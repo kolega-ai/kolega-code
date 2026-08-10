@@ -16,6 +16,7 @@ from textual.widgets import Static
 
 from .. import messages, theme
 from ..theme import Color, Glyph
+from . import pacing
 from .state import ConversationEntry, SubAgentActivity
 from .widgets import ConversationEntryWidget, ScrollbackWindow, ToolEntryWidget, TrajectoryScrollView
 
@@ -122,7 +123,10 @@ class SubAgentInspectorScreen(ModalScreen):
             return
         self._flush_pending = True
         try:
-            self.set_timer(theme.RENDER_COALESCE_INTERVAL, self._flush)
+            # Base cadence, unpaced: trajectory updates are already coalesced per
+            # flush, and a freshly opened inspector must paint immediately even
+            # when the loop is running late.
+            self.set_timer(pacing.FLUSH_BASE_INTERVAL, self._flush)
         except Exception:
             self._flush()
 

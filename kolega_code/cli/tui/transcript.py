@@ -42,6 +42,7 @@ from .state import (
     tool_state_presentation,
 )
 from . import app_base as tui_app_base
+from . import pacing as tui_pacing
 from . import widgets as tui_widgets
 from .sub_agent_screen import SubAgentEntryWidget
 from .widgets import ConversationEntryWidget, JumpToBottomBar, ToolEntryWidget
@@ -1325,21 +1326,24 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             self._flush_conversation_render()
 
     def _render_coalesce_interval(self, entry: Optional[ConversationEntry]) -> float:
-        """Back off the flush cadence for very large live entries.
+        """Back off the flush cadence for very large live entries and for a late loop.
 
         Each flush makes Textual re-measure the auto-height streaming widget (O(height)),
         so for big reasoning streams fewer, larger flushes beat ~20/sec full re-measures.
         Length lags one flush (deltas materialize at flush time), which is fine: the entry
         only grows, so the cadence steps up within one interval of crossing a threshold.
+        The load-paced interval is a floor under both size tiers: whichever backoff is
+        larger wins.
         """
+        paced = self._flush_pacer.interval()
         if entry is None:
-            return theme.RENDER_COALESCE_INTERVAL
+            return paced
         size = len(entry.content)
-        if size >= theme.RENDER_COALESCE_LARGE_CHARS:
-            return theme.RENDER_COALESCE_INTERVAL_LARGE
-        if size >= theme.RENDER_COALESCE_MEDIUM_CHARS:
-            return theme.RENDER_COALESCE_INTERVAL_MEDIUM
-        return theme.RENDER_COALESCE_INTERVAL
+        if size >= tui_pacing.RENDER_COALESCE_LARGE_CHARS:
+            return max(paced, tui_pacing.RENDER_COALESCE_INTERVAL_LARGE)
+        if size >= tui_pacing.RENDER_COALESCE_MEDIUM_CHARS:
+            return max(paced, tui_pacing.RENDER_COALESCE_INTERVAL_MEDIUM)
+        return paced
 
     def _get_transcript_window(self) -> tui_widgets.ScrollbackWindow:
         """The lazily-created scrollback window bounding mounted transcript widgets."""

@@ -97,6 +97,7 @@ from .tui import prompt_flows as tui_prompt_flows
 from .tui import onboarding_screen as tui_onboarding
 from .tui import settings_panel as tui_settings_panel
 from .tui import settings_screen as tui_settings_screen
+from .tui import pacing as tui_pacing
 from .tui import session_diff as tui_session_diff
 from .tui import status_dashboard as tui_status_dashboard
 from .tui import state as tui_state
@@ -109,10 +110,10 @@ CLI_AGENT_MODE = AgentMode.CLI.value
 LOG_MAX_LINES = 2_000
 TERMINAL_MAX_LINES = 2_000
 ScreenResultT = TypeVar("ScreenResultT")
-TERMINAL_FLUSH_INTERVAL = 0.04
 SESSION_DIFF_REFRESH_INTERVAL = 1.0
+# Immediate-flush triggers are memory bounds, not cadence: they intentionally
+# bypass flush pacing so buffered output can never grow without limit.
 TERMINAL_IMMEDIATE_FLUSH_CHARS = 64 * 1024
-LOG_FLUSH_INTERVAL = 0.05
 LOG_IMMEDIATE_FLUSH_ITEMS = 100
 
 
@@ -353,6 +354,7 @@ class KolegaCodeApp(
         self._terminal_display_normalizer = tui_terminal_display.TerminalDisplayNormalizer()
         self._log_output_buffer: list[Any] = []
         self._log_flush_timer: Optional[Timer] = None
+        self._flush_pacer = tui_pacing.FlushPacer()
 
     def get_line_filters(self) -> Sequence[LineFilter]:
         """Apply the terminal-control boundary after Textual's style filters."""
@@ -510,6 +512,7 @@ class KolegaCodeApp(
             # second: chop below the stack-capture threshold is only visible if a beat
             # lands inside the stalled window. The callback is O(1).
             self.set_interval(self._watchdog.beat_interval, self._watchdog.beat)
+            self._flush_pacer.attach(self._watchdog.recent_excess)
         except Exception:
             self._diag, self._watchdog = None, None
         # Register all themes and apply the persisted one before the first paint,
@@ -605,7 +608,7 @@ class KolegaCodeApp(
 
         if self._terminal_flush_timer is None:
             self._terminal_flush_timer = self.set_timer(
-                TERMINAL_FLUSH_INTERVAL,
+                self._flush_pacer.interval(),
                 self._flush_terminal_output,
                 name="terminal-output-flush",
             )
@@ -699,7 +702,7 @@ class KolegaCodeApp(
 
         if self._log_flush_timer is None:
             self._log_flush_timer = self.set_timer(
-                LOG_FLUSH_INTERVAL,
+                self._flush_pacer.interval(),
                 self._flush_log_output,
                 name="log-output-flush",
             )

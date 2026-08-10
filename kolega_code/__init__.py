@@ -40,7 +40,10 @@ from .extensions import (
 from .llm.client import LLMClient
 from .llm.instrumented_client import InstrumentedLLMClient
 from .llm.ledger import LlmCallOrigin, current_llm_call_origin, helper_origin, llm_call_origin
-from .llm.providers.tinker import TinkerTraceRecord
+
+# From the dependency-free leaf module: importing .llm.providers.tinker itself
+# loads the optional native stack (tinker-cookbook -> torch) when installed.
+from .llm.providers.tinker_trace import TinkerTraceRecord
 from .llm.models import (
     ImageBlock,
     Message,

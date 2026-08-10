@@ -262,3 +262,35 @@ def test_terminal_control_filter_does_not_share_state_between_rendered_lines() -
     assert second_text == "l suffix"
     assert "1049" not in repaint_text
     assert repaint_text.endswith(" suffix")
+
+
+def test_terminal_control_filter_returns_clean_lines_unchanged() -> None:
+    control_filter = TerminalControlFilter()
+    segments = [
+        Segment("plain text ", Style(bold=True)),
+        Segment("styled", Style(color="red", link="https://example.com/safe")),
+    ]
+
+    filtered = control_filter.apply(segments, Color.parse("#000000"))
+
+    assert filtered is segments
+
+
+def test_terminal_control_filter_sanitizes_every_segment_of_a_dirty_line() -> None:
+    filtered = _filter_segments(Segment("clean prefix "), Segment("dirty\x1b[31m suffix"))
+
+    joined = "".join(segment.text for segment in filtered)
+    assert "\x1b" not in joined
+    # preserve_width pads the suppressed escape with spaces to keep cell width stable.
+    assert joined == "clean prefix dirty     suffix"
+
+
+def test_terminal_control_filter_parses_escapes_split_across_segments() -> None:
+    # The escape introducer and its parameters land in adjacent styled segments;
+    # the whole line must be parsed as one stream so the parameters are consumed.
+    filtered = _filter_segments(Segment("prefix\x1b", Style(bold=True)), Segment("[31m", Style(color="red")))
+
+    joined = "".join(segment.text for segment in filtered)
+    assert "\x1b" not in joined
+    assert "31m" not in joined
+    assert joined.rstrip() == "prefix"

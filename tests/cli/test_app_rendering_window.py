@@ -63,23 +63,26 @@ async def test_transcript_trims_oldest_entries_while_following_bottom(tmp_path: 
 
     async with app.run_test() as pilot:
         await _settle(pilot)
-        # Stage 1: below the cap, everything mounts.
-        _add_entries(app, 250)
+        # Stage 1: at the cap (counting the startup entry), everything mounts.
+        stage_one = WINDOW_MAX - 1
+        _add_entries(app, stage_one)
         app._flush_conversation_render()
         await _settle(pilot)
-        assert len(app._entry_widgets) == 251  # 250 + startup entry
+        assert len(app._entry_widgets) == stage_one + 1
 
         # Stage 2: crossing max + trim chunk trims the oldest back to the cap.
-        _add_entries(app, 200, start=250)
+        stage_two = TRIM_CHUNK + 10
+        total = stage_one + stage_two + 1
+        _add_entries(app, stage_two, start=stage_one)
         app._flush_conversation_render()
         await _settle(pilot)
 
         entries = app.conversation_entries
-        assert len(entries) == 451  # data model keeps everything
+        assert len(entries) == total  # data model keeps everything
         assert len(app._entry_widgets) == WINDOW_MAX
-        assert _window(app).mounted_start == 451 - WINDOW_MAX
+        assert _window(app).mounted_start == total - WINDOW_MAX
         first_mounted = next(iter(app._entry_widgets))
-        assert first_mounted == entries[451 - WINDOW_MAX].entry_id
+        assert first_mounted == entries[total - WINDOW_MAX].entry_id
         assert entries[0].entry_id not in app._entry_widgets
 
 
@@ -89,7 +92,8 @@ async def test_transcript_does_not_trim_while_scrolled_up(tmp_path: Path, monkey
 
     async with app.run_test() as pilot:
         await _settle(pilot)
-        _add_entries(app, 250)
+        stage_one = WINDOW_MAX - 1
+        _add_entries(app, stage_one)
         app._flush_conversation_render()
         await _settle(pilot)
 
@@ -98,12 +102,14 @@ async def test_transcript_does_not_trim_while_scrolled_up(tmp_path: Path, monkey
         await _settle(pilot)
         assert view.auto_follow_bottom is False
 
-        _add_entries(app, 200, start=250)
+        # Append within the burst guard (≤ max_mounted) so sync mounts incrementally.
+        stage_two = WINDOW_MAX - 20
+        _add_entries(app, stage_two, start=stage_one)
         app._flush_conversation_render()
         await _settle(pilot)
 
         # Nothing trimmed: the user is reading history, so the window only grows.
-        assert len(app._entry_widgets) == 451
+        assert len(app._entry_widgets) == stage_one + stage_two + 1
         assert _window(app).mounted_start == 0
 
 

@@ -9,6 +9,7 @@ model, tool, and persisted values remain untouched.
 
 from __future__ import annotations
 
+import re
 from enum import Enum, auto
 
 from rich.cells import cell_len
@@ -16,6 +17,10 @@ from rich.segment import Segment
 from rich.style import Style
 from textual.color import Color
 from textual.filter import LineFilter
+
+# Mirrors _TerminalControlParser._is_c0_or_c1_control: any hit means the line
+# needs the full parser; no hit means the parser would return it byte-identical.
+_CONTROL_CHARS_RE = re.compile("[\x00-\x1f\x7f-\x9f]")
 
 
 class _State(Enum):
@@ -259,9 +264,26 @@ class TerminalControlFilter(LineFilter):
                 return style.update_link(None)
         return style
 
+    @staticmethod
+    def _is_clean(segment: Segment) -> bool:
+        if _CONTROL_CHARS_RE.search(segment.text):
+            return False
+        style = segment.style
+        if style is not None:
+            link = style.link
+            if link is not None and _CONTROL_CHARS_RE.search(link):
+                return False
+        return True
+
     def apply(self, segments: list[Segment], background: Color) -> list[Segment]:
         """Sanitize one independently rendered line while preserving Rich styles."""
         del background
+        # Fast path: this filter runs on every freshly rendered strip in the app,
+        # and virtually every line carries no control bytes at all. The whole line
+        # must be clean before skipping the parser — escape sequences can span
+        # segment boundaries, so a dirty line is parsed as one stream.
+        if all(self._is_clean(segment) for segment in segments):
+            return segments
         parser = _TerminalControlParser(
             preserve_width=True,
             terminal_transcript=False,

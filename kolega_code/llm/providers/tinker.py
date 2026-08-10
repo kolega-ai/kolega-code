@@ -23,7 +23,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
 from typing import Any, AsyncContextManager, Callable, Dict, List, Optional, Sequence
 
 from ..exceptions import LLMInvalidRequestError
@@ -41,6 +40,7 @@ from ..specs import MODEL_SPECS, get_model_specs
 from ..usage import attach_normalized_usage
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
+from .tinker_trace import TinkerTraceRecord
 
 logger = logging.getLogger(__name__)
 
@@ -76,30 +76,6 @@ _EFFORT_FLOATS = {
 
 # Conservative context fallback for checkpoints whose base is not catalogued.
 _FALLBACK_CONTEXT_LENGTH = 65536
-
-
-@dataclass(frozen=True)
-class TinkerTraceRecord:
-    """Structured record of one native Tinker sample, for on-policy RL.
-
-    Emitted only when a trace sink is attached; the record carries everything
-    the Anthropic-compatible endpoint cannot provide: the exact rendered
-    prompt tokens, the sampled token ids, per-token behavior logprobs, the stop
-    reason, prefix-cache usage, and the model/checkpoint identity.
-    """
-
-    model: str
-    base_model: str
-    request_role: Optional[Dict[str, Any]]
-    prompt_tokens: List[int]
-    sampled_tokens: List[int]
-    sampled_text: str
-    logprobs: List[Optional[float]]
-    stop_reason: str
-    termination: str
-    cache_hit_tokens: int
-    temperature: Optional[float]
-    max_tokens: Optional[int]
 
 
 def _require_native_stack() -> None:
