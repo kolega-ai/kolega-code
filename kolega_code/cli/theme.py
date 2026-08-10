@@ -101,8 +101,8 @@ RENDER_COALESCE_LARGE_CHARS = 200_000
 # sub-agent inspector mount only a trailing window of their entries so Textual's
 # O(mounted-widgets) reflow stays cheap no matter how long the session runs.
 # Scrolling near the top mounts older chunks; following the bottom trims the oldest.
-TRANSCRIPT_WINDOW_MAX = 300
-TRANSCRIPT_WINDOW_TRIM_CHUNK = 100
+TRANSCRIPT_WINDOW_MAX = 120
+TRANSCRIPT_WINDOW_TRIM_CHUNK = 40
 TRANSCRIPT_WINDOW_EXPAND_CHUNK = 100
 INSPECTOR_WINDOW_MAX = 150
 INSPECTOR_WINDOW_EXPAND_CHUNK = 100
