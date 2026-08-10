@@ -10,6 +10,7 @@ from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimi
 from kolega_code.events import AgentConnectionManager
 from kolega_code.agent.tool_backend.memory_tool import MemoryTool
 from kolega_code.agent.tools import ToolCollection, ToolDefinition, ToolCollectionConfig, ToolExtension
+from tests.agent._terminal_manager_stub import SandboxCarryingTerminalManager
 
 
 INTERNAL_TOOL_NAMES = {
@@ -23,24 +24,6 @@ INTERNAL_TOOL_NAMES = {
     "log_warning",
     "log_info",
 }
-
-
-class _StubSandbox:
-    def get_host(self, port: int) -> str:
-        return f"stub-sandbox:{port}"
-
-
-class _SandboxCarryingTerminalManager:
-    """Terminal-manager stand-in that carries a ``sandbox`` host provider.
-
-    Deliberately not an instance of ``SandboxTerminalManager``: the gate must
-    duck-type on the attribute (getattr), not isinstance, so kolega-code-e2b's
-    injected manager — possibly subclassed from a pinned older version — keeps
-    qualifying when they bump.
-    """
-
-    def __init__(self) -> None:
-        self.sandbox = _StubSandbox()
 
 
 @pytest.fixture
@@ -174,9 +157,9 @@ class TestToolCollection:
             mock_connection_manager,
             agent_config,
             mock_base_agent,
-            # The stub is deliberately not a TerminalManager subclass: the gate
-            # duck-types on the `sandbox` attribute, so pyright can't see it.
-            terminal_manager=_SandboxCarryingTerminalManager(),  # pyright: ignore[reportArgumentType]
+            # The stand-in implements TerminalManager but is deliberately not a
+            # SandboxTerminalManager: the gate duck-types on `sandbox`.
+            terminal_manager=SandboxCarryingTerminalManager(),
         )
 
         definitions = {tool.name: tool for tool in tool_collection.get_tool_list()}

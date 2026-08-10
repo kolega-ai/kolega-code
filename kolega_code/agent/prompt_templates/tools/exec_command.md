@@ -16,7 +16,12 @@ ends. Verify a server answers (e.g. curl) before handing its URL to the
 browser agent — its log may be buffered.
 
 Returns:
-    A JSON object: {"status": "exited"|"running", "exit_code",
-    "session_id", "output", "truncated", "original_token_count",
-    "duration_ms"}. Background launches that are still running also
-    include "background": true and a "note" with management hints.
+    Structured text with status, session id, exit code, duration, and
+    model-visible output. `max_output_tokens` is a requested budget and
+    is always clamped to the global 10,000-token terminal-result limit.
+    Oversized streams are represented by a bounded head/tail preview;
+    the result reports truncation statistics and an ordinary `Full
+    output:` filesystem path containing the complete normalized stream.
+    Individual preview lines are capped so one huge line cannot consume
+    the result. Background launches that are still running also report
+    `Background: true` and management guidance.

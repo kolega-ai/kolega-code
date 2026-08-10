@@ -12,4 +12,6 @@ stdin never reaches EOF, so stop stdin-reading commands with
 kill_command.
 
 Returns:
-    A JSON object with the same shape as exec_command.
+    Structured text with the same bounded output and spill-file metadata
+    as exec_command. `max_output_tokens` is a requested budget and is
+    always clamped to the global 10,000-token terminal-result limit.

@@ -46,12 +46,14 @@ def test_session_store_writes_private_directory_layout(tmp_path: Path) -> None:
     assert store.path_for(record.session_id).name == "metadata.json"
     assert store.events_path_for(record.session_id).name == "events.jsonl"
     assert (store.session_dir_for(record.session_id) / "artifacts").is_dir()
+    assert store.terminal_output_dir_for(record.session_id).is_dir()
     if os.name != "nt":
         assert stat.S_IMODE(store.root.stat().st_mode) == 0o700
         assert stat.S_IMODE(store.sessions_dir.stat().st_mode) == 0o700
         assert stat.S_IMODE(store.session_dir_for(record.session_id).stat().st_mode) == 0o700
         assert stat.S_IMODE(store.path_for(record.session_id).stat().st_mode) == 0o600
         assert stat.S_IMODE(store.events_path_for(record.session_id).stat().st_mode) == 0o600
+        assert stat.S_IMODE(store.terminal_output_dir_for(record.session_id).stat().st_mode) == 0o700
 
 
 def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:
@@ -92,8 +94,11 @@ def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:
     assert "latest_plan_markdown" in exported
     assert "interaction_mode" in exported
 
+    spill = store.terminal_output_dir_for(record.session_id) / "000001.exec_command.log"
+    spill.write_text("complete terminal output", encoding="utf-8")
     store.delete(record.session_id)
     assert not store.session_dir_for(record.session_id).exists()
+    assert not spill.exists()
     with pytest.raises(SessionStoreError):
         store.load(record.session_id)
 
@@ -332,6 +337,43 @@ def test_large_tool_result_uses_artifact_and_bounded_preview(tmp_path: Path) -> 
     assert full not in bug_export.session_json
     assert full not in bug_export.events_jsonl
     assert ref["sha256"] in bug_export.artifact_manifest_json
+
+
+def test_terminal_spill_path_round_trips_without_resume_rewriting(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+    spill_path = store.terminal_output_dir_for(record.session_id) / "000001.exec_command.log"
+    spill_path.write_text("complete output", encoding="utf-8")
+    structured = (
+        "Status: exited\n"
+        "Session: none\n"
+        "Exit code: 0\n"
+        "Duration: 1 ms\n"
+        "Output:\npreview\n"
+        f"Full output: {spill_path}\n"
+        "Output truncated: yes"
+    )
+    recorder = store.recorder(record.session_id)
+    recorder.start_turn(Message(role="user", content=[TextBlock("run it")]))
+    recorder.record_assistant(
+        Message(
+            role="assistant",
+            content=[ToolCall(id="call-1", name="exec_command", input={"command": "run"})],
+            stop_reason="tool_use",
+        )
+    )
+    recorder.record_tool_results(
+        [ToolResult(tool_use_id="call-1", content=structured, name="exec_command", is_error=False)]
+    )
+    recorder.finish_turn("completed")
+
+    loaded_result = Message.from_dict(store.load(record.session_id).history[2]).content[0]
+
+    assert isinstance(loaded_result, ToolResult)
+    assert loaded_result.content == structured
+    assert spill_path.exists()
 
 
 def test_images_and_provider_opaque_fields_are_hydrated_from_artifacts(tmp_path: Path) -> None:

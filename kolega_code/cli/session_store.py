@@ -212,6 +212,10 @@ class SessionStore:
     def events_path_for(self, session_id: str) -> Path:
         return self.session_dir_for(session_id) / "events.jsonl"
 
+    def terminal_output_dir_for(self, session_id: str) -> Path:
+        """Return the session-owned directory for recoverable terminal streams."""
+        return self.session_dir_for(session_id) / "terminal-output"
+
     def legacy_path_for(self, session_id: str) -> Path:
         return self.sessions_dir / f"{_validate_session_id(session_id)}.json"
 
@@ -230,6 +234,7 @@ class SessionStore:
             raise SessionStoreError(f"Session already exists: {record.session_id}")
         ensure_private_dir(session_dir)
         ensure_private_dir(session_dir / "artifacts")
+        ensure_private_dir(self.terminal_output_dir_for(record.session_id))
         journal = self.journal(record.session_id)
         epoch_id = str(uuid.uuid4())
         try:

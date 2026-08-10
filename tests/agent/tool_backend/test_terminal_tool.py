@@ -1,6 +1,5 @@
 import os
 import asyncio
-import json
 import sys
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -9,11 +8,16 @@ import uuid
 
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentEvent
-from kolega_code.services.base import ExecResult
+from kolega_code.services.base import ExecResult, TerminalCommandCancelled
 from kolega_code.agent.tool_backend.terminal_tool import BACKGROUND_SETTLE_MS, TerminalTool
 
 # Check if running in CI environment
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
+
+
+def _result_field(result: str, name: str) -> str:
+    prefix = f"{name}: "
+    return next(line.removeprefix(prefix) for line in result.splitlines() if line.startswith(prefix))
 
 
 @pytest.fixture
@@ -178,17 +182,16 @@ class TestUnifiedExecTools:
     """Tests for the codex-style exec_command / write_stdin / kill_command tools."""
 
     @pytest.mark.asyncio
-    async def test_exec_command_returns_json_and_defaults_workdir(self, terminal_tool):
+    async def test_exec_command_returns_structured_text_and_defaults_workdir(self, terminal_tool):
         terminal_tool.terminal_manager = Mock()
         terminal_tool.terminal_manager.exec_command = AsyncMock(
             return_value=ExecResult(status="exited", exit_code=0, output="hi", duration_ms=12)
         )
 
         out = await terminal_tool.exec_command("echo hi")
-        data = json.loads(out)
-        assert data["status"] == "exited"
-        assert data["exit_code"] == 0
-        assert data["output"] == "hi"
+        assert _result_field(out, "Status") == "exited"
+        assert _result_field(out, "Exit code") == "0"
+        assert "Output:\nhi" in out
 
         kwargs = terminal_tool.terminal_manager.exec_command.call_args.kwargs
         assert kwargs["workdir"] == str(terminal_tool.project_path)
@@ -214,9 +217,9 @@ class TestUnifiedExecTools:
     async def test_exec_command_end_to_end_runs_in_project_root(self, terminal_tool):
         # Real PTY through the default manager: even when the CLI process runs
         # elsewhere, workdir="." must land in the project root.
-        data = json.loads(await terminal_tool.exec_command("pwd", workdir=".", yield_time_ms=5000))
-        assert data["status"] == "exited"
-        assert data["output"].strip().endswith(terminal_tool.project_path.name)
+        result = await terminal_tool.exec_command("pwd", workdir=".", yield_time_ms=5000)
+        assert _result_field(result, "Status") == "exited"
+        assert f"Output:\n{terminal_tool.project_path}" in result
 
     @pytest.mark.asyncio
     async def test_exec_command_injects_scratchpad_env(self, terminal_tool, mock_base_agent, tmp_path):
@@ -245,22 +248,24 @@ class TestUnifiedExecTools:
     async def test_exec_command_end_to_end_scratchpad_env(self, terminal_tool, mock_base_agent, tmp_path):
         # Real PTY: the model-facing session sees $KOLEGA_SCRATCHPAD.
         mock_base_agent.scratchpad_dir = tmp_path / "scratchpad"
-        data = json.loads(await terminal_tool.exec_command('echo "SP=$KOLEGA_SCRATCHPAD"', yield_time_ms=5000))
-        assert data["status"] == "exited"
-        assert f"SP={tmp_path / 'scratchpad'}" in data["output"]
+        result = await terminal_tool.exec_command('echo "SP=$KOLEGA_SCRATCHPAD"', yield_time_ms=5000)
+        assert _result_field(result, "Status") == "exited"
+        assert f"SP={tmp_path / 'scratchpad'}" in result
 
     @pytest.mark.asyncio
     async def test_write_stdin_session_keeps_scratchpad_env(self, terminal_tool, mock_base_agent, tmp_path):
         # A session created by exec_command and driven with write_stdin keeps
         # the env it was spawned with.
         mock_base_agent.scratchpad_dir = tmp_path / "scratchpad"
-        data = json.loads(
-            await terminal_tool.exec_command('read line; echo "GOT=$KOLEGA_SCRATCHPAD"', yield_time_ms=300)
+        result = await terminal_tool.exec_command(
+            'read line; echo "GOT=$KOLEGA_SCRATCHPAD"',
+            yield_time_ms=300,
         )
-        assert data["status"] == "running"
-        data = json.loads(await terminal_tool.write_stdin(data["session_id"], "go\n", yield_time_ms=5000))
-        assert data["status"] == "exited"
-        assert f"GOT={tmp_path / 'scratchpad'}" in data["output"]
+        assert _result_field(result, "Status") == "running"
+        session_id = _result_field(result, "Session")
+        result = await terminal_tool.write_stdin(session_id, "go\n", yield_time_ms=5000)
+        assert _result_field(result, "Status") == "exited"
+        assert f"GOT={tmp_path / 'scratchpad'}" in result
 
     @pytest.mark.asyncio
     async def test_exec_command_passes_absolute_workdir_through(self, terminal_tool):
@@ -280,38 +285,122 @@ class TestUnifiedExecTools:
             return_value=ExecResult(status="running", session_id="s_1", output="partial")
         )
 
-        data = json.loads(await terminal_tool.exec_command("sleep 5"))
-        assert data["status"] == "running"
-        assert data["session_id"] == "s_1"
+        result = await terminal_tool.exec_command("sleep 5")
+        assert _result_field(result, "Status") == "running"
+        assert _result_field(result, "Session") == "s_1"
 
     @pytest.mark.asyncio
-    async def test_write_stdin_returns_json(self, terminal_tool):
+    async def test_cancelled_exec_command_returns_structured_recovery_result(self, terminal_tool, tmp_path):
+        spill_path = tmp_path / "terminal-output" / "000001.exec_command.log"
+        terminal_tool.terminal_manager = Mock()
+        terminal_tool.terminal_manager.exec_command = AsyncMock(
+            side_effect=TerminalCommandCancelled(
+                ExecResult(
+                    status="cancelled",
+                    exit_code=143,
+                    output="partial",
+                    truncated=True,
+                    original_token_count=20_000,
+                    spill_path=str(spill_path),
+                    spill_bytes=80_000,
+                )
+            )
+        )
+
+        result = await terminal_tool.exec_command("produce forever")
+
+        assert _result_field(result, "Status") == "cancelled"
+        assert _result_field(result, "Exit code") == "143"
+        assert f"Full output: {spill_path}" in result
+        assert "Output:\npartial" in result
+
+    @pytest.mark.asyncio
+    async def test_structured_result_hard_caps_complete_text_and_preserves_spill_path(
+        self,
+        terminal_tool,
+        tmp_path,
+    ):
+        spill_path = tmp_path / "terminal-output" / "000001.exec_command.log"
+        terminal_tool.terminal_manager = Mock()
+        terminal_tool.terminal_manager.exec_command = AsyncMock(
+            return_value=ExecResult(
+                status="exited",
+                exit_code=0,
+                output="x" * 100_000,
+                truncated=True,
+                original_token_count=25_000,
+                spill_path=str(spill_path),
+                spill_bytes=100_000,
+                line_truncated_count=2,
+                line_truncated_bytes=500,
+                preview_omitted_bytes=60_000,
+                preview_omitted_lines=600,
+            )
+        )
+
+        result = await terminal_tool.exec_command(
+            "produce output",
+            max_output_tokens=1_000_000,
+        )
+
+        assert len(result) <= 40_000
+        assert f"Full output: {spill_path}" in result
+        assert "Output truncated: yes" in result
+        assert "Original output: ~25,000 tokens" in result
+        assert "Long lines shortened: 2 lines, 500 bytes omitted" in result
+        assert "Preview middle omitted: 60,000 bytes across 600 lines" in result
+
+    @pytest.mark.asyncio
+    async def test_write_stdin_returns_structured_text(self, terminal_tool):
         terminal_tool.terminal_manager = Mock()
         terminal_tool.terminal_manager.write_stdin = AsyncMock(
             return_value=ExecResult(status="exited", exit_code=0, output="done")
         )
 
-        data = json.loads(await terminal_tool.write_stdin("s_1", "y\n"))
-        assert data["status"] == "exited"
-        assert data["output"] == "done"
+        result = await terminal_tool.write_stdin("s_1", "y\n")
+        assert _result_field(result, "Status") == "exited"
+        assert "Output:\ndone" in result
         terminal_tool.terminal_manager.write_stdin.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_write_stdin_returns_structured_recovery_result(self, terminal_tool, tmp_path):
+        spill_path = tmp_path / "terminal-output" / "000001.exec_command.log"
+        terminal_tool.terminal_manager = Mock()
+        terminal_tool.terminal_manager.write_stdin = AsyncMock(
+            side_effect=TerminalCommandCancelled(
+                ExecResult(
+                    status="cancelled",
+                    exit_code=137,
+                    output="latest",
+                    spill_path=str(spill_path),
+                    spill_bytes=70_000,
+                )
+            )
+        )
+
+        result = await terminal_tool.write_stdin("s_1")
+
+        assert _result_field(result, "Status") == "cancelled"
+        assert _result_field(result, "Exit code") == "137"
+        assert f"Full output: {spill_path}" in result
+        assert "Output:\nlatest" in result
 
     @pytest.mark.asyncio
     async def test_write_stdin_unknown_session_returns_error(self, terminal_tool):
         terminal_tool.terminal_manager = Mock()
         terminal_tool.terminal_manager.write_stdin = AsyncMock(side_effect=KeyError("No such session: s_9"))
 
-        data = json.loads(await terminal_tool.write_stdin("s_9"))
-        assert data["status"] == "error"
+        result = await terminal_tool.write_stdin("s_9")
+        assert _result_field(result, "Status") == "error"
 
     @pytest.mark.asyncio
-    async def test_kill_command_returns_json(self, terminal_tool):
+    async def test_kill_command_returns_structured_text(self, terminal_tool):
         terminal_tool.terminal_manager = Mock()
         terminal_tool.terminal_manager.kill_session = AsyncMock(return_value=ExecResult(status="exited", exit_code=143))
 
-        data = json.loads(await terminal_tool.kill_command("s_1", "TERM"))
-        assert data["status"] == "exited"
-        assert data["exit_code"] == 143
+        result = await terminal_tool.kill_command("s_1", "TERM")
+        assert _result_field(result, "Status") == "exited"
+        assert _result_field(result, "Exit code") == "143"
         terminal_tool.terminal_manager.kill_session.assert_awaited_once_with("s_1", "TERM")
 
     @pytest.mark.asyncio
@@ -319,18 +408,26 @@ class TestUnifiedExecTools:
         terminal_tool.terminal_manager = Mock()
         terminal_tool.terminal_manager.kill_session = AsyncMock(side_effect=KeyError("No such session"))
 
-        data = json.loads(await terminal_tool.kill_command("s_9"))
-        assert data["status"] == "error"
+        result = await terminal_tool.kill_command("s_9")
+        assert _result_field(result, "Status") == "error"
 
     @pytest.mark.asyncio
-    async def test_list_sessions_returns_json(self, terminal_tool):
+    async def test_list_sessions_returns_structured_text(self, terminal_tool):
         terminal_tool.terminal_manager = Mock()
         terminal_tool.terminal_manager.list_sessions = AsyncMock(
             return_value={"s_1": {"command": "sleep 5", "running": True}}
         )
 
-        data = json.loads(await terminal_tool.list_sessions())
-        assert "s_1" in data["sessions"]
+        result = await terminal_tool.list_sessions()
+        assert "Session: s_1" in result
+        assert "Command: sleep 5" in result
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_empty_is_plain_text(self, terminal_tool):
+        terminal_tool.terminal_manager = Mock()
+        terminal_tool.terminal_manager.list_sessions = AsyncMock(return_value={})
+
+        assert await terminal_tool.list_sessions() == "No running sessions."
 
     @pytest.mark.asyncio
     async def test_exec_command_blocked_by_security_check(self, terminal_tool):
@@ -354,12 +451,12 @@ class TestBackgroundExec:
             return_value=ExecResult(status="running", session_id="s_1", output="ready", duration_ms=2000)
         )
 
-        data = json.loads(await terminal_tool.exec_command("npm run dev", background=True, yield_time_ms=30000))
+        result = await terminal_tool.exec_command("npm run dev", background=True, yield_time_ms=30000)
 
-        assert data["status"] == "running"
-        assert data["session_id"] == "s_1"
-        assert data["background"] is True
-        assert "kill_command" in data["note"]
+        assert _result_field(result, "Status") == "running"
+        assert _result_field(result, "Session") == "s_1"
+        assert _result_field(result, "Background") == "true"
+        assert "kill_command" in result
         kwargs = terminal_tool.terminal_manager.exec_command.call_args.kwargs
         assert kwargs["yield_time_ms"] == BACKGROUND_SETTLE_MS
         assert "s_1" in terminal_tool._background_sessions
@@ -371,11 +468,11 @@ class TestBackgroundExec:
             return_value=ExecResult(status="exited", exit_code=1, output="EADDRINUSE", duration_ms=300)
         )
 
-        data = json.loads(await terminal_tool.exec_command("npm run dev", background=True))
+        result = await terminal_tool.exec_command("npm run dev", background=True)
 
-        assert data["status"] == "exited"
-        assert data["exit_code"] == 1
-        assert "background" not in data
+        assert _result_field(result, "Status") == "exited"
+        assert _result_field(result, "Exit code") == "1"
+        assert "Background:" not in result
         assert terminal_tool._background_sessions == set()
 
     @pytest.mark.asyncio
@@ -385,10 +482,10 @@ class TestBackgroundExec:
             return_value=ExecResult(status="running", session_id="s_2", output="", duration_ms=10000)
         )
 
-        data = json.loads(await terminal_tool.exec_command("sleep 5", yield_time_ms=30000))
+        result = await terminal_tool.exec_command("sleep 5", yield_time_ms=30000)
 
-        assert data["status"] == "running"
-        assert "background" not in data
+        assert _result_field(result, "Status") == "running"
+        assert "Background:" not in result
         kwargs = terminal_tool.terminal_manager.exec_command.call_args.kwargs
         assert kwargs["yield_time_ms"] == 30000
         assert terminal_tool._background_sessions == set()
@@ -405,9 +502,10 @@ class TestBackgroundExec:
         terminal_tool.terminal_manager.list_sessions = AsyncMock(
             return_value={"s_1": {"command": "npm run dev", "running": True}}
         )
-        data = json.loads(await terminal_tool.list_sessions())
+        result = await terminal_tool.list_sessions()
 
-        assert data["sessions"]["s_1"]["background"] is True
+        assert "Session: s_1" in result
+        assert "Background: true" in result
         # Ids no longer running are pruned from the tracking set.
         assert terminal_tool._background_sessions == {"s_1"}
 
@@ -426,15 +524,15 @@ class TestBackgroundExec:
         # Real PTY through the default manager: a backgrounded server process
         # stays alive across later tool calls, appears in list_sessions, and
         # dies via kill_command — the dev-server flow the browser agent needs.
-        data = json.loads(await terminal_tool.exec_command("sleep 30", background=True))
-        assert data["status"] == "running"
-        assert data["background"] is True
-        session_id = data["session_id"]
+        result = await terminal_tool.exec_command("sleep 30", background=True)
+        assert _result_field(result, "Status") == "running"
+        assert _result_field(result, "Background") == "true"
+        session_id = _result_field(result, "Session")
 
-        sessions = json.loads(await terminal_tool.list_sessions())["sessions"]
-        assert session_id in sessions
-        assert sessions[session_id]["background"] is True
+        sessions = await terminal_tool.list_sessions()
+        assert f"Session: {session_id}" in sessions
+        assert "Background: true" in sessions
 
-        killed = json.loads(await terminal_tool.kill_command(session_id))
-        assert killed["status"] == "exited"
-        assert session_id not in json.loads(await terminal_tool.list_sessions())["sessions"]
+        killed = await terminal_tool.kill_command(session_id)
+        assert _result_field(killed, "Status") == "exited"
+        assert f"Session: {session_id}" not in await terminal_tool.list_sessions()

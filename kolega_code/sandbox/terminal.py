@@ -1,20 +1,59 @@
 """Terminal manager implementation for sandbox environments."""
 
-import uuid
 import asyncio
-import re
+import base64
 import os
+import re
+import shlex
 import time
+import uuid
+from pathlib import Path
 from typing import Any, Dict, Optional, Callable, Awaitable
 from datetime import datetime, timezone
 
-from ..services.base import ExecResult, TerminalManager
-from ..services.terminal_buffer import cap_tokens, clamp_yield
+from ..services.base import ExecResult, TerminalCommandCancelled, TerminalManager
+from ..services.terminal_buffer import (
+    GLOBAL_MAX_TOOL_OUTPUT_TOKENS,
+    TerminalOutputAccumulator,
+    TerminalSpillStore,
+    clamp_output_tokens,
+    clamp_yield,
+)
 from kolega_code.events import AgentEvent
+
+
+class BoundedTerminalOutputs(list):
+    """List-compatible terminal history with a hard in-memory byte ceiling."""
+
+    MAX_BYTES = 1_000_000
+
+    def __init__(self, values=()):
+        super().__init__()
+        self._bytes = 0
+        self.extend(values)
+
+    @staticmethod
+    def _item_bytes(item: Any) -> int:
+        if not isinstance(item, dict):
+            return 0
+        return len(str(item.get("data", "")).encode("utf-8"))
+
+    def append(self, item: Any) -> None:
+        super().append(item)
+        self._bytes += self._item_bytes(item)
+        while self._bytes > self.MAX_BYTES and len(self) > 1:
+            removed = super().pop(0)
+            self._bytes -= self._item_bytes(removed)
+
+    def extend(self, values) -> None:
+        for value in values:
+            self.append(value)
 
 
 class SandboxTerminalManager(TerminalManager):
     """Terminal manager that operates within a sandbox."""
+
+    output_buffer_type = BoundedTerminalOutputs
 
     def __init__(self, sandbox: Any, workspace_id: str, thread_id: str, connection_manager: Any = None):
         """
@@ -33,10 +72,23 @@ class SandboxTerminalManager(TerminalManager):
         self.terminals: Dict[str, Dict[str, Any]] = {}
         self.outputs: Dict[str, list] = {}
         self._default_terminal_id: Optional[str] = None
+        self._spill_store: Optional[TerminalSpillStore] = None
+        self._output_accumulators: Dict[str, TerminalOutputAccumulator] = {}
+        self._command_tasks: Dict[str, asyncio.Task] = {}
 
         # Track commands and their status (for interface parity)
         self.command_history: Dict[str, Dict[str, Any]] = {}
         self.command_counter = 0
+
+    def configure_output_spill(self, root: Optional[Path]) -> None:
+        if root is None:
+            return
+        resolved = Path(root)
+        if self._spill_store is not None and self._spill_store.root == resolved:
+            return
+        if any(info.get("status") == "running" for info in self.command_history.values()):
+            raise RuntimeError("Cannot change terminal spill storage while sessions are running")
+        self._spill_store = TerminalSpillStore(resolved)
 
     def set_connection_manager(self, connection_manager: Any) -> None:
         """
@@ -71,20 +123,73 @@ class SandboxTerminalManager(TerminalManager):
                 return
             await asyncio.sleep(0.05)
 
-    def _render_delta(self, terminal_id: str, start_index: int, max_output_tokens: int):
-        parts = []
-        for entry in self.outputs.get(terminal_id, [])[start_index:]:
-            if entry.get("type") in ("stdout", "stderr"):
-                parts.append(entry.get("data", ""))
-        return cap_tokens("".join(parts), max_output_tokens)
+    def _render_delta(self, command_id: str, max_output_tokens: int):
+        accumulator = self._output_accumulators.get(command_id)
+        if accumulator is None:
+            return TerminalOutputAccumulator(None).read_delta(max_output_tokens)
+        return accumulator.read_delta(max_output_tokens)
 
-    def _exec_result(
-        self, command_id: str, terminal_id: str, start_index: int, max_output_tokens: int, duration_ms: int
-    ) -> ExecResult:
-        capped = self._render_delta(terminal_id, start_index, max_output_tokens)
+    async def _sync_sandbox_spill(self, command_id: str, capped) -> None:
+        """Mirror newly persisted normalized bytes to a sandbox-readable file."""
+        if not capped.spill_path:
+            return
+        info = self.command_history.get(command_id)
+        if info is None:
+            return
+
+        remote_path = info.get("sandbox_spill_path")
+        if remote_path is None:
+            remote_path = f"/home/user/.kolega/terminal-output/{uuid.uuid4().hex}.exec_command.log"
+            parent = os.path.dirname(remote_path)
+            result = await self.sandbox.commands.run(
+                f"mkdir -p {shlex.quote(parent)} && : > {shlex.quote(remote_path)}",
+                timeout=60,
+            )
+            if getattr(result, "exit_code", 1) != 0:
+                return
+            info["sandbox_spill_path"] = remote_path
+            info["sandbox_spill_bytes"] = 0
+
+        synced_bytes = int(info.get("sandbox_spill_bytes", 0))
+        target_bytes = capped.spill_bytes
+        if target_bytes > synced_bytes:
+            try:
+                with Path(capped.spill_path).open("rb") as source:
+                    source.seek(synced_bytes)
+                    while synced_bytes < target_bytes:
+                        chunk = source.read(min(48 * 1024, target_bytes - synced_bytes))
+                        if not chunk:
+                            break
+                        encoded = base64.b64encode(chunk).decode("ascii")
+                        result = await self.sandbox.commands.run(
+                            (f"printf %s {shlex.quote(encoded)} | base64 -d >> {shlex.quote(remote_path)}"),
+                            timeout=60,
+                        )
+                        if getattr(result, "exit_code", 1) != 0:
+                            return
+                        synced_bytes += len(chunk)
+                        info["sandbox_spill_bytes"] = synced_bytes
+            except OSError:
+                return
+
+        if synced_bytes < target_bytes:
+            return
+        capped.spill_path = remote_path
+        if info.get("status") in ("completed", "failed", "terminated"):
+            result = await self.sandbox.commands.run(
+                f"chmod 0400 {shlex.quote(remote_path)}",
+                timeout=60,
+            )
+            if getattr(result, "exit_code", 1) != 0:
+                return
+
+    async def _exec_result(self, command_id: str, max_output_tokens: int, duration_ms: int) -> ExecResult:
+        capped = self._render_delta(command_id, max_output_tokens)
+        await self._sync_sandbox_spill(command_id, capped)
         info = self.command_history.get(command_id) or {}
         status = info.get("status")
         if status in ("completed", "failed", "terminated") or status is None:
+            self._output_accumulators.pop(command_id, None)
             return ExecResult(
                 status="exited",
                 session_id=None,
@@ -93,6 +198,12 @@ class SandboxTerminalManager(TerminalManager):
                 truncated=capped.truncated,
                 original_token_count=capped.original_token_count,
                 duration_ms=duration_ms,
+                spill_path=capped.spill_path,
+                spill_bytes=capped.spill_bytes,
+                line_truncated_count=capped.line_truncated_count,
+                line_truncated_bytes=capped.line_truncated_bytes,
+                preview_omitted_bytes=capped.preview_omitted_bytes,
+                preview_omitted_lines=capped.preview_omitted_lines,
             )
         return ExecResult(
             status="running",
@@ -102,6 +213,12 @@ class SandboxTerminalManager(TerminalManager):
             truncated=capped.truncated,
             original_token_count=capped.original_token_count,
             duration_ms=duration_ms,
+            spill_path=capped.spill_path,
+            spill_bytes=capped.spill_bytes,
+            line_truncated_count=capped.line_truncated_count,
+            line_truncated_bytes=capped.line_truncated_bytes,
+            preview_omitted_bytes=capped.preview_omitted_bytes,
+            preview_omitted_lines=capped.preview_omitted_lines,
         )
 
     async def exec_command(
@@ -120,6 +237,7 @@ class SandboxTerminalManager(TerminalManager):
         # single exec and lives until the sandbox is destroyed, so no special
         # handling.
         _ = background
+        max_output_tokens = clamp_output_tokens(max_output_tokens)
         yield_ms = clamp_yield(yield_time_ms, poll=False)
         terminal_id = await self._ensure_default_terminal()
         info = self.terminals[terminal_id]
@@ -132,14 +250,18 @@ class SandboxTerminalManager(TerminalManager):
             merged.update(env)
             info["env"] = merged
 
-        start_index = len(self.outputs.get(terminal_id, []))
         start = time.monotonic()
         command_id = await self.send_command_tracked(terminal_id, command, timeout=0)
         if command_id is None:
             return ExecResult(status="exited", session_id=None, exit_code=1, output="Failed to start command")
-        await self._wait_for_command(command_id, yield_ms)
+        try:
+            await self._wait_for_command(command_id, yield_ms)
+        except asyncio.CancelledError:
+            killed = await asyncio.shield(self.kill_session(command_id, "TERM"))
+            killed.status = "cancelled"
+            raise TerminalCommandCancelled(killed) from None
         duration_ms = int((time.monotonic() - start) * 1000)
-        return self._exec_result(command_id, terminal_id, start_index, max_output_tokens, duration_ms)
+        return await self._exec_result(command_id, max_output_tokens, duration_ms)
 
     async def write_stdin(
         self,
@@ -152,9 +274,9 @@ class SandboxTerminalManager(TerminalManager):
         info = self.command_history.get(session_id)
         if not info:
             raise KeyError(f"No such session: {session_id}")
+        max_output_tokens = clamp_output_tokens(max_output_tokens)
         terminal_id = info["terminal_id"]
         yield_ms = clamp_yield(yield_time_ms, poll=(chars == ""))
-        start_index = len(self.outputs.get(terminal_id, []))
         start = time.monotonic()
         if chars:
             try:
@@ -162,18 +284,23 @@ class SandboxTerminalManager(TerminalManager):
             except ValueError:
                 # The command may have just finished; report its final status.
                 pass
-        await self._wait_for_command(session_id, yield_ms)
+        try:
+            await self._wait_for_command(session_id, yield_ms)
+        except asyncio.CancelledError:
+            killed = await asyncio.shield(self.kill_session(session_id, "TERM"))
+            killed.status = "cancelled"
+            raise TerminalCommandCancelled(killed) from None
         duration_ms = int((time.monotonic() - start) * 1000)
-        return self._exec_result(session_id, terminal_id, start_index, max_output_tokens, duration_ms)
+        return await self._exec_result(session_id, max_output_tokens, duration_ms)
 
     async def kill_session(self, session_id: str, signal: str = "TERM") -> ExecResult:
         info = self.command_history.get(session_id)
         if not info:
             raise KeyError(f"No such session: {session_id}")
         terminal_id = info["terminal_id"]
-        start_index = len(self.outputs.get(terminal_id, []))
         pid = info.get("pid")
         handle = info.get("handle")
+        info["kill_requested"] = signal
         # e2b exposes a single kill; for INT, best-effort send Ctrl-C via stdin.
         if signal == "INT" and pid is not None:
             try:
@@ -185,6 +312,12 @@ class SandboxTerminalManager(TerminalManager):
                 await handle.kill()
             except Exception:
                 pass
+        task = self._command_tasks.get(session_id)
+        if task is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=5)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
         if info.get("status") == "running":
             info["status"] = "terminated"
             if info.get("return_code") is None:
@@ -192,7 +325,12 @@ class SandboxTerminalManager(TerminalManager):
         active = self.terminals.get(terminal_id, {}).get("active_commands")
         if active is not None:
             active.pop(session_id, None)
-        capped = self._render_delta(terminal_id, start_index, 10000)
+        accumulator = self._output_accumulators.get(session_id)
+        if accumulator is not None:
+            accumulator.finalize()
+        capped = self._render_delta(session_id, GLOBAL_MAX_TOOL_OUTPUT_TOKENS)
+        await self._sync_sandbox_spill(session_id, capped)
+        self._output_accumulators.pop(session_id, None)
         return ExecResult(
             status="exited",
             session_id=None,
@@ -200,6 +338,12 @@ class SandboxTerminalManager(TerminalManager):
             output=capped.text,
             truncated=capped.truncated,
             original_token_count=capped.original_token_count,
+            spill_path=capped.spill_path,
+            spill_bytes=capped.spill_bytes,
+            line_truncated_count=capped.line_truncated_count,
+            line_truncated_bytes=capped.line_truncated_bytes,
+            preview_omitted_bytes=capped.preview_omitted_bytes,
+            preview_omitted_lines=capped.preview_omitted_lines,
         )
 
     async def list_sessions(self) -> Dict[str, Any]:
@@ -280,7 +424,12 @@ class SandboxTerminalManager(TerminalManager):
         # Update the terminal's stored working directory
         terminal_info["cwd"] = new_working_dir
 
-    async def _create_output_handler(self, terminal_id: str, output_type: str) -> Callable[[str], Awaitable[None]]:
+    async def _create_output_handler(
+        self,
+        terminal_id: str,
+        output_type: str,
+        command_id: Optional[str] = None,
+    ) -> Callable[[str], Awaitable[None]]:
         """
         Create an async output handler for streaming.
 
@@ -297,6 +446,10 @@ class SandboxTerminalManager(TerminalManager):
             self.outputs[terminal_id].append(
                 {"type": output_type, "data": data, "timestamp": datetime.now(timezone.utc)}
             )
+            if command_id is not None:
+                accumulator = self._output_accumulators.get(command_id)
+                if accumulator is not None:
+                    accumulator.append_text(data)
 
             # Broadcast output immediately for streaming
             if self.connection_manager:
@@ -424,7 +577,7 @@ class SandboxTerminalManager(TerminalManager):
             "last_command_purpose": "",
             "active_commands": {},  # Track commands for this terminal
         }
-        self.outputs[terminal_id] = []
+        self.outputs[terminal_id] = BoundedTerminalOutputs()
 
         return terminal_id
 
@@ -677,7 +830,9 @@ class SandboxTerminalManager(TerminalManager):
             "return_code": None,
             "pid": None,
             "handle": None,
+            "kill_requested": None,
         }
+        self._output_accumulators[command_id] = TerminalOutputAccumulator(self._spill_store)
 
         # Also track in terminal's active commands
         self.terminals[terminal_id]["active_commands"][command_id] = self.command_history[command_id]
@@ -696,7 +851,8 @@ class SandboxTerminalManager(TerminalManager):
             await self._broadcast_output(terminal_id, f"$ {command}\n")
 
         # Start command execution asynchronously without waiting
-        asyncio.create_task(self._execute_command_async(command_id, terminal_id, command, working_dir, timeout))
+        task = asyncio.create_task(self._execute_command_async(command_id, terminal_id, command, working_dir, timeout))
+        self._command_tasks[command_id] = task
 
         return command_id
 
@@ -713,8 +869,8 @@ class SandboxTerminalManager(TerminalManager):
             env = self.terminals.get(terminal_id, {}).get("env") or {}
 
             # Create streaming output handlers
-            stdout_handler = await self._create_output_handler(terminal_id, "stdout")
-            stderr_handler = await self._create_output_handler(terminal_id, "stderr")
+            stdout_handler = await self._create_output_handler(terminal_id, "stdout", command_id)
+            stderr_handler = await self._create_output_handler(terminal_id, "stderr", command_id)
 
             # Determine timeout settings
             sandbox_timeout = timeout if timeout is not None else 0  # Default to no timeout
@@ -734,6 +890,8 @@ class SandboxTerminalManager(TerminalManager):
                     )
                     self.command_history[command_id]["pid"] = handle.pid
                     self.command_history[command_id]["handle"] = handle
+                    if self.command_history[command_id].get("kill_requested"):
+                        await handle.kill()
                     result = await handle.wait()
                 else:
                     handle = await self.sandbox.commands.run(
@@ -748,6 +906,8 @@ class SandboxTerminalManager(TerminalManager):
                     )
                     self.command_history[command_id]["pid"] = handle.pid
                     self.command_history[command_id]["handle"] = handle
+                    if self.command_history[command_id].get("kill_requested"):
+                        await handle.kill()
                     result = await asyncio.wait_for(
                         handle.wait(),
                         timeout=sandbox_timeout + 5,  # Give 5 seconds more than the sandbox timeout
@@ -756,8 +916,15 @@ class SandboxTerminalManager(TerminalManager):
                 # If the sandbox itself times out or hangs
                 raise Exception(f"Command execution timed out after {sandbox_timeout + 5} seconds")
 
+            accumulator = self._output_accumulators.get(command_id)
+            if accumulator is not None:
+                accumulator.finalize()
+
             # Command completed
-            self.command_history[command_id]["status"] = "completed"
+            if self.command_history[command_id].get("kill_requested"):
+                self.command_history[command_id]["status"] = "terminated"
+            else:
+                self.command_history[command_id]["status"] = "completed"
             self.command_history[command_id]["return_code"] = result.exit_code
             self.command_history[command_id]["end_time"] = datetime.now(timezone.utc)
 
@@ -783,7 +950,6 @@ class SandboxTerminalManager(TerminalManager):
             # Remove from active commands
             if terminal_id in self.terminals:
                 self.terminals[terminal_id]["active_commands"].pop(command_id, None)
-
         except Exception as e:
             # Command failed
             self.command_history[command_id]["status"] = "failed"
@@ -795,6 +961,10 @@ class SandboxTerminalManager(TerminalManager):
             self.outputs[terminal_id].append(
                 {"type": "stderr", "data": error_msg, "timestamp": datetime.now(timezone.utc)}
             )
+            accumulator = self._output_accumulators.get(command_id)
+            if accumulator is not None:
+                accumulator.append_text(error_msg)
+                accumulator.finalize()
 
             # Broadcast error
             if self.connection_manager:
@@ -817,6 +987,8 @@ class SandboxTerminalManager(TerminalManager):
             # Remove from active commands
             if terminal_id in self.terminals:
                 self.terminals[terminal_id]["active_commands"].pop(command_id, None)
+        finally:
+            self._command_tasks.pop(command_id, None)
 
     def read_output(self, terminal_id: str, num_chars: int = 1024, offset: int = 0) -> str:
         """
@@ -948,9 +1120,13 @@ class SandboxTerminalManager(TerminalManager):
                 print(f"Closed terminal {terminal_id}")
             except Exception as e:
                 print(f"Error closing terminal {terminal_id}: {e}")
+        for accumulator in self._output_accumulators.values():
+            accumulator.finalize()
         self.terminals.clear()
         self.outputs.clear()
         self.command_history.clear()
+        self._output_accumulators.clear()
+        self._command_tasks.clear()
 
     def _handle_output(self, terminal_id: str, data: str, stream: str):
         """Handle output from process."""
@@ -1013,6 +1189,13 @@ class SandboxTerminalManager(TerminalManager):
             raise KeyError(f"Terminal {terminal_id} not found")
 
         # Clean up
+        for command_id in list(self.terminals[terminal_id]["active_commands"]):
+            try:
+                await self.kill_session(command_id, "TERM")
+            except Exception:
+                accumulator = self._output_accumulators.pop(command_id, None)
+                if accumulator is not None:
+                    accumulator.finalize()
         del self.terminals[terminal_id]
         del self.outputs[terminal_id]
 
@@ -1021,6 +1204,10 @@ class SandboxTerminalManager(TerminalManager):
         terminal_ids = list(self.terminals.keys())
         for terminal_id in terminal_ids:
             await self.close_terminal(terminal_id)
+        for accumulator in self._output_accumulators.values():
+            accumulator.finalize()
+        self._output_accumulators.clear()
+        self._command_tasks.clear()
 
     async def list_terminals(self) -> Dict[str, Any]:
         """

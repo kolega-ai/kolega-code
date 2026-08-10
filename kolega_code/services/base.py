@@ -1,6 +1,7 @@
 import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
@@ -11,8 +12,10 @@ class ExecResult:
     A "session" is one running process. ``status`` is "exited" when the process
     has finished (``exit_code`` is set) or "running" when it is still alive
     (``session_id`` is set so it can be driven with write_stdin / kill_session).
-    ``output`` is the head-tail-truncated, token-capped delta produced since the
-    previous read for this session.
+    ``output`` is the line-capped, head-tail-previewed, hard-token-capped delta
+    produced since the previous read. ``spill_path`` is an ordinary filesystem
+    path containing the complete normalized stream when the command crossed the
+    terminal spill threshold.
     """
 
     status: str
@@ -22,16 +25,34 @@ class ExecResult:
     truncated: bool = False
     original_token_count: int = 0
     duration_ms: int = 0
+    spill_path: Optional[str] = None
+    spill_bytes: int = 0
+    line_truncated_count: int = 0
+    line_truncated_bytes: int = 0
+    preview_omitted_bytes: int = 0
+    preview_omitted_lines: int = 0
+
+
+class TerminalCommandCancelled(asyncio.CancelledError):
+    """Cancellation carrying the bounded final terminal result."""
+
+    def __init__(self, result: ExecResult):
+        super().__init__("Terminal command cancelled")
+        self.result = result
 
 
 class TerminalManager(ABC):
     """Abstract base class for terminal managers (codex-style unified exec).
 
     Each command runs as its own process (a session). Implementations stream
-    output into a bounded buffer, report real exit codes, support writing stdin
-    to a running session, and signal/kill sessions. Local backends allocate a
-    PTY; sandbox backends run non-TTY background commands.
+    output into a recoverable bounded buffer, report real exit codes, support
+    writing stdin to a running session, and signal/kill sessions. Local backends
+    allocate a PTY; sandbox backends run non-TTY background commands.
     """
+
+    def configure_output_spill(self, root: Optional[Path]) -> None:
+        """Configure ordinary filesystem storage for oversized terminal output."""
+        _ = root
 
     @abstractmethod
     async def exec_command(
