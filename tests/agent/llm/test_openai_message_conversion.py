@@ -269,7 +269,7 @@ def test_openai_provider_generate_stamps_ollama_cloud_provider_name_without_usag
     async def run_generate():
         provider = OpenAIProvider(api_key="sk-test", provider_name="ollama_cloud")
         monkeypatch.setattr(provider, "async_client", FakeAsyncClient())
-        return await provider.generate(MessageHistory([]), model="gpt-oss:20b")
+        return await provider.generate(MessageHistory([]), model="test-model")
 
     message = asyncio.run(run_generate())
 

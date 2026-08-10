@@ -11,6 +11,7 @@ import pytest
 
 from kolega_code.cli import model_catalog
 from kolega_code.llm.specs import MODEL_SPECS
+from kolega_code.llm.specs import ollama_cloud_catalog as ollama_cloud
 from kolega_code.llm.specs import openrouter_catalog as openrouter
 from kolega_code.llm.specs.types import ThinkingEffortSpec
 
@@ -319,6 +320,181 @@ def test_tinker_refresh_writes_its_own_cache(tmp_path: Path, monkeypatch) -> Non
     cached = tinker.load_cache(tmp_path / tinker.CACHE_FILENAME)
     assert [identifier for identifier, _spec in cached] == ["Qwen/Qwen3.7-8B"]
     assert "1 not in the bundled catalog" in "\n".join(lines)
+
+
+# --- Ollama Cloud overlay -------------------------------------------------
+
+
+def _ollama_payload(*identifiers: str) -> dict:
+    return {
+        "models": {"data": [{"id": identifier} for identifier in identifiers]},
+        "details": {
+            identifier: {
+                "capabilities": ["completion", "tools", "thinking"],
+                "model_info": {f"{identifier}.context_length": 131072},
+            }
+            for identifier in identifiers
+        },
+    }
+
+
+def test_ollama_cloud_overlay_adds_new_ids_without_overwriting_bundled_specs(tmp_path: Path, restore_catalog) -> None:
+    bundled = next(model for provider, model in MODEL_SPECS if provider == ollama_cloud.PROVIDER)
+    original = dict(MODEL_SPECS[(ollama_cloud.PROVIDER, bundled)])
+    entries = [
+        (
+            bundled,
+            {
+                "context_length": 1,
+                "max_completion_tokens": 1,
+                "default_temperature": 1.0,
+                "supports_vision": False,
+            },
+        ),
+        (
+            "future-agent-model",
+            {
+                "context_length": 131072,
+                "max_completion_tokens": 32768,
+                "default_temperature": 1.0,
+                "supports_vision": True,
+            },
+        ),
+    ]
+    path = tmp_path / ollama_cloud.CACHE_FILENAME
+    ollama_cloud.save_cache(path, entries, fetched_at="2026-08-10T00:00:00+00:00")
+
+    added = model_catalog.apply_catalog_overlay(tmp_path, env={}, catalog=ollama_cloud.PROVIDER)
+
+    assert added == 1
+    assert MODEL_SPECS[(ollama_cloud.PROVIDER, bundled)] == original
+    assert MODEL_SPECS[(ollama_cloud.PROVIDER, "future-agent-model")]["supports_vision"] is True
+
+
+def test_ollama_cloud_overlay_path_and_disable_env_are_provider_specific(tmp_path: Path, restore_catalog) -> None:
+    pinned = tmp_path / "pinned-ollama.json"
+    entries = [
+        (
+            "future-disabled-model",
+            {
+                "context_length": 131072,
+                "max_completion_tokens": 32768,
+                "default_temperature": 1.0,
+                "supports_vision": False,
+            },
+        )
+    ]
+    ollama_cloud.save_cache(pinned, entries, fetched_at="2026-08-10T00:00:00+00:00")
+    env = {
+        "KOLEGA_CODE_OLLAMA_CLOUD_CATALOG": str(pinned),
+        "KOLEGA_CODE_DISABLE_OLLAMA_CLOUD_CATALOG": "1",
+    }
+
+    assert model_catalog.overlay_path(tmp_path / "elsewhere", env, catalog=ollama_cloud.PROVIDER) == pinned
+    assert model_catalog.apply_catalog_overlay(tmp_path / "elsewhere", env=env, catalog=ollama_cloud.PROVIDER) == 0
+    assert (ollama_cloud.PROVIDER, "future-disabled-model") not in MODEL_SPECS
+
+    env.pop("KOLEGA_CODE_DISABLE_OLLAMA_CLOUD_CATALOG")
+    assert model_catalog.apply_catalog_overlay(tmp_path / "elsewhere", env=env, catalog=ollama_cloud.PROVIDER) == 1
+
+
+def test_ollama_cloud_refresh_writes_its_own_cache_and_reports_new_ids(tmp_path: Path, monkeypatch) -> None:
+    bundled = next(model for provider, model in MODEL_SPECS if provider == ollama_cloud.PROVIDER)
+    payload = _ollama_payload(bundled, "future-live-model")
+    monkeypatch.setattr(ollama_cloud, "fetch_models", lambda **_: payload)
+    lines, printer = _collect()
+    errors, error_printer = _collect()
+
+    exit_code = model_catalog.run_models_refresh(
+        _args(provider=ollama_cloud.PROVIDER, state_dir=tmp_path),
+        printer,
+        error_printer,
+    )
+
+    assert exit_code == 0, errors
+    cached = ollama_cloud.load_cache(tmp_path / ollama_cloud.CACHE_FILENAME)
+    assert [entry[0] for entry in cached] == sorted([bundled, "future-live-model"])
+    output = "\n".join(lines)
+    assert "1 not in the bundled catalog" in output
+    assert "Newly available: future-live-model" in output
+
+
+def test_ollama_cloud_refresh_preserves_prior_overlay_ids_and_bundled_accounting(
+    tmp_path: Path,
+    monkeypatch,
+    restore_catalog,
+) -> None:
+    bundled = next(model for provider, model in MODEL_SPECS if provider == ollama_cloud.PROVIDER)
+    path = tmp_path / ollama_cloud.CACHE_FILENAME
+    previous_entries = [
+        (
+            "previous-overlay-model",
+            {
+                "context_length": 65536,
+                "max_completion_tokens": 16384,
+                "default_temperature": 1.0,
+                "supports_vision": False,
+            },
+        )
+    ]
+    ollama_cloud.save_cache(path, previous_entries, fetched_at="2026-08-09T00:00:00+00:00")
+    assert model_catalog.apply_catalog_overlay(tmp_path, env={}, catalog=ollama_cloud.PROVIDER) == 1
+
+    monkeypatch.setattr(
+        ollama_cloud,
+        "fetch_models",
+        lambda **_: _ollama_payload(bundled, "new-overlay-model"),
+    )
+    lines, printer = _collect()
+    errors, error_printer = _collect()
+
+    exit_code = model_catalog.run_models_refresh(
+        _args(provider=ollama_cloud.PROVIDER, state_dir=tmp_path),
+        printer,
+        error_printer,
+    )
+
+    assert exit_code == 0, errors
+    cached = ollama_cloud.load_cache(path)
+    assert [identifier for identifier, _spec in cached] == sorted(
+        [bundled, "new-overlay-model", "previous-overlay-model"]
+    )
+    output = "\n".join(lines)
+    assert "2 not in the bundled catalog (1 new since the last refresh)" in output
+    assert "Newly available: new-overlay-model" in output
+
+
+def test_ollama_cloud_refresh_failure_leaves_existing_cache_untouched(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / ollama_cloud.CACHE_FILENAME
+    ollama_cloud.save_cache(
+        path,
+        [
+            (
+                "previously-cached",
+                {
+                    "context_length": 131072,
+                    "max_completion_tokens": 32768,
+                    "default_temperature": 1.0,
+                    "supports_vision": False,
+                },
+            )
+        ],
+        fetched_at="2026-08-10T00:00:00+00:00",
+    )
+    original = path.read_bytes()
+    monkeypatch.setattr(ollama_cloud, "fetch_models", lambda **_: {"models": {"data": [{"id": "missing"}]}})
+    _lines, printer = _collect()
+    errors, error_printer = _collect()
+
+    exit_code = model_catalog.run_models_refresh(
+        _args(provider=ollama_cloud.PROVIDER, state_dir=tmp_path),
+        printer,
+        error_printer,
+    )
+
+    assert exit_code == 1
+    assert "payload.details" in "\n".join(errors)
+    assert path.read_bytes() == original
 
 
 # --- /model resolution ----------------------------------------------------

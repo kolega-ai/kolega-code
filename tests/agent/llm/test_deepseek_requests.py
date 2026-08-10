@@ -20,11 +20,13 @@ from kolega_code.llm.providers.models import GenerationParams
 from kolega_code.llm.providers.openai import OpenAIProvider
 from kolega_code.llm.specs import (
     DEEPSEEK_WIRE_OUTPUT_CAP,
+    MODEL_SPECS,
     deepseek_output_token_cap,
     is_deepseek_model,
 )
 
 FLASH = "deepseek-v4-flash"
+OLLAMA_DEEPSEEK_MODEL = "deepseek-test-small"
 
 
 class _Recorder:
@@ -78,7 +80,7 @@ def _stream_request(monkeypatch, *, provider_name: str, model: str, max_completi
         "deepseek-v4-pro",  # first-party
         "accounts/fireworks/models/deepseek-v4-flash",  # fireworks path prefix
         "deepseek/deepseek-v4-pro",  # openrouter slug
-        "deepseek-v3.2",  # ollama_cloud tag
+        "deepseek-test:latest",  # ollama_cloud-style tag
         "DeepSeek-R1",  # case-insensitive
     ],
 )
@@ -91,7 +93,12 @@ def test_is_deepseek_model_negative(model: str) -> None:
     assert not is_deepseek_model(model)
 
 
-def test_deepseek_output_token_cap_branches() -> None:
+def test_deepseek_output_token_cap_branches(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(
+        MODEL_SPECS,
+        ("ollama_cloud", OLLAMA_DEEPSEEK_MODEL),
+        {"max_completion_tokens": 32768},
+    )
     # Oversized request (the catalog's old fiction) clamps to the wire cap.
     assert deepseek_output_token_cap("deepseek", "deepseek-v4-pro", 384000) == DEEPSEEK_WIRE_OUTPUT_CAP
     # A below-cap request passes through untouched.
@@ -99,8 +106,8 @@ def test_deepseek_output_token_cap_branches() -> None:
     # No requested cap -> always emit (the wire cap; catalog is higher).
     assert deepseek_output_token_cap("deepseek", "deepseek-v4-pro", None) == DEEPSEEK_WIRE_OUTPUT_CAP
     # A catalog entry BELOW the wire cap wins the min (older/smaller models).
-    assert deepseek_output_token_cap("ollama_cloud", "deepseek-v3.2", None) == 32768
-    assert deepseek_output_token_cap("ollama_cloud", "deepseek-v3.2", 384000) == 32768
+    assert deepseek_output_token_cap("ollama_cloud", OLLAMA_DEEPSEEK_MODEL, None) == 32768
+    assert deepseek_output_token_cap("ollama_cloud", OLLAMA_DEEPSEEK_MODEL, 384000) == 32768
     # Unknown overlay model: no catalog entry, wire cap still applies.
     assert deepseek_output_token_cap("deepseek", "deepseek-experimental", None) == DEEPSEEK_WIRE_OUTPUT_CAP
     assert deepseek_output_token_cap("deepseek", "deepseek-experimental", 384000) == DEEPSEEK_WIRE_OUTPUT_CAP
@@ -116,13 +123,26 @@ def test_deepseek_output_token_cap_branches() -> None:
         ("deepseek", "deepseek-v4-pro", 64000),
         ("fireworks", "accounts/fireworks/models/deepseek-v4-pro", 64000),
         ("fireworks", "accounts/fireworks/models/deepseek-v4-flash", 64000),
-        ("ollama_cloud", "deepseek-v3.2", 32768),
     ],
 )
 def test_chat_stream_sends_clamped_cap_on_wire(monkeypatch, provider_name: str, model: str, expected: int) -> None:
     # No caller-supplied cap: DeepSeek models still always get one (always-emit).
     request = _stream_request(monkeypatch, provider_name=provider_name, model=model)
     assert request["max_tokens"] == expected
+
+
+def test_chat_stream_uses_smaller_catalog_cap_for_ollama_deepseek_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        MODEL_SPECS,
+        ("ollama_cloud", OLLAMA_DEEPSEEK_MODEL),
+        {"max_completion_tokens": 32768},
+    )
+
+    request = _stream_request(monkeypatch, provider_name="ollama_cloud", model=OLLAMA_DEEPSEEK_MODEL)
+
+    assert request["max_tokens"] == 32768
 
 
 def test_chat_oversized_request_is_clamped(monkeypatch) -> None:

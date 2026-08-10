@@ -1,0 +1,150 @@
+{
+  "details": {
+    "deepseek-v4-pro": {
+      "capabilities": [
+        "completion",
+        "tools",
+        "thinking"
+      ],
+      "details": {
+        "families": null,
+        "family": "deepseek4",
+        "format": "",
+        "parameter_size": "1600000000000",
+        "parent_model": "deepseek-v4-pro",
+        "quantization_level": "FP8"
+      },
+      "model_info": {
+        "deepseek4.context_length": 524288,
+        "deepseek4.embedding_length": 4096,
+        "general.architecture": "deepseek4",
+        "general.parameter_count": 1600000000000
+      },
+      "modified_at": "2026-04-24T00:00:00Z"
+    },
+    "glm-5.2": {
+      "capabilities": [
+        "thinking",
+        "completion",
+        "tools"
+      ],
+      "details": {
+        "families": null,
+        "family": "glm5.2",
+        "format": "",
+        "parameter_size": "756162687872",
+        "parent_model": "glm-5.2",
+        "quantization_level": ""
+      },
+      "model_info": {
+        "general.architecture": "glm5.2",
+        "general.parameter_count": 756162687872,
+        "glm5.2.context_length": 1000000,
+        "glm5.2.embedding_length": 0
+      },
+      "modified_at": "2026-06-16T08:00:00-07:00"
+    },
+    "gpt-oss:20b": {
+      "capabilities": [
+        "completion",
+        "tools",
+        "thinking"
+      ],
+      "details": {
+        "families": null,
+        "family": "gptoss",
+        "format": "",
+        "parameter_size": "20914757184",
+        "parent_model": "gpt-oss:20b",
+        "quantization_level": "MXFP4"
+      },
+      "model_info": {
+        "general.architecture": "gptoss",
+        "general.parameter_count": 20914757184,
+        "gptoss.context_length": 131072,
+        "gptoss.embedding_length": 2880
+      },
+      "modified_at": "2025-08-05T00:00:00Z"
+    },
+    "kimi-k3": {
+      "capabilities": [
+        "vision",
+        "thinking",
+        "completion",
+        "tools"
+      ],
+      "details": {
+        "families": null,
+        "family": "kimi-k3",
+        "format": "",
+        "parameter_size": "2812000000000",
+        "parent_model": "kimi-k3",
+        "quantization_level": "MXFP4"
+      },
+      "model_info": {
+        "general.architecture": "kimi-k3",
+        "general.parameter_count": 2812000000000,
+        "kimi-k3.context_length": 1048576,
+        "kimi-k3.embedding_length": 7168
+      },
+      "modified_at": "2026-07-27T08:00:00-07:00"
+    },
+    "mistral-large-3:675b": {
+      "capabilities": [
+        "completion",
+        "tools",
+        "vision"
+      ],
+      "details": {
+        "families": null,
+        "family": "mistral3",
+        "format": "",
+        "parameter_size": "675000000000",
+        "parent_model": "mistral-large-3:675b",
+        "quantization_level": "FP8"
+      },
+      "model_info": {
+        "general.architecture": "mistral3",
+        "general.parameter_count": 675000000000,
+        "mistral3.context_length": 262144,
+        "mistral3.embedding_length": 7168
+      },
+      "modified_at": "2025-12-02T00:00:00Z"
+    }
+  },
+  "models": {
+    "data": [
+      {
+        "created": 1754352000,
+        "id": "gpt-oss:20b",
+        "object": "model",
+        "owned_by": "ollama"
+      },
+      {
+        "created": 1764633600,
+        "id": "mistral-large-3:675b",
+        "object": "model",
+        "owned_by": "ollama"
+      },
+      {
+        "created": 1785164400,
+        "id": "kimi-k3",
+        "object": "model",
+        "owned_by": "ollama"
+      },
+      {
+        "created": 1781622000,
+        "id": "glm-5.2",
+        "object": "model",
+        "owned_by": "ollama"
+      },
+      {
+        "created": 1776988800,
+        "id": "deepseek-v4-pro",
+        "object": "model",
+        "owned_by": "ollama"
+      }
+    ],
+    "object": "list"
+  }
+}

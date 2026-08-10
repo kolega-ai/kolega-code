@@ -182,7 +182,8 @@ def is_deepseek_model(model_name: str) -> bool:
     """True for DeepSeek-family models under any provider's naming scheme.
 
     Covers "deepseek-v4-pro" (first-party), "accounts/fireworks/models/deepseek-v4-flash"
-    (fireworks), "deepseek/deepseek-v4-pro" (openrouter), "deepseek-v3.2" (ollama_cloud).
+    (fireworks), "deepseek/deepseek-v4-pro" (openrouter), and tagged names such
+    as "deepseek-test:latest" (ollama_cloud).
     """
     return "deepseek" in model_name.lower()
 
