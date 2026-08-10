@@ -6,6 +6,18 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- The interactive CLI and `ask` can now load one installed Python extension at
+  launch with `--extension MODULE:FACTORY` and an optional opaque
+  `--extension-config PATH`. An extension contributes ordinary prompt and tool
+  extensions, binds to each top-level agent generation before its first model
+  request, may observe structured LLM trace records (forwarded to every LLM
+  client like the usage ledger), and is cleaned up exactly once per generation,
+  including on interactive agent rebuilds. Extension contracts are exported
+  from the package root, alongside `llm_call_origin`/`helper_origin` and
+  `TinkerTraceRecord`; a minimal example package lives in `examples/extension`.
+
 ## 0.27.1 - 2026-08-10
 
 ### Added

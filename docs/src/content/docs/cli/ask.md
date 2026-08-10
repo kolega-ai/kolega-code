@@ -30,6 +30,8 @@ kolega-code ask "<prompt>" [options]
 | `--compression-threshold PERCENT` | Context-window usage that triggers automatic history compression (`10`–`100`, default `80`; `100` effectively disables it). Overrides settings for the session; not persisted |
 | `--session <ID>` | Resume or create a specific session |
 | `--state-dir <PATH>` | Directory for CLI session state |
+| `--extension <MODULE:FACTORY>` | Load one installed Python extension for this run (see [Extensions](../../concepts/extensions/)) |
+| `--extension-config <PATH>` | Opaque config file path passed to the `--extension` factory (requires `--extension`) |
 | `--worktree <PATH_OR_BRANCH>` | Start in an existing registered worktree |
 | `--create-worktree <BRANCH>` | Create a worktree and start a new session there |
 | `--from <REF>` | Commit start point for a new branch (requires `--create-worktree`) |

@@ -56,6 +56,7 @@ class InstrumentedLLMClient(LLMClient):
         token_manager: Optional[Any] = None,
         model: Optional[str] = None,
         usage_ledger: Optional[Any] = None,
+        trace_sink: Optional[Any] = None,
     ):
         super().__init__(
             provider,
@@ -66,6 +67,7 @@ class InstrumentedLLMClient(LLMClient):
             token_manager,
             model=model,
             usage_ledger=usage_ledger,
+            trace_sink=trace_sink,
         )
         self.langfuse = langfuse_client
         self.workspace_id = workspace_id

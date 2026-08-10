@@ -48,6 +48,8 @@ kolega-code [PROJECT_PATH]
 | `--lsp <on\|off>` | Force LSP tools on or off for this session (overrides settings; not persisted) |
 | `--subagents <on\|off>` | Force sub-agent dispatch (`dispatch_agent`) on or off for this session (overrides settings; not persisted; default on) |
 | `--skills <on\|off>` | Force [Agent Skills](../../skills/) on or off for this session (overrides settings; not persisted; default on). When off, skills are not discovered and the `skill` tool is not exposed |
+| `--extension <MODULE:FACTORY>` | Load one installed Python extension at launch (see [Extensions](../../concepts/extensions/)) |
+| `--extension-config <PATH>` | Opaque config file path passed to the `--extension` factory (requires `--extension`) |
 | `--session <ID>` | Legacy alias for `--resume SESSION_ID` |
 
 See [Sessions & Resuming](../../tui/sessions-and-resume/) for the full session

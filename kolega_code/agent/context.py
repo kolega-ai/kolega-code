@@ -79,6 +79,11 @@ class Telemetry:
     # the recorders above it does not require Langfuse: it reaches the plain
     # LLMClient too.
     usage_ledger: Optional[Any] = None
+    # Structured LLM trace observer, forwarded as LLMClient's trace_sink to
+    # every client created from this context (propagated to descendants the
+    # same way as usage_ledger). Only providers that emit trace records use it;
+    # today that is the native Tinker provider.
+    llm_trace_sink: Optional[Any] = None
 
 
 @dataclass
@@ -127,6 +132,7 @@ class AgentContext:
                 usage_recorder=self.telemetry.usage_recorder,
                 token_manager=self.config.get_chatgpt_token_manager(),
                 usage_ledger=self.telemetry.usage_ledger,
+                trace_sink=self.telemetry.llm_trace_sink,
             )
 
         return LLMClient(
@@ -138,4 +144,5 @@ class AgentContext:
             tokens_per_minute=model_config.rate_limits.tokens_per_minute,
             token_manager=self.config.get_chatgpt_token_manager(),
             usage_ledger=self.telemetry.usage_ledger,
+            trace_sink=self.telemetry.llm_trace_sink,
         )

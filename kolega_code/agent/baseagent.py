@@ -197,6 +197,7 @@ class BaseAgent(LogMixin):
         usage_recorder: Optional[Any] = None,
         sub_agent_recorder: Optional[Any] = None,
         usage_ledger: Optional[Any] = None,
+        llm_trace_sink: Optional[Any] = None,
         session_recorder: Optional[Any] = None,
         hook_dispatcher: Optional[HookDispatcher] = None,
         context: Optional[AgentContext] = None,
@@ -276,6 +277,7 @@ class BaseAgent(LogMixin):
                     usage_recorder=usage_recorder,
                     sub_agent_recorder=sub_agent_recorder,
                     usage_ledger=usage_ledger,
+                    llm_trace_sink=llm_trace_sink,
                 ),
                 agent_mode=agent_mode,
                 prompt_provider=prompt_provider,
@@ -337,6 +339,7 @@ class BaseAgent(LogMixin):
         self.usage_recorder = context.telemetry.usage_recorder
         self.sub_agent_recorder = context.telemetry.sub_agent_recorder
         self.usage_ledger = context.telemetry.usage_ledger
+        self.llm_trace_sink = context.telemetry.llm_trace_sink
         self.session_recorder = None if sub_agent else session_recorder
         self.custom_agent_catalog = custom_agent_catalog
         self.memory_manager = context.services.memory_manager

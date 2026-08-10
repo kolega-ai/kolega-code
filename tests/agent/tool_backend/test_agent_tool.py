@@ -779,3 +779,38 @@ def test_construct_workflow_sub_agent_threads_callers_usage_ledger(agent_tool, m
     agent = agent_tool._construct_workflow_sub_agent(MockAgent, config=None, extra_tool_extensions=None)
 
     assert agent.init_kwargs["usage_ledger"] is ledger
+
+
+@pytest.mark.asyncio
+async def test_dispatch_agent_threads_callers_llm_trace_sink(agent_tool, mock_caller):
+    """Sub-agents inherit the caller's LLM trace sink, exactly like the usage ledger."""
+    sink = lambda record: None  # noqa: E731
+    mock_caller.llm_trace_sink = sink
+    original_import = builtins.__import__
+
+    with patch.object(builtins, "__import__") as mock_import:
+        mock_module = MagicMock()
+        mock_module.MockAgent = MockAgent
+
+        def mock_import_func(name, *args, **kwargs):
+            if name == "test.module":
+                return mock_module
+            return original_import(name, *args, **kwargs)
+
+        mock_import.side_effect = mock_import_func
+        MockAgent.configure_streaming([{"content": "Done.", "complete": True, "uuid": str(uuid.uuid4())}])
+        MockAgent.last_instance = None
+
+        await agent_tool._dispatch_agent(agent_class_import="test.module.MockAgent", task="Test task")
+
+    assert MockAgent.last_instance is not None
+    assert MockAgent.last_instance.init_kwargs["llm_trace_sink"] is sink
+
+
+def test_construct_workflow_sub_agent_threads_callers_llm_trace_sink(agent_tool, mock_caller):
+    sink = lambda record: None  # noqa: E731
+    mock_caller.llm_trace_sink = sink
+
+    agent = agent_tool._construct_workflow_sub_agent(MockAgent, config=None, extra_tool_extensions=None)
+
+    assert agent.init_kwargs["llm_trace_sink"] is sink

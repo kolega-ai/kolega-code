@@ -37,6 +37,7 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from kolega_code.agent import AgentConfig
+from kolega_code.extensions import ExtensionSelection, KolegaExtensionLoadError
 from kolega_code.session.recording import RecordingConnectionManager
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
 from kolega_code.agent.prompt_dump import list_prompt_overrides
@@ -161,6 +162,7 @@ class KolegaCodeApp(
         check_for_updates: bool = False,
         show_logs: bool = False,
         startup_config_error: Optional[str] = None,
+        extension_selection: Optional[ExtensionSelection] = None,
     ) -> None:
         super().__init__()
         self._terminal_control_filter = tui_terminal_display.TerminalControlFilter()
@@ -248,6 +250,8 @@ class KolegaCodeApp(
         self.control_channel.acquire(tui_constants.TUI_CLIENT_ID)
         self._hook_dispatcher: Optional[HookDispatcher] = None
         self._session_started = False
+        self.extension_selection = extension_selection
+        self._extension_bundle = None
         self.agent = None
         self.agent_worker = None
         self.conversation_entries: list[tui_state.ConversationEntry] = []
@@ -546,12 +550,18 @@ class KolegaCodeApp(
         # Always-on scheduler tick. It is a cheap no-op with no loop armed, and
         # only re-renders the dashboard when the coarse countdown label changes.
         self._loop_scheduler_timer = self.set_interval(LOOP_TICK_SECONDS, self._loop_tick, name="loop-scheduler")
-        if self.config is not None:
-            await self._build_agent(self.config)
-            self._set_chat_enabled(True)
-            self._schedule_primary_focus_restore()
-        else:
-            await self._ensure_agent_from_settings()
+        try:
+            if self.config is not None:
+                await self._build_agent(self.config)
+                self._set_chat_enabled(True)
+                self._schedule_primary_focus_restore()
+            else:
+                await self._ensure_agent_from_settings()
+        except KolegaExtensionLoadError as exc:
+            # An unloadable --extension refuses to start rather than running
+            # without the requested extension.
+            self.exit(return_code=1, message=str(exc))
+            return
         await self._restore_loop_on_startup()
         if self.config is None and not self._onboarding_skipped:
             await self.action_open_onboarding()
@@ -2009,6 +2019,7 @@ class KolegaCodeApp(
                         pass
                 await self._save_session_history_async()
                 await self.agent.cleanup()
+            await self._cleanup_extension_bundle()
             # After cleanup: cancelled streams settle their failures into the
             # ledger first, so the drain below captures them.
             if self._usage_sink is not None:
