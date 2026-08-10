@@ -31,6 +31,7 @@ def build_mcp_tool_extension(
         return None
 
     callbacks = {}
+    descriptions = {}
     schemas = {}
     tool_names = []
 
@@ -42,9 +43,8 @@ def build_mcp_tool_extension(
         async def _call_mcp_tool(_server_id=server_id, _tool_id=tool_id, **inputs):
             return await service.call_tool(_server_id, _tool_id, inputs)
 
-        _call_mcp_tool.__name__ = tool_name
-        _call_mcp_tool.__doc__ = exposed_tool.description
         callbacks[tool_name] = _call_mcp_tool
+        descriptions[tool_name] = exposed_tool.description
         schemas[tool_name] = exposed_tool.tool.input_schema
         tool_names.append(tool_name)
 
@@ -52,6 +52,7 @@ def build_mcp_tool_extension(
         name="mcp",
         tools=callbacks,
         tool_groups={"mcp_tools": tool_names},
+        tool_descriptions=descriptions,
         tool_schemas=schemas,
         cleanup=service.cleanup,
         propagate_to_sub_agents=False,

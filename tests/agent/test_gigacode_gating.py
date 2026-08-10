@@ -281,6 +281,18 @@ def test_workflow_sub_agent_does_not_inherit_task_list(project_path, mock_connec
     task_list_ext = ToolExtension(
         name="cli-shared-task-list",
         tools={"get_task_list": get_task_list, "update_task_list": update_task_list},
+        tool_descriptions={
+            "get_task_list": "Return the shared task list.",
+            "update_task_list": "Replace the shared task list.",
+        },
+        tool_schemas={
+            "get_task_list": {"type": "object", "properties": {}, "required": []},
+            "update_task_list": {
+                "type": "object",
+                "properties": {"task_list_markdown": {"type": "string"}},
+                "required": ["task_list_markdown"],
+            },
+        },
         tool_groups={"planning_tools": ["get_task_list", "update_task_list"]},
         propagate_to_sub_agents=False,
     )
@@ -327,6 +339,8 @@ def test_workflow_sub_agent_does_not_inherit_readonly_task_list(project_path, mo
     readonly_ext = ToolExtension(
         name="cli-shared-task-list-readonly",
         tools={"get_task_list": get_task_list},
+        tool_descriptions={"get_task_list": "Return the shared task list."},
+        tool_schemas={"get_task_list": {"type": "object", "properties": {}, "required": []}},
         tool_groups={"planning_tools": ["get_task_list"]},
         propagate_to_sub_agents=False,
     )

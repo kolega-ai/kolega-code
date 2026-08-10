@@ -24,6 +24,7 @@ from kolega_code.permissions import (
     ProjectPermissionStore,
     allow_rule_options,
 )
+from kolega_code.agent.tool_definitions import tool_description_asset
 from kolega_code.tools import ASK_USER_CHOICE_INPUT_SCHEMA, ASK_USER_CHOICE_SHAPE_HINT, ToolError
 
 from .. import messages, theme
@@ -47,30 +48,9 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
 
     def _shared_task_list_tool_extension(self) -> ToolExtension:
         async def get_task_list() -> str:
-            """
-            Return the shared CLI task list.
-
-            Use this before planning or implementation work when you need the current task state.
-
-            Returns:
-                The current shared task list, or a note that no task list has been set.
-            """
             return self.session.task_list_markdown or messages.TASK_LIST_EMPTY_MESSAGE
 
         async def update_task_list(task_list_markdown: str) -> str:
-            """
-            Replace the shared CLI task list.
-
-            Format the list as Markdown checkboxes, for example `- [ ] inspect CLI state handling`.
-            Use this after completing individual task-list items so progress is visible incrementally; do not wait
-            until every TODO is complete before updating the list.
-
-            Args:
-                task_list_markdown: The full current shared task list as Markdown.
-
-            Returns:
-                A confirmation that the shared task list was updated.
-            """
             self.session.task_list_markdown = task_list_markdown.strip()
             await self._save_session_async()
             self._refresh_planning_sidebar()
@@ -81,6 +61,23 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
             tools={
                 "get_task_list": get_task_list,
                 "update_task_list": update_task_list,
+            },
+            tool_descriptions={
+                "get_task_list": tool_description_asset("get_task_list"),
+                "update_task_list": tool_description_asset("update_task_list"),
+            },
+            tool_schemas={
+                "get_task_list": {"type": "object", "properties": {}, "required": []},
+                "update_task_list": {
+                    "type": "object",
+                    "properties": {
+                        "task_list_markdown": {
+                            "type": "string",
+                            "description": "The full current shared task list as Markdown.",
+                        }
+                    },
+                    "required": ["task_list_markdown"],
+                },
             },
             tool_groups={
                 "planning_tools": ["get_task_list", "update_task_list"],
@@ -106,27 +103,18 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
         Plan mode must not mutate session state, and ``session.task_list_markdown``
         is cleared only on thread reset — a plan-mode write would silently clobber
         a build session's in-flight progress. Reading it is what makes re-planning
-        mid-implementation useful, so only the getter is exposed here. The docstring
-        below is the model-facing tool description, so it is deliberately distinct
-        from the build-mode getter's.
+        mid-implementation useful, so only the getter is exposed here. Its
+        description asset is deliberately distinct from the build-mode getter's.
         """
 
         async def get_task_list() -> str:
-            """
-            Return the shared CLI task list, which the build agent owns.
-
-            Use this when re-planning work that is already underway, to see what an in-progress build
-            session has already completed. You cannot modify the list in plan mode; capture the remaining
-            work in the plan you submit with `write_plan` instead.
-
-            Returns:
-                The current shared task list, or a note that no task list has been set.
-            """
             return self.session.task_list_markdown or messages.TASK_LIST_EMPTY_MESSAGE
 
         return ToolExtension(
             name="cli-shared-task-list-readonly",
             tools={"get_task_list": get_task_list},
+            tool_descriptions={"get_task_list": tool_description_asset("get_task_list_readonly")},
+            tool_schemas={"get_task_list": {"type": "object", "properties": {}, "required": []}},
             # PlanningAgent only exposes extension tools declared in its
             # custom_tool_groups, of which planning_tools is one.
             tool_groups={
@@ -164,18 +152,6 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
 
     def _planning_question_tool_extension(self) -> ToolExtension:
         async def ask_user_choice(questions: list[dict]) -> str:
-            """
-            Ask the user one or more multiple-choice questions and wait for their answers.
-
-            Use this only for decisions that materially affect the outcome and cannot be settled from the
-            repository. Each question has a short `header`, the `question` text, a `multiSelect` flag, and an
-            `options` array of `{label, description}` choices. The user selects one option per question or
-            types a custom free-text answer. Questions are asked one at a time, in order.
-
-            Returns:
-                A JSON object mapping each question's header (or its text) to the chosen option label
-                or the user's custom answer.
-            """
             normalized = self._normalize_choice_questions(questions)
             if self._pending_question is not None:
                 raise ToolError("A planning question is already waiting for an answer.")
@@ -189,6 +165,7 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
         return ToolExtension(
             name="cli-planning-questions",
             tools={QUESTION_TOOL_NAME: ask_user_choice},
+            tool_descriptions={QUESTION_TOOL_NAME: tool_description_asset("ask_user_choice")},
             tool_schemas={QUESTION_TOOL_NAME: ASK_USER_CHOICE_INPUT_SCHEMA},
             # Both top-level agents expose it: PlanningAgent allows planning_tools,
             # CoderAgent allows coder_agent_tools. Sub-agents get neither group from

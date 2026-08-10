@@ -87,6 +87,14 @@ class TestToolCollection:
         extension = ToolExtension(
             name="host-dispatch",
             tools={"dispatch_host_agent": dispatch_host_agent},
+            tool_descriptions={"dispatch_host_agent": "Dispatch a task to the host agent."},
+            tool_schemas={
+                "dispatch_host_agent": {
+                    "type": "object",
+                    "properties": {"task": {"type": "string"}},
+                    "required": ["task"],
+                }
+            },
             tool_groups={
                 "investigation_agent_tools": ["dispatch_host_agent"],
                 "agent_dispatch_tools": ["dispatch_host_agent"],
@@ -133,6 +141,14 @@ class TestToolCollection:
         extension = ToolExtension(
             name="legacy-host-dispatch",
             tools={"dispatch_host_agent": dispatch_host_agent},
+            tool_descriptions={"dispatch_host_agent": "Dispatch a task to the host agent."},
+            tool_schemas={
+                "dispatch_host_agent": {
+                    "type": "object",
+                    "properties": {"task": {"type": "string"}},
+                    "required": ["task"],
+                }
+            },
             tool_groups={"investigation_agent_tools": ["dispatch_host_agent"]},
         )
         collection = ToolCollection(
@@ -172,6 +188,8 @@ class TestToolCollection:
         extension = ToolExtension(
             name="test-extension",
             tools={"custom_status": custom_status},
+            tool_descriptions={"custom_status": "Return custom host status."},
+            tool_schemas={"custom_status": {"type": "object", "properties": {}, "required": []}},
             tool_groups={"host_tools": ["custom_status"]},
         )
         config = ToolCollectionConfig(custom_tool_groups=["host_tools"], restrict_to_tool_groups=True)
@@ -198,11 +216,11 @@ class TestToolCollection:
         agent_config: AgentConfig,
         mock_base_agent: BaseAgent,
     ) -> None:
-        """An explicit tool_schemas entry overrides the introspected schema on the built tool."""
+        """The declared tool_schemas entry reaches the wire verbatim; nothing is
+        inferred from the callable's signature."""
         from kolega_code.agent.tools import ToolExtension
 
         async def ask_things(questions: list) -> str:
-            """Ask things."""
             return "{}"
 
         schema = {
@@ -213,6 +231,7 @@ class TestToolCollection:
         extension = ToolExtension(
             name="schema-extension",
             tools={"ask_things": ask_things},
+            tool_descriptions={"ask_things": "Ask things."},
             tool_schemas={"ask_things": schema},
             tool_groups={"host_tools": ["ask_things"]},
         )
@@ -229,5 +248,6 @@ class TestToolCollection:
         )
 
         definition = next(d for d in tool_collection.get_tool_list() if d.name == "ask_things")
+        assert definition.description == "Ask things."
         assert definition.input_schema == schema
         assert definition.to_anthropic()["input_schema"] == schema

@@ -706,9 +706,9 @@ class ToolDefinition(ContentBlock):
         self.description = description
         self.parameters = parameters
         # When set, this explicit JSON schema (an "object" schema dict) is used
-        # verbatim instead of the flat per-parameter schema. This lets a tool
-        # declare nested shapes (arrays of objects, etc.) that the callable
-        # introspection in tool_definition_from_callable cannot express.
+        # verbatim instead of the flat per-parameter schema. Declared tool
+        # definitions always set it; the flat ``parameters`` form remains for
+        # callers that build simple definitions by hand.
         self.input_schema = input_schema
         self.input_kind: ToolInputKind = input_kind
         # Provider-native constraint for a freeform tool. OpenAI Responses accepts

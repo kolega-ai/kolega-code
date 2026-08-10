@@ -442,6 +442,14 @@ def _session_control_tool_extensions():
         ToolExtension(
             name="cli-worktree-control",
             tools={"switch_worktree": switch_worktree},
+            tool_descriptions={"switch_worktree": "Switch the active workspace."},
+            tool_schemas={
+                "switch_worktree": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                }
+            },
             tool_groups={"cli_worktree_tools": ["switch_worktree"]},
             propagate_to_sub_agents=False,
             exclusive_tools=frozenset({"switch_worktree"}),
@@ -449,6 +457,14 @@ def _session_control_tool_extensions():
         ToolExtension(
             name="cli-goal-control",
             tools={"set_goal": set_goal},
+            tool_descriptions={"set_goal": "Set an autonomous goal."},
+            tool_schemas={
+                "set_goal": {
+                    "type": "object",
+                    "properties": {"condition": {"type": "string"}},
+                    "required": ["condition"],
+                }
+            },
             tool_groups={"cli_goal_tools": ["set_goal"]},
             propagate_to_sub_agents=False,
         ),

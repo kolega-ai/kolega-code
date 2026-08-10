@@ -36,14 +36,14 @@ TOOL_DESCRIPTION_DIR = Path(__file__).resolve().parent / "prompt_templates" / "t
 
 
 @lru_cache(maxsize=None)
-def builtin_tool_description(spec_key: str) -> str:
-    """The exact wire description asset for a built-in tool.
+def tool_description_asset(key: str) -> str:
+    """The exact wire description asset for a declared tool.
 
     Assets store the description plus a single trailing newline (so editors and
     the end-of-file hook agree on the format); the wire text is the file content
     with exactly that newline removed.
     """
-    text = (TOOL_DESCRIPTION_DIR / f"{spec_key}.md").read_text(encoding="utf-8")
+    text = (TOOL_DESCRIPTION_DIR / f"{key}.md").read_text(encoding="utf-8")
     return text.removesuffix("\n")
 
 
@@ -65,7 +65,7 @@ def builtin_tool_definition(spec_key: str, *, name: Optional[str] = None) -> Too
     spec = BUILTIN_TOOL_SPECS[spec_key]
     return ToolDefinition(
         name=name or spec_key,
-        description=builtin_tool_description(spec_key),
+        description=tool_description_asset(spec_key),
         parameters=[],
         input_schema=spec.input_schema,
         input_kind=spec.input_kind,  # type: ignore[arg-type]
@@ -73,8 +73,8 @@ def builtin_tool_definition(spec_key: str, *, name: Optional[str] = None) -> Too
     )
 
 
-# Atomic ordinary-dispatch routing cannot be represented by signature
-# introspection: all nested fields are required together and effort is nullable.
+# Atomic ordinary-dispatch routing: all nested fields are required together
+# and effort is nullable.
 ORDINARY_MODEL_OVERRIDE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -146,8 +146,8 @@ def dispatch_agent_input_schema(
     }
 
 
-# Explicit input schema for the generic ``lsp`` tool.  The ``operation`` parameter
-# is an enum that signature introspection cannot express.
+# Input schema for the generic ``lsp`` tool: one ``operation`` enum routing to
+# per-operation argument requirements.
 LSP_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {

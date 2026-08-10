@@ -164,7 +164,18 @@ async def test_research_adapter_can_run_without_production_edit_enum(tmp_path: P
             (root / "a.txt").write_text(input)
             return "updated"
 
-        return ToolExtension(name="candidate", tools={"candidate_edit": candidate_edit})
+        return ToolExtension(
+            name="candidate",
+            tools={"candidate_edit": candidate_edit},
+            tool_descriptions={"candidate_edit": "Replace a.txt with the raw input."},
+            tool_schemas={
+                "candidate_edit": {
+                    "type": "object",
+                    "properties": {"input": {"type": "string"}},
+                    "required": ["input"],
+                }
+            },
+        )
 
     def definition_factory() -> list[ToolDefinition]:
         return [

@@ -170,27 +170,24 @@ def _skill_tool_extension(project_path: Path) -> ToolExtension:
 def _mcp_style_extension() -> ToolExtension:
     """A pinned extension shaped exactly like build_mcp_tool_extension's output.
 
-    One tool's schema describes every property (the Args-strip rule applies) and
-    one leaves a property undescribed (the keep rule applies), freezing both
-    sides of the strip/keep behavior for description-plus-schema extensions.
+    One tool's schema describes every property and one leaves a property
+    undescribed; both descriptions must reach the wire verbatim either way.
     """
 
     async def _lookup(**inputs: Any) -> str:
         return ""
 
-    _lookup.__name__ = "mcp_lookup"
-    _lookup.__doc__ = "Look up a record in the pinned MCP fixture service."
-
     async def _report(**inputs: Any) -> str:
         return ""
-
-    _report.__name__ = "mcp_report"
-    _report.__doc__ = "Produce a report from the pinned MCP fixture service."
 
     return ToolExtension(
         name="mcp",
         tools={"mcp_lookup": _lookup, "mcp_report": _report},
         tool_groups={"mcp_tools": ["mcp_lookup", "mcp_report"]},
+        tool_descriptions={
+            "mcp_lookup": "Look up a record in the pinned MCP fixture service.",
+            "mcp_report": "Produce a report from the pinned MCP fixture service.",
+        },
         tool_schemas={
             "mcp_lookup": {
                 "type": "object",

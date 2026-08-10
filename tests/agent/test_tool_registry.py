@@ -227,6 +227,14 @@ class TestToolCollectionRegistry:
                 ToolExtension(
                     name="test-extension",
                     tools={"echo_conflicting_inputs": echo_conflicting_inputs},
+                    tool_descriptions={"echo_conflicting_inputs": "Echo two inputs joined by a colon."},
+                    tool_schemas={
+                        "echo_conflicting_inputs": {
+                            "type": "object",
+                            "properties": {"name": {"type": "string"}, "tool_name": {"type": "string"}},
+                            "required": ["name", "tool_name"],
+                        }
+                    },
                 )
             ],
         )

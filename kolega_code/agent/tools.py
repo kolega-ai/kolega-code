@@ -7,7 +7,7 @@ from .common import LogMixin
 from kolega_code.config import AgentConfig, EditProtocol
 from kolega_code.llm.models import ImageBlock, ToolDefinition
 from kolega_code.memory import ProjectMemoryManager
-from kolega_code.tools import Tool, ToolRegistry, schema_has_property_descriptions, tool_definition_from_callable
+from kolega_code.tools import Tool, ToolRegistry
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
 from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.terminal import LocalTerminalManager
@@ -41,6 +41,10 @@ from kolega_code.services.snapshots import SnapshotService
 class ToolExtension:
     """Host-provided tool callbacks and named groups.
 
+    A tool's definition is declared data: ``tool_descriptions`` and
+    ``tool_schemas`` must cover every callback in ``tools``, and both are used
+    verbatim on the wire. Nothing is inferred from the callable.
+
     ``exclusive_tools`` declares session-control callbacks that must be the
     sole tool call in a model response. If one is batched with another call,
     the complete batch is rejected before any callback executes.
@@ -49,9 +53,13 @@ class ToolExtension:
     name: str
     tools: dict[str, Callable[..., Any]]
     tool_groups: dict[str, List[str]] = field(default_factory=dict)
-    # Optional explicit JSON schemas keyed by tool name. When provided, the
-    # schema is used verbatim instead of introspecting the callable signature,
-    # allowing nested input shapes the introspector cannot express.
+    # Model-visible description per tool, used verbatim on the wire. Required
+    # for every tool: registration fails without it. An empty string is a
+    # deliberate declaration (used by internal report-only tools), a missing
+    # key is an authoring error.
+    tool_descriptions: dict[str, str] = field(default_factory=dict)
+    # Complete JSON input schema per tool, used verbatim on the wire. Required
+    # for every tool: registration fails without it.
     tool_schemas: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Optional cleanup hook. May be sync or async; ToolCollection.cleanup awaits
     # it when needed.
@@ -314,6 +322,7 @@ class ToolCollection(LogMixin):
         self.langfuse_client = langfuse_client
         self.tool_extensions = tool_extensions or []
         self.extension_callbacks = {}
+        self.extension_descriptions = {}
         self.extension_schemas = {}
         self.exclusive_tools = frozenset()
         self._extension_group_names = set()
@@ -368,8 +377,24 @@ class ToolCollection(LogMixin):
             for tool_name, callback in extension.tools.items():
                 if hasattr(self, tool_name):
                     raise ValueError(f"Tool extension '{extension.name}' conflicts with existing tool '{tool_name}'")
+                missing = [
+                    part
+                    for part, declared in (
+                        ("tool_descriptions", tool_name in extension.tool_descriptions),
+                        ("tool_schemas", tool_name in extension.tool_schemas),
+                    )
+                    if not declared
+                ]
+                if missing:
+                    raise ValueError(
+                        f"Tool extension '{extension.name}' declares tool '{tool_name}' without "
+                        f"{' and '.join(missing)}. Extension tools must declare an explicit "
+                        "model-visible description and a complete JSON input schema; nothing is "
+                        "inferred from the callable."
+                    )
                 setattr(self, tool_name, callback)
                 self.extension_callbacks[tool_name] = callback
+                self.extension_descriptions[tool_name] = extension.tool_descriptions[tool_name]
 
             for tool_name, schema in extension.tool_schemas.items():
                 self.extension_schemas[tool_name] = schema
@@ -1698,20 +1723,13 @@ class ToolCollection(LogMixin):
             definition.input_schema = dispatch_agent_input_schema(agent_types, browser_targets=self._browser_targets)
         return definition
 
-    def _extension_tool_definition(self, method_name: str, method: Callable[..., Any]) -> ToolDefinition:
-        """Build a host-extension tool definition from its callable.
-
-        The wire description drops the docstring's ``Args:`` block because the
-        per-parameter schema carries the same text, unless an explicit input
-        schema does not describe every property — then the ``Args:`` block is
-        the only place the parameters are documented on the wire.
-        """
-        explicit_schema = self.extension_schemas.get(method_name)
-        return tool_definition_from_callable(
-            method_name,
-            method,
-            keep_args_in_description=explicit_schema is not None
-            and not schema_has_property_descriptions(explicit_schema),
+    def _extension_tool_definition(self, method_name: str) -> ToolDefinition:
+        """Build a host-extension tool definition from its declared artifacts."""
+        return ToolDefinition(
+            name=method_name,
+            description=self.extension_descriptions[method_name],
+            parameters=[],
+            input_schema=self.extension_schemas[method_name],
         )
 
     # One accurate line per built-in agent_type, appended to dispatch_agent's
@@ -1891,12 +1909,9 @@ class ToolCollection(LogMixin):
 
     def _build_tool(self, method_name: str, method: Callable[..., Any], definition_key: Optional[str] = None) -> Tool:
         if method_name in self.extension_callbacks:
-            definition = self._extension_tool_definition(method_name, method)
+            definition = self._extension_tool_definition(method_name)
         else:
             definition = self._builtin_tool_definition(definition_key or method_name, method_name)
-        explicit_schema = self.extension_schemas.get(method_name)
-        if explicit_schema is not None:
-            definition.input_schema = explicit_schema
         context = getattr(self.caller, "sub_agent_context", None)
         workflow_dispatch = method_name in self.agent_dispatch_tools and (
             validated_workflow_depth(context) is not None or has_workflow_context_marker(context)
@@ -1932,8 +1947,8 @@ class ToolCollection(LogMixin):
         """
         Returns a list of tool definitions in the format required by the Anthropic API.
 
-        Definitions are generated from the enabled tools' signatures and
-        docstrings; the last definition carries the prompt-cache checkpoint.
+        Definitions come from the enabled tools' declared artifacts; the last
+        definition carries the prompt-cache checkpoint.
         """
         return self.registry().definitions()
 

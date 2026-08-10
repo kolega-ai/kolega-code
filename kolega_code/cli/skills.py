@@ -12,6 +12,7 @@ import yaml
 
 from kolega_code.agent import PromptExtension, ToolExtension
 from kolega_code.agent.prompts import build_skill_catalog_prompt
+from kolega_code.agent.tool_definitions import tool_description_asset
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.llm.models import Message
 from kolega_code.llm.specs import get_model_specs
@@ -433,19 +434,6 @@ def build_skill_tool_extension(
         return None
 
     async def skill(name: str) -> str:
-        """
-        Activate an Agent Skill and load its full instructions.
-
-        Call this before using a skill's specialized workflow. The returned content explains where skill resources
-        live and lists them; read any resource with the `read` tool, whose `file_path` is relative to the absolute
-        skill directory given in the output.
-
-        Args:
-            name: The skill name to activate, without a leading slash.
-
-        Returns:
-            The activated skill instructions, or a note if the skill is already active.
-        """
         try:
             return catalog.activation_content(name, active_names=activated_skill_names(history_provider()))
         except ValueError as exc:
@@ -454,6 +442,19 @@ def build_skill_tool_extension(
     return ToolExtension(
         name="cli-agent-skills",
         tools={"skill": skill},
+        tool_descriptions={"skill": tool_description_asset("skill")},
+        tool_schemas={
+            "skill": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The skill name to activate, without a leading slash.",
+                    }
+                },
+                "required": ["name"],
+            }
+        },
         tool_groups={
             "planning_tools": ["skill"],
             "cli_skill_tools": ["skill"],
