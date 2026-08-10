@@ -17,6 +17,7 @@ from kolega_code.agent.planningagent import PlanningAgent
 from kolega_code.agent.prompt_provider import AgentMode, PromptProvider
 from kolega_code.agent.tools import ToolCollection, ToolExtension
 from kolega_code.llm.specs import MODEL_SPECS
+from tests.agent._terminal_manager_stub import SandboxCarryingTerminalManager
 
 
 INTERNAL_TOOL_NAMES = {"registry", "has_tool", "call", "cleanup", "initialize"}
@@ -780,24 +781,6 @@ def test_shared_tool_names_are_well_formed(project_path, mock_connection_manager
             assert tool.description
 
 
-class _StubSandbox:
-    def get_host(self, port: int) -> str:
-        return f"stub-sandbox:{port}"
-
-
-class _SandboxCarryingTerminalManager:
-    """Terminal-manager stand-in that carries a ``sandbox`` host provider.
-
-    Deliberately not an instance of ``SandboxTerminalManager``: the gate must
-    duck-type on the attribute (getattr), not isinstance, so kolega-code-e2b's
-    injected manager — possibly subclassed from a pinned older version — keeps
-    qualifying when they bump.
-    """
-
-    def __init__(self) -> None:
-        self.sandbox = _StubSandbox()
-
-
 def test_get_host_absent_without_sandbox_terminal_manager(project_path, mock_connection_manager, agent_config):
     """get_host is a sandbox-only tool: the default local CLI coder does not get it."""
     agent = _coder(project_path, mock_connection_manager, agent_config)
@@ -815,7 +798,7 @@ def test_get_host_present_with_sandbox_terminal_manager(project_path, mock_conne
         connection_manager=mock_connection_manager,
         config=agent_config,
         agent_mode=AgentMode.CLI,
-        terminal_manager=_SandboxCarryingTerminalManager(),
+        terminal_manager=SandboxCarryingTerminalManager(),
     )
 
     tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
