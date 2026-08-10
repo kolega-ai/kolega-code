@@ -91,7 +91,9 @@ class TerminalTool(BaseTool):
             scratchpad_dir = getattr(self.caller, "scratchpad_dir", None)
             if isinstance(scratchpad_dir, (str, os.PathLike)) and str(scratchpad_dir):
                 root = Path(scratchpad_dir).expanduser().resolve() / "terminal-output"
-        self.terminal_manager.configure_output_spill(root)
+        configure_output_spill = getattr(self.terminal_manager, "configure_output_spill", None)
+        if callable(configure_output_spill):
+            configure_output_spill(root)
 
     async def _run_command_security_check(self, command: str) -> Tuple[bool, str]:
         provider = self.config.fast_config.provider
