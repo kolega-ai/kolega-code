@@ -1,6 +1,7 @@
 # ruff: noqa: F401,F811,E402
 """Tests for the ChatGPT-subscription Responses provider and its wiring."""
 
+import json
 import types
 
 import httpx
@@ -198,3 +199,109 @@ def test_responses_tools_flattens_function_shape():
 def test_instructions_from_system_message():
     system = Message(role="system", content=[TextBlock(text="be terse")])
     assert instructions_from(system, MessageHistory([])) == "be terse"
+
+
+def test_to_responses_input_escapes_harmony_tokens_in_tool_result():
+    # Regression: a tool result that read a file *containing* gpt-5.x
+    # control-token spellings (Harmony samples, transcript fixtures) put them
+    # raw into the next request, and the ChatGPT/OpenAI backends reject that
+    # with `APIError: Request blocked` — permanently, because the poisoned item
+    # stays in history. The transport copy must escape the spellings.
+    history = MessageHistory(
+        [
+            Message(role="assistant", content=[ToolCall(id="call_1", name="read_file", input={"path": "a.ts"})]),
+            Message(
+                role="user",
+                content=[
+                    ToolResult(
+                        tool_use_id="call_1",
+                        content='const raw = "<|start|>assistant<|channel|>commentary<|message|>x<|call|>";',
+                        name="read_file",
+                        is_error=False,
+                    )
+                ],
+            ),
+        ]
+    )
+    raw = to_responses_input(history)[1]["output"]
+    escaped = to_responses_input(history, escape_control_tokens=True)[1]["output"]
+    assert raw == 'const raw = "<|start|>assistant<|channel|>commentary<|message|>x<|call|>";'
+    assert escaped == ('const raw = "<\\|start\\|>assistant<\\|channel\\|>commentary<\\|message\\|>x<\\|call\\|>";')
+
+
+def test_to_responses_input_escapes_harmony_tokens_in_arguments_json():
+    history = MessageHistory(
+        [
+            Message(
+                role="assistant",
+                content=[ToolCall(id="call_1", name="edit", input={"new_string": "<|channel|>"})],
+            ),
+        ]
+    )
+    items = to_responses_input(history, escape_control_tokens=True)
+    arguments = items[0]["arguments"]
+    assert "<|channel|>" not in arguments
+    # The escaped document must still parse; the decoded value carries the
+    # inert single-backslash spelling.
+    assert json.loads(arguments)["new_string"] == "<\\|channel\\|>"
+
+
+def test_to_responses_input_escapes_reasoning_summary():
+    history = MessageHistory(
+        [
+            Message(
+                role="assistant",
+                content=[
+                    ResponsesReasoningBlock(encrypted_content="ENC", summary=["wrote about <|channel|> samples"]),
+                    ToolCall(id="call_1", name="read_file", input={"path": "a.py"}),
+                ],
+            ),
+        ]
+    )
+    items = to_responses_input(history, escape_control_tokens=True)
+    assert items[0]["summary"] == [{"type": "summary_text", "text": "wrote about <\\|channel\\|> samples"}]
+    # The opaque encrypted blob is untouched.
+    assert items[0]["encrypted_content"] == "ENC"
+
+
+def test_to_responses_input_escapes_message_text_and_freeform_input():
+    history = MessageHistory(
+        [
+            Message(role="user", content=[TextBlock(text="what is <|return|>?")]),
+            Message(
+                role="assistant",
+                content=[ToolCall(id="call_1", name="run", input="<|constrain|>", input_kind="freeform")],
+            ),
+        ]
+    )
+    items = to_responses_input(history, escape_control_tokens=True)
+    assert items[0]["content"][0]["text"] == "what is <\\|return\\|>?"
+    assert items[1] == {
+        "type": "custom_tool_call",
+        "call_id": "call_1",
+        "name": "run",
+        "input": "<\\|constrain\\|>",
+    }
+
+
+def test_chatgpt_build_request_escapes_harmony_tokens():
+    # Provider-level gate: the ChatGPT-subscription backend (gpt-5.x Harmony)
+    # escapes by default; other Responses backends must not.
+    provider = ChatGPTOAuthProvider(token_manager=ChatGPTTokenManager(_tokens()))
+    history = MessageHistory([Message(role="user", content=[TextBlock(text="see <|channel|>")])])
+    request = provider._build_request(history, None, GenerationParams(), {"model": chatgpt_constants.DEFAULT_MODEL})
+    assert request["input"][0]["content"][0]["text"] == "see <\\|channel\\|>"
+
+
+def test_chatgpt_build_request_escapes_harmony_tokens_in_instructions():
+    # The instructions field folds in repo guidance, which can itself document
+    # the spellings (e.g. an AGENTS.md describing Harmony samples).
+    provider = ChatGPTOAuthProvider(token_manager=ChatGPTTokenManager(_tokens()))
+    system = Message(role="system", content=[TextBlock(text="tokens like <|channel|> are reserved")])
+    request = provider._build_request(
+        MessageHistory([Message(role="user", content=[TextBlock(text="hi")])]),
+        system,
+        GenerationParams(),
+        {"model": chatgpt_constants.DEFAULT_MODEL},
+    )
+    assert request["instructions"] == "tokens like <\\|channel\\|> are reserved"

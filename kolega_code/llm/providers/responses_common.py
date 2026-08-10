@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from kolega_code.auth import constants as chatgpt_constants
@@ -114,18 +115,59 @@ def _role_message_item(role: str, parts: List[tuple]) -> Optional[Dict[str, Any]
     return {"role": "user" if is_user else "assistant", "content": content}
 
 
-def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
+# Reserved Harmony control-token spellings (the gpt-5.x protocol token set).
+# The OpenAI / ChatGPT-subscription Responses backends reject any request whose
+# input reproduces one of these spellings as *data* — e.g. a tool result that
+# read a file containing `<|channel|>` (oh-my-pi source, Harmony samples,
+# transcript fixtures) — with ``APIError: Request blocked``, and the poisoned
+# item stays in history so every later request fails too. Escape the transport
+# copy to the inert backslash form (mirrors oh-my-pi's harmony-leak.ts fix for
+# #6913); the persisted transcript keeps the byte-for-byte original.
+_HARMONY_CONTROL_TOKEN_RE = re.compile(r"<\|(start|end|message|channel|constrain|return|call)\|>")
+_HARMONY_CONTROL_TOKEN_BACKENDS = frozenset({"openai", "openai_chatgpt"})
+
+
+def escape_harmony_control_tokens(text: str) -> str:
+    """Escape reserved Harmony control-token spellings to their inert form.
+
+    ``<|channel|>`` becomes ``<\\|channel\\|>`` so the backend accepts the
+    payload as plain data instead of rejecting the whole request. Any other
+    text passes through unchanged.
+    """
+    return _HARMONY_CONTROL_TOKEN_RE.sub(r"<\\|\1\\|>", text)
+
+
+def escape_harmony_control_tokens_in_json(text: str) -> str:
+    """Escape reserved Harmony control-token spellings inside a JSON document.
+
+    Doubles the backslash (``<\\\\|channel\\\\|>``) so the document stays valid
+    JSON whose *decoded* strings carry the inert single-backslash spelling —
+    used for ``function_call.arguments``, where ``<|`` cannot occur outside a
+    string literal anyway.
+    """
+    return _HARMONY_CONTROL_TOKEN_RE.sub(r"<\\\\|\1\\\\|>", text)
+
+
+def to_responses_input(messages: MessageHistory, *, escape_control_tokens: bool = False) -> List[Dict[str, Any]]:
     """Convert unified message history into Responses API ``input`` items.
 
     System/developer messages are dropped here — they are folded into the
     top-level ``instructions`` field instead (see :func:`instructions_from`).
+
+    When ``escape_control_tokens`` is set, reserved Harmony control-token
+    spellings in untrusted text (tool results, message text, tool-call
+    arguments, replayed reasoning summaries) are escaped on the transport copy
+    so Harmony-dialect backends (gpt-5.x via ``openai`` / ``openai_chatgpt``)
+    do not reject the request.
     """
+    escape_text = escape_harmony_control_tokens if escape_control_tokens else (lambda value: value)
+    escape_json = escape_harmony_control_tokens_in_json if escape_control_tokens else (lambda value: value)
     items: List[Dict[str, Any]] = []
     for message in messages:
         if getattr(message, "role", None) in ("system", "developer"):
             continue
         if isinstance(message.content, str):
-            item = _role_message_item(message.role, [("text", message.content)])
+            item = _role_message_item(message.role, [("text", escape_text(message.content))])
             if item:
                 items.append(item)
             continue
@@ -142,7 +184,20 @@ def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
                 # thinking time. Reasoning items must precede the function_call
                 # they belong to, which holds because the stream wrapper puts the
                 # reasoning block first in the assistant message.
-                items.append(block.to_responses_item())
+                reasoning_item = block.to_responses_item()
+                if escape_control_tokens:
+                    # Plaintext summary/content parts are replayed into the next
+                    # request and can carry the spellings the model wrote *about*.
+                    reasoning_item["summary"] = [
+                        {"type": "summary_text", "text": escape_text(part["text"])}
+                        for part in reasoning_item.get("summary", [])
+                    ]
+                    if "content" in reasoning_item:
+                        reasoning_item["content"] = [
+                            {"type": "reasoning_text", "text": escape_text(part["text"])}
+                            for part in reasoning_item["content"]
+                        ]
+                items.append(reasoning_item)
             elif isinstance(block, WebSearchCallBlock):
                 # Resend hosted web-search call items in stream order: the item
                 # id keys the server-side restore of the searched content, which
@@ -162,16 +217,17 @@ def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
                             "type": "custom_tool_call",
                             "call_id": block.id,
                             "name": block.name,
-                            "input": str(block.input),
+                            "input": escape_text(str(block.input)),
                         }
                     )
                 else:
+                    arguments = block.input if isinstance(block.input, str) else json.dumps(block.input)
                     tool_call_items.append(
                         {
                             "type": "function_call",
                             "call_id": block.id,
                             "name": block.name,
-                            "arguments": block.input if isinstance(block.input, str) else json.dumps(block.input),
+                            "arguments": escape_json(arguments),
                         }
                     )
             elif isinstance(block, ToolResult):
@@ -181,14 +237,14 @@ def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
                             "custom_tool_call_output" if block.input_kind == "freeform" else "function_call_output"
                         ),
                         "call_id": block.tool_use_id,
-                        "output": _tool_result_text(block),
+                        "output": escape_text(_tool_result_text(block)),
                     }
                 )
                 image_message = _tool_result_image_message(block)
                 if image_message is not None:
                     tool_image_messages.append(image_message)
             elif isinstance(block, TextBlock):
-                text_parts.append(("text", block.text))
+                text_parts.append(("text", escape_text(block.text)))
             elif isinstance(block, ImageBlock):
                 text_parts.append(("image", _image_data_url(block)))
             # Foreign Anthropic thinking/redacted-thinking blocks (from a prior
@@ -912,7 +968,11 @@ class ResponsesProviderBase(OpenAIProvider):
         model = str(kwargs.get("model") or self._default_model())
         request: Dict[str, Any] = {
             "model": model,
-            "input": to_responses_input(messages),
+            # gpt-5.x (Harmony-dialect) backends reject raw control-token
+            # spellings in input; escape the transport copy for them.
+            "input": to_responses_input(
+                messages, escape_control_tokens=self.provider_name in _HARMONY_CONTROL_TOKEN_BACKENDS
+            ),
             "tools": responses_tools(params) or [],
             "tool_choice": "auto",
             # The executor independently gates each returned batch using the
@@ -925,8 +985,13 @@ class ResponsesProviderBase(OpenAIProvider):
             "prompt_cache_key": self._session_id,
         }
         # A non-empty instructions field is required by the ChatGPT backend (400
-        # otherwise) and harmless on api.openai.com, so always send one.
-        request["instructions"] = instructions_from(system, messages) or "You are a helpful coding assistant."
+        # otherwise) and harmless on api.openai.com, so always send one. The
+        # field folds in repo guidance (AGENTS.md etc.), which can itself
+        # document these spellings — escape it like any other untrusted text.
+        instructions = instructions_from(system, messages) or "You are a helpful coding assistant."
+        if self.provider_name in _HARMONY_CONTROL_TOKEN_BACKENDS:
+            instructions = escape_harmony_control_tokens(instructions)
+        request["instructions"] = instructions
         if params and params.thinking:
             thinking_params = build_thinking_request_params(self.provider_name, model, params.thinking)
             reasoning = thinking_params.get("reasoning")

@@ -22,6 +22,7 @@ from kolega_code.llm.models import (
     ToolParameter,
     ToolResult,
 )
+from kolega_code.llm.providers.deepseek_responses import DeepSeekResponsesProvider
 from kolega_code.llm.providers.models import GenerationParams
 from kolega_code.llm.providers.openai import OpenAIProvider
 from kolega_code.llm.providers.openai_responses import OpenAIResponsesProvider
@@ -195,6 +196,24 @@ def test_build_request_default_model_and_no_reasoning_without_thinking():
     assert request["model"] == "gpt-5.6-sol"
     assert "reasoning" not in request
     assert "include" not in request
+
+
+def test_build_request_escapes_harmony_tokens_for_openai_provider():
+    # gpt-5.x (Harmony-dialect) backends reject raw control-token spellings in
+    # input with "Request blocked"; the api-key openai provider escapes too.
+    provider = OpenAIResponsesProvider(api_key="sk-test")
+    history = MessageHistory([Message(role="user", content=[TextBlock(text="see <|channel|>")])])
+    request = provider._build_request(history, None, GenerationParams(), {"model": "gpt-5.5"})
+    assert request["input"][0]["content"][0]["text"] == "see <\\|channel\\|>"
+
+
+def test_build_request_does_not_escape_harmony_tokens_for_deepseek():
+    # DeepSeek is not a Harmony backend: the escape must stay off so payloads
+    # keep their byte-for-byte spelling.
+    provider = DeepSeekResponsesProvider(api_key="sk-test")
+    history = MessageHistory([Message(role="user", content=[TextBlock(text="see <|channel|>")])])
+    request = provider._build_request(history, None, GenerationParams(), {"model": "deepseek-v4-flash"})
+    assert request["input"][0]["content"][0]["text"] == "see <|channel|>"
 
 
 # --- generate / stream (no network) ---------------------------------------------
