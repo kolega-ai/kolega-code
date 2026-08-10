@@ -59,6 +59,7 @@ def test_settings_store_missing_file_returns_empty_settings(tmp_path: Path) -> N
     assert settings.agent_models == {}
     assert settings.eval_enabled is None
     assert settings.subagents_enabled is None
+    assert settings.skills_enabled is None
 
 
 def test_settings_store_round_trips_eval_enabled(tmp_path: Path) -> None:
@@ -85,6 +86,20 @@ def test_settings_store_round_trips_subagents_enabled(tmp_path: Path) -> None:
     # Absent in older files -> None -> sub-agent dispatch stays enabled downstream.
     store.save(CliSettings())
     assert SettingsStore(tmp_path).load().subagents_enabled is None
+
+
+def test_settings_store_round_trips_skills_enabled(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    store.save(CliSettings(skills_enabled=False))
+
+    loaded = store.load()
+    assert loaded.skills_enabled is False
+    assert loaded.to_dict()["skills_enabled"] is False
+
+    # Absent in older files -> None -> Agent Skills stay enabled downstream.
+    data = CliSettings().to_dict()
+    del data["skills_enabled"]
+    assert CliSettings.from_dict(data).skills_enabled is None
 
 
 def test_settings_store_round_trips_agent_models(tmp_path: Path) -> None:

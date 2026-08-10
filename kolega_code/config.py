@@ -258,6 +258,10 @@ class AgentConfig(BaseModel):
     # eval_enabled) since it is resolved from settings.json / CLI flag at build.
     subagents_enabled: bool = Field(default=True, exclude=True, description="Enable the dispatch_agent sub-agent tool")
 
+    # CLI Agent Skills. This runtime-only switch controls whether CLI hosts add
+    # the skill catalog prompt and model-facing activation tool.
+    skills_enabled: bool = Field(default=True, exclude=True, description="Enable CLI Agent Skills")
+
     def model_config_for_agent(self, agent_name: Optional[str]) -> ModelConfig:
         """Return the model configuration an agent should use for its main loop.
 

@@ -393,6 +393,20 @@ class SettingsScreen(ModalScreen[None]):
                     allow_blank=False,
                     value="true",
                 )
+            with Vertical(classes="settings-section", id="settings_skills") as skills_section:
+                skills_section.border_title = "Agent Skills"
+                yield Static(
+                    "Discover Agent Skills and expose their catalog and activation tool to the agent.",
+                    classes="settings-hint",
+                )
+                yield Static("", id="skills_status")
+                yield Label("Agent Skills")
+                yield Select(
+                    [("Enabled", "true"), ("Disabled", "false")],
+                    id="skills_enabled_select",
+                    allow_blank=False,
+                    value="true",
+                )
             with Vertical(classes="settings-section", id="settings_compression") as compression_section:
                 compression_section.border_title = "Context Compression"
                 yield Static(

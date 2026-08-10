@@ -73,6 +73,7 @@ from .diagnostics import write_crash_log
 from .config import (
     DEPRECATED_THINKING_TOKENS_MESSAGE,
     LSP_MODES,
+    SKILL_MODES,
     SUBAGENT_MODES,
     WEB_SEARCH_MODES,
     CliConfigError,
@@ -80,6 +81,8 @@ from .config import (
     active_model_override_message,
     build_agent_config,
     config_summary,
+    load_cli_env,
+    _skills_enabled,
 )
 from .connection import CliConnectionManager
 from .mentions import build_file_attachments
@@ -347,6 +350,12 @@ def _add_tui_args(parser: argparse.ArgumentParser) -> None:
         help="Force sub-agent dispatch (dispatch_agent) on or off for this session "
         "(overrides settings.json; not persisted).",
     )
+    parser.add_argument(
+        "--skills",
+        choices=list(SKILL_MODES),
+        default=None,
+        help="Force Agent Skills on or off for this session (overrides settings.json; not persisted).",
+    )
     _add_session_args(parser, session_help="Legacy alias for --resume SESSION_ID.")
     _add_worktree_args(parser)
     _add_common_model_args(parser)
@@ -448,6 +457,12 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         default=None,
         help="Force sub-agent dispatch (dispatch_agent) on or off for this session "
         "(overrides settings.json; not persisted).",
+    )
+    ask.add_argument(
+        "--skills",
+        choices=list(SKILL_MODES),
+        default=None,
+        help="Force Agent Skills on or off for this session (overrides settings.json; not persisted).",
     )
     ask.add_argument("--save", action="store_true", help="Persist the session after the prompt completes.")
     ask.add_argument("--json", action="store_true", help="Emit complete messages and events as JSON.")
@@ -663,6 +678,7 @@ def _overrides_from_args(args: argparse.Namespace) -> CliConfigOverrides:
         web_search_mode=getattr(args, "web_search", None),
         lsp_mode=getattr(args, "lsp", None),
         subagents_mode=getattr(args, "subagents", None),
+        skills_mode=getattr(args, "skills", None),
         compression_threshold=getattr(args, "compression_threshold", None),
     )
 
@@ -1210,7 +1226,11 @@ async def _run_ask(args: argparse.Namespace) -> int:
         if resumed_session is not None:
             _validate_session_project(resumed_session, launch_project_path)
             project_path = _active_project_for_resume(resumed_session, store)
-    skill_catalog = discover_skills(project_path)
+    settings_store = _settings_store_from_args(args)
+    settings = settings_store.load()
+    overrides = _overrides_from_args(args)
+    skills_enabled = _skills_enabled(load_cli_env(launch_project_path), settings, overrides.skills_mode)
+    skill_catalog = discover_skills(project_path) if skills_enabled else SkillCatalog()
     goal_condition = getattr(args, "goal", None)
     loop_interval = getattr(args, "loop", None)
     loop_cron = getattr(args, "loop_cron", None)
@@ -1253,10 +1273,11 @@ async def _run_ask(args: argparse.Namespace) -> int:
     skill_command = _parse_skill_prompt(raw_prompt, skill_catalog) if raw_prompt else None
 
     if skill_command and skill_command[0] == "skills":
+        catalog_text = skill_catalog.format_catalog() if skills_enabled else messages.SKILLS_DISABLED
         if args.json:
-            print(json.dumps({"kind": "skills", "data": skill_catalog.format_catalog()}, default=str))
+            print(json.dumps({"kind": "skills", "data": catalog_text}, default=str))
         else:
-            print(skill_catalog.format_catalog())
+            print(catalog_text)
         return 0
 
     if skill_command and skill_command[0] != "skills" and not skill_command[1] and not (args.save or args.session):
@@ -1278,8 +1299,6 @@ async def _run_ask(args: argparse.Namespace) -> int:
             print(activation_content)
         return 0
 
-    settings_store = _settings_store_from_args(args)
-    settings = settings_store.load()
     custom_agent_catalog = discover_custom_agents(project_path, settings_store.root)
     settings_changed = False
     if getattr(args, "trust_hooks", False):
@@ -1293,9 +1312,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
         settings_changed = True
     if settings_changed:
         settings_store.save(settings)
-    config = build_agent_config(
-        launch_project_path, _overrides_from_args(args), settings=settings, settings_store=settings_store
-    )
+    config = build_agent_config(launch_project_path, overrides, settings=settings, settings_store=settings_store)
     custom_agent_catalog = validate_custom_agent_models(custom_agent_catalog, config).for_mode("build")
     if not args.json:
         for diagnostic in custom_agent_catalog.diagnostics:
@@ -1336,18 +1353,19 @@ async def _run_ask(args: argparse.Namespace) -> int:
     agent_ref: dict[str, CoderAgent] = {}
     prompt_extensions = []
     tool_extensions = []
-    skill_prompt_extension = build_skill_prompt_extension(
-        skill_catalog,
-        context_window_tokens=context_window_tokens_for_skill_budget(config, CoderAgent.agent_name),
-    )
-    skill_tool_extension = build_skill_tool_extension(
-        skill_catalog,
-        lambda: agent_ref["agent"].history if "agent" in agent_ref else [],
-    )
-    if skill_prompt_extension is not None:
-        prompt_extensions.append(skill_prompt_extension)
-    if skill_tool_extension is not None:
-        tool_extensions.append(skill_tool_extension)
+    if skills_enabled:
+        skill_prompt_extension = build_skill_prompt_extension(
+            skill_catalog,
+            context_window_tokens=context_window_tokens_for_skill_budget(config, CoderAgent.agent_name),
+        )
+        skill_tool_extension = build_skill_tool_extension(
+            skill_catalog,
+            lambda: agent_ref["agent"].history if "agent" in agent_ref else [],
+        )
+        if skill_prompt_extension is not None:
+            prompt_extensions.append(skill_prompt_extension)
+        if skill_tool_extension is not None:
+            tool_extensions.append(skill_tool_extension)
     mcp_config = getattr(config, "mcp_config", None)
     if not args.json and mcp_config is not None:
         for diagnostic in getattr(mcp_config, "diagnostics", []) or []:

@@ -148,6 +148,7 @@ PLAN_REOFFERED = "No new plan captured. Reusing the last captured plan."
 PLAN_DISCUSSION_RESUMED = "Planning discussion resumed."
 SKILL_ACTIVATED = "Activated skill {name}."
 SKILLS_LISTED = "Listed agent skills."
+SKILLS_DISABLED = "Agent Skills are disabled for this session."
 
 # Mentions
 MENTIONS_NOT_FOUND = "Not found, sent as plain text: {mentions}"

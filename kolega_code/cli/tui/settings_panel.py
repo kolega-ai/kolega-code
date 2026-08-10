@@ -41,6 +41,7 @@ from kolega_code.mcp.state import MCPStatusStore, MCPOAuthTokenStore
 from .. import messages, theme
 from ..config import (
     COMPRESSION_THRESHOLD_ENV,
+    SKILLS_MODE_ENV,
     SUBAGENTS_MODE_ENV,
     CliConfigError,
     active_model_override_message,
@@ -513,6 +514,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         self._populate_mcp_controls()
         self._populate_lsp_controls()
         self._populate_subagents_controls()
+        self._populate_skills_controls()
         self._populate_compression_controls()
         self._update_settings_status()
 
@@ -1613,6 +1615,43 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             return
         self.settings.subagents_enabled = value == "true"
 
+    def _populate_skills_controls(self) -> None:
+        """Seed the Agent Skills toggle from saved settings."""
+        try:
+            skills_select = self._settings_query_one("#skills_enabled_select", Select)
+        except NoMatches:
+            return
+        enabled = self.settings.skills_enabled
+        if enabled is not None:
+            skills_select.value = "true" if enabled else "false"
+        self._update_skills_settings_status()
+
+    def _update_skills_settings_status(self) -> None:
+        """Note when a launch flag or env var pins Agent Skills for this session."""
+        try:
+            status = self._settings_query_one("#skills_status", Static)
+        except NoMatches:
+            return
+        flag_value = getattr(self.overrides, "skills_mode", None)
+        env_value = os.environ.get(SKILLS_MODE_ENV)
+        forced = flag_value or env_value
+        if forced:
+            source = "--skills" if flag_value else SKILLS_MODE_ENV
+            status.update(
+                f"Agent Skills are forced {forced} for this session by {source}; "
+                "the setting applies from the next launch."
+            )
+            return
+        status.update("")
+
+    def _collect_skills_from_ui(self) -> None:
+        """Read the Agent Skills toggle and save it into settings."""
+        try:
+            value = str(self._settings_query_one("#skills_enabled_select", Select).value)
+        except NoMatches:
+            return
+        self.settings.skills_enabled = value == "true"
+
     def _populate_compression_controls(self) -> None:
         """Seed the compression-threshold select from saved settings."""
         try:
@@ -1687,6 +1726,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._collect_web_search_from_ui()
             self._collect_lsp_from_ui()
             self._collect_subagents_from_ui()
+            self._collect_skills_from_ui()
             self._collect_compression_from_ui()
         finally:
             self.settings = original
@@ -2023,6 +2063,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                 mcp_line,
                 f"LSP: {'enabled' if lsp_enabled else 'disabled'}",
                 f"Sub-agents: {'enabled' if self.settings.subagents_enabled is not False else 'disabled'}",
+                f"Agent Skills: {'enabled' if self.settings.skills_enabled is not False else 'disabled'}",
                 f"Theme: {theme_name}",
             ]
         )

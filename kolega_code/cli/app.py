@@ -189,7 +189,10 @@ class KolegaCodeApp(
         )
         self.overrides = overrides or CliConfigOverrides()
         self.settings: CliSettings = CliSettings()
-        self.skill_catalog: SkillCatalog = discover_skills(self.active_project_path)
+        self.skills_enabled = config.skills_enabled if config is not None else True
+        self.skill_catalog: SkillCatalog = (
+            discover_skills(self.active_project_path) if self.skills_enabled else SkillCatalog()
+        )
         self.custom_agent_catalog: CustomAgentCatalog = discover_custom_agents(
             self.active_project_path,
             self.settings_store.root,
@@ -984,7 +987,7 @@ class KolegaCodeApp(
             return
         slash = composer.active_slash_query()
         if slash is not None:
-            commands = search_commands(slash[0], self.skill_catalog, limit=8)
+            commands = search_commands(slash[0], self.skill_catalog, limit=8, skills_enabled=self.skills_enabled)
             if not commands:
                 dropdown.close()
                 return

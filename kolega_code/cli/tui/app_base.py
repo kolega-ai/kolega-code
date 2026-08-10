@@ -93,6 +93,7 @@ class KolegaAppBase(App):
         overrides: CliConfigOverrides
         settings: CliSettings
         skill_catalog: SkillCatalog
+        skills_enabled: bool
         file_index: WorkspaceFileIndex
         _file_index_refreshing: bool
         _diag: DiagnosticsLog | None
