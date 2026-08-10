@@ -1,5 +1,6 @@
 import os
 import asyncio
+import shlex
 import sys
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -18,6 +19,20 @@ SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
 def _result_field(result: str, name: str) -> str:
     prefix = f"{name}: "
     return next(line.removeprefix(prefix) for line in result.splitlines() if line.startswith(prefix))
+
+
+def _marker_command(marker, final_output: str) -> str:
+    script = "\n".join(
+        [
+            "import pathlib, time",
+            f"marker = pathlib.Path({str(marker)!r})",
+            "print('started', flush=True)",
+            "while not marker.exists():",
+            "    time.sleep(0.01)",
+            f"print({final_output!r}, flush=True)",
+        ]
+    )
+    return f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
 
 
 @pytest.fixture
@@ -508,6 +523,38 @@ class TestBackgroundExec:
         assert "Background: true" in result
         # Ids no longer running are pruned from the tracking set.
         assert terminal_tool._background_sessions == {"s_1"}
+
+    @pytest.mark.asyncio
+    async def test_naturally_exited_background_session_is_hidden_but_final_output_remains(
+        self,
+        terminal_tool,
+        tmp_path,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(
+            "kolega_code.agent.tool_backend.terminal_tool.BACKGROUND_SETTLE_MS",
+            250,
+        )
+        marker = tmp_path / "finish-background-tool"
+        result = await terminal_tool.exec_command(
+            _marker_command(marker, "background-final"),
+            workdir=str(tmp_path),
+            background=True,
+        )
+        assert _result_field(result, "Status") == "running"
+        session_id = _result_field(result, "Session")
+        session = terminal_tool.terminal_manager.sessions[session_id]
+
+        marker.touch()
+        await asyncio.wait_for(session.exited.wait(), timeout=3)
+
+        assert await terminal_tool.list_sessions() == "No running sessions."
+        assert terminal_tool._background_sessions == set()
+
+        final = await terminal_tool.write_stdin(session_id, "", yield_time_ms=250)
+        assert _result_field(final, "Status") == "exited"
+        assert _result_field(final, "Exit code") == "0"
+        assert "background-final" in final
 
     @pytest.mark.asyncio
     async def test_kill_command_forgets_background_session(self, terminal_tool):
