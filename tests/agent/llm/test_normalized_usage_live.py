@@ -36,7 +36,6 @@ SYSTEM = Message(
     content=[TextBlock(text="You are a concise math assistant. Answer with as few tokens as possible.")],
 )
 
-OLLAMA_CLOUD_SMOKE_MODEL = "gpt-oss:20b"
 OPENROUTER_SMOKE_MODEL = "openai/gpt-5.4-mini"
 
 
@@ -53,9 +52,7 @@ def _provider_models() -> list[tuple[str, str]]:
         if provider_value in added or ModelProvider(provider_value) in OAUTH_PROVIDERS:
             continue
         added.add(provider_value)
-        if provider_value == ModelProvider.OLLAMA_CLOUD.value:
-            model = OLLAMA_CLOUD_SMOKE_MODEL
-        elif provider_value == ModelProvider.OPENROUTER.value:
+        if provider_value == ModelProvider.OPENROUTER.value:
             model = OPENROUTER_SMOKE_MODEL
         else:
             model = default_model_for_provider(ModelProvider(provider_value))

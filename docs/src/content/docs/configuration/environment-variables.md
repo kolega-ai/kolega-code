@@ -62,6 +62,13 @@ standard Moonshot API used by the `moonshot` provider.
 The `OLLAMA_API_KEY` key authenticates against Ollama Cloud's direct API (`https://ollama.com/v1` for OpenAI-compatible requests).
 The `OPENROUTER_API_KEY` key authenticates against the OpenRouter gateway (`https://openrouter.ai/api/v1`).
 
+### Ollama Cloud catalog
+
+| Variable | Purpose |
+| --- | --- |
+| `KOLEGA_CODE_OLLAMA_CLOUD_CATALOG` | Read the refreshed model cache from this path instead of the state directory. |
+| `KOLEGA_CODE_DISABLE_OLLAMA_CLOUD_CATALOG` | Ignore any refreshed cache and use only the catalog bundled with this release. |
+
 ### OpenRouter tuning
 
 All optional; unset means Kolega Code sends nothing for that field.

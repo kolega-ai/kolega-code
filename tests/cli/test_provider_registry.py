@@ -122,11 +122,11 @@ def test_vision_only_model_options_follow_catalog_capabilities():
 
 
 def test_ollama_cloud_smoke_model_is_available_without_live_call():
-    options = dict(ui_model_options("ollama_cloud"))
+    options = ui_model_options("ollama_cloud")
+    default = default_model_for_provider(ModelProvider.OLLAMA_CLOUD)
 
-    assert options["GPT-OSS 20B"] == "gpt-oss:20b"
-    assert default_model_for_provider(ModelProvider.OLLAMA_CLOUD) == "gpt-oss:20b"
-    assert get_model_specs(ModelProvider.OLLAMA_CLOUD.value, "gpt-oss:20b")["max_completion_tokens"] > 0
+    assert default in {model for _label, model in options}
+    assert get_model_specs(ModelProvider.OLLAMA_CLOUD.value, default)["max_completion_tokens"] > 0
 
 
 def test_thinking_machines_models_are_selectable_and_inkling_is_default():

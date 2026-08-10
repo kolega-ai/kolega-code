@@ -40,10 +40,6 @@ SYSTEM = Message(
     content=[TextBlock(text="You are a concise math assistant. Answer with as few tokens as possible.")],
 )
 
-# Ollama Cloud has a large, mixed-access catalog. Keep live coverage to one
-# non-subscription smoke model so all-test runs avoid expensive/flaky/gated calls.
-OLLAMA_CLOUD_SMOKE_MODEL = "gpt-oss:20b"
-
 # OpenRouter fronts hundreds of models at wildly different prices. Its default
 # model is chosen for day-to-day use, not for a smoke test, so pin a cheap
 # reasoning- and tool-capable model here instead.
@@ -68,9 +64,7 @@ def _provider_smoke_models() -> list[tuple[str, str]]:
         if ModelProvider(provider_value) in OAUTH_PROVIDERS:
             continue
         added.add(provider_value)
-        if provider_value == ModelProvider.OLLAMA_CLOUD.value:
-            model = OLLAMA_CLOUD_SMOKE_MODEL
-        elif provider_value == ModelProvider.OPENROUTER.value:
+        if provider_value == ModelProvider.OPENROUTER.value:
             model = OPENROUTER_SMOKE_MODEL
         else:
             model = default_model_for_provider(ModelProvider(provider_value))

@@ -8,6 +8,8 @@ keep the visible-text fallback. Foreign-provider reasoning never serializes as
 native replay metadata.
 """
 
+import pytest
+
 from kolega_code.llm.models import (
     Message,
     MessageHistory,
@@ -16,12 +18,34 @@ from kolega_code.llm.models import (
     ToolCall,
     ToolResult,
 )
+from kolega_code.llm.specs import MODEL_SPECS
 from kolega_code.llm.specs.thinking import reasoning_replay_field
+from kolega_code.llm.specs.types import ThinkingEffortSpec
 
 DEEPSEEK_MODEL = "deepseek-v4-pro"
 FIREWORKS_MODEL = "accounts/fireworks/models/glm-5p2"
 FIREWORKS_KIMI_K3_MODEL = "accounts/fireworks/models/kimi-k3"
-OLLAMA_MODEL = "deepseek-v3.2"
+OLLAMA_MODEL = "test-reasoning-model"
+
+
+@pytest.fixture
+def ollama_reasoning_model(monkeypatch: pytest.MonkeyPatch) -> str:
+    monkeypatch.setitem(
+        MODEL_SPECS,
+        ("ollama_cloud", OLLAMA_MODEL),
+        {
+            "context_length": 131072,
+            "max_completion_tokens": 32768,
+            "default_temperature": 1.0,
+            "supports_vision": False,
+            "thinking_effort": ThinkingEffortSpec(
+                options=("low", "medium", "high"),
+                default="medium",
+                mode="openai_reasoning_effort",
+            ),
+        },
+    )
+    return OLLAMA_MODEL
 
 
 def _assistant(*blocks, provider):
@@ -40,8 +64,8 @@ def test_reasoning_replay_field_deepseek_fireworks_xai_use_reasoning_content():
     assert reasoning_replay_field("xai", "grok-4.5") == "reasoning_content"
 
 
-def test_reasoning_replay_field_ollama_uses_reasoning():
-    assert reasoning_replay_field("ollama_cloud", OLLAMA_MODEL) == "reasoning"
+def test_reasoning_replay_field_ollama_uses_reasoning(ollama_reasoning_model: str):
+    assert reasoning_replay_field("ollama_cloud", ollama_reasoning_model) == "reasoning"
 
 
 def test_reasoning_replay_field_none_for_unmapped_provider_unknown_and_non_reasoning():
@@ -76,10 +100,10 @@ def test_deepseek_thinking_block_serializes_as_reasoning_content():
     assert out["tool_calls"][0]["function"]["name"] == "get_weather"
 
 
-def test_ollama_cloud_uses_reasoning_not_reasoning_content():
+def test_ollama_cloud_uses_reasoning_not_reasoning_content(ollama_reasoning_model: str):
     asst = _assistant(ThinkingBlock(thinking="r"), TextBlock("a"), provider="ollama_cloud")
 
-    out = MessageHistory([asst]).to_openai(provider="ollama_cloud", model=OLLAMA_MODEL)[0]
+    out = MessageHistory([asst]).to_openai(provider="ollama_cloud", model=ollama_reasoning_model)[0]
 
     assert out["reasoning"] == "r"
     assert "reasoning_content" not in out

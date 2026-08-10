@@ -21,6 +21,7 @@ from typing import Any, Iterable, Optional, Sequence
 
 from kolega_code.config import ModelProvider
 from kolega_code.llm.specs import MODEL_SPECS, is_featured_model
+from kolega_code.llm.specs import ollama_cloud_catalog as ollama_cloud
 from kolega_code.llm.specs import openrouter_catalog as openrouter
 from kolega_code.llm.specs import tinker_catalog as tinker
 
@@ -31,8 +32,17 @@ from .session_store import default_state_dir
 # MODELS_URL, CACHE_FILENAME, fetch_models(), catalog_entries(), load_cache()
 # and save_cache().
 OVERLAY_SOURCES = {
+    ollama_cloud.PROVIDER: ollama_cloud,
     openrouter.PROVIDER: openrouter,
     tinker.PROVIDER: tinker,
+}
+
+# Capture the release snapshot before startup applies any runtime caches.
+# ``MODEL_SPECS`` is mutated by overlays, so consulting it during a later
+# ``models refresh`` would misclassify already-cached IDs as bundled.
+_BUNDLED_MODELS = {
+    provider: frozenset(model for provider_value, model in MODEL_SPECS if provider_value == provider)
+    for provider in OVERLAY_SOURCES
 }
 
 
@@ -238,16 +248,26 @@ def run_models_refresh(args: Any, printer, error_printer) -> int:
         error_printer(f"Could not refresh the {provider} catalog: {exc}")
         return 1
 
-    bundled = {model for (provider_value, model) in MODEL_SPECS if provider_value == provider}
+    bundled = _BUNDLED_MODELS[provider]
     path = overlay_path(getattr(args, "state_dir", None), catalog=provider)
-    previously_cached = {identifier for identifier, _ in module.load_cache(path)}
-    new_models = [identifier for identifier, _ in entries if identifier not in bundled]
+    previous_entries = module.load_cache(path)
+    previously_cached = {identifier for identifier, _ in previous_entries}
 
-    module.save_cache(path, entries, fetched_at=dt.datetime.now(dt.timezone.utc).isoformat())
+    # Runtime overlays are additive discovery, not an authoritative retirement
+    # mechanism. Preserve IDs learned by earlier refreshes when a later live
+    # response omits them; freshly fetched specs win for IDs still present.
+    cache_by_id = dict(previous_entries)
+    cache_by_id.update(entries)
+    cached_entries = sorted(cache_by_id.items())
+    new_models = [identifier for identifier, _ in cached_entries if identifier not in bundled]
 
-    added = [identifier for identifier in new_models if identifier not in previously_cached]
+    module.save_cache(path, cached_entries, fetched_at=dt.datetime.now(dt.timezone.utc).isoformat())
+
+    added = [
+        identifier for identifier, _ in entries if identifier not in bundled and identifier not in previously_cached
+    ]
     printer(
-        f"Cached {len(entries)} models to {path}.\n"
+        f"Cached {len(cached_entries)} models to {path}.\n"
         f"{len(new_models)} not in the bundled catalog ({len(added)} new since the last refresh)."
     )
     if added:

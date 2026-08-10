@@ -10,6 +10,7 @@ only reports images that would actually be sent.
 import base64
 import io
 
+import pytest
 from PIL import Image
 
 from kolega_code.agent.conversation import (
@@ -28,6 +29,30 @@ from kolega_code.llm.models import (
     ToolCall,
     ToolResult,
 )
+from kolega_code.llm.specs import MODEL_SPECS
+from kolega_code.llm.specs.types import ThinkingEffortSpec
+
+OLLAMA_THINKING_MODEL = "test-ollama-thinking-model"
+
+
+@pytest.fixture
+def ollama_thinking_model(monkeypatch: pytest.MonkeyPatch) -> str:
+    monkeypatch.setitem(
+        MODEL_SPECS,
+        ("ollama_cloud", OLLAMA_THINKING_MODEL),
+        {
+            "context_length": 131072,
+            "max_completion_tokens": 32768,
+            "default_temperature": 1.0,
+            "supports_vision": False,
+            "thinking_effort": ThinkingEffortSpec(
+                options=("low", "medium", "high"),
+                default="medium",
+                mode="openai_reasoning_effort",
+            ),
+        },
+    )
+    return OLLAMA_THINKING_MODEL
 
 
 def _image(media_type: str = "image/png") -> ImageBlock:
@@ -134,13 +159,13 @@ def test_adapt_preserves_fireworks_thinking_when_targeting_fireworks():
     assert out[0].content[0].thinking == "native reasoning"
 
 
-def test_adapt_preserves_ollama_cloud_thinking_when_targeting_ollama_cloud():
+def test_adapt_preserves_ollama_cloud_thinking_when_targeting_ollama_cloud(ollama_thinking_model: str):
     history = [_assistant(ThinkingBlock(thinking="ollama reasoning"), provider="ollama_cloud")]
 
     out = adapt_history_for_provider(
         history,
         target_provider="ollama_cloud",
-        target_model="gpt-oss:20b",
+        target_model=ollama_thinking_model,
         supports_vision=False,
     )
 
@@ -163,13 +188,13 @@ def test_adapt_drops_ollama_cloud_thinking_when_targeting_foreign_provider():
     assert out == []
 
 
-def test_adapt_drops_ollama_cloud_thinking_without_source_provider():
+def test_adapt_drops_ollama_cloud_thinking_without_source_provider(ollama_thinking_model: str):
     history = [_assistant(ThinkingBlock(thinking="ollama reasoning"))]
 
     out = adapt_history_for_provider(
         history,
         target_provider="ollama_cloud",
-        target_model="gpt-oss:20b",
+        target_model=ollama_thinking_model,
         supports_vision=False,
     )
 

@@ -17,10 +17,16 @@ from kolega_code.cli.provider_registry import (
     default_model_for_provider,
 )
 from kolega_code.cli.settings import CliSettings
-from kolega_code.llm.specs import is_featured_model
+from kolega_code.llm.specs import MODEL_SPECS, default_thinking_effort, is_featured_model
 
 # Anthropic's registry default, used throughout as a convenient known-good model.
 ANTHROPIC_DEFAULT_MODEL = default_model_for_provider(ModelProvider.ANTHROPIC)
+OLLAMA_CLOUD_DEFAULT_MODEL = default_model_for_provider(ModelProvider.OLLAMA_CLOUD)
+OLLAMA_CLOUD_THINKING_MODEL = next(
+    model
+    for (provider, model), specs in MODEL_SPECS.items()
+    if provider == ModelProvider.OLLAMA_CLOUD.value and "thinking_effort" in specs
+)
 
 
 @pytest.mark.parametrize(
@@ -429,13 +435,16 @@ def test_build_agent_config_accepts_deepseek_cli_active_model(tmp_path: Path) ->
 def test_build_agent_config_accepts_ollama_cloud_cli_active_model(tmp_path: Path) -> None:
     config = build_agent_config(
         tmp_path,
-        CliConfigOverrides(provider=ModelProvider.OLLAMA_CLOUD.value, model="glm-5.2"),
+        CliConfigOverrides(provider=ModelProvider.OLLAMA_CLOUD.value, model=OLLAMA_CLOUD_THINKING_MODEL),
         env={"OLLAMA_API_KEY": "ollama-key"},
     )
 
     assert config.long_context_config.provider == ModelProvider.OLLAMA_CLOUD
-    assert config.long_context_config.model == "glm-5.2"
-    assert config.long_context_config.thinking_effort == "medium"
+    assert config.long_context_config.model == OLLAMA_CLOUD_THINKING_MODEL
+    assert config.long_context_config.thinking_effort == default_thinking_effort(
+        ModelProvider.OLLAMA_CLOUD.value,
+        OLLAMA_CLOUD_THINKING_MODEL,
+    )
     assert config.fast_config.provider == ModelProvider.OLLAMA_CLOUD
     assert config.ollama_cloud_api_key == "ollama-key"
 
@@ -443,24 +452,23 @@ def test_build_agent_config_accepts_ollama_cloud_cli_active_model(tmp_path: Path
 def test_build_agent_config_ollama_cloud_provider_default_is_accessible_model(tmp_path: Path) -> None:
     # The CLI never defaults a model, but the registry default still has to be a model
     # that actually resolves — it backs stale-model recovery and the onboarding picker.
-    assert default_model_for_provider(ModelProvider.OLLAMA_CLOUD) == "gpt-oss:20b"
+    assert (ModelProvider.OLLAMA_CLOUD.value, OLLAMA_CLOUD_DEFAULT_MODEL) in MODEL_SPECS
     config = build_agent_config(
         tmp_path,
-        CliConfigOverrides(provider=ModelProvider.OLLAMA_CLOUD.value, model="gpt-oss:20b"),
+        CliConfigOverrides(provider=ModelProvider.OLLAMA_CLOUD.value, model=OLLAMA_CLOUD_DEFAULT_MODEL),
         env={"OLLAMA_API_KEY": "ollama-key"},
     )
 
     assert config.long_context_config.provider == ModelProvider.OLLAMA_CLOUD
-    assert config.long_context_config.model == "gpt-oss:20b"
-    assert config.long_context_config.thinking_effort == "medium"
-    assert config.fast_config.model == "gpt-oss:20b"
+    assert config.long_context_config.model == OLLAMA_CLOUD_DEFAULT_MODEL
+    assert config.fast_config.model == OLLAMA_CLOUD_DEFAULT_MODEL
 
 
 def test_ollama_cloud_requires_ollama_api_key(tmp_path: Path) -> None:
     with pytest.raises(CliConfigError, match="OLLAMA_API_KEY"):
         build_agent_config(
             tmp_path,
-            CliConfigOverrides(provider=ModelProvider.OLLAMA_CLOUD.value, model="gpt-oss:20b"),
+            CliConfigOverrides(provider=ModelProvider.OLLAMA_CLOUD.value, model=OLLAMA_CLOUD_DEFAULT_MODEL),
             env={},
         )
 

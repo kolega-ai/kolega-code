@@ -61,8 +61,21 @@ key.
 OpenAI-compatible API at `https://ollama.com/v1` with `OLLAMA_API_KEY`. Kolega
 Code uses the direct API model IDs returned by Ollama, such as **`glm-5.2`** and
 **`gpt-oss:120b`**, rather than local Ollama aliases such as `:cloud` or
-`-cloud`. Ollama may deprecate or retire older cloud models, so Kolega Code's supported
-model catalog should be refreshed periodically from Ollama's model library/API.
+`-cloud`.
+
+The bundled catalog is generated from `https://ollama.com/v1/models` plus each
+model's metadata from `https://ollama.com/api/show`. Models are included only
+when Ollama reports both the `completion` and `tools` capabilities. To discover
+eligible models published since the bundled release, run:
+
+```bash
+kolega-code models refresh --provider ollama_cloud
+```
+
+The runtime cache is additive: it adds IDs missing from the bundled release but
+never removes bundled IDs or overwrites their reviewed metadata. Startup never
+contacts Ollama. Retired bundled IDs disappear only when a new release snapshot
+is generated from Ollama's current catalog.
 </Aside>
 
 <Aside type="tip">

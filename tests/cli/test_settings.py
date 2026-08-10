@@ -10,6 +10,7 @@ from kolega_code.cli.provider_registry import (
     MOONSHOT_K26_MODEL,
     UI_DEFAULT_MODEL,
     UI_DEFAULT_PROVIDER,
+    PROVIDER_DEFAULT_MODEL,
     get_ui_model,
     ui_model_options,
     ui_provider_options,
@@ -277,23 +278,22 @@ def test_ui_provider_registry_is_derived_from_model_specs() -> None:
     assert deepseek_model.api_key_env == "DEEPSEEK_API_KEY"
     assert deepseek_model.default_thinking_effort == "high"
 
-    ollama_model = get_ui_model("ollama_cloud", "gpt-oss:20b")
+    ollama_provider = ModelProvider.OLLAMA_CLOUD.value
+    ollama_default = PROVIDER_DEFAULT_MODEL[ModelProvider.OLLAMA_CLOUD]
+    ollama_model = get_ui_model(ollama_provider, ollama_default)
     assert ollama_model is not None
     assert ollama_model.provider_label == "Ollama Cloud"
-    assert ollama_model.model_label == "GPT-OSS 20B"
     assert ollama_model.api_key_env == "OLLAMA_API_KEY"
-    assert ollama_model.default_thinking_effort == "medium"
+    default_effort = MODEL_SPECS[(ollama_provider, ollama_default)].get("thinking_effort")
+    assert ollama_model.default_thinking_effort == (default_effort.default if default_effort else None)
 
-    ollama_glm_model = get_ui_model("ollama_cloud", "glm-5.2")
-    assert ollama_glm_model is not None
-    assert ollama_glm_model.model_label == "GLM-5.2"
-    assert ollama_glm_model.default_thinking_effort == "medium"
-    assert ui_thinking_effort_options("ollama_cloud", "gpt-oss:120b") == [
-        ("None", "none"),
-        ("Low", "low"),
-        ("Medium", "medium"),
-        ("High", "high"),
-        ("Max", "max"),
+    thinking_model, thinking_spec = next(
+        (model, specs["thinking_effort"])
+        for (provider, model), specs in MODEL_SPECS.items()
+        if provider == ollama_provider and "thinking_effort" in specs
+    )
+    assert ui_thinking_effort_options(ollama_provider, thinking_model) == [
+        (option.title(), option) for option in thinking_spec.options
     ]
 
 
