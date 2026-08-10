@@ -220,6 +220,7 @@ class PtySession:
         self._broadcast_queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
         self._broadcast_task: Optional[asyncio.Task] = None
         self._reader_added = False
+        self._reap_task: Optional[asyncio.Task] = None
         self._closed = False
 
     # -- lifecycle ---------------------------------------------------------
@@ -267,6 +268,7 @@ class PtySession:
                 self._broadcast_task = asyncio.create_task(self._broadcast_worker())
             asyncio.get_event_loop().add_reader(master_fd, self._on_readable)
             self._reader_added = True
+            self._reap_task = asyncio.create_task(self._poll_for_exit())
 
     def _remove_reader(self) -> None:
         if self._reader_added and self.master_fd is not None:
@@ -324,6 +326,67 @@ class PtySession:
         if pid == self.pid:
             self.exit_code = _normalize_exit_code(status)
             self.exited.set()
+
+    async def _poll_for_exit(self) -> None:
+        """Reap the shell when it exits without PTY EOF.
+
+        PTY EOF is the normal exit signal, but it is withheld while any
+        process still holds the slave open — and a backgrounded (``&``)
+        process does exactly that on Linux, where the kernel does not
+        reliably SIGHUP it when the session leader exits. Reaping the shell
+        itself marks the command finished on every platform; ``_detach_pty``
+        then releases the PTY, and the hangup that release causes kills any
+        surviving background process — which keeps the EXIT trap's warning
+        accurate.
+        """
+        while not self.exited.is_set():
+            await asyncio.sleep(_REAP_POLL_INTERVAL)
+            if not self._poll_reap():
+                continue
+            # The shell's last bytes (e.g. the background-job warning) may
+            # still sit in the PTY buffer; yield once so the reader drains
+            # them before the output is finalized and `exited` wakes waiters.
+            await asyncio.sleep(_REAP_SETTLE_S)
+            self._detach_pty()
+            self.exited.set()
+            return
+
+    def _poll_reap(self) -> bool:
+        """Reap the shell if it exited; True when this call did the reaping.
+
+        Unlike :meth:`_reap` this does not set ``exited``: the poller must
+        finalize the output first so a waiter (``drain``) only wakes once
+        every byte is in the accumulator.
+        """
+        if self.exited.is_set() or self.pid is None:
+            return False
+        try:
+            pid, status = os.waitpid(self.pid, os.WNOHANG)
+        except ChildProcessError:
+            return False  # the EOF path already reaped it
+        if pid != self.pid:
+            return False
+        self.exit_code = _normalize_exit_code(status)
+        return True
+
+    def _detach_pty(self) -> None:
+        """Release the PTY after the shell exited without EOF.
+
+        The non-EOF analogue of :meth:`_handle_eof`: drop the reader, close
+        the master (hanging up the slave, which SIGHUPs any surviving
+        background process), finalize the output, and flush the display
+        decoder.
+        """
+        self._remove_reader()
+        if self.master_fd is not None:
+            try:
+                os.close(self.master_fd)
+            except OSError:
+                pass
+            self.master_fd = None
+        self._output.finalize()
+        self._flush_display_decoder()
+        self._new_output.set()
 
     def _broadcast(self, data: bytes) -> None:
         if not self.connection_manager:
@@ -413,6 +476,11 @@ class PtySession:
         if self._closed:
             return
         self._closed = True
+        if self._reap_task is not None:
+            self._reap_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reap_task
+            self._reap_task = None
         self._remove_reader()
         if not self.exited.is_set():
             self._signal_group(signal.SIGKILL)
@@ -439,6 +507,20 @@ class PtySession:
 
 # How often the detached-session pump tails its log file and checks liveness.
 _DETACHED_POLL_INTERVAL = 0.05
+
+# How often a PTY session reaps its shell. PTY EOF is the normal exit signal,
+# but it is withheld while any process still holds the slave open — and a
+# backgrounded (`&`) process does exactly that on Linux, where the kernel does
+# not reliably SIGHUP it when the session leader exits. Without this poll,
+# `sleep 30 & echo main-done` would report "running" for the whole 30s even
+# though the shell finished. `waitpid(WNOHANG)` is cheap; 0.05s keeps exit
+# detection invisible to callers.
+_REAP_POLL_INTERVAL = 0.05
+# Grace period after reaping the shell before the output is finalized: the
+# shell's last bytes (e.g. the background-job warning) may still sit in the
+# PTY buffer, and the reader callback needs a loop tick to drain them so the
+# first read after `exited` sees the complete stream.
+_REAP_SETTLE_S = 0.02
 
 
 class DetachedSession:
