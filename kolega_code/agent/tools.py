@@ -13,10 +13,9 @@ from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.terminal import LocalTerminalManager
 from kolega_code.services.browser import PlaywrightBrowserManager
 from .tool_backend.agent_tool import AgentTool
-from .tool_backend.browser_tool import BROWSER_TOOL_SCHEMAS, BrowserTool
+from .tool_backend.browser_tool import BrowserTool
 from .tool_backend.edit_tool import EditTool
 from .tool_backend.eval_tool import EvalTool
-from .tool_backend.codex_patch import CODEX_APPLY_PATCH_GRAMMAR
 from .tool_backend.hashline_v2 import format_hash_lines
 from .tool_backend.memory_tool import MemoryTool
 from .tool_backend.network_status import ConnectFailureTracker
@@ -26,8 +25,9 @@ from .tool_backend.snapshot_tool import SnapshotTool
 from .tool_backend.web_fetch_tool import WebFetchTool
 from .tool_backend.web_search_tool import WebSearchTool
 from .tool_backend.terminal_tool import TerminalTool
-from .tool_backend.workflow_tool import RUN_WORKFLOW_INPUT_SCHEMA, WorkflowTool
+from .tool_backend.workflow_tool import WorkflowTool
 from .edit_protocols import EDIT_HANDLER_NAMES, edit_protocol_spec
+from .tool_definitions import builtin_tool_definition, dispatch_agent_input_schema
 from .orchestration.context import has_workflow_context_marker, validated_workflow_depth
 
 # Import additional tools for consolidated functionality
@@ -35,359 +35,6 @@ from .tool_backend.build_tool import BuildTool
 from .tool_backend.lsp_tool import LspEditTool, LspTool
 from kolega_code.services.lsp import LspManager
 from kolega_code.services.snapshots import SnapshotService
-
-# Atomic ordinary-dispatch routing cannot be represented by signature
-# introspection: all nested fields are required together and effort is nullable.
-_ORDINARY_MODEL_OVERRIDE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "provider": {
-            "type": "string",
-            "minLength": 1,
-            "description": (
-                "Non-empty configured provider name returned by list_subagent_models. "
-                "Never infer it from the model name. "
-                "`openai` and `openai_chatgpt` serve the same models; prefer `openai_chatgpt` when configured."
-            ),
-        },
-        "model": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Non-empty exact model ID returned for that provider by list_subagent_models.",
-        },
-        "thinking_effort": {
-            "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}],
-            "description": (
-                "Exact supported effort string, or null only when the selected model has no effort control."
-            ),
-        },
-    },
-    "required": ["provider", "model", "thinking_effort"],
-}
-
-
-def _dispatch_agent_input_schema(
-    agent_types: Sequence[str],
-    *,
-    browser_targets: tuple[str, ...] = (),
-) -> dict[str, Any]:
-    properties: dict[str, Any] = {
-        "agent_type": {
-            "type": "string",
-            "enum": list(agent_types),
-            "description": "Which agent to dispatch. The tool description lists each value's role and tools.",
-        },
-        "task": {
-            "type": "string",
-            "description": "Detailed, self-contained task for the sub-agent.",
-        },
-        "model_override": {
-            **_ORDINARY_MODEL_OVERRIDE_SCHEMA,
-            "description": (
-                'Usually omit this property entirely: a normal call is {"agent_type": "...", "task": "..."}. '
-                "Only include it after calling list_subagent_models and selecting one exact route. "
-                "Never send an empty object, blank strings, placeholder values, or a guessed provider/model. "
-                "When present, all three nested fields are required."
-            ),
-        },
-    }
-    if "browser" in agent_types and len(browser_targets) > 1:
-        properties["browser_target"] = {
-            "type": "string",
-            "enum": list(browser_targets),
-            "description": (
-                'Only for agent_type "browser". Omit for Playwright; choose Chrome only when the user directs you '
-                "to use their configured Chrome browser."
-            ),
-        }
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": properties,
-        "required": ["agent_type", "task"],
-    }
-
-
-# Explicit input schema for the generic ``lsp`` tool.  The ``operation`` parameter
-# is an enum that signature introspection cannot express.
-_LSP_INPUT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "operation": {
-            "type": "string",
-            "enum": [
-                "diagnostics",
-                "definition",
-                "type_definition",
-                "implementation",
-                "references",
-                "hover",
-                "call_hierarchy",
-                "code_actions",
-                "document_symbols",
-                "workspace_symbols",
-                "status",
-                "capabilities",
-                "reload",
-            ],
-            "description": (
-                "The LSP operation to perform. Position operations (definition, "
-                "type_definition, implementation, references, hover, call_hierarchy, "
-                "code_actions) require path, "
-                "line, and symbol. diagnostics and document_symbols require path. "
-                "workspace_symbols requires query. status, capabilities, and reload "
-                "need no additional args."
-            ),
-        },
-        "path": {
-            "type": "string",
-            "description": (
-                "File path: project-relative, using ../ traversal, or absolute. Required for most operations."
-            ),
-        },
-        "line": {
-            "type": "integer",
-            "description": "1-based line number for position operations.",
-        },
-        "symbol": {
-            "type": "string",
-            "description": "Symbol name to resolve on the line. Supports 'name#N' for the Nth occurrence.",
-        },
-        "query": {
-            "type": "string",
-            "description": "Search query for workspace_symbols.",
-        },
-        "end_line": {
-            "type": "integer",
-            "description": "Optional 1-based end line for code_actions.",
-        },
-        "kind": {
-            "type": "string",
-            "description": "Optional code action kind filter, such as quickfix or refactor.",
-        },
-        "timeout": {
-            "type": "number",
-            "description": "Per-call timeout in seconds (default: 30).",
-        },
-    },
-    "required": ["operation"],
-}
-
-_LSP_EDIT_INPUT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "operation": {
-            "type": "string",
-            "enum": ["rename", "rename_file", "format_document", "format_range", "apply_code_action"],
-            "description": (
-                "Mutating LSP operation. rename requires path, line, symbol, and new_name. "
-                "rename_file requires path and new_path. format_document requires path. "
-                "format_range requires path and line, with optional end_line. "
-                "apply_code_action requires path, line, symbol, and action_id or query."
-            ),
-        },
-        "path": {
-            "type": "string",
-            "description": "File path: project-relative, using ../ traversal, or absolute.",
-        },
-        "line": {
-            "type": "integer",
-            "description": "1-based line number for position/range operations.",
-        },
-        "symbol": {
-            "type": "string",
-            "description": "Symbol name to resolve on the line. Supports 'name#N' for the Nth occurrence.",
-        },
-        "new_name": {
-            "type": "string",
-            "description": "New symbol name for rename.",
-        },
-        "new_path": {
-            "type": "string",
-            "description": ("Destination path for rename_file: project-relative, using ../ traversal, or absolute."),
-        },
-        "query": {
-            "type": "string",
-            "description": "Title substring or numeric index for apply_code_action when action_id is not provided.",
-        },
-        "action_id": {
-            "type": "string",
-            "description": "Stable action_id listed by lsp code_actions.",
-        },
-        "end_line": {
-            "type": "integer",
-            "description": "Optional 1-based end line for format_range and apply_code_action.",
-        },
-        "kind": {
-            "type": "string",
-            "description": "Optional code action kind filter, such as quickfix or refactor.",
-        },
-        "apply": {
-            "type": "boolean",
-            "description": "Apply the edit when true; preview only when false. Defaults to true.",
-        },
-        "timeout": {
-            "type": "number",
-            "description": "Per-call timeout in seconds (default: 30).",
-        },
-    },
-    "required": ["operation"],
-}
-
-_SNAPSHOT_INPUT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "action": {
-            "type": "string",
-            "enum": ["list", "show", "create", "restore"],
-            "description": "Snapshot operation. Use restore with snapshot_id='latest' to undo the latest snapshot.",
-        },
-        "snapshot_id": {
-            "type": "string",
-            "description": "Snapshot id for show/restore. Use 'latest' to restore the newest snapshot.",
-        },
-        "paths": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Project-relative paths for action=create.",
-        },
-        "force": {
-            "type": "boolean",
-            "description": "Restore even when tracked files changed after the snapshot.",
-        },
-        "limit": {
-            "type": "integer",
-            "description": "Maximum number of snapshots to list.",
-        },
-    },
-}
-
-_RESOLVE_INPUT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "action_id": {
-            "type": "string",
-            "description": "Pending action id returned by a preview-only tool.",
-        },
-        "decision": {
-            "type": "string",
-            "enum": ["apply", "discard"],
-            "description": "Apply or discard the pending preview action.",
-        },
-        "force": {
-            "type": "boolean",
-            "description": "Apply even if source hashes no longer match.",
-        },
-    },
-    "required": ["action_id", "decision"],
-}
-
-_HASHLINE_REPLACE_CONTENT_SCHEMA: dict[str, Any] = {
-    "anyOf": [
-        {"type": "string"},
-        {"type": "array", "items": {"type": "string"}},
-        {"type": "null"},
-    ],
-    "description": (
-        "Replacement file text as one string, an array of complete lines, or null to delete the line(s). "
-        "Never include a display-only LINE#ID: prefix in this content."
-    ),
-}
-_HASHLINE_INSERT_CONTENT_SCHEMA: dict[str, Any] = {
-    "anyOf": [
-        {"type": "string", "minLength": 1},
-        {"type": "array", "items": {"type": "string"}, "minItems": 1},
-    ],
-    "description": (
-        "Non-empty inserted file text as one string or an array of complete lines. "
-        "Never include a display-only LINE#ID: prefix in this content."
-    ),
-}
-
-
-def _hashline_operation_schema(
-    op: str,
-    properties: dict[str, Any],
-    required: list[str],
-) -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": {"op": {"type": "string", "enum": [op]}, **properties},
-        "required": ["op", *required],
-        "additionalProperties": False,
-    }
-
-
-_HASHLINE_V2_INPUT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "path": {
-            "type": "string",
-            "description": "Path to edit: project-relative, using ../ traversal, or absolute.",
-        },
-        "edits": {
-            "type": "array",
-            "description": (
-                "All operations for this file, validated against one pre-edit snapshot. In displayed "
-                "LINE#ID:CONTENT rows, pass LINE#ID to anchor fields and only CONTENT to content fields."
-            ),
-            "items": {
-                "anyOf": [
-                    _hashline_operation_schema(
-                        "set",
-                        {
-                            "tag": {"type": "string", "description": "Target LINE#ID."},
-                            "content": _HASHLINE_REPLACE_CONTENT_SCHEMA,
-                        },
-                        ["tag", "content"],
-                    ),
-                    _hashline_operation_schema(
-                        "replace",
-                        {
-                            "first": {"type": "string", "description": "First LINE#ID, inclusive."},
-                            "last": {"type": "string", "description": "Last LINE#ID, inclusive."},
-                            "content": _HASHLINE_REPLACE_CONTENT_SCHEMA,
-                        },
-                        ["first", "last", "content"],
-                    ),
-                    _hashline_operation_schema(
-                        "append",
-                        {
-                            "after": {"type": "string", "description": "Optional LINE#ID to insert after."},
-                            "content": _HASHLINE_INSERT_CONTENT_SCHEMA,
-                        },
-                        ["content"],
-                    ),
-                    _hashline_operation_schema(
-                        "prepend",
-                        {
-                            "before": {"type": "string", "description": "Optional LINE#ID to insert before."},
-                            "content": _HASHLINE_INSERT_CONTENT_SCHEMA,
-                        },
-                        ["content"],
-                    ),
-                    _hashline_operation_schema(
-                        "insert",
-                        {
-                            "after": {"type": "string", "description": "Optional preceding LINE#ID."},
-                            "before": {"type": "string", "description": "Optional following LINE#ID."},
-                            "content": _HASHLINE_INSERT_CONTENT_SCHEMA,
-                        },
-                        ["content"],
-                    ),
-                ]
-            },
-        },
-        "delete": {"type": "boolean", "description": "Delete path; requires edits=[] and no rename."},
-        "rename": {
-            "type": "string",
-            "description": ("Move the edited result to this path: project-relative, using ../ traversal, or absolute."),
-        },
-    },
-    "required": ["path", "edits"],
-    "additionalProperties": False,
-}
 
 
 @dataclass(frozen=True)
@@ -906,18 +553,8 @@ class ToolCollection(LogMixin):
             browser_manager=self.browser_manager,
             langfuse_client=self.langfuse_client,
         )
-        # run_workflow's `args` is free-form JSON, which the signature introspector
-        # cannot express, so register its explicit input schema.
-        self.extension_schemas["run_workflow"] = RUN_WORKFLOW_INPUT_SCHEMA
-        # The `lsp` tool's `operation` is an enum that signature introspection
-        # can't express, so register an explicit input schema.
-        self.extension_schemas["lsp"] = _LSP_INPUT_SCHEMA
-        self.extension_schemas["lsp_edit"] = _LSP_EDIT_INPUT_SCHEMA
-        self.extension_schemas["snapshot"] = _SNAPSHOT_INPUT_SCHEMA
-        self.extension_schemas["resolve"] = _RESOLVE_INPUT_SCHEMA
-        self.extension_schemas.update(BROWSER_TOOL_SCHEMAS)
         # dispatch_agent's schema is built at registration time in
-        # _tool_definition_from_callable: its agent_type enum depends on the
+        # _builtin_tool_definition: its agent_type enum depends on the
         # custom-agent catalog and per-collection gates. browser_targets probes
         # live host configuration, so snapshot it here like the rest of the
         # construction-time tool surface.
@@ -2046,43 +1683,36 @@ class ToolCollection(LogMixin):
         # not declare it.
         return self.terminal_manager.sandbox.get_host(port)  # pyright: ignore[reportAttributeAccessIssue]
 
-    def _tool_definition_from_callable(self, method_name: str, method: Callable[..., Any]) -> ToolDefinition:
-        """Build a provider-agnostic tool definition from a Python callable.
+    def _builtin_tool_definition(self, spec_key: str, wire_name: str) -> ToolDefinition:
+        """Build the declared definition for a built-in tool.
 
-        The wire description drops the docstring's ``Args:`` block because the
-        per-parameter schema carries the same text (``tool_definition_from_callable``
-        strips it unless asked to keep it). Two shapes keep the block: freeform
-        bindings, whose schema is a fallback ``input`` envelope rather than the
-        real parameters, and tools with an explicit input schema that does not
-        describe every property — in both cases the ``Args:`` block is the only
-        place their parameters are documented on the wire.
+        Definitions are explicit artifacts (see ``kolega_code.agent.tool_definitions``);
+        nothing is derived from the handler. dispatch_agent is template plus data:
+        its static base description gains the per-collection agent_type catalog,
+        and its schema is built from the same agent_type computation.
         """
-        explicit_schema = self.extension_schemas.get(method_name)
-        freeform = method_name == "apply_patch"
-        definition = tool_definition_from_callable(
-            method_name,
-            method,
-            keep_args_in_description=freeform
-            or (explicit_schema is not None and not schema_has_property_descriptions(explicit_schema)),
-        )
-        if method_name == "apply_patch":
-            definition.description = (
-                "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON. "
-                "Patch paths may be project-relative, use ../ traversal, or be absolute."
-            )
-            definition.input_kind = "freeform"
-            definition.freeform_format = {
-                "type": "grammar",
-                "syntax": "lark",
-                "definition": CODEX_APPLY_PATCH_GRAMMAR,
-            }
-        if method_name == "edit" and self.edit_protocol == EditProtocol.HASHLINE_V2:
-            definition.input_schema = _HASHLINE_V2_INPUT_SCHEMA
-        if method_name == "dispatch_agent":
+        definition = builtin_tool_definition(spec_key, name=wire_name)
+        if spec_key == "dispatch_agent":
             agent_types = self._available_agent_types()
             definition.description = f"{definition.description}\n\n{self._dispatch_agent_type_catalog(agent_types)}"
-            definition.input_schema = _dispatch_agent_input_schema(agent_types, browser_targets=self._browser_targets)
+            definition.input_schema = dispatch_agent_input_schema(agent_types, browser_targets=self._browser_targets)
         return definition
+
+    def _extension_tool_definition(self, method_name: str, method: Callable[..., Any]) -> ToolDefinition:
+        """Build a host-extension tool definition from its callable.
+
+        The wire description drops the docstring's ``Args:`` block because the
+        per-parameter schema carries the same text, unless an explicit input
+        schema does not describe every property — then the ``Args:`` block is
+        the only place the parameters are documented on the wire.
+        """
+        explicit_schema = self.extension_schemas.get(method_name)
+        return tool_definition_from_callable(
+            method_name,
+            method,
+            keep_args_in_description=explicit_schema is not None
+            and not schema_has_property_descriptions(explicit_schema),
+        )
 
     # One accurate line per built-in agent_type, appended to dispatch_agent's
     # description for the types this collection actually offers.
@@ -2209,7 +1839,9 @@ class ToolCollection(LogMixin):
         for binding in edit_protocol_spec(self.edit_protocol).tools:
             if binding.name in self.tool_exclusions or not self._should_include_tool(binding.name):
                 continue
-            registry.add(self._build_tool(binding.name, getattr(self, binding.handler_name)))
+            registry.add(
+                self._build_tool(binding.name, getattr(self, binding.handler_name), definition_key=binding.handler_name)
+            )
 
         for method_name, method in self.extension_callbacks.items():
             if method_name in registry or method_name in self.tool_exclusions:
@@ -2257,8 +1889,11 @@ class ToolCollection(LogMixin):
         allowed = self.tool_config.allowed_tools
         return allowed is None or name in allowed
 
-    def _build_tool(self, method_name: str, method: Callable[..., Any]) -> Tool:
-        definition = self._tool_definition_from_callable(method_name, method)
+    def _build_tool(self, method_name: str, method: Callable[..., Any], definition_key: Optional[str] = None) -> Tool:
+        if method_name in self.extension_callbacks:
+            definition = self._extension_tool_definition(method_name, method)
+        else:
+            definition = self._builtin_tool_definition(definition_key or method_name, method_name)
         explicit_schema = self.extension_schemas.get(method_name)
         if explicit_schema is not None:
             definition.input_schema = explicit_schema

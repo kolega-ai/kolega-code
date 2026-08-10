@@ -79,10 +79,11 @@ def test_run_workflow_appears_when_enabled(project_path, mock_connection_manager
     assert "args" in schema["properties"]
     assert "type" not in schema["properties"]["args"]
 
-    # The session-scoped run listing ships with the same gate. Its schema is
-    # derived from the method signature, so no explicit input_schema is set.
+    # The session-scoped run listing ships with the same gate.
     assert "list_workflow_runs" in by_name
-    assert by_name["list_workflow_runs"].input_schema is None
+    runs_schema = by_name["list_workflow_runs"].input_schema
+    assert runs_schema is not None
+    assert "limit" in runs_schema["properties"]
 
 
 def test_sub_agent_never_gets_run_workflow(project_path, mock_connection_manager, agent_config):

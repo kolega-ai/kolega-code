@@ -15,8 +15,8 @@ def assert_external_path_description(description: str) -> None:
 
 
 def parameter_description(registry: ToolRegistry, tool_name: str, parameter_name: str) -> str:
-    parameters = registry.get(tool_name).definition.parameters
-    return next(parameter.description for parameter in parameters if parameter.name == parameter_name)
+    schema = registry.get(tool_name).definition._object_schema()
+    return schema["properties"][parameter_name]["description"]
 
 
 def collection(
@@ -102,27 +102,23 @@ def test_claude_protocol_reuses_lowercase_names_with_exact_string_schema(tmp_pat
     assert {"edit", "write"}.issubset(registry.names())
     assert "multi_edit" not in registry
     assert "apply_patch" not in registry
-    edit_parameters = registry.get("edit").definition.parameters
-    write_parameters = registry.get("write").definition.parameters
-    assert {parameter.name for parameter in edit_parameters} == {
+    edit_schema = registry.get("edit").definition._object_schema()
+    write_schema = registry.get("write").definition._object_schema()
+    assert set(edit_schema["properties"]) == {
         "file_path",
         "old_string",
         "new_string",
         "replace_all",
     }
-    assert {parameter.name for parameter in edit_parameters if parameter.required} == {
+    assert set(edit_schema["required"]) == {
         "file_path",
         "old_string",
         "new_string",
     }
-    assert {parameter.name for parameter in write_parameters} == {"file_path", "content"}
-    assert all(parameter.required for parameter in write_parameters)
-    assert_external_path_description(
-        next(parameter.description for parameter in edit_parameters if parameter.name == "file_path")
-    )
-    assert_external_path_description(
-        next(parameter.description for parameter in write_parameters if parameter.name == "file_path")
-    )
+    assert set(write_schema["properties"]) == {"file_path", "content"}
+    assert set(write_schema["required"]) == set(write_schema["properties"])
+    assert_external_path_description(edit_schema["properties"]["file_path"]["description"])
+    assert_external_path_description(write_schema["properties"]["file_path"]["description"])
 
 
 def test_read_only_agent_never_gets_claude_edit_tools(tmp_path: Path) -> None:

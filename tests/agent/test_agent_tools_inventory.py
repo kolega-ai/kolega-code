@@ -511,12 +511,12 @@ def test_exec_command_exposes_optional_background_param(project_path, mock_conne
     )
 
     exec_tool = next(tool for tool in agent.tool_collection.get_tool_list() if tool.name == "exec_command")
-    params = {param.name: param for param in exec_tool.parameters}
+    schema = exec_tool._object_schema()
 
-    assert "background" in params
-    assert params["background"].type == "boolean"
-    assert params["background"].required is False
-    assert params["background"].description
+    assert "background" in schema["properties"]
+    assert schema["properties"]["background"]["type"] == "boolean"
+    assert "background" not in schema["required"]
+    assert schema["properties"]["background"]["description"]
 
 
 def test_eval_tool_schema_carries_the_kernel_contract(project_path, mock_connection_manager, agent_config):
@@ -544,14 +544,14 @@ def test_eval_tool_schema_carries_the_kernel_contract(project_path, mock_connect
     assert "read()/write()" in description
     assert "model-facing format" in description
 
-    params = {param.name: param for param in eval_tool.parameters}
+    schema = eval_tool._object_schema()
     # `code` is the payload and stays required; `language` defaults to "py" (the
     # dominant case), so omitting it is a valid call rather than a hard error.
-    assert params["code"].required is True
-    assert params["language"].required is False
-    assert params["title"].required is False
-    assert params["timeout"].type == "number"
-    assert params["reset"].type == "boolean"
+    assert "code" in schema["required"]
+    assert "language" not in schema["required"]
+    assert "title" not in schema["required"]
+    assert schema["properties"]["timeout"]["type"] == "number"
+    assert schema["properties"]["reset"]["type"] == "boolean"
 
 
 def test_eval_tool_hidden_when_disabled(project_path, mock_connection_manager, agent_config):
