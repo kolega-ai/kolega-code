@@ -216,6 +216,7 @@ def _client(config: AgentConfig, provider: str) -> LLMClient:
     model_config = config.long_context_config
     return LLMClient(
         provider=provider,
+        model=model_config.model,  # route flash -> DeepSeekResponsesProvider (0731); without it, flash falls to the old Chat path
         api_key=config.get_api_key(ModelProvider(provider)) or "",
         max_retries=model_config.rate_limits.max_retries,
         requests_per_minute=model_config.rate_limits.requests_per_minute,
