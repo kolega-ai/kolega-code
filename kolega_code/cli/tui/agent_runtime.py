@@ -17,6 +17,7 @@ from kolega_code.agent import (
 from kolega_code.agent.baseagent import QueuedUserInput
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.tool_definitions import tool_description_asset
+from kolega_code.agent.volatile_context import VolatileSection
 from kolega_code.extensions import (
     KolegaExtensionHost,
     KolegaExtensionLoadError,
@@ -1021,6 +1022,32 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             propagate_to_sub_agents=True,
         )
 
+    def _plan_volatile_section(self) -> VolatileSection:
+        """Volatile section carrying a handle to the current plan artifact.
+
+        Registered on the top-level agent so that after compaction (which summarizes the
+        plan away) the model is reminded where the approved plan lives and can re-read it.
+        Empty text when there is no captured plan; best-effort persistence is silent here
+        because the prompt-extension path already surfaces write failures.
+        """
+        plan = getattr(self, "_latest_plan", None)
+        if not plan:
+            return VolatileSection("plan", "")
+        try:
+            path = write_current_plan_artifact(self.store.root, self.session.session_id, plan)
+        except Exception:
+            return VolatileSection("plan", "")
+        return VolatileSection("plan", build_current_plan_artifact_prompt(path))
+
+    def _task_list_volatile_section(self) -> VolatileSection:
+        """Volatile section carrying the current shared task list.
+
+        Injected as a ``<system-reminder>`` so the model always sees the latest todos —
+        including after compaction and after every ``update_task_list`` call — without
+        needing to re-fetch them. Empty text when no task list has been set.
+        """
+        return VolatileSection("task_list", (getattr(self.session, "task_list_markdown", "") or "").strip())
+
     def _scratchpad_prompt_extension(self) -> PromptExtension | None:
         """Return prompt context advertising this session's scratchpad directory.
 
@@ -1214,6 +1241,14 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         # The runtime owns the agent for control purposes while the CLI keeps
         # composing it from settings, skills, hooks, and MCP configuration.
         self.session_runtime.adopt(self.agent)
+        # The plan handle and shared task list are conversation-injected context (system
+        # reminders), so a compaction that summarizes them away is followed by re-injection
+        # on the next turn — see agent/volatile_context.py. Registered in both interaction
+        # modes: the planner sees the plan artifact while re-planning mid-build, and both
+        # modes keep the task list (read-only for the planner) in view. Each rebuild
+        # constructs a fresh agent, so providers never accumulate across rebuilds.
+        self.agent.add_volatile_section(self._plan_volatile_section)
+        self.agent.add_volatile_section(self._task_list_volatile_section)
         if scratchpad_extension is not None:
             # Expose the resolved directory for the KOLEGA_SCRATCHPAD session env
             # and the terminal safety checker; the prompt extension above is what

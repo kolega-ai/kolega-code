@@ -436,6 +436,10 @@ class BaseAgent(LogMixin):
         # change instead of being rendered into the system prompt, which keeps the cached prefix
         # stable for the whole session. See agent/volatile_context.py.
         self._volatile_context = VolatileContextTracker()
+        # Host-registered volatile-context sections (e.g. a plan handle or the shared task
+        # list). Providers run on every turn; an empty text (or None) means the section is
+        # currently absent. See add_volatile_section.
+        self._extra_volatile_sections: List[Callable[[], Optional[VolatileSection]]] = []
 
         self.conversation = Conversation(max_tool_result_chars=self.max_tool_result_chars_in_history)
         self.conversation.skill_content_pattern = self.skill_content_pattern
@@ -1168,8 +1172,15 @@ class BaseAgent(LogMixin):
                 on_error=on_error,
                 system_prompt_text=compaction_system_prompt,
             )
-            if result.ok and self.session_recorder is not None:
-                await asyncio.to_thread(self.session_recorder.record_compaction, self.dump_compaction_state())
+            if result.ok:
+                # Compaction summarizes the injected volatile-context blocks along with
+                # everything else, so memory, guidance, and any host sections (plan handle,
+                # task list) may survive only in lossy summary form. Forget the sent-state
+                # so the next turn re-sends them. Done here — not at the call sites — so
+                # the manual /compact command gets the same re-injection as auto-compaction.
+                self._volatile_context.forget()
+                if self.session_recorder is not None:
+                    await asyncio.to_thread(self.session_recorder.record_compaction, self.dump_compaction_state())
         finally:
             # Recount + emit so the context gauge reflects post-compaction reality
             # (even on a no-op the UI may have been stale).
@@ -1185,6 +1196,9 @@ class BaseAgent(LogMixin):
         if self.session_recorder is not None:
             self.session_recorder.start_epoch("agent_clear_command")
         self.conversation.clear()
+        # The model no longer holds any injected context; re-send the current sections
+        # (memory, guidance, plan handle, task list) on the next turn.
+        self.reset_volatile_context()
 
     # ------------------------------------------------------------------
     # Tool execution
@@ -2073,11 +2087,41 @@ class BaseAgent(LogMixin):
             except Exception:
                 # Disabled/unavailable memory is intentionally invisible to the model.
                 memory_body = ""
-        return [
+        sections = [
             VolatileSection("memory", memory_body),
             VolatileSection("guidance", guidance, guidance_file),
             VolatileSection("date", f"Today's date: {datetime.now().strftime('%Y-%m-%d')}"),
         ]
+        for provider in self._extra_volatile_sections:
+            try:
+                section = provider()
+            except Exception:
+                # A broken host provider must not kill turns; its section is skipped.
+                logger.exception("Volatile-section provider failed; skipping its section")
+                continue
+            if section is not None:
+                sections.append(section)
+        return sections
+
+    def add_volatile_section(self, provider: Callable[[], Optional[VolatileSection]]) -> None:
+        """Register a host-provided volatile-context section.
+
+        ``provider`` is called on every turn and must return the section's current text;
+        ``None`` or an empty-text :class:`VolatileSection` means "not currently present".
+        Sections are injected as ``<system-reminder>`` user messages, deduplicated by
+        fingerprint, and re-sent after compaction or history clears (see
+        ``reset_volatile_context``). The CLI registers the plan handle and the shared task
+        list this way so they survive conversation summarization.
+        """
+        self._extra_volatile_sections.append(provider)
+
+    def reset_volatile_context(self) -> None:
+        """Drop the volatile-context sent-state so the next turn re-sends every section.
+
+        Used after operations that wipe or summarize history (``/clear``, compaction),
+        which otherwise leave the model without context it was already shown.
+        """
+        self._volatile_context.forget()
 
     def pending_volatile_context(self) -> Optional[TextBlock]:
         """Volatile context the model has not been shown yet, or ``None`` if nothing changed."""
@@ -2186,10 +2230,9 @@ class BaseAgent(LogMixin):
                         },
                     )
                     result = await self.compress_history()
-                    # Compaction summarizes the injected volatile-context blocks along with
-                    # everything else, so the memory and guidance the model was given may
-                    # survive only in lossy summary form. Re-send them on the next turn.
-                    self._volatile_context.forget()
+                    # compress_history forgets the volatile-context sent-state on success,
+                    # so the next turn re-sends memory, guidance, and any host sections
+                    # (plan handle, task list) the summary may have folded away.
                     # Rebuild after compaction (history changed) and re-mark the cache
                     # checkpoint before re-counting so the reused history reflects it.
                     self.mark_cache_checkpoint()
