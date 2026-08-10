@@ -9,10 +9,11 @@ from benchmarks.edit_tools.models import (
     SuiteSpec,
     TaskSpec,
 )
-from benchmarks.edit_tools.runner import _controlled_execution, plan_trials, run_benchmark
+from benchmarks.edit_tools.runner import _client, _controlled_execution, plan_trials, run_benchmark
 from benchmarks.edit_tools.workspace import materialize_task, verify_task
 from kolega_code.config import AgentConfig, EditProtocol, ModelConfig, ModelProvider
 from kolega_code.llm.models import Message, TextBlock, ToolCall
+from kolega_code.llm.providers.deepseek_responses import DeepSeekResponsesProvider
 from kolega_code.llm.specs import default_thinking_effort
 from kolega_code.services.lsp.config import LspConfig
 
@@ -72,6 +73,20 @@ def test_plan_uses_catalog_defaults_and_stable_trial_ids() -> None:
     )
     assert first[0].model_parameters["max_iterations"] == 17
     assert first[0].trial_id == second[0].trial_id
+
+
+def test_client_routes_deepseek_flash_from_benchmark_config() -> None:
+    model = ModelConfig(provider=ModelProvider.DEEPSEEK, model="deepseek-v4-flash")
+    config = AgentConfig(
+        deepseek_api_key="test",
+        long_context_config=model,
+        fast_config=model,
+        lsp=LspConfig(enabled=False),
+    )
+
+    client = _client(config, "deepseek")
+
+    assert isinstance(client.provider, DeepSeekResponsesProvider)
 
 
 @pytest.mark.asyncio
