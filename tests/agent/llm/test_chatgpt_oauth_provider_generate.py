@@ -105,7 +105,7 @@ async def test_provider_generate_builds_codex_shaped_request(monkeypatch):
     # can be resent next turn (matches Codex; the cause of the long-thinking gap).
     assert kwargs["include"] == ["reasoning.encrypted_content"]
     assert kwargs["tool_choice"] == "auto"
-    assert kwargs["parallel_tool_calls"] is False
+    assert kwargs["parallel_tool_calls"] is True
     assert "prompt_cache_key" in kwargs
     # Codex never sends max_output_tokens; sending it triggers a 400.
     assert "max_output_tokens" not in kwargs

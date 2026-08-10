@@ -169,6 +169,7 @@ def test_build_request_is_responses_shaped_with_reasoning():
     assert request["stream"] is True
     assert request["store"] is False
     assert request["tool_choice"] == "auto"
+    assert request["parallel_tool_calls"] is True
     assert request["instructions"] == "sys"
     assert request["reasoning"] == {"effort": "high", "summary": "auto"}
     assert request["include"] == ["reasoning.encrypted_content"]

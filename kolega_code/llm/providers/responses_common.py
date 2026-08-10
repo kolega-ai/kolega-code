@@ -915,7 +915,11 @@ class ResponsesProviderBase(OpenAIProvider):
             "input": to_responses_input(messages),
             "tools": responses_tools(params) or [],
             "tool_choice": "auto",
-            "parallel_tool_calls": False,
+            # The executor independently gates each returned batch using the
+            # tools' parallel_safe metadata. Allow capable Responses models to
+            # emit independent calls together so safe batches can actually run
+            # concurrently.
+            "parallel_tool_calls": True,
             "store": False,
             "stream": True,
             "prompt_cache_key": self._session_id,
