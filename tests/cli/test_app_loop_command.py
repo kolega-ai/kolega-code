@@ -178,6 +178,12 @@ async def _wait_loop_idle(app, pilot, *, timeout: float = 6.0) -> None:
         return app.agent_worker is None and not app._turn_active and not app._loop_iteration_active
 
     await _wait_for(app, pilot, _idle, timeout=timeout)
+    # The turn that just completed scheduled a 10ms queued-message-drain
+    # timer; let it fire before returning. If it fires after a test queues a
+    # message, it would start that message as a real turn which could still be
+    # running at teardown — colliding with widget pruning as a
+    # NoMatches("#composer") WorkerFailed flake in CI.
+    await pilot.pause(0.05)
 
 
 async def _tick(app, pilot) -> None:

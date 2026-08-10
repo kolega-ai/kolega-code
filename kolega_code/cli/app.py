@@ -2486,7 +2486,13 @@ class KolegaCodeApp(
             self._refresh_queued_messages_panel()
 
     def _set_chat_enabled(self, enabled: bool) -> None:
-        composer = self.query_one("#composer", tui_widgets.ChatComposer)
+        try:
+            composer = self.query_one("#composer", tui_widgets.ChatComposer)
+        except Exception:
+            # The composer may be unmounted while a turn finalizes (e.g. app
+            # teardown); nothing to update then. Guarded like the sibling
+            # composer helpers so a late finalize can't raise WorkerFailed.
+            return
         composer.disabled = not enabled or self._plan_decision_active or self._pending_approval is not None
         if self.config is None and self.agent is None:
             composer.placeholder = messages.DISCONNECTED_COMPOSER_PLACEHOLDER
@@ -2494,7 +2500,11 @@ class KolegaCodeApp(
             composer.placeholder = messages.COMPOSER_PLACEHOLDER
 
     def _set_composer_status(self, status: str) -> None:
-        self.query_one("#composer", tui_widgets.ChatComposer).placeholder = status
+        try:
+            composer = self.query_one("#composer", tui_widgets.ChatComposer)
+        except Exception:
+            return
+        composer.placeholder = status
 
     def _restore_composer_placeholder(self) -> None:
         try:
