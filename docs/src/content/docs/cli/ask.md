@@ -26,6 +26,7 @@ kolega-code ask "<prompt>" [options]
 | `--web-search <auto\|hosted\|client\|off>` | Web tool mode: hosted server-side search, client tools, or none (default `auto`) |
 | `--lsp <on\|off>` | Force LSP tools on or off for this session (overrides settings; not persisted) |
 | `--subagents <on\|off>` | Force sub-agent dispatch (`dispatch_agent`) on or off for this session (overrides settings; not persisted; default on) |
+| `--skills <on\|off>` | Force [Agent Skills](../../skills/) on or off for this session (overrides settings; not persisted; default on). When off, skills are not discovered and the `skill` tool is not exposed |
 | `--compression-threshold PERCENT` | Context-window usage that triggers automatic history compression (`10`–`100`, default `80`; `100` effectively disables it). Overrides settings for the session; not persisted |
 | `--session <ID>` | Resume or create a specific session |
 | `--state-dir <PATH>` | Directory for CLI session state |
@@ -86,6 +87,11 @@ it against the project's [Agent Skills](../../skills/):
   prints the skill's activation content.
 - `kolega-code ask "/my-skill do the thing"` activates the skill and runs the
   remaining prompt.
+
+When Agent Skills are disabled (`--skills off`, `KOLEGA_CODE_SKILLS=off`, or the
+saved `skills_enabled` setting), `/skills` reports that Agent Skills are disabled
+and `/skill-name` prompts are sent to the model as plain text instead of being
+activated.
 
 ## Goal mode
 
