@@ -762,6 +762,9 @@ class LocalTerminalManager(TerminalManager):
         self.workspace_id = workspace_id
         self.thread_id = thread_id
         self.connection_manager = connection_manager
+        # Naturally exited sessions remain here until write_stdin/kill_session
+        # returns their final unread delta. list_sessions hides them and closes
+        # their process resources without discarding that recoverable result.
         self.sessions: Dict[str, Session] = {}
         self._counter = 0
         self.auto_activate_venv = True
@@ -1050,13 +1053,22 @@ class LocalTerminalManager(TerminalManager):
 
     async def list_sessions(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {}
-        for session_id, session in self.sessions.items():
+        completed: list[Session] = []
+        for session_id, session in list(self.sessions.items()):
+            running = session.running
+            if not running:
+                completed.append(session)
+                continue
             result[session_id] = {
                 "command": session.command,
                 "workdir": str(session.workdir),
                 "runtime_s": round(time.monotonic() - session.start_time, 1),
-                "running": session.running,
+                "running": True,
             }
+        if completed:
+            # Release PTY descriptors, detached pumps, raw spools, and FIFOs,
+            # but retain each finalized output accumulator for one final poll.
+            await asyncio.gather(*(session.close() for session in completed), return_exceptions=True)
         return result
 
     async def close_all(self) -> None:

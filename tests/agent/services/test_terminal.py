@@ -40,6 +40,20 @@ def _process_alive(pid: int) -> bool:
     return True
 
 
+def _marker_command(marker: Path, final_output: str) -> str:
+    script = "\n".join(
+        [
+            "import pathlib, time",
+            f"marker = pathlib.Path({str(marker)!r})",
+            "print('started', flush=True)",
+            "while not marker.exists():",
+            "    time.sleep(0.01)",
+            f"print({final_output!r}, flush=True)",
+        ]
+    )
+    return f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
+
+
 class _RecordingConnectionManager(AgentConnectionManager):
     def __init__(self):
         self.events = []
@@ -140,6 +154,102 @@ async def test_list_sessions_tracks_running_and_clears(manager):
 
     await manager.kill_session(result.session_id, "TERM")
     assert result.session_id not in await manager.list_sessions()
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_hides_naturally_exited_pty_until_final_poll(manager, tmp_path):
+    marker = tmp_path / "finish-pty"
+    result = await manager.exec_command(
+        _marker_command(marker, "pty-final"),
+        workdir=str(tmp_path),
+        yield_time_ms=250,
+    )
+    assert result.status == "running"
+    session_id = result.session_id
+    assert session_id is not None
+    session = manager.sessions[session_id]
+    assert isinstance(session, PtySession)
+
+    marker.touch()
+    await asyncio.wait_for(session.exited.wait(), timeout=3)
+
+    assert session_id not in await manager.list_sessions()
+    assert manager.sessions[session_id] is session
+    assert session.master_fd is None
+
+    final = await manager.write_stdin(session_id, "", yield_time_ms=250)
+    assert final.status == "exited"
+    assert final.exit_code == 0
+    assert "pty-final" in final.output
+    assert session_id not in manager.sessions
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_hides_naturally_exited_detached_session_and_closes_raw_resources(manager, tmp_path):
+    marker = tmp_path / "finish-detached"
+    result = await manager.exec_command(
+        _marker_command(marker, "detached-final"),
+        workdir=str(tmp_path),
+        yield_time_ms=250,
+        background=True,
+    )
+    assert result.status == "running"
+    session_id = result.session_id
+    assert session_id is not None
+    session = manager.sessions[session_id]
+    assert isinstance(session, DetachedSession)
+    assert session.log_path is not None
+    assert session.stdin_path is not None
+    log_path = Path(session.log_path)
+    stdin_path = Path(session.stdin_path)
+
+    marker.touch()
+    await asyncio.wait_for(session.exited.wait(), timeout=3)
+    assert log_path.exists()
+    assert stdin_path.exists()
+
+    assert session_id not in await manager.list_sessions()
+    assert manager.sessions[session_id] is session
+    assert session.log_path is None
+    assert session.stdin_path is None
+    assert not log_path.exists()
+    assert not stdin_path.exists()
+
+    final = await manager.kill_session(session_id, "TERM")
+    assert final.status == "exited"
+    assert final.exit_code == 0
+    assert "detached-final" in final.output
+    assert session_id not in manager.sessions
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_reports_only_live_sessions_when_completed_results_are_retained(manager, tmp_path):
+    live = await manager.exec_command("sleep 30", workdir=str(tmp_path), yield_time_ms=250)
+    marker = tmp_path / "finish-mixed"
+    completed = await manager.exec_command(
+        _marker_command(marker, "mixed-final"),
+        workdir=str(tmp_path),
+        yield_time_ms=250,
+    )
+    assert live.session_id is not None
+    assert completed.session_id is not None
+
+    try:
+        completed_session = manager.sessions[completed.session_id]
+        marker.touch()
+        await asyncio.wait_for(completed_session.exited.wait(), timeout=3)
+
+        sessions = await manager.list_sessions()
+        assert set(sessions) == {live.session_id}
+        assert sessions[live.session_id]["running"] is True
+        assert completed.session_id in manager.sessions
+
+        final = await manager.write_stdin(completed.session_id, "", yield_time_ms=250)
+        assert final.status == "exited"
+        assert "mixed-final" in final.output
+    finally:
+        if live.session_id in manager.sessions:
+            await manager.kill_session(live.session_id, "TERM")
 
 
 @pytest.mark.asyncio
