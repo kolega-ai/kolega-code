@@ -1454,7 +1454,10 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
 
         if command_name == "skills":
             self._add_conversation_entry(
-                tui_state.ConversationEntry(kind="system", content=self.skill_catalog.format_catalog())
+                tui_state.ConversationEntry(
+                    kind="system",
+                    content=(self.skill_catalog.format_catalog() if self.skills_enabled else messages.SKILLS_DISABLED),
+                )
             )
             self._log_status(messages.SKILLS_LISTED, "ok")
             return True

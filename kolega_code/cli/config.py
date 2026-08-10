@@ -73,6 +73,10 @@ LSP_MODE_ENV = "KOLEGA_CODE_LSP"
 # defer to settings.subagents_enabled, then the default (enabled).
 SUBAGENT_MODES = ("on", "off")
 SUBAGENTS_MODE_ENV = "KOLEGA_CODE_SUBAGENTS"
+# Agent Skills master switch: on or off. Absent means defer to
+# settings.skills_enabled, then the default (enabled).
+SKILL_MODES = ("on", "off")
+SKILLS_MODE_ENV = "KOLEGA_CODE_SKILLS"
 # Compression threshold override, in percent (10-100). Absent means defer to
 # settings.compression_threshold, then the agent's built-in default (80%).
 COMPRESSION_THRESHOLD_ENV = "KOLEGA_CODE_COMPRESSION_THRESHOLD"
@@ -103,6 +107,9 @@ class CliConfigOverrides:
     # Sub-agent dispatch override from the --subagents flag ("on"/"off"); None
     # defers to KOLEGA_CODE_SUBAGENTS, then settings.subagents_enabled.
     subagents_mode: Optional[str] = None
+    # Agent Skills override from the --skills flag ("on"/"off"); None defers
+    # to KOLEGA_CODE_SKILLS, then settings.skills_enabled.
+    skills_mode: Optional[str] = None
     # Compression threshold in percent, as typed on the command line; parsed and
     # validated in _compression_threshold.
     compression_threshold: Optional[str] = None
@@ -317,6 +324,23 @@ def _subagents_enabled(
         return mode == "on"
     if settings is not None and settings.subagents_enabled is not None:
         return bool(settings.subagents_enabled)
+    return True
+
+
+def _skills_enabled(
+    env: Mapping[str, str],
+    settings: Optional[CliSettings],
+    override: Optional[str],
+) -> bool:
+    """Resolve the Agent Skills master switch with flag-over-env-over-settings precedence."""
+    mode = (override or env.get(SKILLS_MODE_ENV) or "").strip().lower()
+    if mode:
+        if mode not in SKILL_MODES:
+            valid = ", ".join(SKILL_MODES)
+            raise CliConfigError(f"Unsupported skills mode '{mode}'. Valid modes: {valid}")
+        return mode == "on"
+    if settings is not None and settings.skills_enabled is not None:
+        return bool(settings.skills_enabled)
     return True
 
 
@@ -675,6 +699,7 @@ def build_agent_config(
             lsp_project_trusted=lsp_project_trusted,
             eval_enabled=(True if settings is None or settings.eval_enabled is None else bool(settings.eval_enabled)),
             subagents_enabled=_subagents_enabled(loaded_env, settings, overrides.subagents_mode),
+            skills_enabled=_skills_enabled(loaded_env, settings, overrides.skills_mode),
             history_compression_threshold=compression_threshold,
         )
     except ValueError as exc:

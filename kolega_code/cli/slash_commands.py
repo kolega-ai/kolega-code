@@ -101,7 +101,9 @@ def agent_command_names() -> frozenset[str]:
     return frozenset(spec.name for spec in CommandProcessor.SPECS)
 
 
-def all_command_entries(skill_catalog: "SkillCatalog | None" = None) -> List[SlashCommandEntry]:
+def all_command_entries(
+    skill_catalog: "SkillCatalog | None" = None, *, skills_enabled: bool = True
+) -> List[SlashCommandEntry]:
     """All known slash commands: agent built-ins, TUI commands, then skills.
 
     De-duplicated by name; agent and TUI commands take precedence over a
@@ -114,10 +116,15 @@ def all_command_entries(skill_catalog: "SkillCatalog | None" = None) -> List[Sla
             SlashCommandEntry(record.name, record.description, CommandScope.SKILL)
             for record in skill_catalog.skills.values()
         )
-        if skill_catalog is not None
+        if skill_catalog is not None and skills_enabled
         else ()
     )
-    for entry in (*agent_command_entries(), *TUI_COMMAND_ENTRIES, *skill_entries):
+    tui_entries = (
+        TUI_COMMAND_ENTRIES
+        if skills_enabled
+        else tuple(entry for entry in TUI_COMMAND_ENTRIES if entry.token != SKILLS_LIST_COMMAND)
+    )
+    for entry in (*agent_command_entries(), *tui_entries, *skill_entries):
         if entry.name in seen:
             continue
         seen.add(entry.name)
@@ -125,14 +132,20 @@ def all_command_entries(skill_catalog: "SkillCatalog | None" = None) -> List[Sla
     return entries
 
 
-def search_commands(query: str, skill_catalog: "SkillCatalog | None" = None, limit: int = 8) -> List[SlashCommandEntry]:
+def search_commands(
+    query: str,
+    skill_catalog: "SkillCatalog | None" = None,
+    limit: int = 8,
+    *,
+    skills_enabled: bool = True,
+) -> List[SlashCommandEntry]:
     """Filter commands by ``query``: prefix matches first, then substring matches.
 
     An empty query returns all commands (capped at ``limit``). Results are
     alphabetical within each tier.
     """
     needle = query.lower()
-    entries = all_command_entries(skill_catalog)
+    entries = all_command_entries(skill_catalog, skills_enabled=skills_enabled)
     if not needle:
         return sorted(entries, key=lambda entry: entry.name)[:limit]
     prefix = [entry for entry in entries if entry.name.lower().startswith(needle)]

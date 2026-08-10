@@ -43,6 +43,7 @@ from ..goal import (
 )
 from ..plan_artifacts import write_current_plan_artifact
 from ..skills import (
+    SkillCatalog,
     build_skill_prompt_extension,
     build_skill_tool_extension,
     context_window_tokens_for_skill_budget,
@@ -1091,7 +1092,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             browser_visible=self.browser_visible,
         )
         agent_class = PlanningAgent if self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE else CoderAgent
-        self.skill_catalog = discover_skills(self.active_project_path)
+        self.skills_enabled = config.skills_enabled
+        self.skill_catalog = discover_skills(self.active_project_path) if self.skills_enabled else SkillCatalog()
         self.custom_agent_catalog = validate_custom_agent_models(
             discover_custom_agents(self.active_project_path, self.settings_store.root),
             config,
@@ -1126,21 +1128,22 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         scratchpad_extension = self._scratchpad_prompt_extension()
         if scratchpad_extension is not None:
             prompt_extensions.append(scratchpad_extension)
-        skill_prompt_extension = build_skill_prompt_extension(
-            self.skill_catalog,
-            context_window_tokens=context_window_tokens_for_skill_budget(
-                config,
-                getattr(agent_class, "agent_name", None),
-            ),
-        )
-        skill_tool_extension = build_skill_tool_extension(
-            self.skill_catalog,
-            lambda: self.agent.history if self.agent is not None else [],
-        )
-        if skill_prompt_extension is not None:
-            prompt_extensions.append(skill_prompt_extension)
-        if skill_tool_extension is not None:
-            tool_extensions.append(skill_tool_extension)
+        if self.skills_enabled:
+            skill_prompt_extension = build_skill_prompt_extension(
+                self.skill_catalog,
+                context_window_tokens=context_window_tokens_for_skill_budget(
+                    config,
+                    getattr(agent_class, "agent_name", None),
+                ),
+            )
+            skill_tool_extension = build_skill_tool_extension(
+                self.skill_catalog,
+                lambda: self.agent.history if self.agent is not None else [],
+            )
+            if skill_prompt_extension is not None:
+                prompt_extensions.append(skill_prompt_extension)
+            if skill_tool_extension is not None:
+                tool_extensions.append(skill_tool_extension)
         # Both modes can ask the user; only the framing differs. Plan mode treats a
         # question as cheap, build mode reserves it for decisions that are expensive
         # to get wrong.

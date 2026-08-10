@@ -92,6 +92,13 @@ def test_parse_lsp_flag_on_both_parsers() -> None:
     assert parse_args(["ask", "hello"]).lsp is None
 
 
+def test_parse_skills_flag_on_both_parsers() -> None:
+    assert parse_args(["/tmp/project", "--skills", "off"]).skills == "off"
+    assert parse_args(["ask", "hello", "--skills", "on"]).skills == "on"
+    assert parse_args(["/tmp/project"]).skills is None
+    assert parse_args(["ask", "hello"]).skills is None
+
+
 def test_parse_tui_show_logs_flag() -> None:
     args = parse_args(["/tmp/project", "--show-logs"])
 
@@ -392,6 +399,24 @@ def test_ask_skills_lists_discovered_skills_without_api_key(tmp_path: Path, caps
     assert "Use this demo skill." in output
 
 
+def test_ask_skills_off_reports_disabled_without_discovery(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    from kolega_code.cli import main as main_module
+
+    project = tmp_path / "project"
+    project.mkdir()
+    write_skill(project)
+    discover = Mock(wraps=main_module.discover_skills)
+    monkeypatch.setattr(main_module, "discover_skills", discover)
+
+    exit_code = main_module.main(["ask", "/skills", "--project", str(project), "--skills", "off"])
+
+    assert exit_code == 0
+    assert "Agent Skills are disabled" in capsys.readouterr().out
+    discover.assert_not_called()
+
+
 def test_ask_skill_only_prints_activation_without_model_call(tmp_path: Path, capsys, isolated_cli_env: None) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -462,6 +487,37 @@ def test_ask_skill_with_prompt_activates_before_dispatch(
     assert agent.messages == ["do the task"]
     assert '<skill_content name="demo-skill">' in agent.history[0].get_text_content()
     assert any(extension.name == "cli-agent-skills" for extension in agent.kwargs["tool_extensions"])
+
+
+def test_ask_skills_off_hides_prompt_and_tool_extensions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    from kolega_code.cli import main as main_module
+
+    class FakeCoderAgent(_FakeCoderAgent):
+        instances = []
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.__class__.instances.append(self)
+
+        async def process_message_stream(self, message):
+            yield {"type": "response", "content": "ok", "complete": True, "uuid": "response-1"}
+
+    project = tmp_path / "project"
+    project.mkdir()
+    write_skill(project)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("KOLEGA_CODE_PROVIDER", "anthropic")
+    monkeypatch.setenv("KOLEGA_CODE_MODEL", "claude-opus-5")
+    monkeypatch.setattr(main_module, "CoderAgent", FakeCoderAgent)
+
+    exit_code = main_module.main(["ask", "hello", "--project", str(project), "--skills", "off"])
+
+    assert exit_code == 0
+    agent = FakeCoderAgent.instances[0]
+    assert "cli-agent-skills" not in {extension.id for extension in agent.kwargs["prompt_extensions"]}
+    assert "cli-agent-skills" not in {extension.name for extension in agent.kwargs["tool_extensions"]}
 
 
 def test_ask_plain_handles_billing_error_without_traceback(

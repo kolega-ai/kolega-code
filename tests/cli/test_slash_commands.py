@@ -107,5 +107,12 @@ def test_search_commands_includes_skills_dynamically():
     assert results[0].description == "Description of demo-skill"
 
 
+def test_search_commands_hides_all_skill_entries_when_disabled():
+    results = search_commands("skill", _catalog("demo-skill"), limit=100, skills_enabled=False)
+    names = {entry.name for entry in results}
+    assert "skills" not in names
+    assert "demo-skill" not in names
+
+
 def test_search_commands_no_match():
     assert search_commands("zzz", _catalog()) == []
