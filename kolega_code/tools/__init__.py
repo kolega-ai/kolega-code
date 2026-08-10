@@ -13,8 +13,6 @@ from .core import Tool, ToolError
 from .definitions import (
     ASK_USER_CHOICE_INPUT_SCHEMA,
     ASK_USER_CHOICE_SHAPE_HINT,
-    schema_has_property_descriptions,
-    tool_definition_from_callable,
 )
 from .registry import ToolPolicy, ToolRegistry
 
@@ -25,6 +23,4 @@ __all__ = [
     "ToolError",
     "ToolPolicy",
     "ToolRegistry",
-    "schema_has_property_descriptions",
-    "tool_definition_from_callable",
 ]

@@ -536,7 +536,7 @@ def test_exec_command_exposes_optional_background_param(project_path, mock_conne
 
 
 def test_eval_tool_schema_carries_the_kernel_contract(project_path, mock_connection_manager, agent_config):
-    """The eval tool's docstring-derived schema teaches the model the feature."""
+    """The eval tool's declared definition teaches the model the feature."""
     agent = CoderAgent(
         project_path=project_path,
         workspace_id="test_workspace",
@@ -828,13 +828,13 @@ def test_get_host_present_with_sandbox_terminal_manager(project_path, mock_conne
 
 
 def test_wire_descriptions_document_parameters_only_in_schema(project_path, mock_connection_manager, agent_config):
-    """CLI coder definitions never carry the docstring Args block twice.
+    """CLI coder definitions never document the same parameter twice.
 
-    Every introspection-built definition documents its parameters in the
-    per-parameter schema; the wire description strips the parsed Args section,
-    so no description repeats it. Tools whose explicit schema leaves a property
-    undocumented (enum-only, e.g. browser button) keep their Args block — that
-    is the only place those parameters are documented.
+    Declared descriptions carry no dangling Args section: parameters are
+    documented in the schema. Tools whose schema leaves a property undocumented
+    (enum-only, e.g. browser button) keep an Args block in the description —
+    that is the only place those parameters are documented, and the declared
+    artifacts preserve it deliberately.
     """
     agent = _coder(project_path, mock_connection_manager, agent_config)
     definitions = {definition.name: definition for definition in agent.tool_collection.get_tool_list()}
@@ -843,7 +843,7 @@ def test_wire_descriptions_document_parameters_only_in_schema(project_path, mock
     for name, definition in definitions.items():
         assert not any(line.strip() == "Args:" for line in definition.description.splitlines()), name
 
-    # The same parameters are fully documented in the flat introspection schema.
+    # The same parameters are fully documented in the declared schema.
     schema = definitions["exec_command"].to_anthropic()["input_schema"]
     assert schema["properties"]["command"]["description"]
     assert schema["properties"]["yield_time_ms"]["description"]
