@@ -28,9 +28,19 @@ from .config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from .events import AgentConnectionManager
 from .events import AgentEvent, AgentStatus
 
+# CLI-selected extensions
+from .extensions import (
+    KolegaExtensionBundle,
+    KolegaExtensionFactory,
+    KolegaExtensionHost,
+    KolegaExtensionLoadError,
+)
+
 # LLM clients and message models
 from .llm.client import LLMClient
 from .llm.instrumented_client import InstrumentedLLMClient
+from .llm.ledger import LlmCallOrigin, current_llm_call_origin, helper_origin, llm_call_origin
+from .llm.providers.tinker import TinkerTraceRecord
 from .llm.models import (
     ImageBlock,
     Message,
@@ -102,9 +112,19 @@ __all__ = [
     "AgentConnectionManager",
     "AgentEvent",
     "AgentStatus",
+    # CLI-selected extensions
+    "KolegaExtensionBundle",
+    "KolegaExtensionFactory",
+    "KolegaExtensionHost",
+    "KolegaExtensionLoadError",
     # LLM
     "LLMClient",
     "InstrumentedLLMClient",
+    "LlmCallOrigin",
+    "current_llm_call_origin",
+    "helper_origin",
+    "llm_call_origin",
+    "TinkerTraceRecord",
     "ImageBlock",
     "Message",
     "MessageHistory",

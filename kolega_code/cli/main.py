@@ -15,6 +15,15 @@ from typing import Any, Iterable, Optional
 
 from kolega_code.agent import CoderAgent
 from kolega_code.config import EditProtocol
+from kolega_code.extensions import (
+    ExtensionSelection,
+    KolegaExtensionHost,
+    KolegaExtensionLoadError,
+    bind_extension_agent,
+    cleanup_extension_bundle,
+    create_extension_bundle,
+    resolve_extension_selection,
+)
 from kolega_code.llm.ledger import UsageLedger
 
 from .ask_output import AskMessageEmitter, synthetic_text_message
@@ -234,6 +243,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser = _build_tui_parser()
     args = parser.parse_args(argv)
     _validate_worktree_args(parser, args)
+    _validate_extension_args(parser, args)
     return args
 
 
@@ -301,6 +311,36 @@ def _validate_worktree_args(parser: argparse.ArgumentParser, args: argparse.Name
         parser.error("--create-worktree cannot be combined with --resume or --session")
 
 
+def _add_extension_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--extension",
+        metavar="MODULE:FACTORY",
+        help="Load one installed Python extension at launch. The factory runs as trusted "
+        "arbitrary Python code with the same authority as Kolega Code itself; the module "
+        "must already be importable in the active environment.",
+    )
+    parser.add_argument(
+        "--extension-config",
+        metavar="PATH",
+        type=Path,
+        help="Opaque configuration file path passed to the --extension factory. "
+        "Kolega Code never reads or interprets its contents.",
+    )
+
+
+def _validate_extension_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if getattr(args, "extension_config", None) is not None and not getattr(args, "extension", None):
+        parser.error("--extension-config requires --extension")
+
+
+def _resolve_extension_selection_from_args(args: argparse.Namespace) -> Optional[ExtensionSelection]:
+    """Import the --extension factory once at launch; None when no extension was requested."""
+    spec = getattr(args, "extension", None)
+    if not spec:
+        return None
+    return resolve_extension_selection(spec, getattr(args, "extension_config", None))
+
+
 def _add_tui_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--version", action="store_true", help="Show the Kolega Code version.")
     parser.add_argument("project_path", nargs="?", default=".", type=Path, help="Project directory to work in.")
@@ -359,6 +399,7 @@ def _add_tui_args(parser: argparse.ArgumentParser) -> None:
     _add_session_args(parser, session_help="Legacy alias for --resume SESSION_ID.")
     _add_worktree_args(parser)
     _add_common_model_args(parser)
+    _add_extension_args(parser)
 
 
 def _build_tui_parser() -> argparse.ArgumentParser:
@@ -498,6 +539,7 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     _add_session_args(ask)
     _add_worktree_args(ask)
     _add_common_model_args(ask)
+    _add_extension_args(ask)
 
     sessions = subparsers.add_parser("sessions", help="Manage local CLI sessions.")
     sessions_sub = sessions.add_subparsers(dest="sessions_command", required=True)
@@ -1015,6 +1057,12 @@ def _run_tui(args: argparse.Namespace) -> int:
         session.permission_mode = effective_permission_mode
         store.save(session)
 
+    try:
+        extension_selection = _resolve_extension_selection_from_args(args)
+    except KolegaExtensionLoadError as exc:
+        _print_styled(str(exc), style="error", stderr=True)
+        return 1
+
     from .app import KolegaCodeApp
 
     app = KolegaCodeApp(
@@ -1030,6 +1078,7 @@ def _run_tui(args: argparse.Namespace) -> int:
         check_for_updates=True,
         show_logs=args.show_logs,
         startup_config_error=startup_config_error,
+        extension_selection=extension_selection,
     )
     try:
         app.run()
@@ -1229,6 +1278,11 @@ async def _run_ask(args: argparse.Namespace) -> int:
     settings_store = _settings_store_from_args(args)
     settings = settings_store.load()
     overrides = _overrides_from_args(args)
+    try:
+        extension_selection = _resolve_extension_selection_from_args(args)
+    except KolegaExtensionLoadError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
     skills_enabled = _skills_enabled(load_cli_env(launch_project_path), settings, overrides.skills_mode)
     skill_catalog = discover_skills(project_path) if skills_enabled else SkillCatalog()
     goal_condition = getattr(args, "goal", None)
@@ -1378,6 +1432,22 @@ async def _run_ask(args: argparse.Namespace) -> int:
     )
     if mcp_extension is not None:
         tool_extensions.append(mcp_extension)
+    extension_bundle = None
+    if extension_selection is not None:
+        extension_host = KolegaExtensionHost(
+            project_path=project_path,
+            workspace_id=session.workspace_id,
+            thread_id=session.thread_id,
+            config=config,
+            agent_mode=AgentMode.ASK,
+        )
+        try:
+            extension_bundle = create_extension_bundle(extension_selection, extension_host)
+        except KolegaExtensionLoadError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+        prompt_extensions.extend(extension_bundle.prompt_extensions)
+        tool_extensions.extend(extension_bundle.tool_extensions)
     permission_mode = normalize_permission_mode(
         getattr(args, "permission_mode", ASK_DEFAULT_PERMISSION_MODE),
         default=PermissionMode.AUTO,
@@ -1392,27 +1462,36 @@ async def _run_ask(args: argparse.Namespace) -> int:
         usage_sink = sink
         usage_ledger.observer = sink
         await sink.start()
-    agent = CoderAgent(
-        project_path=project_path,
-        workspace_id=session.workspace_id,
-        thread_id=session.thread_id,
-        connection_manager=manager,
-        config=config,
-        browser_manager=browser_manager,
-        agent_mode=AgentMode.ASK,
-        prompt_extensions=prompt_extensions,
-        tool_extensions=tool_extensions,
-        permission_mode=permission_mode,
-        permission_callback=_permission_callback_for_ask(launch_project_path)
-        if permission_mode == PermissionMode.ASK
-        else None,
-        session_recorder=session_recorder,
-        hook_dispatcher=hook_dispatcher,
-        custom_agent_catalog=custom_agent_catalog,
-        memory_project_path=launch_project_path,
-        memory_enabled=not getattr(args, "no_memory_tools", False),
-        usage_ledger=usage_ledger,
-    )
+    try:
+        agent = CoderAgent(
+            project_path=project_path,
+            workspace_id=session.workspace_id,
+            thread_id=session.thread_id,
+            connection_manager=manager,
+            config=config,
+            browser_manager=browser_manager,
+            agent_mode=AgentMode.ASK,
+            prompt_extensions=prompt_extensions,
+            tool_extensions=tool_extensions,
+            permission_mode=permission_mode,
+            permission_callback=_permission_callback_for_ask(launch_project_path)
+            if permission_mode == PermissionMode.ASK
+            else None,
+            session_recorder=session_recorder,
+            hook_dispatcher=hook_dispatcher,
+            custom_agent_catalog=custom_agent_catalog,
+            memory_project_path=launch_project_path,
+            memory_enabled=not getattr(args, "no_memory_tools", False),
+            usage_ledger=usage_ledger,
+            llm_trace_sink=extension_bundle.llm_trace_sink if extension_bundle else None,
+        )
+    except ValueError as exc:
+        if extension_bundle is not None:
+            # With an extension loaded, a tool-name conflict at construction
+            # refuses to start rather than running without the extension.
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+        raise
     agent_ref["agent"] = agent
     # --gigacode turns orchestration on for this run; a resumed session that had
     # it on keeps it on, exactly as the TUI's /gigacode toggle persists.
@@ -1434,6 +1513,17 @@ async def _run_ask(args: argparse.Namespace) -> int:
     if session.history:
         agent.restore_message_history(session.history)
         agent.restore_compaction_state(session.compaction)
+
+    if extension_bundle is not None:
+        try:
+            await bind_extension_agent(extension_bundle, agent)
+        except KolegaExtensionLoadError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            await agent.cleanup()
+            await cleanup_extension_bundle(extension_bundle)
+            if usage_sink is not None:
+                await usage_sink.aclose()
+            return 2
 
     fire_hook = getattr(agent, "fire_hook", None)
     if fire_hook is not None:
@@ -1479,6 +1569,8 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 session.config = summary
                 store.save(session)
             await agent.cleanup()
+            if extension_bundle is not None:
+                await cleanup_extension_bundle(extension_bundle)
             if usage_sink is not None:
                 await usage_sink.aclose()
             return 0
@@ -1717,6 +1809,11 @@ async def _run_ask(args: argparse.Namespace) -> int:
             except Exception:
                 pass
         await agent.cleanup()
+        if extension_bundle is not None:
+            try:
+                await cleanup_extension_bundle(extension_bundle)
+            except Exception as exc:  # noqa: BLE001 — reported, never masks the primary exception
+                print(f"Warning: extension cleanup failed: {exc}", file=sys.stderr)
         if usage_sink is not None:
             await usage_sink.aclose()
 

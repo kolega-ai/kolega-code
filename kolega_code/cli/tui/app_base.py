@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from textual.worker import Worker
 
     from kolega_code.agent import AgentConfig, AgentEvent, BaseAgent, PromptExtension, ToolExtension
+    from kolega_code.extensions import ExtensionSelection, KolegaExtensionBundle
     from kolega_code.hooks import HookDispatcher
     from kolega_code.llm.ledger import UsageLedger, UsageSnapshot
     from kolega_code.memory import ProjectMemoryManager
@@ -103,6 +104,12 @@ class KolegaAppBase(App):
         check_for_updates: bool
         show_logs: bool
         startup_config_error: str | None
+        #: Launch-time --extension selection; the factory is re-invoked for
+        #: every top-level agent generation built by _build_agent.
+        extension_selection: ExtensionSelection | None
+        #: The current generation's extension bundle; cleaned up exactly once
+        #: when its agent is replaced or the app exits.
+        _extension_bundle: KolegaExtensionBundle | None
         _settings_screen: SettingsScreen | None
         _memory_screen: MemoryScreen | None
         _onboarding_screen: OnboardingScreen | None

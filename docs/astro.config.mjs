@@ -143,6 +143,7 @@ export default defineConfig({
             { label: "Architecture", slug: "concepts/how-it-works" },
             { label: "Agents", slug: "concepts/agents" },
             { label: "Tools", slug: "concepts/tools" },
+            { label: "Extensions", slug: "concepts/extensions" },
           ],
         },
       ],

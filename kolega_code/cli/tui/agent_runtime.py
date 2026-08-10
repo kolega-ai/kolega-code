@@ -16,6 +16,13 @@ from kolega_code.agent import (
 )
 from kolega_code.agent.baseagent import QueuedUserInput
 from kolega_code.agent.prompt_provider import AgentMode
+from kolega_code.extensions import (
+    KolegaExtensionHost,
+    KolegaExtensionLoadError,
+    bind_extension_agent,
+    cleanup_extension_bundle,
+    create_extension_bundle,
+)
 from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
 from kolega_code.agent.prompts import (
     build_current_plan_artifact_prompt,
@@ -1085,6 +1092,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             compaction = self.session.compaction
             if rebuild:
                 await self.agent.cleanup()
+                await self._cleanup_extension_bundle()
 
         browser_manager = build_browser_manager(
             self.store.root,
@@ -1178,27 +1186,53 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         if self._goal is not None and self._goal.condition:
             prompt_extensions.append(self._goal_prompt_extension())
 
-        self.agent = agent_class(
-            project_path=self.active_project_path,
-            workspace_id=self.session.workspace_id,
-            thread_id=self.session.thread_id,
-            connection_manager=self.recording_connection_manager,
-            config=config,
-            browser_manager=browser_manager,
-            agent_mode=AgentMode(self.mode),
-            prompt_extensions=prompt_extensions,
-            tool_extensions=tool_extensions,
-            memory_manager=self.memory_manager,
-            permission_mode=self.permission_mode,
-            # Permission policy lives in the session runtime, not the UI: mode
-            # checks and saved-rule matching are decisions about the session, so
-            # every frontend gets them and only real questions reach a person.
-            permission_callback=self.session_runtime.permission_callback,
-            session_recorder=self._session_recorder,
-            hook_dispatcher=self._session_hook_dispatcher(),
-            custom_agent_catalog=self.custom_agent_catalog,
-            usage_ledger=self._usage_ledger,
-        )
+        # Launch-selected extension: a fresh bundle for every agent generation,
+        # from the same factory. Assigned to self immediately so every exit path
+        # cleans up exactly this generation's bundle.
+        extension_bundle = None
+        if self.extension_selection is not None:
+            extension_host = KolegaExtensionHost(
+                project_path=self.active_project_path,
+                workspace_id=self.session.workspace_id,
+                thread_id=self.session.thread_id,
+                config=config,
+                agent_mode=AgentMode(self.mode),
+            )
+            extension_bundle = create_extension_bundle(self.extension_selection, extension_host)
+            self._extension_bundle = extension_bundle
+            prompt_extensions.extend(extension_bundle.prompt_extensions)
+            tool_extensions.extend(extension_bundle.tool_extensions)
+
+        try:
+            self.agent = agent_class(
+                project_path=self.active_project_path,
+                workspace_id=self.session.workspace_id,
+                thread_id=self.session.thread_id,
+                connection_manager=self.recording_connection_manager,
+                config=config,
+                browser_manager=browser_manager,
+                agent_mode=AgentMode(self.mode),
+                prompt_extensions=prompt_extensions,
+                tool_extensions=tool_extensions,
+                memory_manager=self.memory_manager,
+                permission_mode=self.permission_mode,
+                # Permission policy lives in the session runtime, not the UI: mode
+                # checks and saved-rule matching are decisions about the session, so
+                # every frontend gets them and only real questions reach a person.
+                permission_callback=self.session_runtime.permission_callback,
+                session_recorder=self._session_recorder,
+                hook_dispatcher=self._session_hook_dispatcher(),
+                custom_agent_catalog=self.custom_agent_catalog,
+                usage_ledger=self._usage_ledger,
+                llm_trace_sink=extension_bundle.llm_trace_sink if extension_bundle else None,
+            )
+        except ValueError as exc:
+            if extension_bundle is not None:
+                # With an extension loaded, a tool-name conflict at construction
+                # refuses the generation rather than continuing without the
+                # requested extension.
+                raise KolegaExtensionLoadError(str(exc)) from exc
+            raise
         assert self.agent is not None
         # The runtime owns the agent for control purposes while the CLI keeps
         # composing it from settings, skills, hooks, and MCP configuration.
@@ -1226,6 +1260,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self.agent.restore_compaction_state(compaction)
             if restore_transcript:
                 self._restore_conversation_history(history)
+        if extension_bundle is not None:
+            await bind_extension_agent(extension_bundle, self.agent)
         self._update_mode_chrome()
         self._ensure_startup_entry()
         await self._fire_session_start_once()
@@ -1233,6 +1269,17 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         # initialized lsp_manager) exists. Without this the status is stale
         # from startup, when it was computed before the agent was built.
         self._update_lsp_settings_status()
+
+    async def _cleanup_extension_bundle(self) -> None:
+        """Release the current extension bundle exactly once (rebuild or app exit)."""
+        bundle = self._extension_bundle
+        self._extension_bundle = None
+        if bundle is None:
+            return
+        try:
+            await cleanup_extension_bundle(bundle)
+        except Exception as exc:  # noqa: BLE001 — reported, never masks the primary failure
+            self._log_status(f"extension cleanup failed: {exc}", level="warn")
 
     def _format_lsp_status(self) -> str:
         """Build a human-readable LSP status message for the conversation or /lsp command."""

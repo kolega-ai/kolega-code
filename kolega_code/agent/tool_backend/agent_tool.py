@@ -356,6 +356,7 @@ class AgentTool(BaseTool):
                 usage_recorder=getattr(self.caller, "usage_recorder", None) if self.caller else None,
                 sub_agent_recorder=getattr(self.caller, "sub_agent_recorder", None) if self.caller else None,
                 usage_ledger=getattr(self.caller, "usage_ledger", None) if self.caller else None,
+                llm_trace_sink=getattr(self.caller, "llm_trace_sink", None) if self.caller else None,
                 hook_dispatcher=getattr(self.caller, "hook_dispatcher", None) if self.caller else None,
                 max_iterations=getattr(self.caller, "max_iterations", None),
                 memory_manager=self.memory_manager,
@@ -812,6 +813,7 @@ class AgentTool(BaseTool):
             usage_recorder=getattr(self.caller, "usage_recorder", None) if self.caller else None,
             sub_agent_recorder=getattr(self.caller, "sub_agent_recorder", None) if self.caller else None,
             usage_ledger=getattr(self.caller, "usage_ledger", None) if self.caller else None,
+            llm_trace_sink=getattr(self.caller, "llm_trace_sink", None) if self.caller else None,
             hook_dispatcher=getattr(self.caller, "hook_dispatcher", None) if self.caller else None,
             max_iterations=getattr(self.caller, "max_iterations", None),
         )
