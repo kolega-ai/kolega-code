@@ -1,8 +1,7 @@
 """Offline tests for tool-definition schema serialization.
 
 Covers the explicit `input_schema` override on ToolDefinition (used for nested
-shapes the callable introspector cannot express) across all three providers.
-No network calls.
+shapes) across all three providers. No network calls.
 """
 
 from typing import Any, cast
@@ -14,7 +13,6 @@ from google.genai import _transformers
 from google.genai import types as genai_types
 
 from kolega_code.llm.models import ToolDefinition, ToolParameter
-from kolega_code.tools.definitions import tool_definition_from_callable
 
 
 NESTED_SCHEMA = {
@@ -208,18 +206,16 @@ async def test_google_mldev_serializes_nested_schema_aliases_without_renaming_pr
 
 
 def test_flat_definition_still_serializes_without_input_schema():
-    """A definition built by introspection (no input_schema) keeps the flat object schema."""
+    """A hand-built flat definition (no input_schema) keeps the flat object schema."""
 
-    async def sample(query: str, limit: int) -> str:
-        """Do a thing.
-
-        Args:
-            query: The search text.
-            limit: Max results.
-        """
-        return ""
-
-    definition = tool_definition_from_callable("sample", sample)
+    definition = ToolDefinition(
+        name="sample",
+        description="Do a thing.",
+        parameters=[
+            ToolParameter(name="query", type="string", description="The search text.", required=True),
+            ToolParameter(name="limit", type="integer", description="Max results.", required=True),
+        ],
+    )
     assert definition.input_schema is None
 
     anthropic = definition.to_anthropic()["input_schema"]
@@ -236,125 +232,3 @@ def test_flat_definition_still_serializes_without_input_schema():
     assert google_params.type == genai_types.Type.OBJECT
     assert google_params.properties is not None
     assert set(google_params.properties) == {"query", "limit"}
-
-
-def test_wire_description_strips_args_block_keeps_preamble_and_returns():
-    """The parsed Args block is documented only in the schema, not the description."""
-
-    async def sample(query: str, limit: int) -> str:
-        """Do a thing.
-
-        Preamble prose that must survive.
-
-        Args:
-            query: The search text.
-            limit: Max results.
-
-        Returns:
-            A summary of results.
-        """
-        return ""
-
-    definition = tool_definition_from_callable("sample", sample)
-    description = definition.description
-    assert "Do a thing." in description
-    assert "Preamble prose that must survive." in description
-    assert "Returns:\n    A summary of results." in description
-    assert "Args:" not in description
-    assert "The search text." not in description
-    assert "Max results." not in description
-
-    # The parameters are documented in the schema instead.
-    schema = definition.to_anthropic()["input_schema"]
-    assert schema["properties"]["query"]["description"] == "The search text."
-    assert schema["properties"]["limit"]["description"] == "Max results."
-
-
-def test_keep_args_in_description_preserves_args_block():
-    """Freeform-style tools whose schema is a fallback envelope keep the block."""
-
-    async def sample(query: str) -> str:
-        """Do a thing.
-
-        Args:
-            query: The search text.
-
-        Returns:
-            A summary.
-        """
-        return ""
-
-    definition = tool_definition_from_callable("sample", sample, keep_args_in_description=True)
-    assert "Args:" in definition.description
-    assert "The search text." in definition.description
-    assert "Returns:\n    A summary." in definition.description
-
-
-def test_parameter_descriptions_collapse_continuation_indentation():
-    """Schema descriptions collapse docstring continuation-line whitespace."""
-
-    async def sample(query: str, timeout: int) -> str:
-        """Do a thing.
-
-        Args:
-            query: The search text that continues
-                   onto a deeply indented line.
-            timeout: Seconds to wait.
-        """
-        return ""
-
-    definition = tool_definition_from_callable("sample", sample)
-    query = next(parameter for parameter in definition.parameters if parameter.name == "query")
-    assert query.description == "The search text that continues onto a deeply indented line."
-    timeout = next(parameter for parameter in definition.parameters if parameter.name == "timeout")
-    assert timeout.description == "Seconds to wait."
-
-
-def test_raises_section_still_split_before_args_strip():
-    """The Raises split keeps its precedence over the Args-block strip."""
-
-    async def sample(query: str) -> str:
-        """Do a thing.
-
-        Args:
-            query: The search text.
-
-        Returns:
-            A summary.
-
-        Raises:
-            ValueError: When the query is empty.
-        """
-        return ""
-
-    definition = tool_definition_from_callable("sample", sample)
-    assert "Raises:" not in definition.description
-    assert "ValueError: When the query is empty." not in definition.description
-    assert "Args:" not in definition.description
-    assert "A summary." in definition.description
-
-
-def test_strip_args_section_edges():
-    from kolega_code.tools.definitions import strip_args_section
-
-    assert strip_args_section("No args here.") == "No args here."
-    assert strip_args_section("Preamble.\n\nArgs:\n    a: one\n") == "Preamble."
-    assert strip_args_section("Args:\n    a: one\n") == ""
-    assert strip_args_section("Preamble.\n\nArgs:\n    a: one\n\nReturns:\n    done.\n") == (
-        "Preamble.\n\nReturns:\n    done."
-    )
-
-
-def test_schema_has_property_descriptions():
-    from kolega_code.tools.definitions import schema_has_property_descriptions
-
-    described = {"type": "object", "properties": {"a": {"type": "string", "description": "x"}}}
-    assert schema_has_property_descriptions(described) is True
-    # An enum-only property has no description: the Args block stays.
-    enum_only = {"type": "object", "properties": {"a": {"type": "string", "enum": ["x", "y"]}}}
-    assert schema_has_property_descriptions(enum_only) is False
-    # No properties: nothing to document.
-    assert schema_has_property_descriptions({"type": "object", "properties": {}}) is True
-    assert schema_has_property_descriptions({"type": "object"}) is True
-    # Non-dict property values count as undocumented.
-    assert schema_has_property_descriptions({"type": "object", "properties": {"a": True}}) is False

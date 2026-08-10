@@ -42,7 +42,14 @@ def _install_extension(monkeypatch, recorder):
         recorder.factory_calls.append((host, config_path))
         return KolegaExtensionBundle(
             prompt_extensions=[PromptExtension(id="app-test-extension-prompt", title="App test", markdown="body")],
-            tool_extensions=[ToolExtension(name="app-test-extension", tools={"extension_probe": lambda: "ok"})],
+            tool_extensions=[
+                ToolExtension(
+                    name="app-test-extension",
+                    tools={"extension_probe": lambda: "ok"},
+                    tool_descriptions={"extension_probe": "A harmless probe."},
+                    tool_schemas={"extension_probe": {"type": "object", "properties": {}, "required": []}},
+                )
+            ],
             llm_trace_sink=_sink,
             bind_agent=recorder.binds.append,
             cleanup=lambda: setattr(recorder, "cleanups", recorder.cleanups + 1),

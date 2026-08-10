@@ -302,7 +302,9 @@ def _lifecycle_factory(monkeypatch, *, tool_name="extension_probe", record_host=
                 ToolExtension(
                     name="test-extension",
                     tools={tool_name: _probe_tool},
-                    # Bare JSON input schema, per the ToolExtension contract.
+                    # Explicit description + bare JSON input schema, per the
+                    # ToolExtension contract.
+                    tool_descriptions={tool_name: "A harmless probe."},
                     tool_schemas={tool_name: {"type": "object", "properties": {}}},
                     propagate_to_sub_agents=False,
                 )

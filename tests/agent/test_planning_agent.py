@@ -98,6 +98,18 @@ async def test_planning_agent_uses_host_task_list_extension(tmp_path, mock_conne
             ToolExtension(
                 name="host-task-list",
                 tools={"update_task_list": update_task_list, "get_task_list": get_task_list},
+                tool_descriptions={
+                    "update_task_list": "Replace the shared task list.",
+                    "get_task_list": "Return the shared task list.",
+                },
+                tool_schemas={
+                    "update_task_list": {
+                        "type": "object",
+                        "properties": {"task_list_markdown": {"type": "string"}},
+                        "required": ["task_list_markdown"],
+                    },
+                    "get_task_list": {"type": "object", "properties": {}, "required": []},
+                },
                 tool_groups={"planning_tools": ["update_task_list", "get_task_list"]},
             )
         ],
@@ -138,6 +150,8 @@ async def test_planning_agent_read_only_task_list_rejects_writes(tmp_path, mock_
             ToolExtension(
                 name="cli-shared-task-list-readonly",
                 tools={"get_task_list": get_task_list},
+                tool_descriptions={"get_task_list": "Return the shared task list."},
+                tool_schemas={"get_task_list": {"type": "object", "properties": {}, "required": []}},
                 tool_groups={"planning_tools": ["get_task_list"]},
                 propagate_to_sub_agents=False,
             )

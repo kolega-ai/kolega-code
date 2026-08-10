@@ -335,6 +335,14 @@ class TestToolCollection:
         extension = ToolExtension(
             name="host-agent-dispatch",
             tools={"dispatch_host_agent": dispatch_host_agent},
+            tool_descriptions={"dispatch_host_agent": "Dispatch a task to the host agent."},
+            tool_schemas={
+                "dispatch_host_agent": {
+                    "type": "object",
+                    "properties": {"task": {"type": "string"}},
+                    "required": ["task"],
+                }
+            },
             tool_groups={"agent_dispatch_tools": ["dispatch_host_agent"]},
         )
         config = ToolCollectionConfig(include_agent_dispatch_tools=True)
@@ -378,6 +386,22 @@ class TestToolCollection:
         extension = ToolExtension(
             name="host-session-control",
             tools={"switch_workspace": switch_workspace, "plain_tool": plain_tool},
+            tool_descriptions={
+                "switch_workspace": "Switch the active workspace.",
+                "plain_tool": "Run an ordinary host task.",
+            },
+            tool_schemas={
+                "switch_workspace": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+                "plain_tool": {
+                    "type": "object",
+                    "properties": {"task": {"type": "string"}},
+                    "required": ["task"],
+                },
+            },
             exclusive_tools=frozenset({"switch_workspace"}),
         )
         tool_collection = ToolCollection(

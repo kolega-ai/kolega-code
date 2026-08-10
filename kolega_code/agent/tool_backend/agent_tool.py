@@ -757,6 +757,9 @@ class AgentTool(BaseTool):
         return ToolExtension(
             name="workflow_structured_output",
             tools={"submit_result": submit_result},
+            # The system-prompt instruction carries the how-to; the tool itself
+            # deliberately ships an empty description on the wire.
+            tool_descriptions={"submit_result": ""},
             tool_schemas={"submit_result": input_schema},
             # submit_result only reports a result (no side effects), so mark it
             # read-only-safe; otherwise read-only sub-agents would have it filtered

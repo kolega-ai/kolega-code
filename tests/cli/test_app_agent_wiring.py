@@ -28,7 +28,6 @@ from kolega_code.cli.provider_registry import (
 )
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
-from kolega_code.tools import tool_definition_from_callable
 
 from ._app_test_utils import (
     FakeCoderAgent,
@@ -129,7 +128,7 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
         build_task_list_prompt = app.agent.kwargs["prompt_extensions"][0].markdown
         assert "After each meaningful task is completed" in build_task_list_prompt
         assert "Do not wait until every TODO is complete" in build_task_list_prompt
-        update_task_list_doc = build_tools["update_task_list"].__doc__ or ""
+        update_task_list_doc = task_list_extension.tool_descriptions["update_task_list"]
         assert "progress is visible incrementally" in update_task_list_doc
         assert "do not wait" in update_task_list_doc.lower()
 
@@ -144,7 +143,7 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
         assert set(goal_extension.tools) == {"set_goal"}
         assert goal_extension.propagate_to_sub_agents is False
         assert goal_prompt.propagate_to_sub_agents is False
-        goal_doc = goal_extension.tools["set_goal"].__doc__ or ""
+        goal_doc = goal_extension.tool_descriptions["set_goal"]
         goal_policy = goal_prompt.markdown
         for policy_text in (goal_doc, goal_policy):
             policy_lower = " ".join(policy_text.lower().split())
@@ -154,8 +153,7 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
             assert "do not infer goal mode" in policy_lower
             assert "repository contents" in policy_lower
             assert "not by itself authorization" in policy_lower
-        goal_definition = tool_definition_from_callable("set_goal", goal_extension.tools["set_goal"])
-        goal_schema = goal_definition.to_anthropic()["input_schema"]
+        goal_schema = goal_extension.tool_schemas["set_goal"]
         assert goal_schema["required"] == ["condition"]
         assert goal_schema["properties"]["condition"]["type"] == "string"
 
@@ -163,7 +161,7 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
         # model sees it in the tool description as well as the prompt section.
         switch_extension = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-worktree-control")
         switch_prompt = extension_by_name(app.agent.kwargs["prompt_extensions"], "cli-worktree-control")
-        switch_doc = switch_extension.tools["switch_worktree"].__doc__ or ""
+        switch_doc = switch_extension.tool_descriptions["switch_worktree"]
         for policy_text in (switch_doc, switch_prompt.markdown):
             policy_lower = " ".join(policy_text.lower().split())
             assert "explicitly asked" in policy_lower or "explicitly asks" in policy_lower

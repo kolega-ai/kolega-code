@@ -82,17 +82,16 @@ applies: prompt filtering by `agent_types`/`modes`, explicit tool schemas,
 `propagate_to_sub_agents`, `exclusive_tools` whole-batch rejection, and
 per-extension `cleanup` through the tool collection.
 
-Tool callbacks follow the existing `ToolExtension` contract: each callback is
-an **async** callable (the executor awaits it), and its docstring is the
-model-visible tool description. By default the input schema is **derived from
-the callback**: parameter types from annotations, required-ness from missing
-defaults, and per-parameter descriptions from the docstring's `Args:` section
-(which is then stripped from the wire description). A `tool_schemas` entry —
-the bare JSON schema, `{"type": "object", "properties": ..., "required":
-...}`, not a full tool-definition envelope — replaces the derived schema
-verbatim, for shapes a signature cannot express (arrays with bounds, enums,
-nested objects). If an explicit schema doesn't describe every property, the
-`Args:` block is kept in the description so the parameters stay documented.
+Tool callbacks follow the `ToolExtension` contract: each callback is an
+**async** callable (the executor awaits it), and what the model sees is
+**declared data**, never inferred from the callable. Every tool in `tools`
+must have a matching entry in both `tool_descriptions` (the exact
+model-visible description string) and `tool_schemas` (the bare JSON input
+schema, `{"type": "object", "properties": ..., "required": ...}`, not a full
+tool-definition envelope); both are used verbatim on the wire. A missing
+entry fails at registration with a clear error — before any model request —
+so an undescribed tool can never reach the model. Signatures and docstrings
+are yours for the implementation; they carry no model-facing meaning.
 
 ### Agent binding
 
@@ -111,8 +110,13 @@ def create_extension(host, config_path):
         return f"history has {len(agent.history)} messages"
 
     return KolegaExtensionBundle(
-        tool_extensions=[ToolExtension(name="probe-ext", tools={"probe": probe},
-                                       propagate_to_sub_agents=False)],
+        tool_extensions=[ToolExtension(
+            name="probe-ext",
+            tools={"probe": probe},
+            tool_descriptions={"probe": "Report the bound agent's history length."},
+            tool_schemas={"probe": {"type": "object", "properties": {}, "required": []}},
+            propagate_to_sub_agents=False,
+        )],
         bind_agent=lambda agent: state.__setitem__("agent", agent),
     )
 ```

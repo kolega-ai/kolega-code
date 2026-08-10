@@ -6,6 +6,24 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Changed
+
+- Tool definitions are now explicit, checked-in artifacts. Every built-in
+  tool's model-visible description lives as data beside the prompt assets
+  (`kolega_code/agent/prompt_templates/tools/`) and its input schema as a
+  literal dict in `kolega_code/agent/tool_definitions.py`; nothing about what
+  the model sees is derived from signatures or docstrings anymore, and the
+  migration is byte-identical on the wire. `ToolExtension` tools (including
+  CLI extensions loaded with `--extension` and MCP tools) now declare an
+  explicit `tool_descriptions` entry alongside `tool_schemas`; a tool missing
+  either fails at registration with a clear error before any model request.
+
+### Removed
+
+- The `tool_definition_from_callable` helper (and the `Args:`-block
+  strip/keep rules behind it) is gone, including its `kolega_code` package
+  root export: definitions are declared, not derived.
+
 ### Added
 
 - The interactive CLI and `ask` can now load one installed Python extension at

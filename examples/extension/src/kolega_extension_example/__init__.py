@@ -22,16 +22,8 @@ def create_extension(host: KolegaExtensionHost, config_path: Path | None) -> Kol
     state: dict = {"agent": None, "config_path": config_path}
 
     async def extension_echo(text: str) -> str:
-        """Echo the given text back, with the caller's history length.
-
-        Args:
-            text: Text to echo back verbatim.
-        """
         # Tool callbacks are awaited by the executor, so they must be async.
-        # The model-visible schema is derived from the signature (types from
-        # annotations, required from missing defaults) and this docstring's
-        # Args: section; tool_schemas= is only needed for shapes a signature
-        # cannot express. The bound agent is available through the closure.
+        # The bound agent is available through the closure.
         agent: BaseAgent | None = state["agent"]
         history_length = len(agent.history) if agent is not None else 0
         return f"echo: {text} (caller history: {history_length} messages)"
@@ -57,6 +49,16 @@ def create_extension(host: KolegaExtensionHost, config_path: Path | None) -> Kol
             ToolExtension(
                 name="kolega-extension-example",
                 tools={"extension_echo": extension_echo},
+                # The description and schema are declared data, used verbatim on
+                # the wire; nothing is inferred from the callable.
+                tool_descriptions={"extension_echo": "Echo the given text back, with the caller's history length."},
+                tool_schemas={
+                    "extension_echo": {
+                        "type": "object",
+                        "properties": {"text": {"type": "string", "description": "Text to echo back verbatim."}},
+                        "required": ["text"],
+                    }
+                },
                 # The callback reads the bound top-level agent, which sub-agents
                 # are not; do not propagate it to them.
                 propagate_to_sub_agents=False,

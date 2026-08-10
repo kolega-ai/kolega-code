@@ -187,7 +187,7 @@ async def test_top_level_agent_exposes_exclusive_non_propagating_switch_tool(
         assert "switch_worktree" in prompt.markdown
         assert "make `switch_worktree` the next model response" in prompt.markdown
         assert "use the target as another tool's `workdir` before switching" in prompt.markdown
-        tool_doc = extension.tools["switch_worktree"].__doc__ or ""
+        tool_doc = extension.tool_descriptions["switch_worktree"]
         normalized_tool_doc = " ".join(tool_doc.split())
         assert "this must be the next model response" in normalized_tool_doc
         assert "use the target as another tool's" in normalized_tool_doc
@@ -498,7 +498,12 @@ async def test_apply_pending_switch_rebuilds_workspace_and_returns_continuation(
     async def linked_mcp_tool() -> str:
         return "linked MCP"
 
-    linked_mcp_extension = ToolExtension(name="mcp", tools={"linked_mcp_tool": linked_mcp_tool})
+    linked_mcp_extension = ToolExtension(
+        name="mcp",
+        tools={"linked_mcp_tool": linked_mcp_tool},
+        tool_descriptions={"linked_mcp_tool": "Report the linked MCP marker."},
+        tool_schemas={"linked_mcp_tool": {"type": "object", "properties": {}, "required": []}},
+    )
 
     app, main, linked, store, agent_cls = _build_app(tmp_path, monkeypatch)
 

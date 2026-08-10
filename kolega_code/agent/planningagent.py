@@ -5,6 +5,7 @@ from .baseagent import BaseAgent
 from kolega_code.config import AgentConfig
 from kolega_code.events import AgentConnectionManager
 from .prompt_provider import AgentMode, AgentType, PromptExtension, PromptProvider
+from .tool_definitions import tool_description_asset
 from .tools import ToolCollection, ToolCollectionConfig, ToolExtension
 from .utils.commands import CommandProcessor
 
@@ -96,6 +97,19 @@ class PlanningAgent(BaseAgent):
             tools={
                 "write_plan": self.write_plan,
             },
+            tool_descriptions={"write_plan": tool_description_asset("write_plan")},
+            tool_schemas={
+                "write_plan": {
+                    "type": "object",
+                    "properties": {
+                        "plan_markdown": {
+                            "type": "string",
+                            "description": "The complete final implementation plan in markdown.",
+                        }
+                    },
+                    "required": ["plan_markdown"],
+                }
+            },
             tool_groups={"planning_tools": ["write_plan"]},
             # write_plan belongs to the top-level planning agent only; sub-agents
             # (e.g. gigacode investigation agents in plan mode) must not capture plans.
@@ -129,18 +143,7 @@ class PlanningAgent(BaseAgent):
         self.system_prompt = self.system_prompt_message(prompt)
 
     async def write_plan(self, plan_markdown: str) -> str:
-        """
-        Submit the final implementation plan.
-
-        Call this only when the plan is complete enough for a build agent to implement without making additional
-        product or architecture decisions.
-
-        Args:
-            plan_markdown: The complete final implementation plan in markdown.
-
-        Returns:
-            A confirmation that the plan was captured.
-        """
+        """Capture the submitted plan for the host to consume."""
         self._completed_plan = plan_markdown.strip()
         return "Plan captured."
 

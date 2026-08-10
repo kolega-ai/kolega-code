@@ -79,10 +79,11 @@ def test_run_workflow_appears_when_enabled(project_path, mock_connection_manager
     assert "args" in schema["properties"]
     assert "type" not in schema["properties"]["args"]
 
-    # The session-scoped run listing ships with the same gate. Its schema is
-    # derived from the method signature, so no explicit input_schema is set.
+    # The session-scoped run listing ships with the same gate.
     assert "list_workflow_runs" in by_name
-    assert by_name["list_workflow_runs"].input_schema is None
+    runs_schema = by_name["list_workflow_runs"].input_schema
+    assert runs_schema is not None
+    assert "limit" in runs_schema["properties"]
 
 
 def test_sub_agent_never_gets_run_workflow(project_path, mock_connection_manager, agent_config):
@@ -280,6 +281,18 @@ def test_workflow_sub_agent_does_not_inherit_task_list(project_path, mock_connec
     task_list_ext = ToolExtension(
         name="cli-shared-task-list",
         tools={"get_task_list": get_task_list, "update_task_list": update_task_list},
+        tool_descriptions={
+            "get_task_list": "Return the shared task list.",
+            "update_task_list": "Replace the shared task list.",
+        },
+        tool_schemas={
+            "get_task_list": {"type": "object", "properties": {}, "required": []},
+            "update_task_list": {
+                "type": "object",
+                "properties": {"task_list_markdown": {"type": "string"}},
+                "required": ["task_list_markdown"],
+            },
+        },
         tool_groups={"planning_tools": ["get_task_list", "update_task_list"]},
         propagate_to_sub_agents=False,
     )
@@ -326,6 +339,8 @@ def test_workflow_sub_agent_does_not_inherit_readonly_task_list(project_path, mo
     readonly_ext = ToolExtension(
         name="cli-shared-task-list-readonly",
         tools={"get_task_list": get_task_list},
+        tool_descriptions={"get_task_list": "Return the shared task list."},
+        tool_schemas={"get_task_list": {"type": "object", "properties": {}, "required": []}},
         tool_groups={"planning_tools": ["get_task_list"]},
         propagate_to_sub_agents=False,
     )
