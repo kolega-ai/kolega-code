@@ -139,26 +139,68 @@ See [Scheduled Loops](../../loop/) for the full interval and cron syntax.
 
 ## JSON output
 
-With `--json`, the command streams newline-delimited JSON objects, each tagged with
-a `kind`, so you can parse them programmatically:
+With `--json`, the command streams the **semantic event protocol**: UTF-8
+newline-delimited JSON where every stdout line is one complete, flushed event
+envelope. The same records — with the same ids, sequence numbers, and
+timestamps — are returned later by
+`kolega-code sessions export <id> --format events-jsonl`, because both are the
+public projection of the session journal.
+
+> **Breaking change:** the former `{"kind": "message"|"event"|"summary"}`
+> record family was removed with no compatibility flag. Machine consumers must
+> parse the envelope below.
 
 ```bash
 kolega-code ask "count the Python files" --project . --json
 ```
 
-The stream includes:
+Every line has this shape:
 
-| `kind` | Meaning |
+```json
+{
+  "schema": "kolega.session.event",
+  "version": 2,
+  "id": "event-uuid",
+  "session_id": "session-id",
+  "seq": 42,
+  "epoch_id": "epoch-uuid",
+  "turn_id": "turn-uuid-or-null",
+  "timestamp": "2026-08-11T09:54:09.372000+00:00",
+  "actor": "assistant",
+  "agent_id": "agent-uuid",
+  "agent_name": "main",
+  "parent_agent_id": null,
+  "parent_tool_call_id": null,
+  "depth": 0,
+  "type": "assistant.message",
+  "payload": {},
+  "artifacts": []
+}
+```
+
+`seq` is a gapless session-wide sequence. Subagent events share it, carrying
+their own `agent_id` with `parent_agent_id`/`parent_tool_call_id`/`depth`
+lineage. Unknown future `type`s must be ignored, not treated as errors.
+
+Common event types:
+
+| `type` | Payload |
 | --- | --- |
-| `message` | A completed assistant message: `role`, `content` blocks (text, thinking, tool calls), `stop_reason`, and normalized `usage` when the provider reported it |
-| `event` | An agent event (sub-agent activity, tool calls, terminal output). Streaming text deltas are excluded — their content arrives as `message` lines |
-| `skill` | Skill activation metadata |
-| `goal_eval` | Emitted after each goal evaluation (with `--goal`): `met`, `turns`, `reason` |
-| `goal_result` | Final goal outcome (with `--goal`): `met`, `turns`, `reason` |
-| `loop_iteration` | Emitted before each loop iteration (with `--loop`): `iteration`, `scheduled_at`, `prompt_source` |
-| `loop_sleep` | Emitted before waiting for the next fire: `seconds`, `next_fire_at` |
-| `loop_result` | Final loop outcome: `iterations`, `reason` |
-| `summary` | A final object with the emitted `messages` count and `session_id` |
+| `session.created` / `context.epoch_started` | Session metadata and context boundaries |
+| `turn.started` | The complete user message |
+| `context.system` | The rendered system context (recorded when it changes) |
+| `assistant.message` | One completed LLM response (`origin_type: "llm"`, `llm_call_id`, `provider`, `model`, `llm_call_count: 1`) or one deterministic notice (`origin_type: "synthetic"`, `llm_call_count: 0`, `notice_code`). The `message` carries content blocks with readable reasoning kept and provider-opaque state removed; tool calls expose the canonical `tool_call_id` plus `provider_call_id`, `input`, `input_kind`, and normalized `arguments` |
+| `tool.results` | Durable results, correlated to calls by the same `tool_call_id`; oversized content carries a `content_artifact` reference |
+| `turn.completed` / `turn.failed` / `turn.cancelled` | Turn outcome with counts and timing |
+| `agent.started` / `agent.completed` / `agent.failed` | Subagent lifecycle |
+| `context.compacted` / `context.rewound` | Context management, with provenance |
+| `skill.activated`, `goal.evaluated`, `goal.completed`, `loop.iteration_started`, `loop.sleeping`, `loop.completed` | Skill/goal/loop progress |
+| `run.completed` / `run.failed` / `run.cancelled` | The final record: status, timestamps, token totals, provider/model, and (on failure) a safe `error` code/message |
+
+Configured secrets and home-directory paths are scrubbed; provider-opaque
+replay state (thinking signatures, encrypted reasoning) never appears. Runs
+without `--save` emit the identical protocol from an in-memory journal and
+leave no session state behind.
 
 In plain (non-JSON) mode, the answer is written to **stdout** while sub-agent and
 tool activity is reported on **stderr** — so piping stdout gives you just the

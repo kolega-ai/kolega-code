@@ -604,10 +604,12 @@ def test_ask_json_handles_billing_error_without_traceback(
     captured = capsys.readouterr()
     lines = [json.loads(line) for line in captured.out.splitlines() if line.strip()]
     assert exit_code == 1
-    assert lines[-1]["kind"] == "error"
-    assert lines[-1]["data"]["type"] == "billing_error"
-    assert lines[-1]["data"]["provider"] == "configured"
-    assert "The selected provider could not run this request" in lines[-1]["data"]["message"]
+    assert lines[-1]["type"] == "run.failed"
+    payload = lines[-1]["payload"]
+    assert payload["status"] == "failed"
+    assert payload["exit_code"] == 1
+    assert payload["error"]["code"] == "billing_error"
+    assert "The selected provider could not run this request" in payload["error"]["message"]
     assert "DeepSeek/deepseek-v4-pro" not in captured.out
     assert "raw-secret-token" not in captured.out
     assert "raw-exception-provider" not in captured.out
@@ -876,89 +878,13 @@ def test_ask_json_interleaves_sub_agent_events(
 
     assert exit_code == 0
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
-    kinds = [line["kind"] for line in lines]
-    assert "chunk" not in kinds  # the chunk protocol is gone
-    event_index = kinds.index("event")
-    message_index = kinds.index("message")
-    assert event_index < message_index, "sub-agent event should interleave before the completed message"
-    event_line = lines[event_index]
-    assert event_line["data"]["sub_agent_info"]["agent_name"] == "general-agent"
-
-
-class _MidStreamFlushCoderAgent(_FakeCoderAgent):
-    """Streams like a hosted web-search turn: a complete response chunk flushes
-    mid-stream (segment rotation at the web_search_call boundary) before any
-    assistant message has landed in history; the real message — containing the
-    pre-search text — lands before the end-of-stream chunk, as BaseAgent does."""
-
-    agent_name = "coder"
-
-    async def process_message_stream(self, message):
-        from kolega_code.llm.models import Message, TextBlock
-
-        yield {"type": "response", "content": "Checking the web. ", "complete": True, "uuid": "r1"}
-        self.history.append(
-            Message(
-                role="assistant",
-                content=[TextBlock("Checking the web. The answer is 42.")],
-                stop_reason="end_turn",
-            )
-        )
-        yield {"type": "response", "content": "The answer is 42.", "complete": True, "uuid": "r2"}
-
-
-def test_ask_json_midstream_complete_flush_emits_message_once(
-    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
-) -> None:
-    from kolega_code.cli import main as main_module
-
-    project = tmp_path / "project"
-    project.mkdir()
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    monkeypatch.setenv("KOLEGA_CODE_PROVIDER", "anthropic")
-    monkeypatch.setenv("KOLEGA_CODE_MODEL", "claude-opus-5")
-    monkeypatch.setattr(main_module, "CoderAgent", _MidStreamFlushCoderAgent)
-
-    exit_code = main_module.main(["ask", "look it up", "--project", str(project), "--json"])
-
-    assert exit_code == 0
-    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
-    messages = [line["data"] for line in lines if line["kind"] == "message"]
-    assert len(messages) == 1, "the mid-stream flush must not emit a synthetic duplicate"
-    (text_part,) = messages[0]["content"]
-    assert text_part["text"] == "Checking the web. The answer is 42."
-
-
-class _NoHistoryCoderAgent(_FakeCoderAgent):
-    """Streams text but never lands an assistant message in history — the
-    lost-text case the end-of-turn fallback exists for."""
-
-    agent_name = "coder"
-
-    async def process_message_stream(self, message):
-        yield {"type": "response", "content": "orphaned text", "complete": True, "uuid": "r1"}
-
-
-def test_ask_json_lost_text_still_emitted_as_synthetic_message(
-    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
-) -> None:
-    from kolega_code.cli import main as main_module
-
-    project = tmp_path / "project"
-    project.mkdir()
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    monkeypatch.setenv("KOLEGA_CODE_PROVIDER", "anthropic")
-    monkeypatch.setenv("KOLEGA_CODE_MODEL", "claude-opus-5")
-    monkeypatch.setattr(main_module, "CoderAgent", _NoHistoryCoderAgent)
-
-    exit_code = main_module.main(["ask", "say something", "--project", str(project), "--json"])
-
-    assert exit_code == 0
-    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
-    messages = [line["data"] for line in lines if line["kind"] == "message"]
-    assert len(messages) == 1
-    (text_part,) = messages[0]["content"]
-    assert text_part["text"] == "orphaned text"
+    # Presentation events never reach --json stdout: every line is a semantic
+    # v2 envelope, and the broadcast sub-agent AgentEvents appear nowhere.
+    assert all("kind" not in line for line in lines)
+    assert all(line.get("schema") == "kolega.session.event" for line in lines)
+    assert not [line for line in lines if line["type"].startswith("ui.")]
+    assert "sub_agent_info" not in json.dumps(lines)
+    assert lines[-1]["type"] == "run.completed"
 
 
 def test_ask_plain_writes_sub_agent_lifecycle_to_stderr(

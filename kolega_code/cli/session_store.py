@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Iterator, Optional, Sequence
 
 from kolega_code.local_state import ensure_private_dir, write_private_text
 
@@ -409,6 +409,31 @@ class SessionStore:
 
     def export(self, session_id: str) -> str:
         return json.dumps(self.load(session_id).to_dict(), indent=2, sort_keys=True) + "\n"
+
+    def iter_public_events(self, session_id: str, *, secret_values: Sequence[str] = ()) -> Iterator[dict[str, Any]]:
+        """The session's canonical public semantic events, in sequence order.
+
+        Every journal event (v1 or v2) is projected through
+        ``to_public_event``; ``ui.*`` presentation records are excluded. This —
+        never ``raw_events()`` — is the only supported way to read a session's
+        events for machine consumption outside this process.
+        """
+        from .session_event_protocol import to_public_event
+
+        self._ensure_migrated(session_id)
+        journal = self.journal(session_id)
+        for event in journal.read_events(repair_tail=True):
+            public = to_public_event(event, secret_values=secret_values)
+            if public is not None:
+                yield public
+
+    def export_events(self, session_id: str, *, secret_values: Sequence[str] = ()) -> str:
+        """Public semantic events as UTF-8 JSONL (``--format events-jsonl``)."""
+        lines = [
+            json.dumps(event, separators=(",", ":"), ensure_ascii=False, default=str)
+            for event in self.iter_public_events(session_id, secret_values=secret_values)
+        ]
+        return "".join(line + "\n" for line in lines)
 
     def bug_export(self, session_id: str) -> SessionBugExport:
         self._ensure_migrated(session_id)
