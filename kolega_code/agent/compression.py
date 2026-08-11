@@ -65,6 +65,7 @@ class HistoryCompressor:
         on_info: Optional[LogCallback] = None,
         on_error: Optional[LogCallback] = None,
         system_prompt_text: Optional[str] = None,
+        keep_recent: Optional[int] = None,
     ) -> CompactionResult:
         """
         Non-destructively summarize the aged-out prefix while keeping the most
@@ -73,6 +74,12 @@ class HistoryCompressor:
         Incremental: only the messages that have aged out since the previous
         boundary are summarized, with the prior summary folded in for continuity.
         Returns a CompactionResult describing what happened — never a silent no-op.
+
+        ``keep_recent`` overrides KEEP_RECENT_MESSAGES (the verbatim tail). A
+        literal ``0`` is the aggressive fallback: everything before the safe
+        boundary — potentially including recent user content — becomes eligible
+        for lossy summarization. The raw history is never modified, and the
+        safe-boundary snap still keeps tool_use/tool_result pairs together.
         """
         history = conversation.history
         if not history or len(history) < self.MIN_MESSAGES_TO_COMPRESS:
@@ -85,9 +92,9 @@ class HistoryCompressor:
                 ),
             )
 
-        split = conversation.compaction_split_point(
-            keep_recent=self.KEEP_RECENT_MESSAGES, min_prefix=self.MIN_PREFIX_TO_SUMMARIZE
-        )
+        if keep_recent is None:
+            keep_recent = self.KEEP_RECENT_MESSAGES
+        split = conversation.compaction_split_point(keep_recent=keep_recent, min_prefix=self.MIN_PREFIX_TO_SUMMARIZE)
         prior_through = conversation.compacted_through if conversation.summary is not None else 0
         if split is None or split <= prior_through:
             return CompactionResult(

@@ -5,6 +5,7 @@ No network and no API keys: every test installs a ``FakeLLM`` on the agent so
 """
 
 import uuid
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from kolega_code.events import AgentConnectionManager
@@ -131,7 +132,7 @@ def long_history(n_pairs: int = 6) -> MessageHistory:
 # ---------------------------------------------------------------------------
 
 
-def make_agent_config():
+def make_agent_config(strict_budget: tuple[int, int] | None = None):
     from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 
     def cfg(**extra):
@@ -142,21 +143,41 @@ def make_agent_config():
             **extra,
         )
 
+    # The paired per-run cap (--context-window-tokens + --max-output-tokens):
+    # validated together by AgentConfig and substituted into the effective model
+    # specs at agent construction (window_minus_output budgeting).
+    strict: dict[str, Any] = {}
+    if strict_budget is not None:
+        window, output = strict_budget
+        strict = {"context_window_tokens": window, "max_output_tokens": output}
+
     return AgentConfig(
         anthropic_api_key="test_key",
         openai_api_key="test_key",
         long_context_config=cfg(),
         fast_config=cfg(),
+        **strict,
     )
 
 
 def build_agent(
-    tmp_path, *, connection_manager=None, agent_cls=None, sub_agent=False, llm=None, model_context_length=1000
+    tmp_path,
+    *,
+    connection_manager=None,
+    agent_cls=None,
+    sub_agent=False,
+    llm=None,
+    model_context_length=1000,
+    strict_budget: tuple[int, int] | None = None,
 ):
     """Construct an agent wired for hermetic compaction tests.
 
     Returns ``(agent, connection_manager)``. The agent has a FakeLLM (if provided),
     a stub tool collection + system prompt, and AsyncMock log/chat sinks.
+
+    With ``strict_budget=(window, output)`` the agent derives its own
+    ``model_max_input_tokens`` from the paired cap (``window - output``); the
+    test-side override is then skipped so the derived value is the one under test.
     """
     from kolega_code.agent.baseagent import BaseAgent
 
@@ -167,7 +188,7 @@ def build_agent(
         workspace_id="test_ws",
         thread_id=str(uuid.uuid4()),
         connection_manager=cm,
-        config=make_agent_config(),
+        config=make_agent_config(strict_budget=strict_budget),
         sub_agent=sub_agent,
     )
     agent.send_chat_message = AsyncMock()
@@ -179,7 +200,8 @@ def build_agent(
     if llm is not None:
         agent.llm = llm
     agent.model_context_length = model_context_length
-    agent.model_max_input_tokens = model_context_length
+    if strict_budget is None:
+        agent.model_max_input_tokens = model_context_length
     # Histories in these tests are sized against a fixed 0.8 trigger; the
     # default threshold is asserted separately in test_compression_threshold.
     agent.history_compression_threshold = 0.8

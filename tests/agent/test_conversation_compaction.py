@@ -64,7 +64,7 @@ def test_recent_tail_is_verbatim_identity():
         assert original is shown
 
 
-@pytest.mark.parametrize("keep_recent", [1, 2, 3, 4, 5])
+@pytest.mark.parametrize("keep_recent", [0, 1, 2, 3, 4, 5])
 def test_compaction_never_splits_tool_pair(keep_recent):
     a_tc, u_tr = tool_pair("tool_x")
     history = MessageHistory(
@@ -95,6 +95,47 @@ def test_stale_compacted_through_is_clamped():
     # min(compacted_through, len) keeps it safe; no IndexError.
     effective = list(conv.effective_history())
     assert effective[-1].get_text_content() == "S"  # everything folded, tail empty
+
+
+def test_zero_tail_boundary_retains_unmatched_final_tool_call():
+    # keep_recent=0 asks to fold the whole history, but the safe-boundary snap
+    # must still move the cut back before a trailing assistant tool call, so the
+    # pending call survives verbatim instead of being folded into the summary.
+    a_tc, _u_tr = tool_pair("tool_unmatched")
+    history = [
+        text_msg("user", "u0"),
+        text_msg("assistant", "a0"),
+        text_msg("user", "u1"),
+        text_msg("assistant", "a1"),
+        a_tc,  # final message: tool call with no result yet
+    ]
+    conv = _conv(history)
+    split = conv.compaction_split_point(keep_recent=0, min_prefix=1)
+
+    assert split == 4  # snapped back from 5: the unmatched call forces a retained tail
+    conv.apply_compaction("S", split)
+    effective = list(conv.effective_history())
+    assert effective[-1] is a_tc  # same object, verbatim
+    assert len(conv.history) == 5  # raw history untouched
+
+
+def test_zero_tail_boundary_folds_matched_tool_pair_together():
+    # Ending on the tool RESULT: the pair is either both-folded or both-kept —
+    # here both fold (the snap only walks back over assistant tool calls), and
+    # the effective view stays valid.
+    a_tc, u_tr = tool_pair("tool_matched")
+    history = [
+        text_msg("user", "u0"),
+        text_msg("assistant", "a0"),
+        a_tc,
+        u_tr,
+    ]
+    conv = _conv(history)
+    split = conv.compaction_split_point(keep_recent=0, min_prefix=1)
+
+    assert split == 4
+    conv.apply_compaction("S", split)
+    assert conv.is_valid_for_anthropic(list(conv.effective_history())) is True
 
 
 def test_clear_resets_compaction_state():

@@ -32,6 +32,19 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Changed
 
+- Automatic compaction now gets one recovery attempt when the ordinary pass —
+  which keeps the six most recent messages verbatim — still leaves a request
+  above the model's resolved input budget: a second pass with no retained tail
+  (`keep_recent=0`, journaled with trigger `auto_tail_fallback`) folds
+  everything before the safe boundary into the summary, still without touching
+  the raw history or splitting a tool call from its result. A pass that failed
+  at the model or hit the minimum-history guard is not retried. When the paired
+  `--context-window-tokens` + `--max-output-tokens` cap is active and the
+  request still does not fit, the run now fails closed with
+  `LLMContextWindowExceededError` before the primary model is called (recorded
+  as the `run.failed` error code) instead of dispatching the oversized request;
+  uncapped runs keep the legacy provider-accept-or-reject behavior.
+
 - **Breaking:** `kolega-code ask --json` now streams the semantic session-event
   protocol — one v2 event envelope per line (`schema: "kolega.session.event"`,
   stable `id`/`seq`/`timestamp`, agent lineage, typed `payload`) — replacing

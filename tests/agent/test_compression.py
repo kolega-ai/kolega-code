@@ -207,3 +207,62 @@ async def test_summarize_snaps_split_out_of_tool_pair():
     # Whether or not it summarized, the effective view is always valid.
     assert conv.is_valid_for_anthropic(list(conv.effective_history())) is True
     assert isinstance(result, CompactionResult)
+
+
+@pytest.mark.asyncio
+async def test_summarize_default_tail_is_keep_recent_messages():
+    # keep_recent omitted: exactly KEEP_RECENT_MESSAGES stay verbatim.
+    history = long_history(6)  # 12 messages
+    conv = Conversation(list(history))
+    result = await HistoryCompressor().summarize(conv, llm=FakeLLM(), **SUMMARIZE_KW)
+
+    assert result.ok is True
+    assert result.summarized_messages == 12 - HistoryCompressor.KEEP_RECENT_MESSAGES
+    effective = list(conv.effective_history())
+    assert (
+        list(history)[-HistoryCompressor.KEEP_RECENT_MESSAGES :] == effective[-HistoryCompressor.KEEP_RECENT_MESSAGES :]
+    )
+
+
+@pytest.mark.asyncio
+async def test_summarize_keep_recent_zero_folds_everything_before_safe_boundary():
+    # Zero-tail fallback: no verbatim tail is requested, so with a plain
+    # user/assistant history the safe boundary is the end of the conversation.
+    history = long_history(6)  # 12 messages
+    conv = Conversation(list(history))
+    llm = FakeLLM(summary_text="ZERO-TAIL SUMMARY")
+    result = await HistoryCompressor().summarize(conv, llm=llm, keep_recent=0, **SUMMARIZE_KW)
+
+    assert result.ok is True
+    assert result.summarized_messages == 12
+    assert conv.compacted_through == 12
+    # Non-destructive: the raw history is untouched; the effective view is the summary alone.
+    assert list(conv.history) == list(history)
+    effective = list(conv.effective_history())
+    assert [m.get_text_content() for m in effective] == ["ZERO-TAIL SUMMARY"]
+
+
+@pytest.mark.asyncio
+async def test_summarize_keep_recent_zero_recovers_when_default_tail_cannot_advance():
+    # Prior boundary inside the six-message tail: the ordinary pass has nothing
+    # new to fold (its candidate split is behind the boundary), but the zero-tail
+    # pass finds the later boundary and folds the remaining messages — including
+    # the previous summary, which the prompt carries forward.
+    conv = Conversation(list(long_history(6)))  # 12 messages
+    conv.apply_compaction("EARLIER SUMMARY", split_point=8)
+
+    ordinary = await HistoryCompressor().summarize(conv, llm=FakeLLM(), **SUMMARIZE_KW)
+    assert ordinary.ok is False
+    assert ordinary.reason == "nothing_to_summarize"
+
+    llm = FakeLLM(summary_text="FOLDED SUMMARY")
+    fallback = await HistoryCompressor().summarize(conv, llm=llm, keep_recent=0, **SUMMARIZE_KW)
+    assert fallback.ok is True
+    assert fallback.summarized_messages == 4  # messages 8..12 folded into the new summary
+    assert conv.compacted_through == 12
+    assert conv.summary is not None
+    assert conv.summary.get_text_content() == "FOLDED SUMMARY"
+    # The previous summary was handed to the summarizer for folding, not dropped.
+    assert llm.stream.await_args is not None
+    prompt_message = llm.stream.await_args.kwargs["messages"][0]
+    assert "EARLIER SUMMARY" in prompt_message.get_text_content()
