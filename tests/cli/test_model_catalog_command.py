@@ -10,9 +10,10 @@ from pathlib import Path
 import pytest
 
 from kolega_code.cli import model_catalog
-from kolega_code.llm.specs import MODEL_SPECS
+from kolega_code.llm.specs import MODEL_SPECS, resolve_max_input_tokens
 from kolega_code.llm.specs import ollama_cloud_catalog as ollama_cloud
 from kolega_code.llm.specs import openrouter_catalog as openrouter
+from kolega_code.llm.specs import tinker_catalog as tinker
 from kolega_code.llm.specs.types import ThinkingEffortSpec
 
 PROVIDER = openrouter.PROVIDER
@@ -112,6 +113,7 @@ def _cache_entries() -> list[tuple[str, dict]]:
             {
                 "context_length": 200000,
                 "max_completion_tokens": 8192,
+                "input_budget": "window_minus_output",
                 "default_temperature": 1.0,
                 "supports_vision": False,
                 "preferred_edit_protocol": "claude_code",
@@ -132,6 +134,7 @@ def test_overlay_adds_new_models_without_featuring_them(tmp_path: Path, restore_
     assert added == 1
     spec = MODEL_SPECS[(PROVIDER, "vendor/brand-new")]
     assert spec["context_length"] == 200000
+    assert resolve_max_input_tokens(spec) == 191808
     assert isinstance(spec["thinking_effort"], ThinkingEffortSpec)
     # The picker keeps showing the release's reviewed most-used set.
     assert "featured" not in spec
@@ -148,7 +151,17 @@ def test_overlay_never_overrides_a_bundled_model(tmp_path: Path, restore_catalog
     path = tmp_path / openrouter.CACHE_FILENAME
     openrouter.save_cache(
         path,
-        [(bundled, {"context_length": 1, "max_completion_tokens": 1, "supports_vision": False})],
+        [
+            (
+                bundled,
+                {
+                    "context_length": 1,
+                    "max_completion_tokens": 1,
+                    "input_budget": "output_shares_window",
+                    "supports_vision": False,
+                },
+            )
+        ],
         fetched_at="2026-07-31T00:00:00+00:00",
     )
 
@@ -198,6 +211,78 @@ def test_unusable_cache_files_are_ignored_not_fatal(tmp_path: Path, content: str
 
 def test_missing_cache_is_a_no_op(tmp_path: Path, restore_catalog) -> None:
     assert model_catalog.apply_catalog_overlay(tmp_path, env={}) == 0
+
+
+@pytest.mark.parametrize("module", [openrouter, tinker, ollama_cloud])
+def test_legacy_catalog_cache_without_input_budget_is_ignored(
+    tmp_path: Path,
+    restore_catalog,
+    module,
+) -> None:
+    identifier = f"legacy/{module.PROVIDER}"
+    payload = {
+        "schema_version": 1,
+        "provider": module.PROVIDER,
+        "models": [
+            {
+                "id": identifier,
+                "spec": {
+                    "context_length": 131072,
+                    "max_completion_tokens": 32768,
+                    "default_temperature": 1.0,
+                    "supports_vision": False,
+                },
+            }
+        ],
+    }
+    path = tmp_path / module.CACHE_FILENAME
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert module.load_cache(path) == []
+    assert model_catalog.apply_catalog_overlay(tmp_path, env={}, catalog=module.PROVIDER) == 0
+    assert (module.PROVIDER, identifier) not in MODEL_SPECS
+
+
+@pytest.mark.parametrize("module", [openrouter, tinker, ollama_cloud])
+@pytest.mark.parametrize(
+    ("invalid_field", "invalid_value"),
+    [
+        ("input_budget", None),
+        ("input_budget", "invented_convention"),
+        ("context_length", 0),
+        ("max_completion_tokens", True),
+    ],
+)
+def test_current_catalog_cache_with_invalid_budget_spec_is_ignored(
+    tmp_path: Path,
+    restore_catalog,
+    module,
+    invalid_field: str,
+    invalid_value: object,
+) -> None:
+    identifier = f"invalid/{module.PROVIDER}"
+    spec = {
+        "context_length": 131072,
+        "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_vision": False,
+    }
+    if invalid_value is None:
+        spec.pop(invalid_field)
+    else:
+        spec[invalid_field] = invalid_value
+    payload = {
+        "schema_version": module.CACHE_SCHEMA_VERSION,
+        "provider": module.PROVIDER,
+        "models": [{"id": identifier, "spec": spec}],
+    }
+    path = tmp_path / module.CACHE_FILENAME
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert module.load_cache(path) == []
+    assert model_catalog.apply_catalog_overlay(tmp_path, env={}, catalog=module.PROVIDER) == 0
+    assert (module.PROVIDER, identifier) not in MODEL_SPECS
 
 
 # --- models refresh -------------------------------------------------------
@@ -268,6 +353,7 @@ def test_tinker_overlay_adds_new_models_without_featuring_them(tmp_path: Path, r
             {
                 "context_length": 65536,
                 "max_completion_tokens": 32768,
+                "input_budget": "output_shares_window",
                 "default_temperature": 1.0,
                 "supports_vision": False,
             },
@@ -347,6 +433,7 @@ def test_ollama_cloud_overlay_adds_new_ids_without_overwriting_bundled_specs(tmp
             {
                 "context_length": 1,
                 "max_completion_tokens": 1,
+                "input_budget": "output_shares_window",
                 "default_temperature": 1.0,
                 "supports_vision": False,
             },
@@ -356,6 +443,7 @@ def test_ollama_cloud_overlay_adds_new_ids_without_overwriting_bundled_specs(tmp
             {
                 "context_length": 131072,
                 "max_completion_tokens": 32768,
+                "input_budget": "window_minus_output",
                 "default_temperature": 1.0,
                 "supports_vision": True,
             },
@@ -379,6 +467,7 @@ def test_ollama_cloud_overlay_path_and_disable_env_are_provider_specific(tmp_pat
             {
                 "context_length": 131072,
                 "max_completion_tokens": 32768,
+                "input_budget": "window_minus_output",
                 "default_temperature": 1.0,
                 "supports_vision": False,
             },
@@ -432,6 +521,7 @@ def test_ollama_cloud_refresh_preserves_prior_overlay_ids_and_bundled_accounting
             {
                 "context_length": 65536,
                 "max_completion_tokens": 16384,
+                "input_budget": "window_minus_output",
                 "default_temperature": 1.0,
                 "supports_vision": False,
             },
@@ -474,6 +564,7 @@ def test_ollama_cloud_refresh_failure_leaves_existing_cache_untouched(tmp_path: 
                 {
                     "context_length": 131072,
                     "max_completion_tokens": 32768,
+                    "input_budget": "window_minus_output",
                     "default_temperature": 1.0,
                     "supports_vision": False,
                 },

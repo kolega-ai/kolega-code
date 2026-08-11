@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from .types import ThinkingEffortSpec
+from .validation import validate_model_spec
 
 PROVIDER = "openrouter"
 BASE_URL = "https://openrouter.ai/api/v1"
@@ -70,7 +71,9 @@ _CODEX_APPLY_PATCH_PREFIXES = ("openai/",)
 # reasoning is dropped for these ids instead (see ``prior_reasoning_is_replayable``).
 _DROP_PRIOR_REASONING_PREFIXES = ("anthropic/",)
 
-CACHE_SCHEMA_VERSION = 1
+# v2 adds the required input_budget convention. V1 entries are invalidated
+# rather than guessed because the provider metadata does not encode it.
+CACHE_SCHEMA_VERSION = 2
 CACHE_FILENAME = "openrouter_models.json"
 
 
@@ -343,6 +346,7 @@ def spec_from_jsonable(payload: Mapping[str, Any]) -> dict[str, Any]:
             default=str(thinking.get("default") or ""),
             mode=str(thinking.get("mode") or "openrouter_reasoning"),
         )
+    validate_model_spec(spec)
     return spec
 
 

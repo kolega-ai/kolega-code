@@ -169,10 +169,16 @@ def test_cache_round_trip(entries: list[tuple[str, dict[str, Any]]], tmp_path: P
     "contents",
     [
         "{",
-        '{"schema_version": 999, "provider": "ollama_cloud", "models": []}',
-        '{"schema_version": 1, "provider": "other", "models": []}',
-        '{"schema_version": 1, "provider": "ollama_cloud", "models": "bad"}',
-        '{"schema_version": 1, "provider": "ollama_cloud", "models": [{"id": "x", "spec": {}}]}',
+        json.dumps({"schema_version": 999, "provider": "ollama_cloud", "models": []}),
+        json.dumps({"schema_version": oc.CACHE_SCHEMA_VERSION, "provider": "other", "models": []}),
+        json.dumps({"schema_version": oc.CACHE_SCHEMA_VERSION, "provider": "ollama_cloud", "models": "bad"}),
+        json.dumps(
+            {
+                "schema_version": oc.CACHE_SCHEMA_VERSION,
+                "provider": "ollama_cloud",
+                "models": [{"id": "x", "spec": {}}],
+            }
+        ),
     ],
 )
 def test_invalid_cache_is_ignored(contents: str, tmp_path: Path) -> None:
