@@ -31,9 +31,11 @@ The module also provides supporting classes and types for working with messages,
 tools, and provider-specific parameters in a standardized way.
 """
 
+import dataclasses
+import inspect
 from typing import TYPE_CHECKING, Any, AsyncContextManager, Coroutine, Dict, List, Optional, Union
 
-from .exceptions import map_to_llm_error
+from .exceptions import LLMContextWindowExceededError, map_to_llm_error
 from .ledger import LedgerStreamAdapter, UsageLedger, describe_error
 from .models import Message, MessageHistory, ToolDefinition
 from .providers.models import GenerationParams, TokenCount
@@ -78,11 +80,21 @@ class LLMClient:
         model: Optional[str] = None,
         usage_ledger: Optional[UsageLedger] = None,
         trace_sink: Optional[Any] = None,
+        context_window_tokens: Optional[int] = None,
+        max_output_tokens: Optional[int] = None,
     ):
+        if (context_window_tokens is None) != (max_output_tokens is None):
+            raise ValueError("context_window_tokens and max_output_tokens must be supplied together")
         self.provider_name = provider.lower()
         self._api_key = api_key  # Store API key privately
         # Refreshing OAuth token manager, used only by the ChatGPT-subscription provider.
         self._token_manager = token_manager
+        # Strict per-run context budget (the paired AgentConfig fields, propagated
+        # by AgentContext.create_llm_client). When set, generate()/stream() cap the
+        # output maximum at max_output_tokens and reject, before any provider call,
+        # a request whose counted input exceeds context_window_tokens - output.
+        self._context_window_tokens = context_window_tokens
+        self._max_output_tokens = max_output_tokens
         # Optional structured trace sink for the native Tinker provider (the
         # on-policy RL trajectory record). Ignored by every other provider.
         self._trace_sink = trace_sink
@@ -290,6 +302,61 @@ class LLMClient:
             raise ValueError("A model is required when setting thinking effort.")
         return validate_thinking_effort(self.provider_name, model, thinking)
 
+    @property
+    def _has_run_context_budget(self) -> bool:
+        return self._context_window_tokens is not None and self._max_output_tokens is not None
+
+    async def _enforce_run_context_budget(
+        self,
+        messages: MessageHistory,
+        system: Optional[Message],
+        params: GenerationParams,
+        kwargs: Dict[str, Any],
+        precomputed_input_tokens: Optional[int],
+    ) -> GenerationParams:
+        """Apply the strict per-run context budget to one request.
+
+        Returns the params to send: a copy of ``params`` carrying the effective
+        output maximum (the smaller of the caller's request and the run-wide cap,
+        or the run-wide cap when the caller requested none). The supplied params
+        are never mutated. Raises LLMContextWindowExceededError before any
+        provider generation when the request's input — the fully rendered
+        request, counted with the same messages/system/tools/model and
+        renderer-affecting thinking setting — exceeds
+        ``context_window_tokens - effective_output`` (equality is allowed).
+        ``precomputed_input_tokens`` is the caller's own count of this exact
+        request (BaseAgent already counts its main-loop request for the context
+        gauge); when given, no second count is performed.
+        """
+        assert self._context_window_tokens is not None and self._max_output_tokens is not None
+        requested = params.max_completion_tokens
+        effective_output = self._max_output_tokens if requested is None else min(requested, self._max_output_tokens)
+
+        if precomputed_input_tokens is not None:
+            input_tokens = precomputed_input_tokens
+        else:
+            counted = await self.provider.count_tokens(
+                messages=messages,
+                system=system,
+                model=self._request_model(kwargs),
+                tools=params.tools or [],
+                thinking=params.thinking,
+            )
+            input_tokens = counted.input_tokens
+
+        max_input = self._context_window_tokens - effective_output
+        if input_tokens > max_input:
+            raise LLMContextWindowExceededError(
+                f"Request needs {input_tokens} input tokens, exceeding this run's maximum input of "
+                f"{max_input} (context window {self._context_window_tokens} tokens minus "
+                f"{effective_output} reserved output tokens).",
+                provider=self.provider_name,
+            )
+
+        if effective_output == params.max_completion_tokens:
+            return params
+        return dataclasses.replace(params, max_completion_tokens=effective_output)
+
     async def generate(
         self,
         messages: MessageHistory,
@@ -300,6 +367,8 @@ class LLMClient:
         thinking: Optional[Union[int, str]] = None,
         params: Optional[GenerationParams] = None,
         hosted_web_search: bool = False,
+        *,
+        _precomputed_input_tokens: Optional[int] = None,
         **kwargs: Any,
     ) -> Message:
         """Generate a complete response from the LLM provider.
@@ -314,6 +383,10 @@ class LLMClient:
             params (Optional[GenerationParams]): Override all parameters with a GenerationParams object
             hosted_web_search (bool): Expose the provider's server-side web_search
                 tool (Responses APIs only; ignored elsewhere).
+            _precomputed_input_tokens: Internal. The caller's own input count for
+                this exact request; used by the strict per-run context budget to
+                avoid counting the same request twice. Never forwarded to
+                providers.
             **kwargs: Additional provider-specific parameters
 
         Returns:
@@ -332,6 +405,10 @@ class LLMClient:
                         thinking, str(kwargs.get("model")) if kwargs.get("model") else None
                     ),
                     hosted_web_search=hosted_web_search,
+                )
+            if self._has_run_context_budget:
+                params = await self._enforce_run_context_budget(
+                    messages, system, params, kwargs, _precomputed_input_tokens
                 )
             if self._usage_ledger is None:
                 return await self.provider.generate(messages, system, params, **kwargs)
@@ -359,6 +436,8 @@ class LLMClient:
         thinking: Optional[Union[int, str]] = None,
         params: Optional[GenerationParams] = None,
         hosted_web_search: bool = False,
+        *,
+        _precomputed_input_tokens: Optional[int] = None,
         **kwargs: Any,
     ) -> Union[AsyncContextManager[Any], Coroutine[Any, Any, AsyncContextManager[Any]]]:
         """Generate a streaming response from the LLM provider.
@@ -373,6 +452,10 @@ class LLMClient:
             params (Optional[GenerationParams]): Override all parameters with a GenerationParams object
             hosted_web_search (bool): Expose the provider's server-side web_search
                 tool (Responses APIs only; ignored elsewhere).
+            _precomputed_input_tokens: Internal. The caller's own input count for
+                this exact request; used by the strict per-run context budget to
+                avoid counting the same request twice. Never forwarded to
+                providers.
             **kwargs: Additional provider-specific parameters
 
         Returns:
@@ -393,6 +476,12 @@ class LLMClient:
                     hosted_web_search=hosted_web_search,
                 )
 
+            if self._has_run_context_budget:
+                # The budget check is async (token counting), and stream() is not:
+                # defer both into a coroutine so the over-limit error surfaces when
+                # the caller awaits — still before any provider generation.
+                return self._budgeted_stream(messages, system, params, kwargs, _precomputed_input_tokens)
+
             # Return the appropriate stream type for the provider
             inner = self.provider.stream(messages, system, params, **kwargs)
             if self._usage_ledger is None:
@@ -400,6 +489,27 @@ class LLMClient:
             return self._ledgered_stream(inner, self._request_model(kwargs))
         except Exception as e:
             raise map_to_llm_error(e, self.provider_name) from e
+
+    async def _budgeted_stream(
+        self,
+        messages: MessageHistory,
+        system: Optional[Message],
+        params: GenerationParams,
+        kwargs: Dict[str, Any],
+        precomputed_input_tokens: Optional[int],
+    ) -> AsyncContextManager[Any]:
+        """Enforce the run context budget, then open the provider stream.
+
+        Runs when the caller awaits the stream — the point the request starts —
+        so the over-limit error is raised before any provider generation.
+        """
+        params = await self._enforce_run_context_budget(messages, system, params, kwargs, precomputed_input_tokens)
+        inner = self.provider.stream(messages, system, params, **kwargs)
+        if self._usage_ledger is not None:
+            return await self._ledgered_stream(inner, self._request_model(kwargs))
+        if inspect.iscoroutine(inner):
+            return await inner
+        return inner
 
     def _request_model(self, kwargs: Dict[str, Any]) -> Optional[str]:
         model = kwargs.get("model")

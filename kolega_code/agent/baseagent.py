@@ -2484,6 +2484,10 @@ class BaseAgent(LogMixin):
                             tools=self.tool_collection.get_tool_list(),
                             thinking=self.primary_model_config.thinking_effort,
                             hosted_web_search=self.hosted_web_search_active,
+                            # The strict per-run budget rechecks this request inside
+                            # the client; hand it the count already taken for the
+                            # gauge (same history) so it is not counted twice.
+                            _precomputed_input_tokens=token_count.input_tokens,
                         ),
                     )
                     async with stream_cm as stream:
