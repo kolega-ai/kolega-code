@@ -215,6 +215,18 @@ wheels = [
 ]
 
 [[package]]
+name = "atif"
+version = "1.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c1/14/b0629cab0a86470c31d530498fc39c65a8385eaf95f4f39dbcde695284c5/atif-1.7.0.tar.gz", hash = "sha256:668cf3d4592a2147e62a4c2fc3663faacb3217a1627b395a1e0f354076f79d3f", size = 9613, upload-time = "2026-05-16T05:23:02.163Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ba/97/cddb7c5cebe218534563533600eacc57beaace90ee85c435126214f5b18b/atif-1.7.0-py3-none-any.whl", hash = "sha256:7bb0c09a6d94ff5a73f6253a2aeb101d41d0724cfd0cdb8d96541ac4f2b7ab6c", size = 12346, upload-time = "2026-05-16T05:23:00.825Z" },
+]
+
+[[package]]
 name = "attrs"
 version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1777,6 +1789,7 @@ version = "0.27.1"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
+    { name = "atif" },
     { name = "beautifulsoup4" },
     { name = "cryptography", version = "48.0.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
     { name = "cryptography", version = "50.0.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
@@ -1840,6 +1853,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = "==0.101.0" },
+    { name = "atif", specifier = "==1.7.0" },
     { name = "beautifulsoup4", specifier = "==4.14.3" },
     { name = "cryptography", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'", specifier = "==50.0.0" },
     { name = "cryptography", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'", specifier = "==48.0.1" },

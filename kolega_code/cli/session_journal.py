@@ -616,6 +616,7 @@ class SessionRecorder:
         self.current_turn_id: Optional[str] = None
         self._agent_stamp = agent_stamp
         self._last_system_fingerprint: Optional[str] = None
+        self._last_tools_fingerprint: Optional[str] = None
         self._turn_started_at: Optional[str] = None
         self._assistant_count = 0
         self._tool_batches = 0
@@ -760,6 +761,28 @@ class SessionRecorder:
                 artifacts=artifacts,
             )
             self._last_system_fingerprint = fingerprint
+            return True
+
+    def record_tool_definitions(self, tools: list[dict[str, Any]]) -> bool:
+        """Record the public schemas of the tools available to this agent.
+
+        Fingerprinted like the system context so only changes are journaled;
+        an empty toolset records nothing.
+        """
+        if not tools:
+            return False
+        canonical = json.dumps(tools, sort_keys=True, separators=(",", ":"), default=str)
+        fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        with self._lock:
+            if fingerprint == self._last_tools_fingerprint:
+                return False
+            self._append(
+                "context.tools",
+                actor="system",
+                payload={"tools": copy.deepcopy(tools), "sha256": fingerprint},
+                turn_id=self.current_turn_id,
+            )
+            self._last_tools_fingerprint = fingerprint
             return True
 
     def record_tool_results(self, results: list[ToolResult]) -> list[ToolResult]:
@@ -917,6 +940,7 @@ class SessionRecorder:
             if self.current_turn_id is not None:
                 raise SessionJournalError("Cannot reset context while a session turn is open")
             self._last_system_fingerprint = None
+            self._last_tools_fingerprint = None
             return self.journal.start_epoch(reason)
 
     def list_rewindable_turns(self) -> list[TurnSummary]:

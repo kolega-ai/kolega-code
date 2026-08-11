@@ -63,12 +63,13 @@ Export a session to stdout or a file, in one of two formats.
 kolega-code sessions export <session_id>                          # replay JSON (default)
 kolega-code sessions export <session_id> --output run.json
 kolega-code sessions export <session_id> --format events-jsonl    # semantic event log
+kolega-code sessions export <session_id> --format atif --output trajectory.json
 ```
 
 | Argument / option | Description |
 | --- | --- |
 | `session_id` | The Resume ID shown by `sessions list` (required) |
-| `--format <json\|events-jsonl>` | `json` (default): effective-history replay snapshot. `events-jsonl`: the canonical public semantic event log |
+| `--format <json\|events-jsonl\|atif>` | `json` (default): effective-history replay snapshot. `events-jsonl`: the canonical public semantic event log. `atif`: a validated ATIF v1.7 trajectory |
 | `--output <PATH>` | Write the export to a file instead of stdout |
 | `--state-dir <PATH>` | Directory for CLI session state |
 
@@ -85,3 +86,16 @@ recorded by older Kolega versions export with deterministic fallbacks (derived
 root agent identity); facts those sessions never captured are not invented.
 Secrets are scrubbed and provider-opaque replay state is excluded in both
 formats' event output.
+
+`atif` converts the same events into an [ATIF v1.7](https://github.com/harbor-framework/harbor/blob/main/rfcs/0001-trajectory-format.md)
+trajectory document, validated before anything is written. One `source: agent`
+step per LLM inference (with per-step token metrics), tool results attached as
+observations on the step that made the call, compactions and rewinds preserved
+as auditable system steps, and subagents embedded as complete
+`subagent_trajectories` referenced from their dispatch call. Oversized tool
+results are fully hydrated into the document. If the trajectory contains
+images, stdout export refuses and asks for `--output`; file export writes
+assets to `<output-stem>.assets/` with relative paths, atomically. Legacy (v1)
+sessions convert with explicit `conversion_warnings` in the document's
+`extra`. `ask --atif-output FILE` writes the same document directly at the end
+of a run — completed, failed, or cancelled, with or without `--save`.

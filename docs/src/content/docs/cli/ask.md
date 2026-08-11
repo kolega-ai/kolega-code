@@ -189,6 +189,7 @@ Common event types:
 | `session.created` / `context.epoch_started` | Session metadata and context boundaries |
 | `turn.started` | The complete user message |
 | `context.system` | The rendered system context (recorded when it changes) |
+| `context.tools` | Public schemas of the tools available to the agent (recorded when they change) |
 | `assistant.message` | One completed LLM response (`origin_type: "llm"`, `llm_call_id`, `provider`, `model`, `llm_call_count: 1`) or one deterministic notice (`origin_type: "synthetic"`, `llm_call_count: 0`, `notice_code`). The `message` carries content blocks with readable reasoning kept and provider-opaque state removed; tool calls expose the canonical `tool_call_id` plus `provider_call_id`, `input`, `input_kind`, and normalized `arguments` |
 | `tool.results` | Durable results, correlated to calls by the same `tool_call_id`; oversized content carries a `content_artifact` reference |
 | `turn.completed` / `turn.failed` / `turn.cancelled` | Turn outcome with counts and timing |

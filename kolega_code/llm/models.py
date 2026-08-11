@@ -743,6 +743,19 @@ class ToolDefinition(ContentBlock):
             }
         return self._object_schema()
 
+    def to_public_dict(self) -> Dict[str, Any]:
+        """Provider-neutral public shape for journaling and trajectory export."""
+        public: Dict[str, Any] = {
+            "name": self.name,
+            "description": self.description,
+            "input_schema": self._object_schema(),
+        }
+        if self.input_kind != "json":
+            public["input_kind"] = self.input_kind
+        if self.freeform_format:
+            public["freeform_format"] = dict(self.freeform_format)
+        return public
+
     @classmethod
     def _dict_to_google_schema(cls, schema: Dict[str, Any]) -> genai_types.Schema:
         """Recursively convert a JSON-schema dict to a google.genai Schema."""

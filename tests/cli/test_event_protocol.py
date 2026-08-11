@@ -452,6 +452,25 @@ def test_system_context_is_fingerprinted_and_reset_by_epoch(tmp_path: Path) -> N
     assert sum(1 for e in journal.read_events() if e.event_type == "context.system") == 3
 
 
+def test_tool_definitions_are_fingerprinted_and_reset_by_epoch(tmp_path: Path) -> None:
+    journal = make_file_journal(tmp_path)
+    bootstrap(journal)
+    recorder = SessionRecorder(journal, recover=False)
+    tools = [{"name": "read_file", "description": "Read a file.", "input_schema": {"type": "object"}}]
+    assert recorder.record_tool_definitions([]) is False
+    assert recorder.record_tool_definitions(tools) is True
+    assert recorder.record_tool_definitions(tools) is False
+    assert recorder.record_tool_definitions(tools + [{"name": "bash", "description": "", "input_schema": {}}]) is True
+    recorder.start_epoch("agent_clear_command")
+    assert recorder.record_tool_definitions(tools) is True
+    events = [e for e in journal.read_events() if e.event_type == "context.tools"]
+    assert len(events) == 3
+    assert events[0].payload["tools"][0]["name"] == "read_file"
+    public = to_public_event(events[0])
+    assert public is not None
+    assert public["payload"]["tools"] == tools
+
+
 def test_scoped_child_recorder_stamps_lineage_and_interleaves(tmp_path: Path) -> None:
     journal = make_file_journal(tmp_path)
     bootstrap(journal)
