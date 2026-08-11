@@ -286,6 +286,8 @@ async def test_action_quit_cleans_generation_even_when_save_fails(tmp_path, monk
         assert recorder.cleanups == 1
         assert app.agent is None
         assert app._extension_bundle is None
+        # The session was not saved, so the post-quit resume hint must not fire.
+        assert app._quit_cleanly is False
         app.exit.assert_called_once_with()
 
 

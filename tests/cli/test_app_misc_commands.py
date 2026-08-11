@@ -158,6 +158,8 @@ async def test_textual_app_quit_slash_command_exits(
 
     assert app.return_value is None
     assert not app.is_running
+    # A clean quit saved the session, so main.py prints the resume hint.
+    assert app._quit_cleanly is True
 
 
 @pytest.mark.asyncio

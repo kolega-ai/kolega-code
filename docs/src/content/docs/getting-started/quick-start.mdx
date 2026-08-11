@@ -82,11 +82,14 @@ broad enough to benefit from fan-out.
 
 7. **Save and exit.**
 
-   Press `Ctrl+Q` (or run `/quit`) to save the session and exit. Resume later
-   with:
+   Press `Ctrl+Q` (or run `/quit`) to save the session and exit. The terminal
+   then prints the exact command to resume this session, including its session
+   ID. Run that (or `kolega-code . --resume <session-id>`) to come back to this
+   session — bare `--resume` picks the most recently modified session, which may
+   be a different one you have open in another terminal.
 
    ```bash
-   kolega-code . --resume
+   kolega-code . --resume <session-id>
    ```
 
 </Steps>

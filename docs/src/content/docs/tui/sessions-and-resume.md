@@ -30,6 +30,8 @@ kolega-code . --resume <session-id>
 
 A few rules:
 
+- Quitting the TUI prints the exact resume command for the session you just
+  closed, including its ID — copy it to be sure you get this session back.
 - `--resume` with no ID resumes the **latest** session for the project. If there
   are none, the CLI reports that.
 - `sessions list` labels the session ID to copy as **Resume ID**. Previously

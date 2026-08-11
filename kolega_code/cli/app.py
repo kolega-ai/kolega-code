@@ -251,6 +251,9 @@ class KolegaCodeApp(
         self.control_channel.acquire(tui_constants.TUI_CLIENT_ID)
         self._hook_dispatcher: Optional[HookDispatcher] = None
         self._session_started = False
+        #: Set when action_quit saves the session cleanly; main.py prints the
+        #: resume-with-session-ID hint only when this is True.
+        self._quit_cleanly = False
         self.extension_selection = extension_selection
         self._extension_bundle = None
         self.agent = None
@@ -2021,6 +2024,10 @@ class KolegaCodeApp(
                     except Exception:
                         pass
                 await self._save_session_history_async()
+            # The session is durably saved: the post-quit resume hint may point
+            # at it. If any step above raised, the flag stays False and main.py
+            # prints nothing (the finally still exits).
+            self._quit_cleanly = True
         finally:
             # Generation teardown and the sink drain run even when an earlier
             # step raised; the original failure still propagates.

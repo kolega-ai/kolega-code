@@ -10,6 +10,7 @@ from kolega_code.config import ModelProvider
 from kolega_code.cli.main import (
     CLI_AGENT_MODE,
     RESUME_LATEST,
+    _print_quit_resume_hint,
     _resolve_tui_permission_mode,
     _resolve_tui_session,
     main,
@@ -693,6 +694,16 @@ def test_tui_default_creates_new_session_even_when_latest_exists(tmp_path: Path)
     assert session.session_id != existing.session_id
     assert session.thread_id != existing.thread_id
     assert session.mode == CLI_AGENT_MODE
+
+
+def test_print_quit_resume_hint_shows_full_session_id(capsys) -> None:
+    session_id = "0123456789abcdef0123456789abcdef"
+
+    _print_quit_resume_hint(session_id)
+
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "Session saved. Resume it with: kolega-code . --resume " + session_id
+    assert captured.err == ""
 
 
 def test_tui_resume_without_id_loads_latest_project_session(tmp_path: Path) -> None:

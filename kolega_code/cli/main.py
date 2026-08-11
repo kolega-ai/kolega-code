@@ -1043,6 +1043,11 @@ def _run_browser(args: argparse.Namespace) -> int:
         return 2
 
 
+def _print_quit_resume_hint(session_id: str) -> None:
+    """Print the post-quit resume command for this session."""
+    _print_styled(messages.SESSION_RESUME_HINT.format(session_id=session_id), style="success")
+
+
 def _run_tui(args: argparse.Namespace) -> int:
     if importlib.util.find_spec("textual") is None:
         print("Textual is not installed. Reinstall the CLI with: uv tool install --force kolega-code", file=sys.stderr)
@@ -1130,6 +1135,10 @@ def _run_tui(args: argparse.Namespace) -> int:
                     await usage_sink.aclose()
                 except Exception as exc:  # noqa: BLE001 — reported, never masks the primary exception
                     print(f"Warning: usage sink close failed: {exc}", file=sys.stderr)
+        # Normal quit only: action_quit set _quit_cleanly after saving the
+        # session, so the terminal now shows how to resume exactly this one.
+        if getattr(app, "_quit_cleanly", False):
+            _print_quit_resume_hint(session.session_id)
 
     try:
         asyncio.run(_run_app())
