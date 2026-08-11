@@ -977,3 +977,26 @@ def test_ask_prompt_with_unresolved_mention_warns_on_stderr(
     captured = capsys.readouterr()
     assert "@missing.md not found" in captured.err
     assert FakeCoderAgent.instances[0].attachments == [None]
+
+
+def test_sessions_repair_renumbers_corrupted_journal(tmp_path: Path, capsys) -> None:
+    import json
+
+    from kolega_code.cli import main as main_module
+    from kolega_code.cli.session_store import SessionStore
+
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+    events_path = store.events_path_for(record.session_id)
+    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+    events[1]["seq"] = events[0]["seq"]
+    events_path.write_text("\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8")
+
+    exit_code = main_module.main(["sessions", "repair", record.session_id, "--state-dir", str(tmp_path / "state")])
+
+    assert exit_code == 0
+    assert f"Repaired session {record.session_id}" in capsys.readouterr().out
+    loaded = store.load(record.session_id)
+    assert loaded.session_id == record.session_id

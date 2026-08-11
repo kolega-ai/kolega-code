@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, cast
 
+from filelock import BaseFileLock, Timeout
+
 from kolega_code.llm.models import ContentBlock, Message, ToolResult
 from kolega_code.local_state import ensure_private_dir, ensure_private_file, write_private_bytes
 
@@ -242,6 +244,7 @@ class SessionJournal:
         session_dir: Path,
         lock: Optional[threading.RLock] = None,
         artifact_reference_dir: Optional[Path] = None,
+        cross_process_lock: Optional[BaseFileLock] = None,
     ) -> None:
         self.session_id = session_id
         self.session_dir = session_dir
@@ -249,6 +252,7 @@ class SessionJournal:
         self.artifacts_dir = session_dir / "artifacts"
         self.artifact_reference_dir = artifact_reference_dir or self.artifacts_dir
         self._lock = lock or threading.RLock()
+        self._cross_process_lock: Optional[BaseFileLock] = cross_process_lock
         self._loaded = False
         self._next_seq = 1
         self._epoch_id: Optional[str] = None
@@ -308,39 +312,172 @@ class SessionJournal:
         agent: Optional[AgentStamp] = None,
     ) -> SessionEvent:
         with self._lock:
-            self._ensure_loaded_locked()
-            resolved_epoch = epoch_id or self._epoch_id
-            if not resolved_epoch:
-                raise SessionJournalError("An epoch id is required for every session event")
-            stamp = agent or self._root_stamp
-            event = SessionEvent(
-                version=EVENT_SCHEMA_VERSION,
-                event_id=str(uuid.uuid4()),
-                session_id=self.session_id,
-                seq=self._next_seq,
-                epoch_id=resolved_epoch,
-                turn_id=turn_id,
-                timestamp=_now(),
-                actor=actor,
-                event_type=event_type,
-                payload=payload or {},
-                artifacts=artifacts or [],
-                agent_id=stamp.agent_id,
-                agent_name=stamp.agent_name,
-                parent_agent_id=stamp.parent_agent_id,
-                parent_tool_call_id=stamp.parent_tool_call_id,
-                depth=stamp.depth,
-            )
-            self._write_event_locked(event)
-            self._next_seq += 1
-            if event_type == "context.epoch_started":
-                self._epoch_id = resolved_epoch
-            for listener in self._listeners:
+            if self._cross_process_lock is not None:
                 try:
-                    listener(event)
-                except Exception:
-                    logger.exception("Session event listener failed for %s", event_type)
-            return event
+                    with self._cross_process_lock:
+                        return self._append_locked(
+                            event_type,
+                            actor=actor,
+                            payload=payload,
+                            turn_id=turn_id,
+                            epoch_id=epoch_id,
+                            artifacts=artifacts,
+                            agent=agent,
+                        )
+                except Timeout as exc:
+                    raise SessionJournalError(
+                        f"Session event log is locked by another kolega-code instance: {self.events_path}"
+                    ) from exc
+            return self._append_locked(
+                event_type,
+                actor=actor,
+                payload=payload,
+                turn_id=turn_id,
+                epoch_id=epoch_id,
+                artifacts=artifacts,
+                agent=agent,
+            )
+
+    def _append_locked(
+        self,
+        event_type: str,
+        *,
+        actor: str,
+        payload: Optional[dict[str, Any]] = None,
+        turn_id: Optional[str] = None,
+        epoch_id: Optional[str] = None,
+        artifacts: Optional[list[dict[str, Any]]] = None,
+        agent: Optional[AgentStamp] = None,
+    ) -> SessionEvent:
+        """Allocate and persist one event; callers hold the process lock and, when configured, the cross-process lock."""
+        self._ensure_loaded_locked()
+        if self._cross_process_lock is not None:
+            self._resync_seq_from_tail_locked()
+        resolved_epoch = epoch_id or self._epoch_id
+        if not resolved_epoch:
+            raise SessionJournalError("An epoch id is required for every session event")
+        stamp = agent or self._root_stamp
+        event = SessionEvent(
+            version=EVENT_SCHEMA_VERSION,
+            event_id=str(uuid.uuid4()),
+            session_id=self.session_id,
+            seq=self._next_seq,
+            epoch_id=resolved_epoch,
+            turn_id=turn_id,
+            timestamp=_now(),
+            actor=actor,
+            event_type=event_type,
+            payload=payload or {},
+            artifacts=artifacts or [],
+            agent_id=stamp.agent_id,
+            agent_name=stamp.agent_name,
+            parent_agent_id=stamp.parent_agent_id,
+            parent_tool_call_id=stamp.parent_tool_call_id,
+            depth=stamp.depth,
+        )
+        self._write_event_locked(event)
+        self._next_seq += 1
+        if event_type == "context.epoch_started":
+            self._epoch_id = resolved_epoch
+        for listener in self._listeners:
+            try:
+                listener(event)
+            except Exception:
+                logger.exception("Session event listener failed for %s", event_type)
+        return event
+
+    def _resync_seq_from_tail_locked(self) -> None:
+        """Reconcile ``_next_seq`` with the durable tail after another writer appended.
+
+        Called with the cross-process lock held, so the tail read cannot race
+        with another writer's allocate+write. A missing or unreadable tail
+        (e.g. a crashed partial write) falls back to a full repair-and-reload.
+        """
+        tail_seq = self._read_tail_seq_locked()
+        if tail_seq is None:
+            events = self._read_events_locked(repair_tail=True)
+            self._set_state_from_events_locked(events)
+            return
+        if tail_seq + 1 != self._next_seq:
+            self._next_seq = tail_seq + 1
+
+    def _read_tail_seq_locked(self) -> Optional[int]:
+        """Return the seq of the last complete event line, or None when absent or unreadable."""
+        if not self.events_path.exists():
+            return None
+        try:
+            size = self.events_path.stat().st_size
+        except OSError:
+            return None
+        if size == 0:
+            return None
+        try:
+            with open(self.events_path, "rb") as fh:
+                fh.seek(max(0, size - 65536))
+                chunk = fh.read()
+        except OSError:
+            return None
+        if chunk.endswith(b"\n"):
+            lines = chunk.split(b"\n")
+            last = lines[-2] if len(lines) >= 2 else b""
+        else:
+            last = chunk.split(b"\n")[-1]
+        if not last.strip():
+            return None
+        try:
+            data = json.loads(last)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        seq = data.get("seq") if isinstance(data, dict) else None
+        return seq if isinstance(seq, int) else None
+
+    def repair_sequence(self) -> int:
+        """Renumber every event 1..N in file order and return the event count.
+
+        Rewrites the journal atomically only when the sequence is broken. The
+        store holds the cross-process lock around calls that may race with
+        another instance; the lock is acquired here too for direct callers.
+        """
+        with self._lock:
+            if self._cross_process_lock is not None:
+                with self._cross_process_lock:
+                    return self._repair_sequence_locked()
+            return self._repair_sequence_locked()
+
+    def _repair_sequence_locked(self) -> int:
+        events = self._read_events_locked(repair_tail=True, strict_seq=False)
+        if not events:
+            self._set_state_from_events_locked(events)
+            return 0
+        needs_rewrite = any(event.seq != index for index, event in enumerate(events, start=1))
+        if needs_rewrite:
+            payload = b"".join(
+                (
+                    json.dumps(replace(event, seq=index).to_dict(), separators=(",", ":"), ensure_ascii=False) + "\n"
+                ).encode("utf-8")
+                for index, event in enumerate(events, start=1)
+            )
+            tmp_path = self.events_path.with_name(f".{self.events_path.name}.repair-{uuid.uuid4().hex}")
+            try:
+                fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                try:
+                    os.fchmod(fd, 0o600)
+                    with os.fdopen(fd, "wb") as fh:
+                        fh.write(payload)
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                except BaseException:
+                    os.close(fd)
+                    raise
+                os.replace(tmp_path, self.events_path)
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+        self._set_state_from_events_locked(events)
+        return len(events)
 
     def _write_event_locked(self, event: SessionEvent) -> None:
         """Append one complete event, truncating a failed partial write."""
@@ -546,7 +683,7 @@ class SessionJournal:
                 self._epoch_id = event.epoch_id
         self._loaded = True
 
-    def _read_events_locked(self, *, repair_tail: bool) -> list[SessionEvent]:
+    def _read_events_locked(self, *, repair_tail: bool, strict_seq: bool = True) -> list[SessionEvent]:
         if not self.events_path.exists():
             return []
         try:
@@ -586,7 +723,7 @@ class SessionJournal:
                 raise SessionJournalError(
                     f"Session event at line {line_number} belongs to {event.session_id}, expected {self.session_id}"
                 )
-            if event.seq != expected_seq:
+            if strict_seq and event.seq != expected_seq:
                 raise SessionJournalError(
                     f"Session event sequence gap at line {line_number}: expected {expected_seq}, got {event.seq}"
                 )

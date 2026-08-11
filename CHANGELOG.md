@@ -8,6 +8,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Fixed
 
+- A session could be opened in two kolega-code instances at once, interleaving
+  duplicate event sequence numbers into the session journal until it became
+  unreadable (and `switch_worktree`/`save` failed with "Session event sequence
+  gap"). Resuming a session that is already open in another instance is now
+  refused with a clear error, journal appends allocate sequence numbers under
+  a cross-process lock, and `kolega-code sessions repair <id>` renumbers a
+  corrupted journal back into a contiguous sequence.
+
 - File tools (`read`, `write`, `edit`, `multi_edit`, `read_image`) now expand
   a `$KOLEGA_SCRATCHPAD` (or `${KOLEGA_SCRATCHPAD}`) reference in path
   arguments to the session scratchpad at the tool-dispatch choke point, so
