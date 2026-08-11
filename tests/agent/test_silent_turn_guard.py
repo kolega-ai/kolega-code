@@ -285,8 +285,9 @@ async def test_nudge_journal_ordering_and_replay(base_agent, tmp_path) -> None:
     event_types = [event.event_type for event in store.journal(session.session_id).read_events()]
     # Context messages: the volatile-context update at the start of the turn,
     # then the nudge injected after the silent assistant response.
-    assert event_types[-6:] == [
+    assert event_types[-7:] == [
         "turn.started",
+        "context.system",
         "context.message",
         "assistant.message",
         "context.message",

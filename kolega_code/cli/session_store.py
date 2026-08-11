@@ -238,10 +238,12 @@ class SessionStore:
         journal = self.journal(record.session_id)
         epoch_id = str(uuid.uuid4())
         try:
+            from kolega_code import __version__ as kolega_version
+
             journal.append(
                 "session.created",
                 actor="system",
-                payload={"metadata": record.to_metadata_dict()},
+                payload={"metadata": record.to_metadata_dict(), "kolega_version": kolega_version},
                 epoch_id=epoch_id,
             )
             journal.append(
@@ -546,6 +548,10 @@ class SessionStore:
         epoch_start_seq = 0
         message_events = {"turn.started", "assistant.message", "tool.results", "context.message"}
         for event in events:
+            if event.depth:
+                # Subagent semantic events share the journal but must never
+                # replay into the root agent's resumable history.
+                continue
             if event.event_type == "context.epoch_started":
                 current_epoch = event.epoch_id
                 epoch_start_seq = event.seq
