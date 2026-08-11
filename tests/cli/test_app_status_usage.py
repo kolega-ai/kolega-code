@@ -53,6 +53,7 @@ async def test_fresh_session_renders_zero_usage_without_markers(tmp_path, monkey
     assert "(partial)" not in card
     assert "failed" not in card
     assert "Cache reads" not in card
+    assert "Cache hit" not in card
     # Usage lives in its own card, not folded into the Status section.
     assert "Session:" not in dashboard
 
@@ -95,6 +96,37 @@ async def test_baseline_and_live_usage_combine(tmp_path, monkeypatch):
     assert "In 8k · Out 2k" in card
     assert "Requests: 11" in card
     assert "(partial)" not in card
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_percentage_renders(tmp_path, monkeypatch):
+    app = _build_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        _settle(app._usage_ledger, inp=200, out=200, cache_read=800)
+        _settle(app._usage_ledger, inp=200, out=200, cache_read=800)
+        card = app._usage_summary_lines()
+
+    # Normalized input_tokens is inclusive of cache reads: 1000 per request,
+    # 800 served from cache → 1600 of 2000 tokens → 80.00%, two decimals.
+    assert "Cache reads 1.6k · Cache hit 80.00%" in card
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_percentage_from_baseline(tmp_path, monkeypatch):
+    app = _build_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.session.usage = {
+            "input_tokens": 10_000,
+            "output_tokens": 1_000,
+            "total_tokens": 11_000,
+            "cache_read_input_tokens": 5_000,
+            "coverage": {"accounted_runs": 1, "pre_accounting_turns": 0, "full": True},
+        }
+        card = app._usage_summary_lines()
+
+    assert "Cache hit 50.00%" in card
 
 
 @pytest.mark.asyncio

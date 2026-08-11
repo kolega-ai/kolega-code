@@ -142,6 +142,10 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         cache_reads = combined("cache_read_input_tokens")
         if cache_reads:
             split_line += f" · Cache reads {self._format_token_count(cache_reads)}"
+            input_total = combined("input_tokens")
+            if input_total:
+                hit_pct = 100.0 * cache_reads / input_total
+                split_line += f" · Cache hit {hit_pct:.2f}%"
 
         requests_line = f"Requests: {combined('requests'):,}"
         failed = combined("failed")
