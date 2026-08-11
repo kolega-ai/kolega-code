@@ -2021,15 +2021,18 @@ class KolegaCodeApp(
                     except Exception:
                         pass
                 await self._save_session_history_async()
-                await self.agent.cleanup()
-            await self._cleanup_extension_bundle()
-            # After cleanup: cancelled streams settle their failures into the
-            # ledger first, so the drain below captures them.
-            if self._usage_sink is not None:
-                await self._usage_sink.aclose()
         finally:
-            self._close_memory_manager()
-            self.exit()
+            # Generation teardown and the sink drain run even when an earlier
+            # step raised; the original failure still propagates.
+            try:
+                await self._cleanup_agent_generation()
+                # After cleanup: cancelled streams settle their failures into
+                # the ledger first, so the drain below captures them.
+                if self._usage_sink is not None:
+                    await self._usage_sink.aclose()
+            finally:
+                self._close_memory_manager()
+                self.exit()
 
     def _set_sidebar_visible(self, visible: bool) -> None:
         self.sidebar_visible = visible

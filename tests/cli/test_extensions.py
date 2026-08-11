@@ -50,6 +50,23 @@ def test_resolve_reports_import_failure():
         resolve_extension_selection("kolega_no_such_module:factory", None)
 
 
+def test_resolve_wraps_import_time_exception(tmp_path, monkeypatch):
+    mod = tmp_path / "raising_ext_mod.py"
+    mod.write_text('raise ValueError("bad module state")\n')
+    monkeypatch.syspath_prepend(str(tmp_path))
+    with pytest.raises(KolegaExtensionLoadError, match="ValueError: bad module state") as excinfo:
+        resolve_extension_selection("raising_ext_mod:factory", None)
+    assert isinstance(excinfo.value.__cause__, ValueError)
+
+
+def test_resolve_does_not_wrap_base_exceptions(tmp_path, monkeypatch):
+    mod = tmp_path / "exiting_ext_mod.py"
+    mod.write_text("raise SystemExit(3)\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    with pytest.raises(SystemExit):
+        resolve_extension_selection("exiting_ext_mod:factory", None)
+
+
 def test_resolve_reports_missing_factory(monkeypatch):
     _install_module(monkeypatch)
     with pytest.raises(KolegaExtensionLoadError, match="has no attribute"):
@@ -391,6 +408,8 @@ def test_ask_tool_conflict_refuses_to_start(tmp_path, monkeypatch, isolated_cli_
     assert exit_code == 2
     assert "conflicts" in capsys.readouterr().err
     assert RecordingCoderAgent.events.count("stream") == 0
+    # The refused generation still releases its bundle.
+    assert RecordingCoderAgent.events.count("cleanup") == 1
 
 
 def test_ask_factory_exception_fails_with_concise_error(tmp_path, monkeypatch, isolated_cli_env, capsys):
@@ -408,3 +427,218 @@ def test_ask_factory_exception_fails_with_concise_error(tmp_path, monkeypatch, i
     assert exit_code == 2
     assert "manifest invalid" in capsys.readouterr().err
     assert RecordingCoderAgent.instances == []
+
+
+# --- ask-mode transactional cleanup ------------------------------------------------
+
+
+class LspInitFailsAgent(RecordingCoderAgent):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        assert self.tool_collection is not None
+
+        async def _fail():
+            raise RuntimeError("lsp init failed")
+
+        self.tool_collection.initialize = _fail  # type: ignore[method-assign]
+
+
+class SessionStartHookFailsAgent(RecordingCoderAgent):
+    async def fire_hook(self, name, payload, *, target=""):
+        from kolega_code.hooks import HookEvent
+
+        if name == HookEvent.SESSION_START:
+            raise RuntimeError("session-start hook failed")
+        return await super().fire_hook(name, payload, target=target)
+
+
+class StreamFailsAgent(RecordingCoderAgent):
+    async def process_message_stream(self, message, attachments=None):
+        RecordingCoderAgent.events.append("stream")
+        raise RuntimeError("inference exploded")
+        yield {}  # pragma: no cover — makes this an async generator
+
+
+class StreamCancelledAgent(RecordingCoderAgent):
+    async def process_message_stream(self, message, attachments=None):
+        RecordingCoderAgent.events.append("stream")
+        raise __import__("asyncio").CancelledError()
+        yield {}  # pragma: no cover
+
+
+class AgentCleanupFailsAgent(RecordingCoderAgent):
+    async def cleanup(self):
+        RecordingCoderAgent.events.append("agent-cleanup-attempted")
+        raise RuntimeError("agent cleanup exploded")
+
+
+class StreamAndAgentCleanupFailAgent(StreamFailsAgent, AgentCleanupFailsAgent):
+    pass
+
+
+def _run_ask_with_extension(main_module, project):
+    return main_module.main(
+        ["ask", "do the thing", "--project", str(project), "--extension", "fake_ext_mod:create_extension"]
+    )
+
+
+def _saved_run_terminal(tmp_path):
+    """Last run.* event of the single saved session in the isolated state dir."""
+    import json
+
+    (events_file,) = (tmp_path / "state").glob("sessions/*/events.jsonl")
+    events = [json.loads(line) for line in events_file.read_text().splitlines()]
+    terminals = [event for event in events if event["type"].startswith("run.")]
+    assert len(terminals) == 1
+    return terminals[0]
+
+
+@pytest.mark.parametrize(
+    ("agent_cls", "error"),
+    [
+        (LspInitFailsAgent, "lsp init failed"),
+        (SessionStartHookFailsAgent, "session-start hook failed"),
+        (StreamFailsAgent, "inference exploded"),
+    ],
+)
+def test_ask_failure_paths_clean_up_bundle_and_keep_primary_error(
+    tmp_path, monkeypatch, isolated_cli_env, capsys, agent_cls, error
+):
+    from kolega_code.cli import main as main_module
+
+    _setup_ask(tmp_path, monkeypatch)
+    monkeypatch.setattr(main_module, "CoderAgent", agent_cls)
+    project = tmp_path / "p2"
+    project.mkdir()
+    _lifecycle_factory(monkeypatch)
+
+    with pytest.raises(RuntimeError, match=error):
+        _run_ask_with_extension(main_module, project)
+
+    assert RecordingCoderAgent.events.count("cleanup") == 1
+
+
+def test_ask_pre_run_failure_records_failed_terminal(tmp_path, monkeypatch, isolated_cli_env, capsys):
+    from kolega_code.cli import main as main_module
+
+    _setup_ask(tmp_path, monkeypatch)
+    monkeypatch.setattr(main_module, "CoderAgent", LspInitFailsAgent)
+    project = tmp_path / "p2"
+    project.mkdir()
+    _lifecycle_factory(monkeypatch)
+
+    with pytest.raises(RuntimeError, match="lsp init failed"):
+        main_module.main(
+            [
+                "ask",
+                "do the thing",
+                "--project",
+                str(project),
+                "--save",
+                "--extension",
+                "fake_ext_mod:create_extension",
+            ]
+        )
+
+    terminal = _saved_run_terminal(tmp_path)
+    assert terminal["type"] == "run.failed"
+    assert terminal["payload"]["error"]["code"] == "RuntimeError"
+    assert RecordingCoderAgent.events.count("cleanup") == 1
+
+
+def test_ask_cancellation_cleans_up_bundle(tmp_path, monkeypatch, isolated_cli_env, capsys):
+    import asyncio
+
+    from kolega_code.cli import main as main_module
+
+    _setup_ask(tmp_path, monkeypatch)
+    monkeypatch.setattr(main_module, "CoderAgent", StreamCancelledAgent)
+    project = tmp_path / "p2"
+    project.mkdir()
+    _lifecycle_factory(monkeypatch)
+
+    with pytest.raises(asyncio.CancelledError):
+        _run_ask_with_extension(main_module, project)
+
+    assert RecordingCoderAgent.events.count("cleanup") == 1
+
+
+def test_ask_bind_failure_cleans_up_and_exits_2(tmp_path, monkeypatch, isolated_cli_env, capsys):
+    main_module, project = _setup_ask(tmp_path, monkeypatch)
+
+    def create_extension(host, config_path):
+        def bad_bind(agent):
+            raise RuntimeError("bind boom")
+
+        return KolegaExtensionBundle(
+            bind_agent=bad_bind,
+            cleanup=lambda: RecordingCoderAgent.events.append("cleanup"),
+        )
+
+    _install_module(monkeypatch, create_extension=create_extension)
+
+    exit_code = _run_ask_with_extension(main_module, project)
+
+    assert exit_code == 2
+    assert "bind_agent failed" in capsys.readouterr().err
+    assert RecordingCoderAgent.events.count("stream") == 0
+    assert RecordingCoderAgent.events.count("cleanup") == 1
+
+
+def test_ask_agent_cleanup_failure_still_cleans_bundle(tmp_path, monkeypatch, isolated_cli_env, capsys):
+    from kolega_code.cli import main as main_module
+
+    _setup_ask(tmp_path, monkeypatch)
+    monkeypatch.setattr(main_module, "CoderAgent", AgentCleanupFailsAgent)
+    project = tmp_path / "p2"
+    project.mkdir()
+    _lifecycle_factory(monkeypatch)
+
+    exit_code = _run_ask_with_extension(main_module, project)
+
+    assert exit_code == 0
+    assert RecordingCoderAgent.events.count("agent-cleanup-attempted") == 1
+    assert RecordingCoderAgent.events.count("cleanup") == 1
+    assert "agent cleanup failed" in capsys.readouterr().err
+
+
+def test_ask_agent_cleanup_failure_never_masks_run_failure(tmp_path, monkeypatch, isolated_cli_env, capsys):
+    from kolega_code.cli import main as main_module
+
+    _setup_ask(tmp_path, monkeypatch)
+    monkeypatch.setattr(main_module, "CoderAgent", StreamAndAgentCleanupFailAgent)
+    project = tmp_path / "p2"
+    project.mkdir()
+    _lifecycle_factory(monkeypatch)
+
+    with pytest.raises(RuntimeError, match="inference exploded"):
+        _run_ask_with_extension(main_module, project)
+
+    assert RecordingCoderAgent.events.count("agent-cleanup-attempted") == 1
+    assert RecordingCoderAgent.events.count("cleanup") == 1
+
+
+def test_ask_bundle_cleanup_failure_never_masks_run_failure(tmp_path, monkeypatch, isolated_cli_env, capsys):
+    from kolega_code.cli import main as main_module
+
+    _setup_ask(tmp_path, monkeypatch)
+    monkeypatch.setattr(main_module, "CoderAgent", StreamFailsAgent)
+    project = tmp_path / "p2"
+    project.mkdir()
+
+    cleanups = []
+
+    def create_extension(host, config_path):
+        def bad_cleanup():
+            cleanups.append("attempted")
+            raise RuntimeError("bundle cleanup exploded")
+
+        return KolegaExtensionBundle(cleanup=bad_cleanup)
+
+    _install_module(monkeypatch, create_extension=create_extension)
+
+    with pytest.raises(RuntimeError, match="inference exploded"):
+        _run_ask_with_extension(main_module, project)
+
+    assert cleanups == ["attempted"]
+    assert "extension cleanup failed" in capsys.readouterr().err

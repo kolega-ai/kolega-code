@@ -92,6 +92,13 @@ def resolve_extension_selection(spec: str, config_path: str | Path | None) -> Ex
         module = importlib.import_module(module_name)
     except ImportError as exc:
         raise KolegaExtensionLoadError(f"--extension: cannot import module {module_name!r}: {exc}") from exc
+    except Exception as exc:
+        # Module-level code can raise anything during import; keep every
+        # ordinary failure on the same concise CLI error path. BaseException
+        # (KeyboardInterrupt, SystemExit) propagates untouched.
+        raise KolegaExtensionLoadError(
+            f"--extension: importing module {module_name!r} raised {type(exc).__name__}: {exc}"
+        ) from exc
     factory = getattr(module, factory_name, None)
     if factory is None:
         raise KolegaExtensionLoadError(f"--extension: module {module_name!r} has no attribute {factory_name!r}")

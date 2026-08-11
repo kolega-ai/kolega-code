@@ -48,6 +48,7 @@ class FakeCoderAgent:
         self.gigacode_enabled = False
         self.gigacode_prompt_extension = None
         self.clear_history_calls = 0
+        self.cleanup_calls = 0
         self.session_recorder = kwargs.get("session_recorder")
         self.queued_input_provider = None
         # Volatile-context providers registered by _build_agent (plan handle, task list).
@@ -96,6 +97,7 @@ class FakeCoderAgent:
         pass
 
     async def cleanup(self):
+        self.cleanup_calls += 1
         return None
 
     async def process_message_stream(self, message, attachments=None):

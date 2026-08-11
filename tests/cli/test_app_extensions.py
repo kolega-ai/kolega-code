@@ -31,6 +31,7 @@ class _Recorder:
         self.factory_calls: list = []
         self.binds: list = []
         self.cleanups: int = 0
+        self.fail_bind: bool = False
 
 
 def _sink(record):
@@ -38,6 +39,11 @@ def _sink(record):
 
 
 def _install_extension(monkeypatch, recorder):
+    def _bind(agent):
+        if recorder.fail_bind:
+            raise RuntimeError("bind boom")
+        recorder.binds.append(agent)
+
     def create_extension(host, config_path):
         recorder.factory_calls.append((host, config_path))
         return KolegaExtensionBundle(
@@ -51,7 +57,7 @@ def _install_extension(monkeypatch, recorder):
                 )
             ],
             llm_trace_sink=_sink,
-            bind_agent=recorder.binds.append,
+            bind_agent=_bind,
             cleanup=lambda: setattr(recorder, "cleanups", recorder.cleanups + 1),
         )
 
@@ -121,6 +127,81 @@ async def test_extension_bundle_injected_and_bound_per_generation(tmp_path, monk
         assert recorder.cleanups == 2
         await app._cleanup_extension_bundle()
         assert recorder.cleanups == 2
+
+
+@pytest.mark.asyncio
+async def test_cleanup_agent_generation_is_idempotent_and_detaches_agent(tmp_path, monkeypatch):
+    pytest.importorskip("textual")
+    recorder = _Recorder()
+    selection = _install_extension(monkeypatch, recorder)
+    app, _config = _build_app(tmp_path, monkeypatch, selection)
+
+    async with app.run_test():
+        agent = app.agent
+        assert isinstance(agent, FakeCoderAgent)
+        await app._cleanup_agent_generation()
+        assert app.agent is None
+        assert app._extension_bundle is None
+        assert agent.cleanup_calls == 1
+        assert recorder.cleanups == 1
+        # Repeated calls find nothing to clean.
+        await app._cleanup_agent_generation()
+        assert agent.cleanup_calls == 1
+        assert recorder.cleanups == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_rebuild_reclaims_partial_generation_exactly_once(tmp_path, monkeypatch):
+    pytest.importorskip("textual")
+    from kolega_code.extensions import KolegaExtensionLoadError
+
+    recorder = _Recorder()
+    selection = _install_extension(monkeypatch, recorder)
+    app, config = _build_app(tmp_path, monkeypatch, selection)
+
+    async with app.run_test():
+        first_agent = app.agent
+        assert isinstance(first_agent, FakeCoderAgent)
+
+        # Make the second generation fail at bind time, after its bundle and
+        # agent already exist.
+        recorder.fail_bind = True
+
+        with pytest.raises(KolegaExtensionLoadError, match="bind_agent failed"):
+            await app._build_agent(config, rebuild=True)
+
+        # Old generation cleaned on rebuild entry, failed new generation
+        # reclaimed by the transaction guard: two bundle cleanups total, the
+        # partially built agent cleaned, and no live generation installed.
+        assert recorder.cleanups == 2
+        assert first_agent.cleanup_calls == 1
+        assert app.agent is None
+        assert app._extension_bundle is None
+
+
+@pytest.mark.asyncio
+async def test_action_quit_cleans_generation_even_when_save_fails(tmp_path, monkeypatch):
+    pytest.importorskip("textual")
+    from unittest.mock import AsyncMock, MagicMock
+
+    recorder = _Recorder()
+    selection = _install_extension(monkeypatch, recorder)
+    app, _config = _build_app(tmp_path, monkeypatch, selection)
+
+    async with app.run_test():
+        agent = app.agent
+        assert isinstance(agent, FakeCoderAgent)
+        app._save_session_history_async = AsyncMock(side_effect=RuntimeError("session save failed"))
+        app.exit = MagicMock()
+
+        with pytest.raises(RuntimeError, match="session save failed"):
+            await app.action_quit()
+
+        assert agent.cleanup_calls == 1
+        assert recorder.cleanups == 1
+        assert app.agent is None
+        assert app._extension_bundle is None
+        app.exit.assert_called_once_with()
 
 
 @pytest.mark.asyncio
