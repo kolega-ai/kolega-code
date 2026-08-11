@@ -38,8 +38,9 @@ def test_opus_5_is_selectable_and_default_for_anthropic() -> None:
 def test_kimi_coding_exposes_plan_specific_k3_models():
     assert ui_model_options(ModelProvider.KIMI_CODING.value) == [
         ("Kimi K3 (256K)", "k3"),
-        ("Kimi K3 (1M)", "k3[1m]"),
+        ("Kimi K3-256K", "k3-256k"),
         ("Kimi for Coding", "kimi-for-coding"),
+        ("Kimi for Coding (HighSpeed)", "kimi-for-coding-highspeed"),
     ]
     assert default_model_for_provider(ModelProvider.KIMI_CODING) == "kimi-for-coding"
     assert ui_thinking_effort_options("kimi_coding", "k3") == [("Max", "max")]

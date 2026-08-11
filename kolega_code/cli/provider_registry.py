@@ -54,8 +54,9 @@ MODEL_LABELS: dict[str, str] = {
     "kimi-k2.6": "Kimi K2.6",
     # Kimi Coding Plan
     "k3": "Kimi K3 (256K)",
-    "k3[1m]": "Kimi K3 (1M)",
+    "k3-256k": "Kimi K3-256K",
     "kimi-for-coding": "Kimi for Coding",
+    "kimi-for-coding-highspeed": "Kimi for Coding (HighSpeed)",
     # DeepSeek
     "deepseek-v4-pro": "DeepSeek V4 Pro",
     "deepseek-v4-flash": "DeepSeek V4 Flash",

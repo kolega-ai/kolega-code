@@ -47,13 +47,14 @@ documents as `ANTHROPIC_AUTH_TOKEN`).
 <Aside type="tip">
 **Kimi Coding Plan.** The `kimi_coding` provider targets Kimi's Anthropic-compatible
 coding endpoint (`https://api.kimi.com/coding/`), which is separate from the standard
-Moonshot API used by the `moonshot` provider. It exposes **`k3`** with a 256K context
-on Moderato and higher plans, and **`k3[1m]`** with a 1M context on Allegretto and
-higher plans. Both K3 IDs use deep thinking with fixed `max` effort. The
-**`kimi-for-coding`** ID remains the default because it is available on every plan;
-with thinking effort `auto` (enabled) it routes to **K2.7 Code**, and with `none`
-(disabled) it routes to **K2.6**. Set `KIMI_CODING_API_KEY` to your Kimi Coding Plan
-key.
+Moonshot API used by the `moonshot` provider. It exposes **`k3`** (256K context on
+Moderato and higher plans; the same ID carries up to 1M on Allegretto and higher),
+**`k3-256k`** (a fixed 256K K3 route with roughly half the quota burn), and
+**`kimi-for-coding`** (the default because it is available on every plan). The K3
+IDs use deep thinking with fixed `max` effort. **`kimi-for-coding-highspeed`** (K2.7
+Code HighSpeed, Allegretto and higher) is also available. With thinking effort `auto`
+(enabled) the `kimi-for-coding` IDs route to **K2.7 Code**, and with `none` (disabled)
+they route to **K2.6**. Set `KIMI_CODING_API_KEY` to your Kimi Coding Plan key.
 </Aside>
 
 <Aside type="tip">
@@ -316,8 +317,8 @@ models in the TUI.
 | Moonshot `kimi-k3` | `max` | `max` |
 | Moonshot `kimi-k2.7-code` | `auto` | `auto` |
 | Moonshot `kimi-k2.6` | `auto`, `none` | `auto` |
-| Kimi Coding Plan `k3`, `k3[1m]` | `max` | `max` |
-| Kimi Coding Plan `kimi-for-coding` | `auto`, `none` | `auto` |
+| Kimi Coding Plan `k3`, `k3-256k` | `max` | `max` |
+| Kimi Coding Plan `kimi-for-coding`, `kimi-for-coding-highspeed` | `auto`, `none` | `auto` |
 | Z.AI `glm-5.2` | `high`, `max` | `max` |
 | Z.AI `glm-5.1` | `auto`, `none` | `auto` |
 | Fireworks serverless reasoning models | `none`, `low`, `medium`, `high`, `max` | `medium` |

@@ -19,6 +19,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   specs that fail later with `KeyError: 'input_budget'`. Refreshing a catalog
   rewrites it in the current schema.
 
+- Kimi Coding Plan model IDs now match the provider's real wire IDs:
+  `k3-256k` (fixed 256K K3 route) and `kimi-for-coding-highspeed` are
+  recognized, and the fabricated `k3[1m]` ID is gone (Kimi's 1M context is
+  the same `k3` ID, tier-gated). Kimi and Moonshot input budgets treat output
+  as a separate allowance (verified by live probes), so the full context
+  window is usable as input instead of being cut down by the output cap.
+
 ### Added
 
 - ATIF v1.7 trajectory export: `sessions export --format atif` converts any
