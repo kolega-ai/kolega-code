@@ -167,6 +167,7 @@ class _TrajectoryDraft:
     status: Optional[str] = None
     summary: Optional[str] = None
     model_name: Optional[str] = None
+    tool_definitions: Optional[list[dict[str, Any]]] = None
     steps: list[_StepDraft] = field(default_factory=list)
     call_owner: dict[str, int] = field(default_factory=dict)  # tool_call_id -> steps index
     extra: dict[str, Any] = field(default_factory=dict)
@@ -431,6 +432,7 @@ class _Grouper:
         handler = {
             "turn.started": self._on_turn_started,
             "context.system": self._on_context_system,
+            "context.tools": self._on_context_tools,
             "context.message": self._on_context_message,
             "assistant.message": self._on_assistant_message,
             "llm.message": self._on_llm_message,
@@ -471,6 +473,13 @@ class _Grouper:
             payload.get("message") or {}, event=event, assets=self.assets, warnings=self.warnings
         )
         self._append_step(draft, self._system_step(event, message if isinstance(message, str) else ""))
+
+    def _on_context_tools(self, draft: _TrajectoryDraft, event: dict[str, Any], payload: dict[str, Any]) -> None:
+        # Not a step: the toolset describes the agent, not a context change the
+        # model observed as content. Latest recording wins.
+        tools = payload.get("tools")
+        if isinstance(tools, list) and tools:
+            draft.tool_definitions = tools
 
     def _on_context_message(self, draft: _TrajectoryDraft, event: dict[str, Any], payload: dict[str, Any]) -> None:
         message, _, _, content_blocks = _step_message_and_reasoning(
@@ -864,11 +873,6 @@ def build_atif_document(
         for key in ("long_provider", "long_model", "thinking_effort"):
             if key in metadata_config and key not in config:
                 config[key] = metadata_config[key]
-    warnings.add(
-        "tool_definitions_unavailable",
-        "Tool definitions are not recorded in the session journal; agent.tool_definitions is omitted.",
-    )
-
     root_agent = {
         "name": ATIF_AGENT_NAME,
         "version": kolega_version,
@@ -880,6 +884,13 @@ def build_atif_document(
             "profile": grouper.root.agent_name,
         },
     }
+    if grouper.root.tool_definitions:
+        root_agent["tool_definitions"] = grouper.root.tool_definitions
+    else:
+        warnings.add(
+            "tool_definitions_unavailable",
+            "This session recorded no tool schemas (pre-context.tools journal); agent.tool_definitions is omitted.",
+        )
 
     subagent_refs = {
         draft.parent_tool_call_id: draft.agent_id for draft in grouper.subagents.values() if draft.parent_tool_call_id
@@ -887,7 +898,7 @@ def build_atif_document(
 
     subagent_documents = []
     for child in grouper.subagents.values():
-        child_agent = {
+        child_agent: dict[str, Any] = {
             "name": ATIF_AGENT_NAME,
             "version": kolega_version,
             "model_name": child.model_name,
@@ -901,6 +912,8 @@ def build_atif_document(
                 **({"summary": child.summary} if child.summary else {}),
             },
         }
+        if child.tool_definitions:
+            child_agent["tool_definitions"] = child.tool_definitions
         subagent_documents.append(
             _project_trajectory(
                 child,

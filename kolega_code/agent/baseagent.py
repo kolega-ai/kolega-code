@@ -2209,12 +2209,18 @@ class BaseAgent(LogMixin):
                 self.session_recorder.start_turn,
                 Message(role="user", content=content_blocks),
             )
-            # Journal the rendered provider-facing system context; deduplicated
-            # by fingerprint inside the recorder so only changes are recorded.
+            # Journal the rendered provider-facing system context and the
+            # available tool schemas; both are deduplicated by fingerprint
+            # inside the recorder so only changes are recorded.
             await asyncio.to_thread(
                 self.session_recorder.record_system_context,
                 self.system_prompt.get_text_content(),
             )
+            if self.tool_collection is not None:
+                await asyncio.to_thread(
+                    self.session_recorder.record_tool_definitions,
+                    [tool.to_public_dict() for tool in self.tool_collection.get_tool_list()],
+                )
 
         self.append_user_message(content_blocks)
 

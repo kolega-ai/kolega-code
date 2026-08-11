@@ -252,6 +252,9 @@ class TestBaseAgent:
             def record_system_context(self, text):
                 return False
 
+            def record_tool_definitions(self, tools):
+                return False
+
             def record_context_message(self, message, *, actor=None):
                 pass
 
@@ -295,6 +298,9 @@ class TestBaseAgent:
                 self.current_turn_id = "turn"
 
             def record_system_context(self, text):
+                return False
+
+            def record_tool_definitions(self, tools):
                 return False
 
             def record_context_message(self, message, *, actor=None):

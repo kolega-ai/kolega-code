@@ -78,9 +78,21 @@ def convert(journal, **overrides):
     return json.loads(export_atif_to_text(journal, **kwargs))
 
 
+RICH_TURN_TOOLS = [
+    {"name": "exec_command", "description": "Run a command.", "input_schema": {"type": "object"}},
+    {
+        "name": "apply_patch",
+        "description": "Apply a patch.",
+        "input_schema": {"type": "object"},
+        "input_kind": "freeform",
+    },
+]
+
+
 def drive_rich_turn(recorder, ledger):
     recorder.start_turn(Message(role="user", content=[TextBlock("run the tests")]))
     recorder.record_system_context("You are kolega.")
+    recorder.record_tool_definitions(RICH_TURN_TOOLS)
     first = settled(
         ledger,
         Message(
@@ -139,6 +151,8 @@ def test_rich_turn_projects_and_validates():
     assert doc["trajectory_id"] == derive_root_agent_id("atif-s1")
     assert doc["agent"]["name"] == "kolega-code"
     assert doc["agent"]["model_name"] == "claude-opus-5"
+    assert doc["agent"]["tool_definitions"] == RICH_TURN_TOOLS
+    assert not any(w["code"] == "tool_definitions_unavailable" for w in doc["extra"]["conversion_warnings"])
 
     steps = doc["steps"]
     assert [step["step_id"] for step in steps] == list(range(1, len(steps) + 1))
@@ -456,6 +470,9 @@ def test_v1_legacy_journal_exports_with_derived_identities(tmp_path):
         "v1_subagent_tools_unrecorded",
     } <= codes
     assert "v1_source_journal" in doc["notes"]
+    # v1 sessions never recorded tool schemas: omitted with a warning.
+    assert "tool_definitions" not in doc["agent"]
+    assert "tool_definitions_unavailable" in codes
 
 
 def test_secrets_and_state_dir_are_scrubbed(tmp_path):
