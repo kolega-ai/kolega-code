@@ -4,6 +4,7 @@ with the prior generation's bundle cleaned up exactly once on rebuild and the
 last one on app exit."""
 
 # ruff: noqa: F401,F811,E402
+import asyncio
 import sys
 import types
 
@@ -148,6 +149,90 @@ async def test_cleanup_agent_generation_is_idempotent_and_detaches_agent(tmp_pat
         await app._cleanup_agent_generation()
         assert agent.cleanup_calls == 1
         assert recorder.cleanups == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_generation_cleanup_preserves_agent_before_bundle_order(tmp_path, monkeypatch):
+    pytest.importorskip("textual")
+    recorder = _Recorder()
+    selection = _install_extension(monkeypatch, recorder)
+    app, _config = _build_app(tmp_path, monkeypatch, selection)
+
+    async with app.run_test():
+        agent = app.agent
+        bundle = app._extension_bundle
+        assert isinstance(agent, FakeCoderAgent)
+        assert bundle is not None
+
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        events: list[str] = []
+
+        async def cleanup_agent() -> None:
+            events.append("agent-start")
+            cleanup_started.set()
+            await release_cleanup.wait()
+            events.append("agent-end")
+
+        async def cleanup_bundle() -> None:
+            events.append("bundle")
+
+        agent.cleanup = cleanup_agent
+        bundle.cleanup = cleanup_bundle
+
+        first_cleanup = asyncio.create_task(app._cleanup_agent_generation())
+        await cleanup_started.wait()
+
+        second_cleanup = asyncio.create_task(app._cleanup_agent_generation())
+        await second_cleanup
+
+        assert app.agent is None
+        assert app._extension_bundle is None
+        assert events == ["agent-start"]
+
+        release_cleanup.set()
+        await first_cleanup
+
+        assert events == ["agent-start", "agent-end", "bundle"]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_generation_cleanup_still_releases_claimed_bundle(tmp_path, monkeypatch):
+    pytest.importorskip("textual")
+    recorder = _Recorder()
+    selection = _install_extension(monkeypatch, recorder)
+    app, _config = _build_app(tmp_path, monkeypatch, selection)
+
+    async with app.run_test():
+        agent = app.agent
+        bundle = app._extension_bundle
+        assert isinstance(agent, FakeCoderAgent)
+        assert bundle is not None
+
+        cleanup_started = asyncio.Event()
+        events: list[str] = []
+
+        async def cleanup_agent() -> None:
+            events.append("agent-start")
+            cleanup_started.set()
+            await asyncio.Event().wait()
+
+        async def cleanup_bundle() -> None:
+            events.append("bundle")
+
+        agent.cleanup = cleanup_agent
+        bundle.cleanup = cleanup_bundle
+
+        cleanup_task = asyncio.create_task(app._cleanup_agent_generation())
+        await cleanup_started.wait()
+        cleanup_task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await cleanup_task
+
+        assert app.agent is None
+        assert app._extension_bundle is None
+        assert events == ["agent-start", "bundle"]
 
 
 @pytest.mark.asyncio
