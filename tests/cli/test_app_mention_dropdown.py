@@ -116,7 +116,13 @@ async def test_mention_dropdown_uses_cached_search_not_blocking_walk(
         dropdown = app.query_one("#completion_dropdown", CompletionDropdown)
         composer.focus()
         composer.insert("@alp")
-        await pilot.pause()
+        # The TextArea.Changed message can land a pump cycle later on a slow
+        # runner; settle until the completion handler has run. The blocking
+        # search() trap stays armed for the whole window.
+        for _ in range(20):
+            await pilot.pause()
+            if calls["cached"]:
+                break
 
         assert calls["cached"] >= 1  # keystroke used the non-blocking cached search
         assert dropdown.is_open

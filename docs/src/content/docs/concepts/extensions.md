@@ -128,6 +128,36 @@ assistant message with that tool call. A tool that depends on the top-level
 binding should set `propagate_to_sub_agents=False`, since sub-agents are not
 the bound agent.
 
+### Continuing from restored history
+
+`BaseAgent.continue_from_history_stream()` runs the ordinary agent loop without
+inserting a user message — for resuming a restored conversation that already
+ends at a point from which the assistant should act, commonly an assistant tool
+call followed by its matching tool result. The preparation surface is public:
+
+```python
+agent.restore_message_history(serialized_history)
+agent.restore_compaction_state(compaction)          # after restore, if saved
+agent.append_user_message([ToolResult(tool_use_id=..., name=..., content=...)])
+async for chunk in agent.continue_from_history_stream():
+    ...
+```
+
+The continuation runs the same compaction checks, request construction, model
+streaming, tool execution, iteration limits, stop handling, retries, session
+recording, and usage accounting as a normal turn, and yields the same chunk
+format as `process_message_stream`. It adds no user text, attachment,
+volatile-context turn, or prompt-submit hook. Preconditions and caveats:
+
+- The conversation must be non-empty (`ValueError` otherwise) and valid for the
+  provider; validity is the caller's responsibility.
+- Append the real `ToolResult` **before** continuing. A restored history ending
+  in an unanswered tool call is repaired with a placeholder "interrupted"
+  result — exactly as a normal turn would — not rejected.
+- In a recorded session the turn journals as a `turn.started` event with
+  `{"continuation": true}` and no message; replay skips it, and older Kolega
+  Code versions cannot load sessions that contain one.
+
 ### LLM trace sink
 
 `llm_trace_sink` is an optional callable forwarded to every LLM client created

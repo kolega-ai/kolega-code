@@ -2045,6 +2045,52 @@ class BaseAgent(LogMixin):
             async for chunk in turn:
                 yield chunk
 
+    async def continue_from_history_stream(self) -> AsyncGenerator[Dict[str, Any], None]:
+        """Continue the ordinary agent loop without inserting a user message.
+
+        Requires an already valid conversation ending at a point from which the
+        assistant should act — commonly an assistant tool call followed by its
+        appended matching tool result. ``restore_message_history``,
+        ``restore_compaction_state``, and ``append_user_message`` (with a
+        ``ToolResult`` matched to the restored ``ToolCall``) are the public
+        preparation surface.
+
+        Runs the same compaction checks, request construction, model streaming,
+        tool execution, iteration limits, stop handling, retries, session
+        recording, usage accounting, and cancellation/terminal bookkeeping as a
+        normal turn, and yields the same chunk format as
+        ``process_message_stream``. Adds no user text, attachment,
+        volatile-context turn, or prompt-submit hook.
+        """
+        if not self.get_effective_history_for_llm():
+            raise ValueError(
+                "continue_from_history_stream requires a non-empty conversation; "
+                "restore message history (and any compaction state) first"
+            )
+        turn = self._run_recorded_turn(self._continue_from_history_impl(), user_text=None)
+        async with contextlib.aclosing(turn):
+            async for chunk in turn:
+                yield chunk
+
+    async def _continue_from_history_impl(self) -> AsyncGenerator[Dict[str, Any], None]:
+        # No memory refresh: its only model-visible effect is volatile-context
+        # injection, which a continuation deliberately never performs.
+        if self.session_recorder is not None:
+            await asyncio.to_thread(self.session_recorder.start_continuation_turn)
+            await asyncio.to_thread(
+                self.session_recorder.record_system_context,
+                self.system_prompt.get_text_content(),
+            )
+            if self.tool_collection is not None:
+                await asyncio.to_thread(
+                    self.session_recorder.record_tool_definitions,
+                    [tool.to_public_dict() for tool in self.tool_collection.get_tool_list()],
+                )
+        loop_stream = self._agent_loop_stream()
+        async with contextlib.aclosing(loop_stream):
+            async for chunk in loop_stream:
+                yield chunk
+
     async def _run_recorded_turn(
         self, impl: AsyncGenerator[Dict[str, Any], None], *, user_text: Optional[str]
     ) -> AsyncGenerator[Dict[str, Any], None]:
