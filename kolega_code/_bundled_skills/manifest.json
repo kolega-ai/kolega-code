@@ -14,11 +14,11 @@
     },
     {
       "path": "skills/deep-research/references/gigacode-workflow.md",
-      "sha256": "097807156d55a29d12b16a3a5d496a41fb07f152476e95e390699dec1842bc6a"
+      "sha256": "dbbe41f577bd96e2d6658f353b2cffd1e7971fbba255b803f781e86c3a6d5f1b"
     },
     {
       "path": "skills/deep-research/scripts/deep-research.workflow",
-      "sha256": "5207a175f1f1b4144d1c1e53c66e351c20006444e9d31abc7ce3f9be9204df3c"
+      "sha256": "3928a54b360fbee4a942f2b0172ad7607a7350500f9ea5ad413a9c2dcbce2ed7"
     },
     {
       "path": "skills/deep-research/scripts/materialize_report.py",
@@ -217,8 +217,8 @@
     "xlsx"
   ],
   "source": {
-    "commit": "c0ba68e7aee0994318913aa9fcaad4f57cbc11d7",
+    "commit": "ff2d74cd95523e9173332ef5f2ba6c92d40acf0b",
     "repository": "https://github.com/kolega-ai/kolega-skills",
-    "tag": "v0.3.0"
+    "tag": "v0.3.1"
   }
 }

@@ -1335,9 +1335,10 @@ WRITE_INSTRUCTIONS = (
 )
 
 READ_INSTRUCTIONS = (
-    "Read the referenced files with read_file_section (preferred) or read_entire_file "
-    "using the absolute paths given. If a file is missing or unreadable, continue from "
-    "the inline records below and note the degradation in your gaps."
+    "Read the referenced files with the read tool (using offset/limit for "
+    "sections) using the absolute paths given. If a file is missing or "
+    "unreadable, continue from the inline records below and note the "
+    "degradation in your gaps."
 )
 
 
