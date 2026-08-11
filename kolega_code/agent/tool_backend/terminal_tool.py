@@ -107,6 +107,7 @@ class TerminalTool(BaseTool):
             tokens_per_minute=rate_limits.tokens_per_minute,
             token_manager=self.config.get_chatgpt_token_manager(),
             usage_ledger=getattr(self.caller, "usage_ledger", None),
+            trace_sink=getattr(self.caller, "llm_trace_sink", None),
         )
 
         try:
