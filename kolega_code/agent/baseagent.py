@@ -2038,10 +2038,19 @@ class BaseAgent(LogMixin):
         no actual conversation. Mirroring here rather than at each ``yield`` keeps
         one choke point that cannot drift out of sync with the yields.
         """
+        async for chunk in self._run_recorded_turn(
+            self._process_message_stream_impl(message, attachments), user_text=message
+        ):
+            yield chunk
+
+    async def _run_recorded_turn(
+        self, impl: AsyncGenerator[Dict[str, Any], None], *, user_text: Optional[str]
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Drive one recorded turn: boundaries, chunk mirroring, terminal bookkeeping."""
         turn_id = str(uuid.uuid4())
-        await self._emit_turn_boundary("started", turn_id=turn_id, user_text=message)
+        await self._emit_turn_boundary("started", turn_id=turn_id, user_text=user_text)
         try:
-            async for chunk in self._process_message_stream_impl(message, attachments):
+            async for chunk in impl:
                 await self._mirror_stream_chunk(chunk)
                 yield chunk
         except asyncio.CancelledError:
@@ -2244,6 +2253,16 @@ class BaseAgent(LogMixin):
                 )
             self.append_user_message([volatile_context])
 
+        async for chunk in self._agent_loop_stream():
+            yield chunk
+
+    async def _agent_loop_stream(self) -> AsyncGenerator[Dict[str, Any], None]:
+        """The shared agent loop: compaction, model streaming, tool execution.
+
+        Message-independent by construction: user-content handling (attachment
+        guards, prompt-submit hooks, user-message insertion, volatile context)
+        happens before this generator is entered.
+        """
         stop_reason = None
         stop_overrides = 0
         silent_turn_nudges = 0
