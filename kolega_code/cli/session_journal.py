@@ -674,20 +674,37 @@ class SessionRecorder:
         with self._lock:
             if self.current_turn_id is not None:
                 raise SessionJournalError("Cannot start a session turn while another turn is open")
-            turn_id = str(uuid.uuid4())
             stored, artifacts = self.journal.prepare_message(message.to_dict())
-            event = self._append(
-                "turn.started",
-                actor="user",
-                payload={"message": stored},
-                turn_id=turn_id,
-                artifacts=artifacts,
-            )
-            self.current_turn_id = turn_id
-            self._turn_started_at = event.timestamp
-            self._assistant_count = 0
-            self._tool_batches = 0
-            return turn_id
+            return self._open_turn_locked(actor="user", payload={"message": stored}, artifacts=artifacts)
+
+    def start_continuation_turn(self) -> str:
+        """Open a turn that continues from restored history with no user message.
+
+        The ``turn.started`` payload carries ``{"continuation": True}`` and no
+        ``message`` key: it contributes no history message on replay, and export
+        consumers must not synthesize a user step for it.
+        """
+        with self._lock:
+            if self.current_turn_id is not None:
+                raise SessionJournalError("Cannot start a session turn while another turn is open")
+            return self._open_turn_locked(actor="system", payload={"continuation": True}, artifacts=None)
+
+    def _open_turn_locked(
+        self, *, actor: str, payload: dict[str, Any], artifacts: Optional[list[dict[str, Any]]]
+    ) -> str:
+        turn_id = str(uuid.uuid4())
+        event = self._append(
+            "turn.started",
+            actor=actor,
+            payload=payload,
+            turn_id=turn_id,
+            artifacts=artifacts,
+        )
+        self.current_turn_id = turn_id
+        self._turn_started_at = event.timestamp
+        self._assistant_count = 0
+        self._tool_batches = 0
+        return turn_id
 
     def record_assistant(self, message: Message, *, reasoning_effort: Optional[str] = None) -> None:
         with self._lock:

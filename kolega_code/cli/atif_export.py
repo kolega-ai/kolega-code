@@ -455,6 +455,16 @@ class _Grouper:
         self.warnings.add("unknown_event_type", f"Unknown event type {event_type} kept in extra only.")
 
     def _on_turn_started(self, draft: _TrajectoryDraft, event: dict[str, Any], payload: dict[str, Any]) -> None:
+        if payload.get("continuation"):
+            # A continuation turn carries no user utterance; keep the boundary
+            # in extra instead of fabricating an empty user step. Root drafts
+            # surface extra via root_extra; subagent drafts via their own extra.
+            record = {"turn_id": event.get("turn_id"), "seq": int(event["seq"])}
+            if draft is self.root:
+                self.root_extra.setdefault("continuation_turns", []).append(record)
+            else:
+                draft.extra.setdefault("continuation_turns", []).append(record)
+            return
         message, _, _, content_blocks = _step_message_and_reasoning(
             payload.get("message") or {}, event=event, assets=self.assets, warnings=self.warnings
         )

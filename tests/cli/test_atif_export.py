@@ -575,3 +575,26 @@ def test_usage_is_never_fabricated():
     assert "total_prompt_tokens" not in (doc.get("final_metrics") or {})
     codes = {w["code"] for w in doc["extra"]["conversion_warnings"]}
     assert "usage_missing_for_llm_step" in codes and "usage_totals_partial" in codes
+
+
+def test_continuation_turn_produces_no_user_step():
+    journal = make_journal()
+    recorder = bootstrap(journal)
+    ledger = UsageLedger()
+    recorder.start_continuation_turn()
+    recorder.record_system_context("You are kolega.")
+    message = settled(
+        ledger,
+        Message(role="assistant", content=[TextBlock("resumed")], stop_reason="end_turn", usage=_usage(10, 5)),
+    )
+    recorder.record_assistant(message, reasoning_effort="high")
+    recorder.finish_turn("completed")
+
+    doc = convert(journal)
+
+    # No fabricated empty user utterance; the boundary survives in extra.
+    assert [step["source"] for step in doc["steps"]].count("user") == 0
+    continuations = doc["extra"]["kolega"]["continuation_turns"]
+    assert len(continuations) == 1 and continuations[0]["turn_id"]
+    agent_steps = [step for step in doc["steps"] if step["source"] == "agent"]
+    assert len(agent_steps) == 1 and agent_steps[0]["message"] == "resumed"

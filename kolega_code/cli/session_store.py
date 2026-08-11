@@ -586,6 +586,10 @@ class SessionStore:
             if current_epoch is None or event.epoch_id != current_epoch:
                 continue
             if event.event_type in message_events:
+                if event.event_type == "turn.started" and event.payload.get("continuation"):
+                    # A continuation turn opens with no user message; the
+                    # boundary contributes nothing to resumable history.
+                    continue
                 message = event.payload.get("message")
                 if not isinstance(message, dict):
                     raise SessionStoreError(f"Session event {event.seq} is missing a message")

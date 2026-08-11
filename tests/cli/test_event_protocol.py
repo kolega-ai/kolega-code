@@ -550,3 +550,18 @@ def test_recovery_ignores_open_subagent_turns(tmp_path: Path) -> None:
     assert recovered.current_turn_id is None
     types = [e.event_type for e in journal.read_events()]
     assert types.count("turn.completed") == 1
+
+
+def test_continuation_turn_started_passes_through_without_message() -> None:
+    journal = InMemorySessionJournal("proto-continuation")
+    bootstrap(journal)
+    recorder = SessionRecorder(journal, recover=False)
+    recorder.start_continuation_turn()
+    recorder.finish_turn("completed")
+
+    started = next(event for event in journal.read_events() if event.event_type == "turn.started")
+    public = to_public_event(started)
+    assert public is not None
+    assert public["type"] == "turn.started"
+    assert public["actor"] == "system"
+    assert public["payload"] == {"continuation": True}
