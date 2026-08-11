@@ -36,6 +36,7 @@ from kolega_code.hooks import (
 )
 from kolega_code.llm.exceptions import (
     LLMConnectionError,
+    LLMContextWindowExceededError,
     LLMError,
     LLMInternalServerError,
     LLMRateLimitError,
@@ -1156,7 +1157,7 @@ class BaseAgent(LogMixin):
         )
 
     async def compress_history(
-        self, *, trigger: str = "manual", tokens_before: Optional[int] = None
+        self, *, trigger: str = "manual", tokens_before: Optional[int] = None, keep_recent: Optional[int] = None
     ) -> CompactionResult:
         """
         Non-destructively summarize the current history, keeping recent turns
@@ -1165,6 +1166,9 @@ class BaseAgent(LogMixin):
         refreshes. Returns the structured outcome.
 
         ``trigger``/``tokens_before`` are journaled as compaction provenance.
+        ``keep_recent`` overrides the compressor's verbatim tail; ``None`` keeps
+        the default six-message tail, ``0`` folds everything before the safe
+        boundary (the automatic zero-tail recovery pass).
         """
         # Compaction changes what the server restores and what the client
         # counts, so any carried residual is stale; the next clean response
@@ -1203,6 +1207,7 @@ class BaseAgent(LogMixin):
                 on_info=on_info,
                 on_error=on_error,
                 system_prompt_text=compaction_system_prompt,
+                keep_recent=keep_recent,
             )
             if result.ok:
                 # Compaction summarizes the injected volatile-context blocks along with
@@ -1231,6 +1236,50 @@ class BaseAgent(LogMixin):
         summary_text = self.conversation.summary.get_text_content() if result.ok and self.conversation.summary else ""
         await self.emitter.compaction_status(phase, result.message, summary=summary_text)
         return result
+
+    async def _auto_compact_once(
+        self, *, trigger: str, before_tokens: int, keep_recent: Optional[int] = None
+    ) -> tuple[CompactionResult, MessageHistory, TokenCount]:
+        """One automatic compaction pass with its hook lifecycle, then a rebuilt + recounted request.
+
+        Fires the advisory PreCompact/PostCompact hooks around ``compress_history``
+        with ``trigger`` provenance, then rebuilds the request history — compaction
+        moved the boundary — and recounts so the caller decides on the
+        post-compaction size. Returns the outcome plus the rebuilt history and
+        count so the agent loop can reuse them for the primary request.
+        """
+        await self.fire_hook(
+            HookEvent.PRE_COMPACT,
+            {
+                "trigger": trigger,
+                "input_tokens": before_tokens,
+                "model_context_length": self.model_context_length,
+            },
+        )
+        result = await self.compress_history(trigger=trigger, tokens_before=before_tokens, keep_recent=keep_recent)
+        # compress_history forgets the volatile-context sent-state on success,
+        # so the next turn re-sends memory, guidance, and any host sections
+        # (plan handle, task list) the summary may have folded away.
+        # Rebuild after compaction (history changed) and re-mark the cache
+        # checkpoint before re-counting so the reused history reflects it.
+        self.mark_cache_checkpoint()
+        self._sanitize_oversized_tool_results()
+        fixed_history = await self._history_for_llm_async()
+        token_count = await self.count_current_context(fixed_history)
+
+        await self.fire_hook(
+            HookEvent.POST_COMPACT,
+            {
+                "trigger": trigger,
+                "ok": result.ok,
+                "reason": result.reason,
+                "summarized_messages": result.summarized_messages,
+                "input_tokens_before": before_tokens,
+                "input_tokens_after": token_count.input_tokens,
+                "model_context_length": self.model_context_length,
+            },
+        )
+        return result, fixed_history, token_count
 
     def clear_history(self) -> None:
         """Drop all history and reset compaction state."""
@@ -2361,43 +2410,38 @@ class BaseAgent(LogMixin):
                 logger.debug("Input token count: %s", token_count)
 
                 if self.compressor.over_budget(token_count.input_tokens, self.model_max_input_tokens):
-                    before_tokens = token_count.input_tokens
-                    # PreCompact hooks (advisory): observe before history is compacted.
-                    await self.fire_hook(
-                        HookEvent.PRE_COMPACT,
-                        {
-                            "trigger": "auto",
-                            "input_tokens": before_tokens,
-                            "model_context_length": self.model_context_length,
-                        },
+                    # Ordinary pass: keep the six most recent messages verbatim.
+                    result, fixed_history, token_count = await self._auto_compact_once(
+                        trigger="auto", before_tokens=token_count.input_tokens
                     )
-                    result = await self.compress_history(trigger="auto", tokens_before=before_tokens)
-                    # compress_history forgets the volatile-context sent-state on success,
-                    # so the next turn re-sends memory, guidance, and any host sections
-                    # (plan handle, task list) the summary may have folded away.
-                    # Rebuild after compaction (history changed) and re-mark the cache
-                    # checkpoint before re-counting so the reused history reflects it.
-                    self.mark_cache_checkpoint()
-                    self._sanitize_oversized_tool_results()
-                    fixed_history = await self._history_for_llm_async()
-                    token_count = await self.count_current_context(fixed_history)
 
-                    # PostCompact hooks (advisory): observe the outcome. There is no
-                    # destructive fallback — a bounded summary plus capped tool results
-                    # and a small verbatim tail keep us under budget; if somehow not, we
-                    # send as-is rather than wipe history.
-                    await self.fire_hook(
-                        HookEvent.POST_COMPACT,
-                        {
-                            "trigger": "auto",
-                            "ok": result.ok,
-                            "reason": result.reason,
-                            "summarized_messages": result.summarized_messages,
-                            "input_tokens_before": before_tokens,
-                            "input_tokens_after": token_count.input_tokens,
-                            "model_context_length": self.model_context_length,
-                        },
-                    )
+                    # Zero-tail recovery: one aggressive pass with no requested
+                    # verbatim tail when the retained tail alone still exceeds the
+                    # resolved maximum input. Skipped when the ordinary pass failed
+                    # at the model (llm_error — the provider client already applied
+                    # its retry policy, so another summarization request buys
+                    # nothing) or hit the minimum-history guard (too_few — a zero
+                    # tail must not weaken it). A nothing_to_summarize result MAY
+                    # proceed: with no retained tail, the safe boundary can advance
+                    # past the previous one even when the six-message tail could not.
+                    if token_count.input_tokens > self.model_max_input_tokens and result.reason not in (
+                        "llm_error",
+                        "too_few",
+                    ):
+                        result, fixed_history, token_count = await self._auto_compact_once(
+                            trigger="auto_tail_fallback", before_tokens=token_count.input_tokens, keep_recent=0
+                        )
+
+                    # Fail closed only under the paired per-run cap
+                    # (--context-window-tokens + --max-output-tokens): never dispatch
+                    # a request whose measured input exceeds the run's resolved
+                    # maximum (equality is allowed). Without the cap, preserve the
+                    # legacy behavior and let the provider accept or reject it.
+                    if token_count.input_tokens > self.model_max_input_tokens and self.strict_context_budget:
+                        raise LLMContextWindowExceededError(
+                            f"Request needs {token_count.input_tokens} input tokens after automatic compaction, "
+                            f"exceeding this run's resolved maximum input of {self.model_max_input_tokens}."
+                        )
 
                 current_response = ""
                 current_thinking = ""
