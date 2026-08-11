@@ -90,12 +90,13 @@ from .config import (
     WEB_SEARCH_MODES,
     CliConfigError,
     CliConfigOverrides,
+    StrictContextBudgetError,
+    _skills_enabled,
     active_model_override_message,
     build_agent_config,
     config_summary,
-    strict_context_budget_marker,
     load_cli_env,
-    _skills_enabled,
+    strict_context_budget_marker,
 )
 from .connection import CliConnectionManager
 from .mentions import build_file_attachments
@@ -1071,6 +1072,10 @@ def _run_tui(args: argparse.Namespace) -> int:
             project_path, _overrides_from_args(args), settings=settings, settings_store=settings_store
         )
         summary = config_summary(config)
+    except StrictContextBudgetError:
+        # Strict caps are explicit per-run constraints, not recoverable missing
+        # setup. Fail before creating a TUI session or emitting llm.run_started.
+        raise
     except CliConfigError as exc:
         if str(exc) == DEPRECATED_THINKING_TOKENS_MESSAGE:
             raise
