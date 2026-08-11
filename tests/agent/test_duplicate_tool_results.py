@@ -37,7 +37,11 @@ class TestDuplicateToolResultPrevention:
             patch("kolega_code.agent.context.LocalFileSystem") as mock_filesystem_class,
         ):
             # Mock get_model_specs to return reasonable values
-            mock_get_model_specs.return_value = {"context_length": 100000, "max_completion_tokens": 4096}
+            mock_get_model_specs.return_value = {
+                "context_length": 100000,
+                "max_completion_tokens": 4096,
+                "input_budget": "window_minus_output",
+            }
 
             # Create mock filesystem instance
             mock_filesystem = Mock()

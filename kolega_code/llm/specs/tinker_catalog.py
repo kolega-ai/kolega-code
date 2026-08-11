@@ -123,6 +123,9 @@ def catalog_entries(payload: Any) -> list[tuple[str, dict[str, Any]]]:
         spec: dict[str, Any] = {
             "context_length": _context_tokens(item.get("context")),
             "max_completion_tokens": MAX_COMPLETION_TOKENS,
+            # Output shares the window; the sampler clamps to remaining context
+            # at generation time (providers/tinker.py), so nothing is reserved.
+            "input_budget": "output_shares_window",
             "default_temperature": DEFAULT_TEMPERATURE,
             "supports_vision": "Vision" in model_type,
         }
@@ -223,6 +226,7 @@ TINKER_WILDCARD_SPECS = {
     (PROVIDER, "tinker://*"): {
         "context_length": 65536,
         "max_completion_tokens": MAX_COMPLETION_TOKENS,
+        "input_budget": "output_shares_window",
         "default_temperature": DEFAULT_TEMPERATURE,
         "supports_vision": False,
     },

@@ -50,8 +50,9 @@ class HistoryCompressor:
         # Fraction of the model context window above which compression kicks in
         self.threshold = threshold
 
-    def over_budget(self, input_tokens: int, model_context_length: int) -> bool:
-        return input_tokens > model_context_length * self.threshold
+    def over_budget(self, input_tokens: int, input_budget_tokens: int) -> bool:
+        """True when input exceeds the threshold fraction of the input budget."""
+        return input_tokens > input_budget_tokens * self.threshold
 
     async def summarize(
         self,

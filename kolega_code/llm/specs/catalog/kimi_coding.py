@@ -6,6 +6,7 @@ KIMI_CODING_SPECS = {
     ("kimi_coding", "k3"): {
         "context_length": 262144,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -18,6 +19,7 @@ KIMI_CODING_SPECS = {
     ("kimi_coding", "k3[1m]"): {
         "context_length": 1048576,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -30,6 +32,7 @@ KIMI_CODING_SPECS = {
     ("kimi_coding", "kimi-for-coding"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(

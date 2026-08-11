@@ -16,6 +16,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "deepseek/deepseek-v4-flash-0731"): {
         "context_length": 1048576,
         "max_completion_tokens": 384000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -29,6 +30,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "tencent/hy3"): {
         "context_length": 262144,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -42,6 +44,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "deepseek/deepseek-v4-flash"): {
         "context_length": 1048576,
         "max_completion_tokens": 393216,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -55,6 +58,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "xiaomi/mimo-v2.5"): {
         "context_length": 1050000,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -63,6 +67,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.6-luna"): {
         "context_length": 1050000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -77,6 +82,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "z-ai/glm-5.2"): {
         "context_length": 1048576,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -90,6 +96,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "deepseek/deepseek-v4-pro"): {
         "context_length": 1048576,
         "max_completion_tokens": 384000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -103,6 +110,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free"): {
         "context_length": 1000000,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -116,6 +124,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemini-3.6-flash"): {
         "context_length": 1048576,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -129,6 +138,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "poolside/laguna-s-2.1:free"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -137,6 +147,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "minimax/minimax-m3"): {
         "context_length": 1048576,
         "max_completion_tokens": 512000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -145,6 +156,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "moonshotai/kimi-k3"): {
         "context_length": 1048576,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -158,6 +170,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "stepfun/step-3.7-flash"): {
         "context_length": 262144,
         "max_completion_tokens": 256000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -171,6 +184,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-opus-5"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -185,6 +199,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-sonnet-5"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -200,6 +215,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemini-3-flash-preview"): {
         "context_length": 1048576,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -213,6 +229,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-sonnet-4.6"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -227,6 +244,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.6-terra"): {
         "context_length": 1050000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -241,6 +259,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemini-2.5-flash-lite"): {
         "context_length": 1048576,
         "max_completion_tokens": 65535,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -249,6 +268,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.6-sol"): {
         "context_length": 1050000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -263,6 +283,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.6-luna-pro"): {
         "context_length": 1050000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -276,6 +297,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-opus-4.8"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -289,6 +311,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemini-2.5-flash"): {
         "context_length": 1048576,
         "max_completion_tokens": 65535,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -296,6 +319,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "xiaomi/mimo-v2.5-pro"): {
         "context_length": 1050000,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -303,6 +327,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemini-3.1-flash-lite"): {
         "context_length": 1048576,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -315,6 +340,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-oss-120b"): {
         "context_length": 131072,
         "max_completion_tokens": 131072,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -327,6 +353,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemma-4-31b-it"): {
         "context_length": 262144,
         "max_completion_tokens": 262144,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -334,6 +361,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "deepseek/deepseek-v3.2"): {
         "context_length": 163840,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -341,6 +369,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemma-4-26b-a4b-it"): {
         "context_length": 262144,
         "max_completion_tokens": 262144,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -348,6 +377,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"): {
         "context_length": 262144,
         "max_completion_tokens": 262144,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -360,6 +390,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "x-ai/grok-4.5"): {
         "context_length": 500000,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -372,6 +403,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-opus-4.7"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -386,6 +418,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "cohere/north-mini-code:free"): {
         "context_length": 256000,
         "max_completion_tokens": 64000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -393,6 +426,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-haiku-4.5"): {
         "context_length": 200000,
         "max_completion_tokens": 64000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -401,6 +435,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-fable-5"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -415,6 +450,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "inclusionai/ling-2.6-flash"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -422,6 +458,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-4o-mini"): {
         "context_length": 128000,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -429,6 +466,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.8-max"): {
         "context_length": 1000000,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -441,6 +479,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "moonshotai/kimi-k2.6"): {
         "context_length": 262144,
         "max_completion_tokens": 262144,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -448,6 +487,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "minimax/minimax-m2.7"): {
         "context_length": 204800,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -455,6 +495,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemini-3.5-flash"): {
         "context_length": 1048576,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -467,6 +508,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemini-3.5-flash-lite"): {
         "context_length": 1048576,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -479,6 +521,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5-mini"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -492,6 +535,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemini-3.1-pro-preview"): {
         "context_length": 1048576,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -504,6 +548,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "poolside/laguna-xs-2.1:free"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -511,6 +556,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-oss-20b"): {
         "context_length": 131072,
         "max_completion_tokens": 131072,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -523,6 +569,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.4"): {
         "context_length": 1050000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -536,6 +583,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-opus-4.6"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -549,6 +597,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.7-flash"): {
         "context_length": 1000000,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -556,6 +605,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.5"): {
         "context_length": 1050000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -569,6 +619,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.4-mini"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -582,6 +633,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "mistralai/mistral-nemo"): {
         "context_length": 131072,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -589,6 +641,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.4-nano"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -602,6 +655,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "moonshotai/kimi-k2.5"): {
         "context_length": 262144,
         "max_completion_tokens": 262144,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -609,6 +663,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.7-plus"): {
         "context_length": 1000000,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -616,6 +671,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemini-3.1-flash-lite-preview"): {
         "context_length": 1048576,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -628,6 +684,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-4.1-mini"): {
         "context_length": 1047576,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -635,6 +692,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "moonshotai/kimi-k2.7-code"): {
         "context_length": 262144,
         "max_completion_tokens": 262144,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -642,6 +700,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.6-35b-a3b"): {
         "context_length": 262144,
         "max_completion_tokens": 262144,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -649,6 +708,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-sonnet-4.5"): {
         "context_length": 1000000,
         "max_completion_tokens": 64000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -657,6 +717,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "z-ai/glm-5.1"): {
         "context_length": 204800,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -664,6 +725,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "z-ai/glm-5"): {
         "context_length": 204800,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -671,6 +733,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "x-ai/grok-4.3"): {
         "context_length": 1000000,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -683,6 +746,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "amazon/nova-micro-v1"): {
         "context_length": 128000,
         "max_completion_tokens": 5120,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -690,6 +754,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "z-ai/glm-4.7"): {
         "context_length": 204800,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -697,6 +762,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.6-terra-pro"): {
         "context_length": 1050000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -710,6 +776,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-235b-a22b-2507"): {
         "context_length": 262144,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -717,6 +784,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemini-2.5-pro"): {
         "context_length": 1048576,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -724,6 +792,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.7-max"): {
         "context_length": 1000000,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -731,6 +800,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.5-flash-02-23"): {
         "context_length": 1000000,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -738,6 +808,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "meta/muse-spark-1.1"): {
         "context_length": 1048576,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -750,6 +821,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.6-sol-pro"): {
         "context_length": 1050000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -763,6 +835,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-4.1"): {
         "context_length": 1047576,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -770,6 +843,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "nvidia/nemotron-3-ultra-550b-a55b"): {
         "context_length": 512288,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -782,6 +856,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.2"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -795,6 +870,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "poolside/laguna-s-2.1"): {
         "context_length": 1048576,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -802,6 +878,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "meta-llama/llama-3.1-8b-instruct"): {
         "context_length": 131072,
         "max_completion_tokens": 131072,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -809,6 +886,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "deepseek/deepseek-chat-v3.1"): {
         "context_length": 163840,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -816,6 +894,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "nvidia/nemotron-3-nano-30b-a3b:free"): {
         "context_length": 256000,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -823,6 +902,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5-nano"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -836,6 +916,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.6-plus"): {
         "context_length": 1000000,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -843,6 +924,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "tencent/hy3-preview"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -855,6 +937,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "deepseek/deepseek-chat-v3-0324"): {
         "context_length": 163840,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -862,6 +945,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "meta/muse-spark-1.2"): {
         "context_length": 1048576,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -874,6 +958,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "x-ai/grok-4.20"): {
         "context_length": 2000000,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -881,6 +966,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.3-codex"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -894,6 +980,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"): {
         "context_length": 256000,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -901,6 +988,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "minimax/minimax-m2.5"): {
         "context_length": 204800,
         "max_completion_tokens": 196608,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -908,6 +996,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "deepseek/deepseek-v3.1-terminus"): {
         "context_length": 163840,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -915,6 +1004,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-opus-5-fast"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -929,6 +1019,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "meta-llama/llama-3.3-70b-instruct"): {
         "context_length": 131072,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -936,6 +1027,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "meta-llama/llama-4-maverick"): {
         "context_length": 1048576,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -943,6 +1035,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-30b-a3b-instruct-2507"): {
         "context_length": 262144,
         "max_completion_tokens": 32000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -950,6 +1043,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.5-9b"): {
         "context_length": 262144,
         "max_completion_tokens": 262144,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -957,6 +1051,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "deepseek/deepseek-chat"): {
         "context_length": 163840,
         "max_completion_tokens": 16000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -964,6 +1059,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemma-3-27b-it"): {
         "context_length": 262144,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -971,6 +1067,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.6-27b"): {
         "context_length": 262144,
         "max_completion_tokens": 262144,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -978,6 +1075,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-4.1-nano"): {
         "context_length": 1047576,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -985,6 +1083,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-sonnet-4"): {
         "context_length": 1000000,
         "max_completion_tokens": 64000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -993,6 +1092,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "inclusionai/ling-3.0-tiny:free"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1000,6 +1100,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "z-ai/glm-5v-turbo"): {
         "context_length": 202752,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1007,6 +1108,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-coder-next"): {
         "context_length": 262144,
         "max_completion_tokens": 262144,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1014,6 +1116,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "deepseek/deepseek-v3.2-exp"): {
         "context_length": 163840,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1021,6 +1124,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.5-35b-a3b"): {
         "context_length": 262144,
         "max_completion_tokens": 262144,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1028,6 +1132,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "nvidia/nemotron-3-super-120b-a12b"): {
         "context_length": 1000000,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1040,6 +1145,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "meta-llama/llama-4-scout"): {
         "context_length": 1310720,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1047,6 +1153,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "mistralai/mistral-small-3.2-24b-instruct"): {
         "context_length": 256000,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1054,6 +1161,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "mistralai/mistral-small-2603"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1066,6 +1174,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "thinkingmachines/inkling"): {
         "context_length": 1048576,
         "max_completion_tokens": 262144,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1078,6 +1187,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "z-ai/glm-4.7-flash"): {
         "context_length": 202752,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1085,6 +1195,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemma-3-12b-it"): {
         "context_length": 131072,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1092,6 +1203,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -1105,6 +1217,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.1"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -1118,6 +1231,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-32b"): {
         "context_length": 131072,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1125,6 +1239,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-opus-4.5"): {
         "context_length": 200000,
         "max_completion_tokens": 64000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1133,6 +1248,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "nvidia/nemotron-nano-9b-v2:free"): {
         "context_length": 128000,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1140,6 +1256,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemma-4-26b-a4b-it:free"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1147,6 +1264,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.5-397b-a17b"): {
         "context_length": 262144,
         "max_completion_tokens": 262144,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1154,6 +1272,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-coder"): {
         "context_length": 262144,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1161,6 +1280,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "nex-agi/nex-n2-mini"): {
         "context_length": 262144,
         "max_completion_tokens": 262144,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1168,6 +1288,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "nvidia/nemotron-3-nano-30b-a3b"): {
         "context_length": 262144,
         "max_completion_tokens": 228000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1175,6 +1296,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.5-122b-a10b"): {
         "context_length": 262144,
         "max_completion_tokens": 81920,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1182,6 +1304,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-4o"): {
         "context_length": 128000,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -1189,6 +1312,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.6-flash"): {
         "context_length": 1000000,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1196,6 +1320,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-next-80b-a3b-instruct"): {
         "context_length": 262144,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1203,6 +1328,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "z-ai/glm-4.6"): {
         "context_length": 204800,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1210,6 +1336,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-opus-4.8-fast"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -1224,6 +1351,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-vl-235b-a22b-instruct"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1231,6 +1359,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "z-ai/glm-4.5-air"): {
         "context_length": 131072,
         "max_completion_tokens": 98304,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1238,6 +1367,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-vl-32b-instruct"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1245,6 +1375,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-4o-mini-2024-07-18"): {
         "context_length": 128000,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -1252,6 +1383,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-vl-8b-instruct"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1259,6 +1391,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "inclusionai/ling-3.0-flash"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1266,6 +1399,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "moonshotai/kimi-k2-0905"): {
         "context_length": 262144,
         "max_completion_tokens": 100352,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1273,6 +1407,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "mistralai/mistral-medium-3-5"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1285,6 +1420,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-oss-20b:free"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -1297,6 +1433,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "deepseek/deepseek-r1-0528"): {
         "context_length": 163840,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1304,6 +1441,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.5-plus-02-15"): {
         "context_length": 1000000,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1311,6 +1449,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "meta-llama/llama-3.1-70b-instruct"): {
         "context_length": 131072,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1318,6 +1457,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-vl-30b-a3b-instruct"): {
         "context_length": 262144,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1325,6 +1465,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "thinkingmachines/inkling-small"): {
         "context_length": 524288,
         "max_completion_tokens": 262144,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1337,6 +1478,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "aion-labs/aion-3.0"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1344,6 +1486,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-coder-30b-a3b-instruct"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1351,6 +1494,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.3-chat"): {
         "context_length": 128000,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -1359,6 +1503,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "mistralai/mistral-large-2512"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1366,6 +1511,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "nvidia/nemotron-nano-12b-v2-vl:free"): {
         "context_length": 128000,
         "max_completion_tokens": 128000,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1373,6 +1519,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen-2.5-7b-instruct"): {
         "context_length": 32768,
         "max_completion_tokens": 32768,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1380,6 +1527,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-oss-safeguard-20b"): {
         "context_length": 131072,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -1387,6 +1535,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.5-27b"): {
         "context_length": 262144,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1394,6 +1543,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "meituan/longcat-2.0"): {
         "context_length": 1048756,
         "max_completion_tokens": 262144,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1401,6 +1551,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-14b"): {
         "context_length": 131072,
         "max_completion_tokens": 8192,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1408,6 +1559,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "mistralai/ministral-8b-2512"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1415,6 +1567,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "z-ai/glm-5-turbo"): {
         "context_length": 202752,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1422,6 +1575,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "inclusionai/ring-2.6-1t"): {
         "context_length": 262144,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1434,6 +1588,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-8b"): {
         "context_length": 131072,
         "max_completion_tokens": 8192,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1441,6 +1596,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-235b-a22b-thinking-2507"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1448,6 +1604,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen-2.5-72b-instruct"): {
         "context_length": 32768,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1455,6 +1612,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "poolside/laguna-xs-2.1"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1462,6 +1620,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-30b-a3b"): {
         "context_length": 131072,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1469,6 +1628,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "inclusionai/ling-2.6-1t"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1476,6 +1636,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "inception/mercury-2"): {
         "context_length": 128000,
         "max_completion_tokens": 50000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1488,6 +1649,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "x-ai/grok-build-0.1"): {
         "context_length": 256000,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1495,6 +1657,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "bytedance-seed/seed-2.0-mini"): {
         "context_length": 262144,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1507,6 +1670,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "ibm-granite/granite-4.1-8b"): {
         "context_length": 131072,
         "max_completion_tokens": 131072,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1514,6 +1678,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "deepseek/deepseek-r1"): {
         "context_length": 163840,
         "max_completion_tokens": 16000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1521,6 +1686,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "moonshotai/kimi-k2"): {
         "context_length": 131072,
         "max_completion_tokens": 100352,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1528,6 +1694,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-coder-plus"): {
         "context_length": 1000000,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1535,6 +1702,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "mistralai/mistral-medium-3.1"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1542,6 +1710,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/o3-mini"): {
         "context_length": 200000,
         "max_completion_tokens": 100000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": False,
@@ -1550,6 +1719,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "aion-labs/aion-2.0"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1557,6 +1727,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-max"): {
         "context_length": 262144,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1564,6 +1735,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "stepfun/step-3.5-flash"): {
         "context_length": 262144,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1571,6 +1743,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-coder-flash"): {
         "context_length": 1000000,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1578,6 +1751,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-4o-2024-11-20"): {
         "context_length": 128000,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -1585,6 +1759,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "moonshotai/kimi-k2-thinking"): {
         "context_length": 262144,
         "max_completion_tokens": 100352,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1592,6 +1767,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "amazon/nova-lite-v1"): {
         "context_length": 300000,
         "max_completion_tokens": 5120,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1599,6 +1775,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "mistralai/ministral-14b-2512"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1606,6 +1783,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/o4-mini"): {
         "context_length": 200000,
         "max_completion_tokens": 100000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -1614,6 +1792,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-3-haiku"): {
         "context_length": 200000,
         "max_completion_tokens": 4096,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1622,6 +1801,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "upstage/solar-pro-3"): {
         "context_length": 131072,
         "max_completion_tokens": 131072,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1629,6 +1809,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.2-chat"): {
         "context_length": 128000,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -1637,6 +1818,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "amazon/nova-2-lite-v1"): {
         "context_length": 1000000,
         "max_completion_tokens": 65535,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1644,6 +1826,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "aion-labs/aion-3.0-mini"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1651,6 +1834,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-4o-2024-08-06"): {
         "context_length": 128000,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -1658,6 +1842,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "bytedance-seed/seed-1.6-flash"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1665,6 +1850,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.5-plus-20260420"): {
         "context_length": 1000000,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1672,6 +1858,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "kwaipilot/kat-coder-pro-v2"): {
         "context_length": 262144,
         "max_completion_tokens": 80000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1679,6 +1866,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "bytedance-seed/seed-2.0-lite"): {
         "context_length": 262144,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1691,6 +1879,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-235b-a22b"): {
         "context_length": 131072,
         "max_completion_tokens": 8192,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1698,6 +1887,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "nex-agi/nex-n2-pro"): {
         "context_length": 262144,
         "max_completion_tokens": 262144,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1705,6 +1895,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen-plus"): {
         "context_length": 1000000,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1712,6 +1903,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "mistralai/ministral-3b-2512"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1719,6 +1911,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemini-3.1-pro-preview-customtools"): {
         "context_length": 1048576,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1731,6 +1924,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemma-4-31b-it:free"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1738,6 +1932,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.1-codex-mini"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -1751,6 +1946,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "sakana/fugu-ultra"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -1764,6 +1960,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-opus-4.1"): {
         "context_length": 200000,
         "max_completion_tokens": 32000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1772,6 +1969,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemini-3-pro-image"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1779,6 +1977,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "minimax/minimax-m2.1"): {
         "context_length": 204800,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1786,6 +1985,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "kwaipilot/kat-coder-air-v2.5"): {
         "context_length": 256000,
         "max_completion_tokens": 80000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1793,6 +1993,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "mistralai/mistral-large"): {
         "context_length": 128000,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1800,6 +2001,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.1-codex"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -1813,6 +2015,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/o3"): {
         "context_length": 200000,
         "max_completion_tokens": 100000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -1821,6 +2024,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "z-ai/glm-4.5"): {
         "context_length": 131072,
         "max_completion_tokens": 98304,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1828,6 +2032,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "minimax/minimax-m2"): {
         "context_length": 204800,
         "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1835,6 +2040,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "z-ai/glm-4.6v"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1842,6 +2048,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-3.5-turbo"): {
         "context_length": 16385,
         "max_completion_tokens": 4096,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -1849,6 +2056,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "arcee-ai/trinity-large-thinking"): {
         "context_length": 262144,
         "max_completion_tokens": 262144,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1856,6 +2064,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.2-codex"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -1869,6 +2078,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-opus-4"): {
         "context_length": 200000,
         "max_completion_tokens": 32000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1877,6 +2087,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "kwaipilot/kat-coder-pro-v2.5"): {
         "context_length": 256000,
         "max_completion_tokens": 80000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1884,6 +2095,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "mistralai/codestral-2508"): {
         "context_length": 256000,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1891,6 +2103,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-chat-latest"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -1899,6 +2112,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.5-pro"): {
         "context_length": 1050000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -1912,6 +2126,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3.6-max-preview"): {
         "context_length": 262144,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1919,6 +2134,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "mistralai/mistral-medium-3"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1926,6 +2142,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "thedrummer/unslopnemo-12b"): {
         "context_length": 1024000,
         "max_completion_tokens": 1024000,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1933,6 +2150,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "z-ai/glm-4.5v"): {
         "context_length": 65536,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1940,6 +2158,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "mistralai/mixtral-8x22b-instruct"): {
         "context_length": 65536,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1947,6 +2166,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-vl-30b-a3b-thinking"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -1954,6 +2174,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen-plus-2025-07-28"): {
         "context_length": 1000000,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1961,6 +2182,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-30b-a3b-thinking-2507"): {
         "context_length": 81920,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1968,6 +2190,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.1-codex-max"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -1981,6 +2204,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-max-thinking"): {
         "context_length": 262144,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1988,6 +2212,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "sao10k/l3.1-euryale-70b"): {
         "context_length": 131072,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -1995,6 +2220,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-audio-mini"): {
         "context_length": 128000,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -2002,6 +2228,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-vl-235b-a22b-thinking"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -2009,6 +2236,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-4o-2024-05-13"): {
         "context_length": 128000,
         "max_completion_tokens": 4096,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -2016,6 +2244,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-vl-8b-thinking"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -2023,6 +2252,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "ai21/jamba-large-1.7"): {
         "context_length": 256000,
         "max_completion_tokens": 4096,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -2030,6 +2260,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "amazon/nova-pro-v1"): {
         "context_length": 300000,
         "max_completion_tokens": 5120,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -2037,6 +2268,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "cohere/command-r-08-2024"): {
         "context_length": 128000,
         "max_completion_tokens": 4000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -2044,6 +2276,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-3.5-turbo-0613"): {
         "context_length": 4095,
         "max_completion_tokens": 4096,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -2051,6 +2284,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen3-next-80b-a3b-thinking"): {
         "context_length": 262144,
         "max_completion_tokens": 262144,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -2058,6 +2292,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-4"): {
         "context_length": 8191,
         "max_completion_tokens": 4096,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -2065,6 +2300,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "mistralai/voxtral-small-24b-2507"): {
         "context_length": 32000,
         "max_completion_tokens": 32000,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -2072,6 +2308,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-4-turbo"): {
         "context_length": 128000,
         "max_completion_tokens": 4096,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -2079,6 +2316,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "mistralai/mistral-large-2407"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -2086,6 +2324,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "minimax/minimax-m1"): {
         "context_length": 1000000,
         "max_completion_tokens": 40000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -2093,6 +2332,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "bytedance-seed/seed-1.6"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -2100,6 +2340,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "amazon/nova-premier-v1"): {
         "context_length": 1000000,
         "max_completion_tokens": 32000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -2107,6 +2348,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "mistralai/mistral-saba"): {
         "context_length": 32768,
         "max_completion_tokens": 32768,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -2114,6 +2356,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/o4-mini-high"): {
         "context_length": 200000,
         "max_completion_tokens": 100000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -2127,6 +2370,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.4-pro"): {
         "context_length": 1050000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -2140,6 +2384,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5.2-pro"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -2153,6 +2398,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "rekaai/reka-edge"): {
         "context_length": 16384,
         "max_completion_tokens": 16384,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -2160,6 +2406,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "cohere/command-r-plus-08-2024"): {
         "context_length": 128000,
         "max_completion_tokens": 4000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -2167,6 +2414,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-audio"): {
         "context_length": 128000,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -2174,6 +2422,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/o3-pro"): {
         "context_length": 200000,
         "max_completion_tokens": 100000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -2182,6 +2431,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "qwen/qwen-plus-2025-07-28:thinking"): {
         "context_length": 1000000,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -2189,6 +2439,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-5-pro"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -2202,6 +2453,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/o1"): {
         "context_length": 200000,
         "max_completion_tokens": 100000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -2210,6 +2462,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/o3-mini-high"): {
         "context_length": 200000,
         "max_completion_tokens": 100000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": False,
@@ -2223,6 +2476,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "relace/relace-search"): {
         "context_length": 256000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -2230,6 +2484,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-3.5-turbo-16k"): {
         "context_length": 16385,
         "max_completion_tokens": 4096,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",
@@ -2237,6 +2492,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "anthropic/claude-opus-4.7-fast"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -2251,6 +2507,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "arcee-ai/virtuoso-large"): {
         "context_length": 131072,
         "max_completion_tokens": 64000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -2258,6 +2515,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemini-2.5-pro-preview"): {
         "context_length": 1048576,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -2265,6 +2523,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "google/gemini-2.5-pro-preview-05-06"): {
         "context_length": 1048576,
         "max_completion_tokens": 65535,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -2272,6 +2531,7 @@ OPENROUTER_SPECS = {
     ("openrouter", "openai/gpt-4-turbo-preview"): {
         "context_length": 128000,
         "max_completion_tokens": 4096,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",

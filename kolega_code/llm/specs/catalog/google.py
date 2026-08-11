@@ -5,6 +5,7 @@ GOOGLE_SPECS = {
     ("google", "gemini-3.6-flash"): {
         "context_length": 1048576,
         "max_completion_tokens": 65536,
+        "input_budget": "separate_output_limit",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -17,6 +18,7 @@ GOOGLE_SPECS = {
     ("google", "gemini-3.5-flash-lite"): {
         "context_length": 1048576,
         "max_completion_tokens": 65536,
+        "input_budget": "separate_output_limit",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -29,6 +31,7 @@ GOOGLE_SPECS = {
     ("google", "gemini-3.1-pro-preview"): {
         "context_length": 1048576,
         "max_completion_tokens": 65536,
+        "input_budget": "separate_output_limit",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -40,6 +43,7 @@ GOOGLE_SPECS = {
     ("google", "gemini-3.5-flash"): {
         "context_length": 1048576,
         "max_completion_tokens": 65536,
+        "input_budget": "separate_output_limit",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(

@@ -179,6 +179,11 @@ def build_agent(
     if llm is not None:
         agent.llm = llm
     agent.model_context_length = model_context_length
+    agent.model_max_input_tokens = model_context_length
+    # Histories in these tests are sized against a fixed 0.8 trigger; the
+    # default threshold is asserted separately in test_compression_threshold.
+    agent.history_compression_threshold = 0.8
+    agent.compressor.threshold = 0.8
     return agent, cm
 
 

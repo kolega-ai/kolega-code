@@ -3,6 +3,30 @@ from typing import Any, Dict, Optional
 from .catalog import MODEL_SPECS, WILDCARD_MODEL_SPECS
 from .types import ThinkingEffortSpec
 
+# Every spec entry must declare which input-budget calculation applies:
+#   window_minus_output   — usable input = context_length − max_completion_tokens
+#                           (one shared pool; we reserve what we request)
+#   separate_output_limit — usable input = context_length (independent output cap)
+#   output_shares_window  — usable input = context_length (output may consume the
+#                           whole window, bounded only at generation time)
+INPUT_BUDGET_CONVENTIONS = ("window_minus_output", "separate_output_limit", "output_shares_window")
+
+
+def resolve_max_input_tokens(specs: Dict[str, Any]) -> int:
+    """The usable input budget for a spec entry, per its declared convention."""
+    if specs["input_budget"] == "window_minus_output":
+        return max(1, specs["context_length"] - specs["max_completion_tokens"])
+    return specs["context_length"]
+
+
+def _validate_input_budgets() -> None:
+    for key, specs in list(MODEL_SPECS.items()) + list(WILDCARD_MODEL_SPECS.items()):
+        if specs.get("input_budget") not in INPUT_BUDGET_CONVENTIONS:
+            raise ValueError(f"Spec {key} missing or invalid input_budget (got {specs.get('input_budget')!r})")
+
+
+_validate_input_budgets()
+
 
 def _provider_value(provider: Any) -> str:
     return provider.value if hasattr(provider, "value") else provider

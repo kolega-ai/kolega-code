@@ -13,6 +13,7 @@ TINKER_SPECS = {
     ("tinker", "thinkingmachines/Inkling"): {
         "context_length": 65536,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -24,6 +25,7 @@ TINKER_SPECS = {
     ("tinker", "thinkingmachines/Inkling:peft:262144"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -35,6 +37,7 @@ TINKER_SPECS = {
     ("tinker", "thinkingmachines/Inkling-Small"): {
         "context_length": 65536,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -46,6 +49,7 @@ TINKER_SPECS = {
     ("tinker", "thinkingmachines/Inkling-Small:peft:262144"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -57,36 +61,42 @@ TINKER_SPECS = {
     ("tinker", "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16"): {
         "context_length": 65536,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
     },
     ("tinker", "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16:peft:262144"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
     },
     ("tinker", "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"): {
         "context_length": 65536,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
     },
     ("tinker", "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:peft:262144"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
     },
     ("tinker", "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"): {
         "context_length": 65536,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
     },
     ("tinker", "moonshotai/Kimi-K2.6"): {
         "context_length": 32768,
         "max_completion_tokens": 32768,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -98,6 +108,7 @@ TINKER_SPECS = {
     ("tinker", "moonshotai/Kimi-K2.6:peft:131072"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -109,6 +120,7 @@ TINKER_SPECS = {
     ("tinker", "Qwen/Qwen3.6-35B-A3B"): {
         "context_length": 65536,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -120,6 +132,7 @@ TINKER_SPECS = {
     ("tinker", "Qwen/Qwen3.6-27B"): {
         "context_length": 65536,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -131,6 +144,7 @@ TINKER_SPECS = {
     ("tinker", "Qwen/Qwen3.5-397B-A17B"): {
         "context_length": 65536,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -142,6 +156,7 @@ TINKER_SPECS = {
     ("tinker", "Qwen/Qwen3.5-397B-A17B:peft:262144"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -153,6 +168,7 @@ TINKER_SPECS = {
     ("tinker", "Qwen/Qwen3.5-9B"): {
         "context_length": 65536,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -164,6 +180,7 @@ TINKER_SPECS = {
     ("tinker", "Qwen/Qwen3.5-4B"): {
         "context_length": 65536,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -175,30 +192,35 @@ TINKER_SPECS = {
     ("tinker", "Qwen/Qwen3-8B"): {
         "context_length": 32768,
         "max_completion_tokens": 32768,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
     },
     ("tinker", "openai/gpt-oss-120b"): {
         "context_length": 32768,
         "max_completion_tokens": 32768,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
     },
     ("tinker", "openai/gpt-oss-120b:peft:131072"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
     },
     ("tinker", "openai/gpt-oss-20b"): {
         "context_length": 32768,
         "max_completion_tokens": 32768,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
     },
     ("tinker", "deepseek-ai/DeepSeek-V3.1"): {
         "context_length": 32768,
         "max_completion_tokens": 32768,
+        "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
@@ -215,6 +237,7 @@ TINKER_WILDCARD_SPECS = {
     ("tinker", "tinker://*"): {
         "context_length": 65536,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
     },

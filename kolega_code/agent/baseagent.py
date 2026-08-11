@@ -58,6 +58,7 @@ from kolega_code.llm.specs import (
     deepseek_output_token_cap,
     get_model_specs,
     is_deepseek_model,
+    resolve_max_input_tokens,
     supports_vision as model_supports_vision,
 )
 from kolega_code.permissions import (
@@ -140,7 +141,7 @@ class BaseAgent(LogMixin):
     # Tool collection; subclasses initialize this in ``__init__`` with the
     # appropriate tool configuration. ``None`` until then.
     tool_collection: Optional[ToolCollection] = None
-    history_compression_threshold = 0.8
+    history_compression_threshold = 0.95
     # Cap on concurrently executing tool calls within one batch (each dispatched
     # sub-agent runs its own multi-turn LLM loop, so an unbounded fan-out would
     # multiply token spend and shared-resource pressure).
@@ -467,6 +468,10 @@ class BaseAgent(LogMixin):
         model_specs = get_model_specs(self.primary_model_config.provider, self.primary_model_config.model)
         self.model_context_length = model_specs["context_length"]
         self.model_completion_tokens = model_specs["max_completion_tokens"]
+        # Usable input budget per the spec's declared input_budget convention.
+        # Compaction and the context gauge denominate on this so
+        # input + max_output ≤ window holds wherever the window is shared.
+        self.model_max_input_tokens = resolve_max_input_tokens(model_specs)
         self.model_default_temperature = model_specs.get("default_temperature", 1.0)
         # The clamped cap DeepSeek requests carry on the wire (None for other
         # models). Used to flag probable silent server-side truncation — see the
@@ -520,14 +525,12 @@ class BaseAgent(LogMixin):
         self._workflow_accounting: Optional["WorkflowRunAccounting"] = None
         self._accounting_reservation: Optional["AgentReservation"] = None
         self.total_tokens_used: int = 0
-        # Hosted web-search accounting side-channel. Searched/fetched content is
-        # injected into the model's context SERVER-side (restored on replay of
-        # web_search_call items, billed as input) and never reaches the client,
-        # so tiktoken-over-history can't see it. The residual — billed input
-        # minus the client-side count of the request actually sent — measures it
-        # and is added to the gauge in count_current_context. Updated by
-        # _update_hosted_search_residual; zeroed by compress_history.
-        self._hosted_injected_tokens: int = 0
+        # Billed input minus the client-side count of the request actually
+        # sent, measured on clean responses: server-injected content (hosted
+        # web-search restores, re-attachment wrapping of restored reasoning)
+        # is invisible to the local count. Added to the gauge in
+        # count_current_context; zeroed by compress_history.
+        self._context_residual_tokens: int = 0
         self._last_raw_context_count: Optional[int] = None
         # Set by a blocking PostToolUse hook to end the turn after the current tool batch.
         self._hook_end_turn = False
@@ -1063,15 +1066,12 @@ class BaseAgent(LogMixin):
             model=self.primary_model_config.model,
             tools=self.tool_collection.get_tool_list(),
         )
-        # Hosted web-search content lives only in the server's copy of the
-        # context (restored on replay of the web_search_call items, billed as
-        # input) — the client history has nothing to count for it. Add the
-        # residual measured from billed usage so the gauge AND the compaction
-        # check both see the true context size. Nonzero only while un-compacted
-        # web_search_call blocks exist (see _update_hosted_search_residual).
+        # Add the measured billed−counted residual so the gauge and the
+        # compaction check see the billed-true context size (see
+        # _update_context_residual).
         self._last_raw_context_count = token_count.input_tokens
-        if self._hosted_injected_tokens > 0:
-            token_count.input_tokens += self._hosted_injected_tokens
+        if self._context_residual_tokens > 0:
+            token_count.input_tokens += self._context_residual_tokens
 
         # Send context update event
         await self._send_context_update(token_count)
@@ -1088,39 +1088,29 @@ class BaseAgent(LogMixin):
     # 6000 overestimates safely, and overestimating only compacts early.
     HOSTED_SEARCH_PROVISIONAL_TOKENS = 6000
 
-    def _update_hosted_search_residual(self, assistant_message: Message) -> None:
-        """Track server-injected hosted-search content from billed usage.
+    def _update_context_residual(self, assistant_message: Message) -> None:
+        """Track the billed−counted residual from billed usage.
 
-        Search-bearing responses bump the estimate by a provisional per-call
-        constant (their own billing telescopes internal rounds, so the direct
-        residual would overshoot and could trip compaction spuriously). Clean
-        responses — single invocation, so ``billed − counted`` is exact —
-        replace it with the measurement. No-ops for sessions that never
-        searched, keeping the known ±tokenizer-drift band out of the gauge.
+        Search-bearing responses bump a provisional per-call constant (their
+        billing telescopes internal rounds); clean responses — single
+        invocation, so ``billed − counted`` is exact — replace it with the
+        measurement. Positive-only: billing below the local count reads as
+        zero, which errs toward compacting early.
         """
         content = assistant_message.content if isinstance(assistant_message.content, list) else []
         new_calls = sum(1 for block in content if isinstance(block, WebSearchCallBlock))
         if new_calls:
-            self._hosted_injected_tokens += self.HOSTED_SEARCH_PROVISIONAL_TOKENS * new_calls
-            return
-        if self._hosted_injected_tokens <= 0 and not self._history_contains_hosted_search():
+            self._context_residual_tokens += self.HOSTED_SEARCH_PROVISIONAL_TOKENS * new_calls
             return
         billed = (assistant_message.usage_metadata or {}).get("prompt_tokens")
         counted = self._last_raw_context_count
         if not isinstance(billed, int) or counted is None:
             return
-        self._hosted_injected_tokens = max(0, billed - counted)
-
-    def _history_contains_hosted_search(self) -> bool:
-        for message in self.history:
-            content = getattr(message, "content", None)
-            if isinstance(content, list) and any(isinstance(block, WebSearchCallBlock) for block in content):
-                return True
-        return False
+        self._context_residual_tokens = max(0, billed - counted)
 
     async def _send_context_update(self, token_count: TokenCount) -> None:
         """Send an event to update the UI about current context usage."""
-        usage_percentage = (token_count.input_tokens / self.model_context_length) * 100
+        usage_percentage = (token_count.input_tokens / self.model_max_input_tokens) * 100
 
         # Determine alert level based on usage
         alert_level = "normal"
@@ -1132,7 +1122,7 @@ class BaseAgent(LogMixin):
 
         await self.emitter.context_update(
             input_tokens=token_count.input_tokens,
-            model_context_length=self.model_context_length,
+            model_context_length=self.model_max_input_tokens,
             compression_threshold=self.history_compression_threshold,
             alert_level=alert_level,
             message=message,
@@ -1149,11 +1139,10 @@ class BaseAgent(LogMixin):
 
         ``trigger``/``tokens_before`` are journaled as compaction provenance.
         """
-        # Compacted-away web_search_call blocks stop being replayed, so the
-        # server stops restoring their content. Reset the hosted-search residual
-        # rather than carrying a stale figure; if search blocks survive in the
-        # verbatim tail, the next clean response re-measures it.
-        self._hosted_injected_tokens = 0
+        # Compaction changes what the server restores and what the client
+        # counts, so any carried residual is stale; the next clean response
+        # re-measures.
+        self._context_residual_tokens = 0
 
         async def on_info(message: str) -> None:
             await self.log_info(message, sender=self.agent_name)
@@ -2344,7 +2333,7 @@ class BaseAgent(LogMixin):
                 token_count = await self.count_current_context(fixed_history)
                 logger.debug("Input token count: %s", token_count)
 
-                if self.compressor.over_budget(token_count.input_tokens, self.model_context_length):
+                if self.compressor.over_budget(token_count.input_tokens, self.model_max_input_tokens):
                     before_tokens = token_count.input_tokens
                     # PreCompact hooks (advisory): observe before history is compacted.
                     await self.fire_hook(
@@ -2505,7 +2494,7 @@ class BaseAgent(LogMixin):
 
                     assistant_message = await stream.get_final_message()
                 self._normalize_freeform_tool_calls(assistant_message)
-                self._update_hosted_search_residual(assistant_message)
+                self._update_context_residual(assistant_message)
                 assistant_message.usage_metadata["edit_protocol"] = self.edit_protocol.value
                 response_output_tokens = get_output_tokens(
                     assistant_message.usage_metadata,

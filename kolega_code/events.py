@@ -353,7 +353,12 @@ class AgentEventEmitter:
         alert_level: str,
         message: Optional[str],
     ) -> None:
-        """Send an llm_context_update event describing context-window usage."""
+        """Send an llm_context_update event describing context usage.
+
+        ``model_context_length`` is the usable input budget (window minus the
+        output allowance), so percentages and ``will_compress_at`` line up
+        with the compaction trigger. The payload key stays ``max_tokens``.
+        """
         usage_percentage = (input_tokens / model_context_length) * 100
         sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
 

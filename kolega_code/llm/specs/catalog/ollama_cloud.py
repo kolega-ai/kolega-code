@@ -13,6 +13,7 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "deepseek-v4-flash:0731"): {
         "context_length": 1048576,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
@@ -24,6 +25,7 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "deepseek-v4-flash:preview"): {
         "context_length": 1048576,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
@@ -35,6 +37,7 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "deepseek-v4-pro"): {
         "context_length": 524288,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
@@ -46,6 +49,7 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "gemma4:31b"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -57,6 +61,7 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "glm-5.1"): {
         "context_length": 202752,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
@@ -68,6 +73,7 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "glm-5.2"): {
         "context_length": 1000000,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
@@ -79,6 +85,7 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "gpt-oss:120b"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
@@ -90,6 +97,7 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "gpt-oss:20b"): {
         "context_length": 131072,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
@@ -101,6 +109,7 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "kimi-k2.6"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -112,6 +121,7 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "kimi-k2.7-code"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -123,6 +133,7 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "kimi-k3"): {
         "context_length": 1048576,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -134,6 +145,7 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "minimax-m2.7"): {
         "context_length": 196608,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
@@ -145,6 +157,7 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "minimax-m3"): {
         "context_length": 524288,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -156,12 +169,14 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "mistral-large-3:675b"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
     },
     ("ollama_cloud", "nemotron-3-nano:30b"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
@@ -173,6 +188,7 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "nemotron-3-super"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
@@ -184,6 +200,7 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "nemotron-3-ultra"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
@@ -195,6 +212,7 @@ OLLAMA_CLOUD_SPECS = {
     ("ollama_cloud", "qwen3.5:397b"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(

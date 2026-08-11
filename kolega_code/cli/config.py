@@ -78,7 +78,7 @@ SUBAGENTS_MODE_ENV = "KOLEGA_CODE_SUBAGENTS"
 SKILL_MODES = ("on", "off")
 SKILLS_MODE_ENV = "KOLEGA_CODE_SKILLS"
 # Compression threshold override, in percent (10-100). Absent means defer to
-# settings.compression_threshold, then the agent's built-in default (80%).
+# settings.compression_threshold, then the agent's built-in default (95%).
 COMPRESSION_THRESHOLD_ENV = "KOLEGA_CODE_COMPRESSION_THRESHOLD"
 # Env vars that supply a cloud web-search backend's key, keyed by backend name.
 SEARCH_BACKEND_KEY_ENV = {

@@ -23,6 +23,7 @@ DEEPSEEK_SPECS = {
     ("deepseek", "deepseek-v4-pro"): {
         "context_length": 1000000,
         "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -48,6 +49,7 @@ DEEPSEEK_SPECS = {
     ("deepseek", "deepseek-v4-flash"): {
         "context_length": 1000000,
         "max_completion_tokens": 384000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         # /responses executes {"type": "web_search"} server-side (search +
