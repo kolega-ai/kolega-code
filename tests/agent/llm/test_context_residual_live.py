@@ -34,9 +34,7 @@ async def test_flash_bills_at_least_the_client_count():
         pytest.skip(f"{API_KEY_ENV[ModelProvider.DEEPSEEK]} not set")
     provider = DeepSeekResponsesProvider(api_key=api_key)
     model = "deepseek-v4-flash"
-    history = MessageHistory(
-        [Message(role="user", content=[TextBlock(text="Reply with the single word: ok")])]
-    )
+    history = MessageHistory([Message(role="user", content=[TextBlock(text="Reply with the single word: ok")])])
     counted = await provider.count_tokens(messages=history, system=None, model=model, tools=[])
     message = await provider.generate(
         history, system=None, params=GenerationParams(thinking="high", max_completion_tokens=2000), model=model

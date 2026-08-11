@@ -100,9 +100,7 @@ class TestResidualUpdates:
     def test_missing_usage_keeps_last_value(self, agent):
         agent._context_residual_tokens = 5_000
         agent._last_raw_context_count = 2_000
-        agent._update_context_residual(
-            Message(role="assistant", content=[TextBlock(text="ok")], usage_metadata={})
-        )
+        agent._update_context_residual(Message(role="assistant", content=[TextBlock(text="ok")], usage_metadata={}))
         assert agent._context_residual_tokens == 5_000
 
 
