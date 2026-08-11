@@ -95,8 +95,8 @@ def test_ask_default_keeps_builtin_threshold(tmp_path, monkeypatch, isolated_cli
 
     assert exit_code == 0
     agent = RecordingCoderAgent.instances[0]
-    assert agent.history_compression_threshold == pytest.approx(0.8)
-    assert agent.compressor.threshold == pytest.approx(0.8)
+    assert agent.history_compression_threshold == pytest.approx(0.95)
+    assert agent.compressor.threshold == pytest.approx(0.95)
 
 
 def test_ask_flag_sets_threshold(tmp_path, monkeypatch, isolated_cli_env):

@@ -1,6 +1,7 @@
 from .accessors import (
     DEEPSEEK_WIRE_OUTPUT_CAP,
     deepseek_output_token_cap,
+    resolve_max_input_tokens,
     default_thinking_effort,
     get_model_specs,
     get_thinking_effort_spec,
@@ -28,6 +29,7 @@ __all__ = [
     "MODEL_SPECS",
     "DEEPSEEK_WIRE_OUTPUT_CAP",
     "deepseek_output_token_cap",
+    "resolve_max_input_tokens",
     "is_deepseek_model",
     "get_model_specs",
     "supports_hosted_web_search",

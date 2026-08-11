@@ -154,6 +154,10 @@ def _model_spec(identifier: str, detail: Mapping[str, Any], capabilities: set[st
         "default_temperature": DEFAULT_TEMPERATURE,
         "supports_vision": "vision" in capabilities,
     }
+    # Upstream declares no budget convention; classify from the pair itself.
+    spec["input_budget"] = (
+        "output_shares_window" if spec["max_completion_tokens"] >= context_length else "window_minus_output"
+    )
     if "thinking" in capabilities:
         spec["thinking_effort"] = THINKING_EFFORT_SPEC
     return spec

@@ -1,6 +1,11 @@
 import pytest
 
-from kolega_code.llm.specs import build_thinking_request_params, get_model_specs, thinking_effort_options
+from kolega_code.llm.specs import (
+    build_thinking_request_params,
+    get_model_specs,
+    resolve_max_input_tokens,
+    thinking_effort_options,
+)
 
 
 @pytest.mark.parametrize(
@@ -28,7 +33,7 @@ def test_new_google_model_specs(
 
 
 @pytest.mark.parametrize("model", ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])
-@pytest.mark.parametrize("provider,context_length", [("openai", 1050000), ("openai_chatgpt", 272000)])
+@pytest.mark.parametrize("provider,context_length", [("openai", 1050000), ("openai_chatgpt", 400000)])
 def test_gpt56_model_specs(provider, context_length, model):
     specs = get_model_specs(provider, model)
 
@@ -47,8 +52,9 @@ def test_openai_chatgpt_gpt55_context_length():
     backend, with 128K reserved for output → effective max input is ~272K."""
     specs = get_model_specs("openai_chatgpt", "gpt-5.5")
 
-    assert specs["context_length"] == 272000
+    assert specs["context_length"] == 400000
     assert specs["max_completion_tokens"] == 128000
+    assert resolve_max_input_tokens(specs) == 272000
     assert specs["thinking_effort"].default == "medium"
 
 

@@ -48,7 +48,7 @@ class CommandProcessor:
         before = (await agent.count_current_context()).input_tokens if has_history else 0
         result = await agent.compress_history()
         after = (await agent.count_current_context()).input_tokens if has_history else 0
-        ctx = agent.model_context_length
+        ctx = agent.model_max_input_tokens
 
         def pct(tokens: int) -> int:
             return int(tokens * 100 / ctx) if ctx else 0
@@ -56,11 +56,11 @@ class CommandProcessor:
         if result.ok:
             return (
                 f"Compressed history: {result.summarized_messages} older message(s) summarized. "
-                f"Context {pct(before)}% → {pct(after)}% of the window."
+                f"Context {pct(before)}% → {pct(after)}% of the input budget."
             )
         if result.reason == "llm_error":
             return f"Compression failed: {result.message}"
-        return f"Nothing to compress. {result.message} (context {pct(before)}% of the window)."
+        return f"Nothing to compress. {result.message} (context {pct(before)}% of the input budget)."
 
     async def _handle_clear(self) -> str:
         """Handle the /clear command."""

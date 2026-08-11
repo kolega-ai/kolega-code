@@ -253,8 +253,8 @@ def _add_common_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--compression-threshold",
         metavar="PERCENT",
-        help="Context-window usage percentage that triggers automatic history compression "
-        "(10-100; default 80). Overrides settings.json for this session; not persisted. "
+        help="Input-budget usage percentage that triggers automatic history compression "
+        "(10-100; default 95). Overrides settings.json for this session; not persisted. "
         "100 effectively disables automatic compression.",
     )
     parser.add_argument(

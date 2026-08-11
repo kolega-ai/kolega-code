@@ -5,6 +5,7 @@ ANTHROPIC_SPECS = {
     ("anthropic", "claude-fable-5"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -17,6 +18,7 @@ ANTHROPIC_SPECS = {
     ("anthropic", "claude-opus-5"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -29,6 +31,7 @@ ANTHROPIC_SPECS = {
     ("anthropic", "claude-opus-4-8"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -41,6 +44,7 @@ ANTHROPIC_SPECS = {
     ("anthropic", "claude-opus-4-7"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -53,6 +57,7 @@ ANTHROPIC_SPECS = {
     ("anthropic", "claude-opus-4-6"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -64,6 +69,7 @@ ANTHROPIC_SPECS = {
     ("anthropic", "claude-sonnet-5"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -76,6 +82,7 @@ ANTHROPIC_SPECS = {
     ("anthropic", "claude-sonnet-4-6"): {
         "context_length": 1000000,
         "max_completion_tokens": 64000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -87,18 +94,21 @@ ANTHROPIC_SPECS = {
     ("anthropic", "claude-sonnet-4-5-20250929"): {
         "context_length": 200000,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
     },
     ("anthropic", "claude-opus-4-5-20251101"): {
         "context_length": 200000,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
     },
     ("anthropic", "claude-haiku-4-5-20251001"): {
         "context_length": 200000,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
     },

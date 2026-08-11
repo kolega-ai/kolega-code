@@ -211,6 +211,9 @@ def model_spec(entry: Mapping[str, Any]) -> dict[str, Any]:
     spec: dict[str, Any] = {
         "context_length": context_length,
         "max_completion_tokens": max_completion_tokens,
+        # Upstream declares no budget convention; mirrors are wire-clamped
+        # budgeting data, so classify from the pair itself.
+        "input_budget": "output_shares_window" if max_completion_tokens >= context_length else "window_minus_output",
         "default_temperature": 1.0,
     }
     # Reasoning models such as openai/gpt-5.6-* reject an explicit temperature.

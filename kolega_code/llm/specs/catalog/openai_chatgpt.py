@@ -14,8 +14,9 @@ from kolega_code.llm.specs.types import ThinkingEffortSpec
 # subscription-specific values here so compression runs before backend limits.
 OPENAI_CHATGPT_SPECS = {
     ("openai_chatgpt", "gpt-5.6-sol"): {
-        "context_length": 272000,
+        "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -28,8 +29,9 @@ OPENAI_CHATGPT_SPECS = {
         ),
     },
     ("openai_chatgpt", "gpt-5.6-terra"): {
-        "context_length": 272000,
+        "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -42,8 +44,9 @@ OPENAI_CHATGPT_SPECS = {
         ),
     },
     ("openai_chatgpt", "gpt-5.6-luna"): {
-        "context_length": 272000,
+        "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -56,8 +59,9 @@ OPENAI_CHATGPT_SPECS = {
         ),
     },
     ("openai_chatgpt", "gpt-5.5"): {
-        "context_length": 272000,
+        "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -72,6 +76,7 @@ OPENAI_CHATGPT_SPECS = {
     ("openai_chatgpt", "gpt-5.4"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -86,6 +91,7 @@ OPENAI_CHATGPT_SPECS = {
     ("openai_chatgpt", "gpt-5.4-mini"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -98,8 +104,10 @@ OPENAI_CHATGPT_SPECS = {
         ),
     },
     ("openai_chatgpt", "gpt-5.3-codex-spark"): {
-        "context_length": 256000,
+        # Input limit probed live 2026-08-11: accepted 122,473, rejected ~129.6k.
+        "context_length": 128000,
         "max_completion_tokens": 128000,
+        "input_budget": "separate_output_limit",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,

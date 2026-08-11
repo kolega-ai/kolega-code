@@ -16,6 +16,7 @@ class MockAgent:
         self.compress_history = AsyncMock()
         self.count_current_context = AsyncMock()
         self.model_context_length = 1000
+        self.model_max_input_tokens = 1000
 
     def clear_history(self):
         self.history = MessageHistory()

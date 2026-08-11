@@ -12,6 +12,7 @@ THINKING_MACHINES_SPECS = {
     ("thinking_machines", "thinkingmachines/Inkling"): {
         "context_length": 1000000,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -23,6 +24,7 @@ THINKING_MACHINES_SPECS = {
     ("thinking_machines", "thinkingmachines/Inkling-Small"): {
         "context_length": 1000000,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(

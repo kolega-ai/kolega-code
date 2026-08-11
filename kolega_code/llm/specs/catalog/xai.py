@@ -5,6 +5,7 @@ XAI_SPECS = {
     ("xai", "grok-4.5"): {
         "context_length": 500000,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         # 0.7 matches xAI/Vals AI benchmark defaults (temp 0.7 + high reasoning).
         "default_temperature": 0.7,
         "supports_vision": True,
@@ -18,6 +19,7 @@ XAI_SPECS = {
     ("xai", "grok-4.3"): {
         "context_length": 1000000,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 0.6,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
@@ -29,6 +31,7 @@ XAI_SPECS = {
     ("xai", "grok-build-0.1"): {
         "context_length": 256000,
         "max_completion_tokens": 16384,
+        "input_budget": "window_minus_output",
         "default_temperature": 0.6,
         "supports_vision": False,
     },

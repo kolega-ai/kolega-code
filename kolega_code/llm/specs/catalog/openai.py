@@ -14,6 +14,7 @@ OPENAI_SPECS = {
     ("openai", "gpt-5.6-sol"): {
         "context_length": 1050000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -28,6 +29,7 @@ OPENAI_SPECS = {
     ("openai", "gpt-5.6-terra"): {
         "context_length": 1050000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -42,6 +44,7 @@ OPENAI_SPECS = {
     ("openai", "gpt-5.6-luna"): {
         "context_length": 1050000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -56,6 +59,7 @@ OPENAI_SPECS = {
     ("openai", "gpt-5.5"): {
         "context_length": 1050000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -68,8 +72,9 @@ OPENAI_SPECS = {
         ),
     },
     ("openai", "gpt-5.4"): {
-        "context_length": 400000,
+        "context_length": 1050000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
@@ -84,6 +89,7 @@ OPENAI_SPECS = {
     ("openai", "gpt-5.4-mini"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
