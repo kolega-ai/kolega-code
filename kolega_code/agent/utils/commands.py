@@ -73,7 +73,8 @@ class CommandProcessor:
         if len(self.agent.history) > 0:
             token_count = await self.agent.count_current_context()
             input_tokens = token_count.input_tokens
-        return f"Current context token count: {input_tokens}"
+        capped = " (capped)" if getattr(self.agent, "strict_context_budget", False) else ""
+        return f"Current context token count: {input_tokens} / {self.agent.model_max_input_tokens} input budget{capped}"
 
     @staticmethod
     def process_commands(target_cls: Type) -> Type:

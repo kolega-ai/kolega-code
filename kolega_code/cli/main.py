@@ -93,6 +93,7 @@ from .config import (
     active_model_override_message,
     build_agent_config,
     config_summary,
+    strict_context_budget_marker,
     load_cli_env,
     _skills_enabled,
 )
@@ -256,6 +257,20 @@ def _add_common_model_args(parser: argparse.ArgumentParser) -> None:
         help="Input-budget usage percentage that triggers automatic history compression "
         "(10-100; default 95). Overrides settings.json for this session; not persisted. "
         "100 effectively disables automatic compression.",
+    )
+    parser.add_argument(
+        "--context-window-tokens",
+        metavar="TOKENS",
+        help="Total input-plus-output context-window limit for this process. "
+        "Must be used with --max-output-tokens; may lower but not exceed the "
+        "model's catalogued context length. Not persisted.",
+    )
+    parser.add_argument(
+        "--max-output-tokens",
+        metavar="TOKENS",
+        help="Maximum generated tokens reserved for a primary model call in "
+        "this process. Must be used with --context-window-tokens; may lower "
+        "but not exceed the model's catalogued completion maximum.",
     )
     parser.add_argument(
         "--edit-protocol",
@@ -738,6 +753,8 @@ def _overrides_from_args(args: argparse.Namespace) -> CliConfigOverrides:
         subagents_mode=getattr(args, "subagents", None),
         skills_mode=getattr(args, "skills", None),
         compression_threshold=getattr(args, "compression_threshold", None),
+        context_window_tokens=getattr(args, "context_window_tokens", None),
+        max_output_tokens=getattr(args, "max_output_tokens", None),
     )
 
 
@@ -1580,7 +1597,15 @@ async def _run_ask(args: argparse.Namespace) -> int:
         # Journal every settled non-history response and failure (in-memory journal
         # for unsaved runs). Attached before the SESSION_START hook below: hook
         # prompts are paid LLM calls and must be covered from the first request.
-        sink = SessionUsageSink(journal, session_recorder, usage_ledger, mode="ask")
+        sink = SessionUsageSink(
+            journal,
+            session_recorder,
+            usage_ledger,
+            mode="ask",
+            run_metadata=(
+                {"context_budget": budget_marker} if (budget_marker := strict_context_budget_marker(config)) else None
+            ),
+        )
         usage_sink = sink
         usage_ledger.observer = sink
         await sink.start()

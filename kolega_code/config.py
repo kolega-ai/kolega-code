@@ -231,6 +231,26 @@ class AgentConfig(BaseModel):
         description="Context-window fraction that triggers automatic history compression",
     )
 
+    # Strict per-run context budget from the paired CLI flags. Process-local:
+    # populated only from the command line, never persisted. When set, the
+    # agent budgets against these instead of the catalog and enforces a hard
+    # post-compaction preflight.
+    context_window_tokens: Optional[int] = Field(
+        default=None, gt=0, description="Total input-plus-output context-window limit for this process"
+    )
+    max_output_tokens: Optional[int] = Field(
+        default=None, gt=0, description="Output allowance reserved for a primary model call in this process"
+    )
+
+    @model_validator(mode="after")
+    def _validate_strict_context_budget(self) -> "AgentConfig":
+        window, output = self.context_window_tokens, self.max_output_tokens
+        if (window is None) != (output is None):
+            raise ValueError("context_window_tokens and max_output_tokens must be supplied together")
+        if window is not None and output is not None and output >= window:
+            raise ValueError("max_output_tokens must be strictly smaller than context_window_tokens")
+        return self
+
     # eval tool (persistent code kernels with a loopback tool bridge). All fields
     # are additive with defaults that enable the feature; excluded from
     # serialization since they carry local paths (parity with lsp/mcp_config).

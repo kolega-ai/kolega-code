@@ -30,6 +30,8 @@ def agent(tmp_path):
     manager.workspace_id = "test_workspace"
     manager.send_message = AsyncMock()
     config = Mock(spec=AgentConfig)
+    config.context_window_tokens = None
+    config.max_output_tokens = None
     config.long_context_config = Mock()
     config.long_context_config.provider = "anthropic"
     config.long_context_config.model = "claude-sonnet-4-5-20250929"
