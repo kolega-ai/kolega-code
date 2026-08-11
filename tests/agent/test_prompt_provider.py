@@ -215,6 +215,11 @@ class TestPromptProvider:
 
         assert "## Running Commands" in prompt
         assert "prefer `rg` / `rg --files` over grep/find" in prompt
+        # ripgrep's -r is --replace, not recursive; a stray -r silently turns
+        # matches into the literal replacement text and reads as a redaction
+        # layer, so the guidance must call it out explicitly.
+        assert "`-r` means `--replace`, not recursive" in prompt
+        assert "use `rg -n` for line numbers" in prompt
         assert "Do not use python scripts (or `eval`) to print chunks of a file" in prompt
         # One wording serves both interactive and autonomous runs: destructive
         # commands need explicit authorization — by the user or by the task.
