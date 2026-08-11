@@ -372,13 +372,30 @@ class PtySession:
     def _detach_pty(self) -> None:
         """Release the PTY after the shell exited without EOF.
 
-        The non-EOF analogue of :meth:`_handle_eof`: drop the reader, close
-        the master (hanging up the slave, which SIGHUPs any surviving
-        background process), finalize the output, and flush the display
-        decoder.
+        The non-EOF analogue of :meth:`_handle_eof`: drop the reader, drain
+        and close the master (hanging up the slave, which SIGHUPs any
+        surviving background process), finalize the output, and flush the
+        display decoder.
         """
         self._remove_reader()
         if self.master_fd is not None:
+            # The shell has exited, so everything still sitting in the PTY
+            # buffer is final output. Drain it synchronously before closing:
+            # the reap path's settle sleep gives the reader callback *a*
+            # chance to run, not a guarantee it consumed every byte — under
+            # load, closing here used to drop the tail of large bursts.
+            # The master is O_NONBLOCK, so this loop cannot stall.
+            while True:
+                try:
+                    data = os.read(self.master_fd, 65536)
+                except (BlockingIOError, InterruptedError):
+                    break
+                except OSError:
+                    break  # EIO: the PTY has nothing further to give
+                if not data:
+                    break
+                self._output.append_bytes(data)
+                self._broadcast(data)
             try:
                 os.close(self.master_fd)
             except OSError:
