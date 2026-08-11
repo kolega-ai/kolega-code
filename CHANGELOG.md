@@ -8,6 +8,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Fixed
 
+- File tools (`read`, `write`, `edit`, `multi_edit`, `read_image`) now expand
+  a `$KOLEGA_SCRATCHPAD` (or `${KOLEGA_SCRATCHPAD}`) reference in path
+  arguments to the session scratchpad at the tool-dispatch choke point, so
+  the shell spelling no longer creates a literal `$KOLEGA_SCRATCHPAD`
+  directory in the workspace.
+
 - Runtime model-catalog caches created before input-budget conventions were
   introduced are now ignored safely instead of injecting incomplete model
   specs that fail later with `KeyError: 'input_budget'`. Refreshing a catalog

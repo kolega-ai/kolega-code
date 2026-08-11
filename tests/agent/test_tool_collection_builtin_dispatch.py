@@ -161,3 +161,81 @@ class TestToolCollection:
         """read_image is in read_only_tools and has a ToolCollection wrapper."""
         assert "read_image" in ToolCollection.read_only_tools
         assert hasattr(ToolCollection, "read_image")
+
+
+@pytest.mark.asyncio
+class TestScratchpadPathExpansion:
+    """File-tool path arguments expand $KOLEGA_SCRATCHPAD at the dispatch choke point."""
+
+    @pytest.fixture
+    def real_collection(
+        self, project_path: Path, mock_connection_manager: AsyncMock, agent_config: AgentConfig, mock_base_agent: Mock
+    ) -> ToolCollection:
+        # Real (unmocked) handlers: the expansion must reach the actual tools.
+        # A real tool-call id keeps the snapshot-service records serializable.
+        mock_base_agent.current_tool_execution_id = "test-call-id"
+        return ToolCollection(
+            project_path, "test_workspace", str(uuid.uuid4()), mock_connection_manager, agent_config, mock_base_agent
+        )
+
+    async def test_write_expands_reference_and_never_creates_literal_dir(
+        self, real_collection: ToolCollection, project_path: Path, mock_base_agent: Mock, tmp_path: Path
+    ) -> None:
+        scratchpad = tmp_path / "scratchpad"
+        scratchpad.mkdir()
+        mock_base_agent.scratchpad_dir = scratchpad
+
+        result = await real_collection.call("write", path="$KOLEGA_SCRATCHPAD/notes.txt", content="hello")
+
+        assert str(scratchpad / "notes.txt") in result
+        assert (scratchpad / "notes.txt").read_text() == "hello"
+        # The literal $KOLEGA_SCRATCHPAD directory must never appear in the workspace.
+        assert not (project_path / "$KOLEGA_SCRATCHPAD").exists()
+
+    async def test_write_expands_braced_reference(
+        self, real_collection: ToolCollection, mock_base_agent: Mock, tmp_path: Path
+    ) -> None:
+        scratchpad = tmp_path / "scratchpad"
+        scratchpad.mkdir()
+        mock_base_agent.scratchpad_dir = scratchpad
+
+        result = await real_collection.call("write", path="${KOLEGA_SCRATCHPAD}/notes.txt", content="hi")
+
+        assert str(scratchpad / "notes.txt") in result
+        assert (scratchpad / "notes.txt").read_text() == "hi"
+
+    async def test_read_after_write_round_trips_through_reference(
+        self, real_collection: ToolCollection, mock_base_agent: Mock, tmp_path: Path
+    ) -> None:
+        scratchpad = tmp_path / "scratchpad"
+        scratchpad.mkdir()
+        mock_base_agent.scratchpad_dir = scratchpad
+
+        await real_collection.call("write", path="$KOLEGA_SCRATCHPAD/code.py", content="value = 1\n")
+        read_result = await real_collection.call("read", file_path="$KOLEGA_SCRATCHPAD/code.py")
+
+        assert str(scratchpad / "code.py") in read_result
+        assert "value = 1" in read_result
+
+    async def test_edit_expands_reference(
+        self, real_collection: ToolCollection, mock_base_agent: Mock, tmp_path: Path
+    ) -> None:
+        scratchpad = tmp_path / "scratchpad"
+        scratchpad.mkdir()
+        mock_base_agent.scratchpad_dir = scratchpad
+        (scratchpad / "code.py").write_text("value = 1\n")
+
+        block = "<<<<<<< SEARCH\nvalue = 1\n=======\nvalue = 2\n>>>>>>> REPLACE"
+        result = await real_collection.call("edit", path="$KOLEGA_SCRATCHPAD/code.py", block=block)
+
+        assert str(scratchpad / "code.py") in result
+        assert (scratchpad / "code.py").read_text() == "value = 2\n"
+
+    async def test_without_scratchpad_leaves_path_unchanged(self, tool_collection: AsyncMock) -> None:
+        tool_collection.caller.scratchpad_dir = None
+        tool_collection.edit_tool.write.return_value = "Wrote $KOLEGA_SCRATCHPAD/x.txt"
+
+        result = await tool_collection.call("write", path="$KOLEGA_SCRATCHPAD/x.txt", content="hi")
+
+        assert result == "Wrote $KOLEGA_SCRATCHPAD/x.txt"
+        tool_collection.edit_tool.write.assert_called_once_with("$KOLEGA_SCRATCHPAD/x.txt", "hi")

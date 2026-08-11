@@ -36,6 +36,14 @@ class Tool:
     # Debug-level log_message sink for param-alias hits, so trajectory mining
     # sees which aliases fire. None falls back to stdlib logging.
     log_debug: Optional[Callable[[str], Awaitable[None]]] = None
+    # Expands filesystem-path arguments (scratchpad references such as
+    # ``$KOLEGA_SCRATCHPAD/foo.py``) before the handler runs. Supplied at
+    # construction for the built-in file tools; None leaves paths untouched.
+    path_expander: Optional[Callable[[str], str]] = None
+    # Canonical parameter names of ``handler`` that hold filesystem paths.
+    # Only these receive expansion; a value is expanded only when it is a
+    # plain string. Defaults to empty, so expansion is opt-in per tool.
+    path_params: FrozenSet[str] = field(default_factory=frozenset)
     # Parameter names the bound handler accepts, computed once at construction
     # via ``inspect``. Alias resolution treats a registered alias as real only
     # when the binding does NOT accept the name: a name the handler itself
@@ -53,8 +61,26 @@ class Tool:
 
     async def call(self, **inputs: Any) -> Any:
         inputs = await self._resolve_param_aliases(inputs)
+        inputs = self._expand_path_params(inputs)
         self._reject_malformed_call(inputs)
         return await self.handler(**inputs)
+
+    def _expand_path_params(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """Expand scratchpad references in the tool's path arguments.
+
+        Runs after alias resolution so the canonical parameter names are
+        already in place, and before argument validation so the expanded path
+        is what the handler (and its result strings) sees. A no-op unless the
+        tool was constructed with a ``path_expander``.
+        """
+        expander = self.path_expander
+        if expander is None or not self.path_params:
+            return inputs
+        for name in self.path_params:
+            value = inputs.get(name)
+            if isinstance(value, str):
+                inputs[name] = expander(value)
+        return inputs
 
     async def _resolve_param_aliases(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         """Map registered wrong-name arguments onto canonical parameters.

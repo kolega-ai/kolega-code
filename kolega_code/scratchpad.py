@@ -79,3 +79,24 @@ def ensure_scratchpad_dir(project_path: Path | str, session_id: str) -> Path:
     path = scratchpad_dir_for(project_path, session_id)
     ensure_private_dir(path)
     return path
+
+
+_SCRATCHPAD_TOKEN_PATTERN = re.compile(r"(^|[/\\])\$(?:\{KOLEGA_SCRATCHPAD\}|KOLEGA_SCRATCHPAD)(?=$|[/\\])")
+
+
+def expand_scratchpad_reference(path: str, scratchpad_dir: str | os.PathLike[str] | None) -> str:
+    """Expand ``$KOLEGA_SCRATCHPAD`` references in a model-provided path.
+
+    The scratchpad prompt tells agents to refer to the session scratchpad as
+    ``$KOLEGA_SCRATCHPAD`` (the spelling shells expand). File tools accept the
+    same spelling at the tool-dispatch choke point so a literal
+    ``$KOLEGA_SCRATCHPAD`` directory can never appear in the workspace: every
+    whole-segment occurrence of the token (``$KOLEGA_SCRATCHPAD`` or
+    ``${KOLEGA_SCRATCHPAD}``, at the start of the path or after a separator) is
+    replaced with ``scratchpad_dir``. Paths without the token, or callers
+    without a scratchpad, are returned unchanged.
+    """
+    if not path or not isinstance(scratchpad_dir, (str, os.PathLike)):
+        return path
+    value = str(scratchpad_dir)
+    return _SCRATCHPAD_TOKEN_PATTERN.sub(lambda match: match.group(1) + value, path)
