@@ -57,7 +57,7 @@ def _persist_threshold(tmp_path, percent: float):
 def test_compression_resolution_precedence():
     settings = CliSettings(compression_threshold=65.0)
     env = {"KOLEGA_CODE_COMPRESSION_THRESHOLD": "70"}
-    # flag > env > settings > default (None -> the agent's built-in 0.8)
+    # flag > env > settings > default (None -> the agent's built-in 0.95)
     assert _compression_threshold(env, settings, "90") == pytest.approx(0.9)
     assert _compression_threshold(env, settings, None) == pytest.approx(0.7)
     assert _compression_threshold({}, settings, None) == pytest.approx(0.65)

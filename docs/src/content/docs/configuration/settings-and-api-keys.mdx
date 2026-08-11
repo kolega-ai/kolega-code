@@ -99,8 +99,9 @@ your self-hosted instance. The same settings can be supplied with
 
 The **Tools** category also holds the **history-compression threshold**: the
 context-window usage percent at which older conversation history is summarized
-automatically (default `80%`). Choose `100%` to effectively disable automatic
-compression — `/compress` always works manually. For one session only, override
+automatically (default `95%`). Choose `100%` to disable proactive
+compression; over-limit recovery and explicit context caps remain enforced
+— `/compress` always works manually. For one session only, override
 it with `--compression-threshold PERCENT` or `KOLEGA_CODE_COMPRESSION_THRESHOLD`;
 the editor notes when a launch flag or environment variable has pinned the value.
 
