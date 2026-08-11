@@ -325,8 +325,13 @@ async def test_cancelled_exec_returns_recoverable_spill_result(manager, tmp_path
     task = asyncio.create_task(
         manager.exec_command(command, yield_time_ms=30_000),
     )
-    for _ in range(200):
-        if list(spill_root.glob("*.log")):
+    # Wait for the full payload to be durably spilled, not merely for the spill
+    # file to exist: cancelling while the child is still flushing through the
+    # PTY kills it before END was ever written, which is not the recovery path
+    # this test exercises.
+    for _ in range(500):
+        spilled = list(spill_root.glob("*.log"))
+        if spilled and b"END" in spilled[0].read_bytes():
             break
         await asyncio.sleep(0.01)
     else:
