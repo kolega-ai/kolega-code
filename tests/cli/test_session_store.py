@@ -1,6 +1,9 @@
 import json
 import os
 import stat
+import subprocess
+import sys
+import time
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -890,3 +893,109 @@ def test_rewind_of_recovered_crashed_turn(tmp_path: Path) -> None:
     recovered.record_rewind(turns[1].turn_id)
     loaded = store.load(record.session_id)
     assert [message["content"][0]["text"] for message in loaded.history] == ["turn one", "answer one"]
+
+
+def _corrupt_journal_with_duplicate_seq(events_path: Path) -> None:
+    """Rewrite a journal so line 2 duplicates line 1's seq (the two-instance corruption pattern)."""
+    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+    events[1]["seq"] = events[0]["seq"]
+    for index in range(2, len(events)):
+        events[index]["seq"] = events[0]["seq"] + index - 1
+    events_path.write_text("\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8")
+
+
+def test_recorder_refuses_second_instance(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    first = SessionStore(tmp_path / "state")
+    second = SessionStore(tmp_path / "state")
+    record = first.create(project, "code", {})
+    recorder = first.recorder(record.session_id)
+
+    with pytest.raises(SessionStoreError, match="already open"):
+        second.recorder(record.session_id)
+
+    # The first instance keeps recording normally.
+    journal = first.journal(record.session_id)
+    event = journal.append("test.event", actor="system", epoch_id=journal.epoch_id)
+    assert event.seq == 3
+    assert recorder.journal is journal
+
+
+def test_recorder_same_store_reentrant(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+    first = store.recorder(record.session_id)
+    second = store.recorder(record.session_id)
+    assert second is first
+
+
+def test_recorder_lock_released_on_process_exit(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+
+    child_script = tmp_path / "hold_lock.py"
+    child_script.write_text(
+        "import sys\n"
+        "import time\n"
+        "from pathlib import Path\n"
+        "from kolega_code.cli.session_store import SessionStore\n"
+        "state_dir, session_id = sys.argv[1], sys.argv[2]\n"
+        "store = SessionStore(Path(state_dir))\n"
+        "store.recorder(session_id)\n"
+        "Path(state_dir, 'locked.marker').write_text('ok')\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    proc = subprocess.Popen(
+        [sys.executable, str(child_script), str(tmp_path / "state"), record.session_id],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        marker = tmp_path / "state" / "locked.marker"
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if marker.exists():
+                break
+            if proc.poll() is not None:
+                child_error = proc.stderr.read() if proc.stderr is not None else ""
+                raise AssertionError(f"child exited early: {child_error}")
+            time.sleep(0.05)
+        assert marker.exists(), "child never acquired the session lock"
+
+        with pytest.raises(SessionStoreError, match="already open"):
+            store.recorder(record.session_id)
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
+
+    recorder = store.recorder(record.session_id)
+    assert recorder is not None
+
+
+def test_repair_sequence_recovers_gap(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+    events_path = store.events_path_for(record.session_id)
+    _corrupt_journal_with_duplicate_seq(events_path)
+
+    with pytest.raises(SessionStoreError, match="sequence gap"):
+        store.load(record.session_id)
+
+    count = store.repair_sequence(record.session_id)
+    assert count == 2
+    loaded = store.load(record.session_id)
+    assert loaded.session_id == record.session_id
+
+    journal = store.journal(record.session_id)
+    event = journal.append("test.event", actor="system", epoch_id=journal.epoch_id)
+    assert event.seq == count + 1
+    assert [e.seq for e in journal.read_events()] == [1, 2, 3]

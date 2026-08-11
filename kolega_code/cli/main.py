@@ -569,6 +569,9 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     sessions_delete = sessions_sub.add_parser("delete", help="Delete a session.")
     sessions_delete.add_argument("session_id")
     sessions_delete.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
+    sessions_repair = sessions_sub.add_parser("repair", help="Renumber the events of a corrupted session journal.")
+    sessions_repair.add_argument("session_id")
+    sessions_repair.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
     sessions_export = sessions_sub.add_parser("export", help="Export a session (replay JSON or semantic events).")
     sessions_export.add_argument("session_id")
     sessions_export.add_argument(
@@ -1922,6 +1925,12 @@ async def _run_ask(args: argparse.Namespace) -> int:
                     # a run that already failed keeps its own exit status.
                     exit_code = 1
 
+        # The command's ownership of the session ends here: release the
+        # cross-process lock so a sequential resume in this process (tests,
+        # embedded hosts) is not refused. A concurrent process cannot run
+        # while this command is alive, so there is no window to exploit.
+        store.release_session_locks()
+
     return exit_code
 
 
@@ -2150,6 +2159,10 @@ def _run_sessions(args: argparse.Namespace) -> int:
     if args.sessions_command == "delete":
         store.delete(args.session_id)
         print(f"Deleted session {args.session_id}")
+        return 0
+    if args.sessions_command == "repair":
+        count = store.repair_sequence(args.session_id)
+        print(f"Repaired session {args.session_id}: {count} events with a contiguous sequence.")
         return 0
     if args.sessions_command == "export":
         export_format = getattr(args, "format", "json")

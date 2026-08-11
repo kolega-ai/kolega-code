@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Optional, Sequence
 
+from filelock import BaseFileLock, FileLock, Timeout
+
 from kolega_code.local_state import ensure_private_dir, write_private_text
 
 from .session_journal import (
@@ -195,6 +197,7 @@ class SessionStore:
         self.sessions_dir = self.root / "sessions"
         self._locks_guard = threading.RLock()
         self._locks: dict[str, threading.RLock] = {}
+        self._session_locks: dict[str, BaseFileLock] = {}
         self._journals: dict[str, SessionJournal] = {}
         self._recorders: dict[str, SessionRecorder] = {}
 
@@ -352,6 +355,7 @@ class SessionStore:
         if not self.session_dir_for(session_id).exists():
             raise SessionStoreError(f"Session not found: {session_id}")
         with self._lock_for(session_id):
+            self._acquire_session_lock(session_id)
             with self._locks_guard:
                 recorder = self._recorders.get(session_id)
             if recorder is not None:
@@ -368,9 +372,80 @@ class SessionStore:
         with self._locks_guard:
             journal = self._journals.get(session_id)
             if journal is None:
-                journal = SessionJournal(session_id, self.session_dir_for(session_id), self._lock_for(session_id))
+                journal = SessionJournal(
+                    session_id,
+                    self.session_dir_for(session_id),
+                    self._lock_for(session_id),
+                    cross_process_lock=self._session_lock_for(session_id),
+                )
                 self._journals[session_id] = journal
             return journal
+
+    def _session_lock_for(self, session_id: str) -> BaseFileLock:
+        """Return the shared cross-process lock for a session (one instance per store).
+
+        The lock file is a dot-prefixed sibling of the session directory, so
+        session listing, migration, and export never see it. ``thread_local``
+        is disabled so acquire/release balance across the store's threads
+        (recording, background saves), and ``timeout`` is zero so contention
+        surfaces immediately as a refusal instead of blocking.
+        """
+        with self._locks_guard:
+            lock = self._session_locks.get(session_id)
+            if lock is None:
+                lock = FileLock(
+                    self.sessions_dir / f".{_validate_session_id(session_id)}.lock",
+                    timeout=0,
+                    thread_local=False,
+                )
+                self._session_locks[session_id] = lock
+            return lock
+
+    def _acquire_session_lock(self, session_id: str) -> None:
+        """Take exclusive ownership of a session for this process.
+
+        The lock is held for the process lifetime — ``flock`` releases it
+        automatically on exit, so there is no stale-lock cleanup. A second
+        instance opening the same session is refused here.
+        """
+        lock = self._session_lock_for(session_id)
+        try:
+            lock.acquire(timeout=0)
+        except Timeout as exc:
+            raise SessionStoreError(
+                f"Session {session_id} is already open in another kolega-code instance; close it there before retrying."
+            ) from exc
+
+    def repair_sequence(self, session_id: str) -> int:
+        """Renumber a corrupted journal's events 1..N in file order; returns the event count.
+
+        Refused while another instance holds the session, because repairing a
+        live journal is exactly the corruption scenario.
+        """
+        self._ensure_migrated(session_id)
+        if not self.session_dir_for(session_id).exists():
+            raise SessionStoreError(f"Session not found: {session_id}")
+        with self._lock_for(session_id):
+            self._acquire_session_lock(session_id)
+            try:
+                return self.journal(session_id).repair_sequence()
+            finally:
+                self._session_lock_for(session_id).release()
+
+    def release_session_locks(self) -> None:
+        """Release every cross-process session lock held by this store.
+
+        Ownership is per-invocation for headless commands: a finished command
+        must not keep the session locked for the rest of the process's life,
+        or a sequential resume in the same process (tests, embedded hosts)
+        would be refused. The TUI keeps its locks until process exit, which
+        releases them via ``flock``.
+        """
+        with self._locks_guard:
+            locks = list(self._session_locks.values())
+        for lock in locks:
+            if lock.is_locked:
+                lock.release(force=True)
 
     def start_epoch(self, session_id: str, reason: str) -> str:
         return self.recorder(session_id).start_epoch(reason)

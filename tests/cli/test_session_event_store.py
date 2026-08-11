@@ -199,3 +199,90 @@ async def test_llm_events_are_invisible_to_the_presentation_stream(tmp_path):
     )
     events = await FileSessionEventStore(journal).read(session.session_id)
     assert events == []
+
+
+def test_append_resyncs_from_tail_after_foreign_writer(tmp_path: Path) -> None:
+    """A writer that bypassed this journal object must not cause duplicate seqs."""
+    import json
+
+    from filelock import FileLock
+
+    from kolega_code.cli.session_journal import SessionJournal
+
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
+    lock = FileLock(tmp_path / "session.lock", timeout=0, thread_local=False)
+    journal = SessionJournal("test-session", session_dir, cross_process_lock=lock)
+    journal.append("context.epoch_started", actor="system", epoch_id="epoch-1")
+    journal.append("test.event", actor="system", epoch_id="epoch-1")
+
+    # A second writer appends directly to the file, advancing the durable tail
+    # past this journal's in-memory counter.
+    events_path = session_dir / "events.jsonl"
+    base = json.loads(events_path.read_text(encoding="utf-8").splitlines()[-1])
+    for seq in (3, 4):
+        foreign = dict(base)
+        foreign["seq"] = seq
+        foreign["event_id"] = f"foreign-{seq}"
+        with events_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(foreign) + "\n")
+
+    event = journal.append("test.event", actor="system", epoch_id="epoch-1")
+    assert event.seq == 5
+    assert [e.seq for e in journal.read_events()] == [1, 2, 3, 4, 5]
+
+
+def test_concurrent_appends_keep_sequence_monotonic(tmp_path: Path) -> None:
+    """Two processes appending to one journal produce one contiguous sequence."""
+    import subprocess
+    import sys
+    import textwrap
+
+    from kolega_code.cli.session_journal import SessionJournal
+
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
+    child_script = tmp_path / "append_loop.py"
+    child_script.write_text(
+        textwrap.dedent(
+            """\
+            import sys
+            from pathlib import Path
+
+            from filelock import FileLock
+
+            from kolega_code.cli.session_journal import SessionJournal
+
+            session_dir = Path(sys.argv[1])
+            who = sys.argv[2]
+            lock = FileLock(session_dir / ".lock", timeout=30, thread_local=False)
+            journal = SessionJournal("test-session", session_dir, cross_process_lock=lock)
+            for index in range(25):
+                journal.append("test.event", actor=who, payload={"index": index}, epoch_id="epoch-1")
+            """
+        ),
+        encoding="utf-8",
+    )
+    procs = [
+        subprocess.Popen(
+            [sys.executable, str(child_script), str(session_dir), "writer-a"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ),
+        subprocess.Popen(
+            [sys.executable, str(child_script), str(session_dir), "writer-b"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ),
+    ]
+    for proc in procs:
+        _, stderr = proc.communicate(timeout=60)
+        assert proc.returncode == 0, stderr
+
+    journal = SessionJournal("test-session", session_dir)
+    events = journal.read_events()
+    assert len(events) == 50
+    assert [event.seq for event in events] == list(range(1, 51))
+    assert len({event.event_id for event in events}) == 50
