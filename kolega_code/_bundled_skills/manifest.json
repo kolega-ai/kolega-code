@@ -138,7 +138,7 @@
     },
     {
       "path": "skills/pptx/references/operations.md",
-      "sha256": "ef0a0f508b562d65d16624cf126075c33924a156b71efbe4cc0ff995a1be87d1"
+      "sha256": "7e65b53b63b25d6c0a84598946fcbf98c341f2d32ce356801a011ffa408b01bf"
     },
     {
       "path": "skills/pptx/requirements.txt",
@@ -146,11 +146,11 @@
     },
     {
       "path": "skills/pptx/scripts/pptx_tool.py",
-      "sha256": "b67bf31e00ea81904b89b2dc3a48dc346e0a940f99cd86c9c042a81d8b331465"
+      "sha256": "71a90eb26a581e0d7f06e5b1765b4ab26cc494085d2b8ed4a8ec219a3282799e"
     },
     {
       "path": "skills/pptx/scripts/smoke_test.py",
-      "sha256": "200d9d5f1ffdaa8497c589877f0941d8cf79a94743ddb737952e0aeab5179ba0"
+      "sha256": "6b52cc0be763dcf3b7d1ab5e4418f56549d858cc6415fce041b1692d078bc26d"
     },
     {
       "path": "skills/review/SKILL.md",
@@ -217,8 +217,8 @@
     "xlsx"
   ],
   "source": {
-    "commit": "ff2d74cd95523e9173332ef5f2ba6c92d40acf0b",
+    "commit": "2de7491964d92e3dc78f13290d875c800ac6e22d",
     "repository": "https://github.com/kolega-ai/kolega-skills",
-    "tag": "v0.3.1"
+    "tag": "v0.3.2"
   }
 }

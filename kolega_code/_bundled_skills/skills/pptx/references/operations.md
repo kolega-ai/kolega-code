@@ -149,10 +149,12 @@ A create job has this top-level shape:
 }
 ```
 
-`template` is optional. Without one, `python-pptx`'s default presentation is used. With one, the
-template's masters and layouts are retained. Existing template slides are removed by default;
-set `keep_template_slides` to `true` to retain them. Template removal uses the same
-version-aware, reopen-verified relationship adapter as edit operations.
+`template` is optional. Without one, `python-pptx`'s 10 × 7.5-inch (4:3) default presentation is
+used. The schema does not resize a presentation; use a template with the required slide size
+before authoring absolute-inch geometry for another aspect ratio. With a template, its masters,
+layouts, and slide size are retained. Existing template slides are removed by default; set
+`keep_template_slides` to `true` to retain them. Template removal uses the same version-aware,
+reopen-verified relationship adapter as edit operations.
 
 A slide may select a `layout` with either `{"name": "Exact Layout Name"}` or `{"index": 1}`.
 If `layout` is omitted, layout index 1 is used and must exist. Duplicate layout names are
@@ -198,7 +200,9 @@ Supported actions:
 - `replace_image`: select one picture and provide `path`. The replacement must use the same media
   content type. Geometry/crop and unselected picture relationships remain unchanged; the selected
   picture receives a relationship to the validated replacement image.
-- `set_notes`: select a slide and provide plain `text`.
+- `set_notes`: select a slide and provide plain `text`. Written decks include and verify the
+  presentation-level notes-master owner reference required for PowerPoint and Keynote
+  interoperability.
 - `remove_slide`: select exactly one slide.
 - `reorder_slides`: provide `slide_ids` containing every current slide ID exactly once.
 
@@ -263,10 +267,13 @@ Elements:
 
 Chart types are `column`, `bar`, `line`, `line_markers`, `pie`, `doughnut`, `area`, `scatter`,
 and `scatter_lines`. Add `title` and `has_legend` as needed. Tables and charts remain editable.
-Notes are plain text only. Resource files are bounded and validated before use. Images are limited
-to 50 MiB compressed, 20,000 pixels per dimension, 50 million pixels, one frame, and an estimated
-200 MiB decoded raster. Each image path is read once into a bounded immutable byte snapshot;
-Pillow validation, full decode, and `python-pptx` ingestion all consume that same snapshot.
+Notes are plain text only. The tool repairs and validates the notes-master relationship graph that
+`python-pptx` 1.x can otherwise serialize without its presentation-level owner reference, which
+some consumers including Keynote reject. Resource files are bounded and validated before use.
+Images are limited to 50 MiB compressed, 20,000 pixels per dimension, 50 million pixels, one
+frame, and an estimated 200 MiB decoded raster. Each image path is read once into a bounded
+immutable byte snapshot; Pillow validation, full decode, and `python-pptx` ingestion all consume
+that same snapshot.
 
 ## LibreOffice prerequisite
 
