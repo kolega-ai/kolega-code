@@ -18,6 +18,8 @@ def agent(tmp_path):
     manager.workspace_id = "test_workspace"
     manager.send_message = AsyncMock()
     config = Mock(spec=AgentConfig)
+    config.context_window_tokens = None
+    config.max_output_tokens = None
     config.long_context_config = Mock()
     config.long_context_config.provider = "anthropic"
     config.long_context_config.model = "claude-sonnet-4-5-20250929"
@@ -73,3 +75,17 @@ def test_catalog_declares_input_budget_everywhere():
 
     for key, specs in list(MODEL_SPECS.items()) + list(WILDCARD_MODEL_SPECS.items()):
         assert specs.get("input_budget") in INPUT_BUDGET_CONVENTIONS, key
+
+
+@pytest.mark.asyncio
+async def test_count_passes_thinking_config(agent, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from kolega_code.llm.providers.models import TokenCount
+
+    counter = AsyncMock(return_value=TokenCount(input_tokens=10))
+    monkeypatch.setattr(agent.llm, "count_tokens", counter)
+    await agent.count_current_context()
+    # Count-before-sample must select the same renderer configuration as
+    # sampling on thinking-sensitive providers (native Tinker).
+    assert "thinking" in counter.call_args.kwargs

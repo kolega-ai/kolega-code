@@ -78,11 +78,22 @@ class SessionUsageSink:
     session recorder.
     """
 
-    def __init__(self, journal: SessionJournal, recorder: SessionRecorder, ledger: UsageLedger, *, mode: str) -> None:
+    def __init__(
+        self,
+        journal: SessionJournal,
+        recorder: SessionRecorder,
+        ledger: UsageLedger,
+        *,
+        mode: str,
+        run_metadata: Optional[dict[str, Any]] = None,
+    ) -> None:
         self._journal = journal
         self._recorder = recorder
         self._ledger = ledger
         self._mode = mode
+        # Extra key/values merged into the run_started marker (e.g. the strict
+        # context-budget declaration). None leaves the marker unchanged.
+        self._run_metadata = run_metadata
         self._queue: asyncio.Queue[Optional[_PendingEvent]] = asyncio.Queue()
         self._drainer: Optional[asyncio.Task[None]] = None
         self._closed = False
@@ -100,7 +111,7 @@ class SessionUsageSink:
                 self._journal.append,
                 LLM_RUN_STARTED_EVENT,
                 actor="system",
-                payload={"run_id": self._ledger.run_id, "mode": self._mode},
+                payload={"run_id": self._ledger.run_id, "mode": self._mode, **(self._run_metadata or {})},
             )
         except Exception:
             self._ledger.note_persist_failure()

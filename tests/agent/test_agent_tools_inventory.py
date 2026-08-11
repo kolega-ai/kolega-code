@@ -46,6 +46,8 @@ def mock_connection_manager():
 def agent_config():
     """Create a mock agent configuration."""
     config = Mock(spec=AgentConfig)
+    config.context_window_tokens = None
+    config.max_output_tokens = None
     config.long_context_config = Mock()
     config.long_context_config.provider = "anthropic"
     config.long_context_config.model = "claude-sonnet-4-5-20250929"

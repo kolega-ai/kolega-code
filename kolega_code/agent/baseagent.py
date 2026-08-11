@@ -466,6 +466,29 @@ class BaseAgent(LogMixin):
         )
 
         model_specs = get_model_specs(self.primary_model_config.provider, self.primary_model_config.model)
+        # Strict per-run budget from the paired CLI flags: re-validate against
+        # the ACTUAL primary model (config-time validation used the globally
+        # resolved model, which a saved role override can supersede), then
+        # budget from an effective spec with the reservation forced — a strict
+        # cap must reserve its output even on output_shares_window routes.
+        self.strict_context_budget = (
+            self.config.context_window_tokens is not None and self.config.max_output_tokens is not None
+        )
+        if self.strict_context_budget:
+            if self.config.context_window_tokens > model_specs["context_length"]:
+                raise ValueError(
+                    f"context_window_tokens ({self.config.context_window_tokens}) exceeds the catalogued "
+                    f"context length ({model_specs['context_length']}) for the primary model."
+                )
+            if self.config.max_output_tokens > model_specs["max_completion_tokens"]:
+                raise ValueError(
+                    f"max_output_tokens ({self.config.max_output_tokens}) exceeds the catalogued "
+                    f"completion maximum ({model_specs['max_completion_tokens']}) for the primary model."
+                )
+            model_specs = dict(model_specs)
+            model_specs["context_length"] = self.config.context_window_tokens
+            model_specs["max_completion_tokens"] = self.config.max_output_tokens
+            model_specs["input_budget"] = "window_minus_output"
         self.model_context_length = model_specs["context_length"]
         self.model_completion_tokens = model_specs["max_completion_tokens"]
         # Usable input budget per the spec's declared input_budget convention.
@@ -1065,6 +1088,10 @@ class BaseAgent(LogMixin):
             messages=fixed_history,
             model=self.primary_model_config.model,
             tools=self.tool_collection.get_tool_list(),
+            # Thinking effort changes what the native Tinker renderer emits, so
+            # count-before-sample must select the same renderer as sampling.
+            # Providers whose rendering is thinking-independent ignore it.
+            thinking=self.primary_model_config.thinking_effort,
         )
         # Add the measured billed−counted residual so the gauge and the
         # compaction check see the billed-true context size (see

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, NoReturn, Optional
+from typing import Any, Mapping, NoReturn, Optional
 
 from pydantic import ValidationError
 
@@ -113,6 +113,10 @@ class CliConfigOverrides:
     # Compression threshold in percent, as typed on the command line; parsed and
     # validated in _compression_threshold.
     compression_threshold: Optional[str] = None
+    # Strict per-run context budget, as typed on the command line; parsed and
+    # validated as a pair in _strict_context_budget. Never persisted.
+    context_window_tokens: Optional[str] = None
+    max_output_tokens: Optional[str] = None
 
 
 def load_cli_env(project_path: Path, env: Optional[Mapping[str, str]] = None) -> dict[str, str]:
@@ -386,6 +390,53 @@ def _compression_threshold(
     return percent / 100.0
 
 
+def _strict_context_budget(
+    overrides: CliConfigOverrides,
+    provider: ModelProvider,
+    model: str,
+) -> tuple[Optional[int], Optional[int]]:
+    """Parse and validate the paired strict context-budget flags.
+
+    Process-local by design: no env or settings layer. Validated against the
+    resolved active model here for an early error; BaseAgent re-validates
+    against its actual primary model (a saved role override can supersede the
+    global selection).
+    """
+    raw_window, raw_output = overrides.context_window_tokens, overrides.max_output_tokens
+    if raw_window is None and raw_output is None:
+        return None, None
+    if raw_window is None or raw_output is None:
+        raise CliConfigError("--context-window-tokens and --max-output-tokens must be supplied together.")
+
+    def _positive_int(raw: str, flag: str) -> int:
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 0
+        if value <= 0 or str(value) != raw.strip():
+            raise CliConfigError(f"{flag} must be a positive integer, got '{raw}'.")
+        return value
+
+    window = _positive_int(raw_window, "--context-window-tokens")
+    output = _positive_int(raw_output, "--max-output-tokens")
+    if output >= window:
+        raise CliConfigError(
+            f"--max-output-tokens ({output}) must be strictly smaller than --context-window-tokens ({window})."
+        )
+    specs = get_model_specs(provider.value, model)
+    if window > specs["context_length"]:
+        raise CliConfigError(
+            f"--context-window-tokens ({window}) exceeds the catalogued context length "
+            f"({specs['context_length']}) for {provider.value}/{model}."
+        )
+    if output > specs["max_completion_tokens"]:
+        raise CliConfigError(
+            f"--max-output-tokens ({output}) exceeds the catalogued completion maximum "
+            f"({specs['max_completion_tokens']}) for {provider.value}/{model}."
+        )
+    return window, output
+
+
 def _coerce_known_model(provider: ModelProvider, model: Optional[str]) -> str:
     """Return ``model`` if it's a known spec for ``provider``, else the default.
 
@@ -633,6 +684,7 @@ def build_agent_config(
     web_search_backend, web_search_api_key, web_search_base_url = _search_config(loaded_env, settings)
     web_search_mode = _web_search_mode(loaded_env, settings, overrides.web_search_mode)
     compression_threshold = _compression_threshold(loaded_env, settings, overrides.compression_threshold)
+    context_window_tokens, max_output_tokens = _strict_context_budget(overrides, long_provider, long_model)
     state_dir = settings_store.root if settings_store is not None else SettingsStore().root
     mcp_config = load_mcp_config(
         project_path,
@@ -701,6 +753,8 @@ def build_agent_config(
             subagents_enabled=_subagents_enabled(loaded_env, settings, overrides.subagents_mode),
             skills_enabled=_skills_enabled(loaded_env, settings, overrides.skills_mode),
             history_compression_threshold=compression_threshold,
+            context_window_tokens=context_window_tokens,
+            max_output_tokens=max_output_tokens,
         )
     except ValueError as exc:
         raise CliConfigError(str(exc)) from exc
@@ -808,4 +862,38 @@ def config_summary(config: AgentConfig) -> dict[str, object]:
         "mcp_servers": len(mcp_servers),
         "mcp_enabled_servers": len(mcp_enabled),
         "mcp_project_trusted": bool(getattr(mcp_config, "project_trusted", False)),
+        **({"context_budget": strict_context_budget_marker(config)} if config.context_window_tokens else {}),
+    }
+
+
+def strict_context_budget_marker(config: AgentConfig) -> Optional[dict[str, Any]]:
+    """The strict-budget declaration for run evidence, or None when inactive.
+
+    Built from the RESOLVED coder route (an agent-role override can supersede
+    the global model selection), so the marker cannot disagree with the route
+    the agent actually uses. The experiment side audits every episode's billed
+    usage against these registered values.
+    """
+    window, output = config.context_window_tokens, config.max_output_tokens
+    if window is None or output is None:
+        return None
+    coder = config.model_config_for_agent("coder")
+    specs = get_model_specs(coder.provider.value, coder.model)
+    threshold = config.history_compression_threshold
+    if threshold is None:
+        from kolega_code.agent.baseagent import BaseAgent
+
+        threshold = BaseAgent.history_compression_threshold
+    max_input = window - output
+    return {
+        "provider": coder.provider.value,
+        "model": coder.model,
+        "compression_threshold": threshold,
+        "catalog_context_window_tokens": specs["context_length"],
+        "catalog_max_output_tokens": specs["max_completion_tokens"],
+        "context_window_tokens": window,
+        "max_output_tokens": output,
+        "max_input_tokens": max_input,
+        "first_compaction_input_tokens": int(max_input * threshold) + 1,
+        "source": "cli",
     }

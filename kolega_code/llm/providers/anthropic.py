@@ -192,8 +192,12 @@ class AnthropicProvider(BaseLLMProvider):
         system: Optional[Message] = None,
         model: Optional[str] = None,
         tools: Optional[List[ToolDefinition]] = None,
+        thinking: Optional[str] = None,
         **kwargs,
     ) -> TokenCount:
+        # Consumed, not forwarded: Anthropic-shaped count endpoints reject a
+        # thinking parameter, and this provider's rendering doesn't vary by it.
+        del thinking
         tools = tools or []
         if self.use_local_token_counting:
             # Use local tiktoken-based counting (no API call). This is an
