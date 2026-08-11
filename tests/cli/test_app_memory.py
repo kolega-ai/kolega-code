@@ -1,4 +1,5 @@
 # ruff: noqa: F401,F811,E402
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -11,6 +12,23 @@ from ._app_test_utils import (
     install_fake_agents,
     open_settings_screen,
 )
+
+
+async def _wait_for_agent_view(screen, pilot, *, timeout: float = 6.0) -> None:
+    """Poll until the memory screen enters agent view or time out.
+
+    ``_enter_agent_view`` flips the flag and writes the preview in one
+    synchronous step, but the view is rendered by an exclusive worker that
+    queues behind any in-flight entry load, so a fixed pause budget races the
+    worker on a loaded CI runner. Poll the completion signal to a deadline
+    before asserting preview content.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        if screen._agent_view:
+            return
+    raise AssertionError(f"memory screen did not enter agent view within {timeout}s")
 
 
 async def _wait_for_entry(screen, pilot, reference: str) -> None:
@@ -538,10 +556,7 @@ async def test_memory_screen_agent_view_matches_prompt_context(
         await _wait_for_entry(screen, pilot, "MEMORY.md")
 
         screen.action_agent_view()
-        for _ in range(40):
-            await pilot.pause(0.025)
-            if screen._agent_view:
-                break
+        await _wait_for_agent_view(screen, pilot)
         assert screen._agent_view is True
 
         expected = app.memory_manager.prompt_context()
@@ -558,10 +573,7 @@ async def test_memory_screen_agent_view_matches_prompt_context(
 
         app.memory_manager.set_enabled(False)
         screen.action_agent_view()
-        for _ in range(40):
-            await pilot.pause(0.025)
-            if screen._agent_view:
-                break
+        await _wait_for_agent_view(screen, pilot)
         assert "receives no memory context" in screen.query_one("#memory_preview", Markdown).source
 
 
