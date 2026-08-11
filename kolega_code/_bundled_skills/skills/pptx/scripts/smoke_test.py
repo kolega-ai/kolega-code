@@ -137,6 +137,87 @@ def _rewrite_zip(
             output.writestr(name, data)
 
 
+def _assert_notes_master_graph(path: Path, expected_notes_slides: int) -> None:
+    with zipfile.ZipFile(path) as archive:
+        names = set(archive.namelist())
+        presentation = ElementTree.fromstring(archive.read(PptxTool.PRESENTATION_PART))
+        relationships = ElementTree.fromstring(archive.read(PptxTool.PRESENTATION_RELS))
+    notes_slide_parts = {
+        name
+        for name in names
+        if name.startswith("ppt/notesSlides/notesSlide")
+        and name.endswith(".xml")
+        and "/_rels/" not in name
+    }
+    _assert(
+        len(notes_slide_parts) == expected_notes_slides,
+        f"expected {expected_notes_slides} notes-slide parts, found {len(notes_slide_parts)}",
+    )
+    notes_relationships = [
+        relationship
+        for relationship in relationships.findall(f"{{{PptxTool.REL_NS}}}Relationship")
+        if relationship.get("Type") == PptxTool.NOTES_MASTER_REL
+    ]
+    master_lists = presentation.findall(f"{{{PptxTool.P_NS}}}notesMasterIdLst")
+    if expected_notes_slides == 0:
+        _assert(
+            not notes_relationships,
+            "no-notes deck unexpectedly has a notes-master relationship",
+        )
+        _assert(not master_lists, "no-notes deck unexpectedly has a notes-master owner reference")
+        _assert(
+            not any(name.startswith("ppt/notesMasters/") for name in names),
+            "no-notes deck unexpectedly has a notes-master part",
+        )
+        return
+    _assert(
+        len(notes_relationships) == 1 and notes_relationships[0].get("TargetMode") != "External",
+        "notes deck must have exactly one internal notes-master relationship",
+    )
+    _assert(len(master_lists) == 1, "notes deck must have one notes-master owner-reference list")
+    master_ids = master_lists[0].findall(f"{{{PptxTool.P_NS}}}notesMasterId")
+    _assert(
+        len(master_ids) == 1
+        and len(master_lists[0]) == 1
+        and master_ids[0].get(f"{{{PptxTool.R_NS}}}id") == notes_relationships[0].get("Id"),
+        "notes-master owner reference does not match the presentation relationship",
+    )
+    children = list(presentation)
+    notes_index = children.index(master_lists[0])
+    slide_master_indexes = [
+        index
+        for index, child in enumerate(children)
+        if child.tag == f"{{{PptxTool.P_NS}}}sldMasterIdLst"
+    ]
+    slide_indexes = [
+        index for index, child in enumerate(children) if child.tag == f"{{{PptxTool.P_NS}}}sldIdLst"
+    ]
+    _assert(
+        (not slide_master_indexes or notes_index > max(slide_master_indexes))
+        and (not slide_indexes or notes_index < min(slide_indexes)),
+        "notes-master owner reference is not in schema order",
+    )
+
+
+def _remove_notes_master_owner_reference(source: Path, destination: Path) -> None:
+    with zipfile.ZipFile(source) as archive:
+        presentation = ElementTree.fromstring(archive.read(PptxTool.PRESENTATION_PART))
+    master_lists = presentation.findall(f"{{{PptxTool.P_NS}}}notesMasterIdLst")
+    _assert(len(master_lists) == 1, "notes-master corruption fixture lacks one owner list")
+    presentation.remove(master_lists[0])
+    _rewrite_zip(
+        source,
+        destination,
+        replacements={
+            PptxTool.PRESENTATION_PART: ElementTree.tostring(
+                presentation,
+                encoding="UTF-8",
+                xml_declaration=True,
+            )
+        },
+    )
+
+
 def _rewrite_font_typefaces(
     source: Path,
     destination: Path,
@@ -466,8 +547,9 @@ def _run_smoke(require_libreoffice: bool) -> dict[str, Any]:
             and create_result["verification"]["owner_relationship_references_resolved"],
             "create relationship target/reference verification missing",
         )
+        _assert_notes_master_graph(created, 2)
         Presentation(str(created))
-        checks.append("create/reopen")
+        checks.append("create/reopen-notes-master-reference")
 
         created_hash = _sha256(created)
         first_inspection = _run(["inspect", str(created)])
@@ -475,6 +557,68 @@ def _run_smoke(require_libreoffice: bool) -> dict[str, Any]:
         slides = first_inspection["presentation"]["slides"]
         original_ids = [slide["slide_id"] for slide in slides]
         _assert(len(set(original_ids)) == 3, "slide IDs are not unique")
+        missing_notes_owner = work / "missing-notes-owner.pptx"
+        _remove_notes_master_owner_reference(created, missing_notes_owner)
+        try:
+            PptxTool._validate_pptx_output(missing_notes_owner, original_ids)
+        except PptxTool.ToolError as exc:
+            _assert(
+                exc.category == "post_write_validation"
+                and "notes-master owner reference" in exc.message,
+                "missing notes-master owner reference produced the wrong validation failure",
+            )
+        else:
+            raise SmokeFailure("output validation accepted a missing notes-master owner reference")
+        checks.append("failure/missing-notes-master-owner-reference")
+
+        no_notes_job = work / "no-notes.json"
+        no_notes = work / "no-notes.pptx"
+        _write_json(
+            no_notes_job,
+            {
+                "schema_version": 1,
+                "operation": "create",
+                "slides": [{"layout": {"index": 5}, "title": "No notes"}],
+            },
+        )
+        _run(["create", "--job", str(no_notes_job), "--output", str(no_notes)])
+        _assert_notes_master_graph(no_notes, 0)
+        no_notes_inspection = _run(["inspect", str(no_notes)])
+        no_notes_slide_id = no_notes_inspection["presentation"]["slides"][0]["slide_id"]
+        add_notes_job = work / "add-notes.json"
+        added_notes = work / "added-notes.pptx"
+        _write_json(
+            add_notes_job,
+            {
+                "schema_version": 1,
+                "operation": "edit",
+                "operations": [
+                    {
+                        "action": "set_notes",
+                        "slide": {"slide_id": no_notes_slide_id},
+                        "text": "Added after creation",
+                    }
+                ],
+            },
+        )
+        _run(
+            [
+                "edit",
+                str(no_notes),
+                "--job",
+                str(add_notes_job),
+                "--output",
+                str(added_notes),
+            ]
+        )
+        _assert_notes_master_graph(added_notes, 1)
+        _assert(
+            _run(["inspect", str(added_notes)])["presentation"]["slides"][0]["notes"]
+            == "Added after creation",
+            "notes added during edit did not round-trip",
+        )
+        checks.append("create-edit/notes-master-lifecycle")
+
         _assert(first_inspection["counts"]["images"] == 2, "image inventory mismatch")
         _assert(first_inspection["counts"]["tables"] == 1, "table inventory mismatch")
         _assert(first_inspection["counts"]["charts"] == 1, "chart inventory mismatch")
@@ -916,6 +1060,7 @@ def _run_smoke(require_libreoffice: bool) -> dict[str, Any]:
             len(first_edit_result["verification"]["graph_checkpoints"]) == 1,
             "insert reorder was not checkpointed",
         )
+        _assert_notes_master_graph(first_edit, 3)
         second_inspection = _run(["inspect", str(first_edit)])
         second_slides = second_inspection["presentation"]["slides"]
         second_ids = [slide["slide_id"] for slide in second_slides]

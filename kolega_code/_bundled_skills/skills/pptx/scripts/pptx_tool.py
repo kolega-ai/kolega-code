@@ -95,6 +95,7 @@ P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 NOTES_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide"
+NOTES_MASTER_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesMaster"
 SLIDE_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"
 OFFICE_DOCUMENT_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
@@ -815,6 +816,92 @@ class OoxmlAdapter:
             slide_id_list.append(by_id[slide_id])
 
     @classmethod
+    def ensure_notes_master_reference(cls, presentation: Any) -> None:
+        """Repair python-pptx's missing presentation-level notes-master owner reference."""
+
+        cls.require_supported_version()
+        relationships = [
+            (rel_id, relationship)
+            for rel_id, relationship in presentation.part.rels.items()
+            if relationship.reltype == NOTES_MASTER_REL
+        ]
+        root = presentation.part._element
+        master_lists = root.findall(f"{{{P_NS}}}notesMasterIdLst")
+        if not relationships:
+            if master_lists:
+                raise ToolError(
+                    "post_write_validation",
+                    "presentation has a notes-master owner reference without a relationship",
+                )
+            return
+        if len(relationships) != 1 or relationships[0][1].is_external:
+            raise ToolError(
+                "post_write_validation",
+                "presentation must contain exactly one internal notes-master relationship",
+                {"relationships": len(relationships)},
+            )
+        relationship_id = relationships[0][0]
+        if len(master_lists) > 1:
+            raise ToolError(
+                "post_write_validation",
+                "presentation contains duplicate notes-master owner-reference lists",
+            )
+        if master_lists:
+            master_ids = master_lists[0].findall(f"{{{P_NS}}}notesMasterId")
+            if (
+                len(master_ids) != 1
+                or len(master_lists[0]) != 1
+                or master_ids[0].get(f"{{{R_NS}}}id") != relationship_id
+            ):
+                raise ToolError(
+                    "post_write_validation",
+                    "presentation notes-master owner reference conflicts with its relationship",
+                    {"relationship": relationship_id},
+                )
+            return
+
+        master_list = etree.Element(f"{{{P_NS}}}notesMasterIdLst")
+        master_id = etree.SubElement(master_list, f"{{{P_NS}}}notesMasterId")
+        master_id.set(f"{{{R_NS}}}id", relationship_id)
+        children = list(root)
+        slide_master_tag = f"{{{P_NS}}}sldMasterIdLst"
+        successor_tags = {
+            f"{{{P_NS}}}handoutMasterIdLst",
+            f"{{{P_NS}}}sldIdLst",
+            f"{{{P_NS}}}sldSz",
+            f"{{{P_NS}}}notesSz",
+            f"{{{P_NS}}}smartTags",
+            f"{{{P_NS}}}embeddedFontLst",
+            f"{{{P_NS}}}custShowLst",
+            f"{{{P_NS}}}photoAlbum",
+            f"{{{P_NS}}}custDataLst",
+            f"{{{P_NS}}}kinsoku",
+            f"{{{P_NS}}}defaultTextStyle",
+            f"{{{P_NS}}}modifyVerifier",
+            f"{{{P_NS}}}extLst",
+        }
+        slide_master_indexes = [
+            index for index, child in enumerate(children) if child.tag == slide_master_tag
+        ]
+        if len(slide_master_indexes) > 1:
+            raise ToolError(
+                "post_write_validation",
+                "presentation contains duplicate slide-master ID lists",
+            )
+        insert_at = slide_master_indexes[0] + 1 if slide_master_indexes else 0
+        successor_indexes = [
+            index for index, child in enumerate(children) if child.tag in successor_tags
+        ]
+        if successor_indexes and min(successor_indexes) < insert_at:
+            raise ToolError(
+                "post_write_validation",
+                "presentation child order cannot accept a notes-master owner reference",
+            )
+        if not slide_master_indexes and successor_indexes:
+            insert_at = min(successor_indexes)
+        root.insert(insert_at, master_list)
+
+    @classmethod
     def paragraph_has_field(cls, paragraph: Any) -> bool:
         cls.require_supported_version()
         return bool(paragraph._p.xpath("./a:fld"))
@@ -944,9 +1031,84 @@ def _open_presentation(path: Path, category: str = "bad_input") -> Any:
         raise ToolError(category, "python-pptx could not reopen the presentation") from exc
 
 
+def _validate_notes_master_reference(path: Path) -> None:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            presentation = _safe_xml(archive.read(PRESENTATION_PART), PRESENTATION_PART)
+            relationships_root = _safe_xml(
+                archive.read(PRESENTATION_RELS),
+                PRESENTATION_RELS,
+            )
+    except (OSError, RuntimeError, zipfile.BadZipFile, KeyError) as exc:
+        raise ToolError(
+            "post_write_validation",
+            "written PPTX notes-master graph could not be inspected",
+        ) from exc
+
+    relationships = [
+        relationship
+        for relationship in relationships_root.findall(f"{{{REL_NS}}}Relationship")
+        if relationship.get("Type") == NOTES_MASTER_REL
+    ]
+    master_lists = presentation.findall(f"{{{P_NS}}}notesMasterIdLst")
+    if not relationships:
+        if master_lists:
+            raise ToolError(
+                "post_write_validation",
+                "written PPTX has a notes-master owner reference without a relationship",
+            )
+        return
+    if len(relationships) != 1 or relationships[0].get("TargetMode") == "External":
+        raise ToolError(
+            "post_write_validation",
+            "written PPTX must contain exactly one internal notes-master relationship",
+            {"relationships": len(relationships)},
+        )
+    if len(master_lists) != 1:
+        raise ToolError(
+            "post_write_validation",
+            "written PPTX is missing its notes-master owner reference",
+            {"owner_reference_lists": len(master_lists)},
+        )
+    master_ids = master_lists[0].findall(f"{{{P_NS}}}notesMasterId")
+    relationship_id = relationships[0].get("Id")
+    if (
+        len(master_ids) != 1
+        or len(master_lists[0]) != 1
+        or master_ids[0].get(f"{{{R_NS}}}id") != relationship_id
+    ):
+        raise ToolError(
+            "post_write_validation",
+            "written PPTX notes-master owner reference does not match its relationship",
+            {"relationship": relationship_id},
+        )
+
+    children = list(presentation)
+    notes_index = children.index(master_lists[0])
+    slide_master_indexes = [
+        index for index, child in enumerate(children) if child.tag == f"{{{P_NS}}}sldMasterIdLst"
+    ]
+    successor_indexes = [
+        index
+        for index, child in enumerate(children)
+        if child.tag in {f"{{{P_NS}}}handoutMasterIdLst", f"{{{P_NS}}}sldIdLst"}
+    ]
+    if (
+        slide_master_indexes
+        and notes_index <= max(slide_master_indexes)
+        or successor_indexes
+        and notes_index >= min(successor_indexes)
+    ):
+        raise ToolError(
+            "post_write_validation",
+            "written PPTX notes-master owner reference is in an invalid presentation order",
+        )
+
+
 def _validate_pptx_output(path: Path, expected_ids: list[int]) -> PackageReport:
     try:
         report = preflight_pptx(path)
+        _validate_notes_master_reference(path)
         reopened = _open_presentation(path, "post_write_validation")
     except ToolError as exc:
         if exc.category in {"bad_input", "resource_limit", "unsupported_operation"}:
@@ -979,6 +1141,7 @@ def _checkpoint_graph_mutation(
     if set(retained) != set(before_ids) & set(expected_ids):
         raise ToolError("post_write_validation", "retained slide ID calculation failed")
     path = checkpoint_dir / f"graph-{ordinal}.pptx"
+    OoxmlAdapter.ensure_notes_master_reference(presentation)
     try:
         presentation.save(str(path))
     except Exception as exc:
@@ -2341,6 +2504,7 @@ def _save_atomic_presentation(
     temporary = _temporary_sibling(destination, ".pptx")
     try:
         _enforce_presentation_limits(presentation)
+        OoxmlAdapter.ensure_notes_master_reference(presentation)
         try:
             presentation.save(str(temporary))
         except Exception as exc:
