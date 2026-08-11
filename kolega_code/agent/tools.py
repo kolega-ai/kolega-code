@@ -8,6 +8,7 @@ from kolega_code.config import AgentConfig, EditProtocol
 from kolega_code.llm.models import ImageBlock, ToolDefinition
 from kolega_code.memory import ProjectMemoryManager
 from kolega_code.tools import Tool, ToolRegistry
+from kolega_code.scratchpad import expand_scratchpad_reference
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
 from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.terminal import LocalTerminalManager
@@ -35,6 +36,31 @@ from .tool_backend.build_tool import BuildTool
 from .tool_backend.lsp_tool import LspEditTool, LspTool
 from kolega_code.services.lsp import LspManager
 from kolega_code.services.snapshots import SnapshotService
+
+# Canonical path parameters of the built-in file tools. The model-facing names
+# differ across edit protocols (``path`` vs ``file_path``), so expansion covers
+# every spelling the bound handler can accept; alias resolution has already
+# collapsed wrong-name arguments onto these by the time they are expanded.
+FILE_TOOL_PATH_PARAMS = frozenset({"path", "file_path", "rename"})
+
+# Built-in tools whose path arguments may reference the session scratchpad as
+# ``$KOLEGA_SCRATCHPAD``. The dispatch choke point (``Tool.call``) expands
+# those references to the caller's real scratchpad directory before the
+# handler runs, so a literal ``$KOLEGA_SCRATCHPAD`` directory can never appear
+# in the workspace when the model passes the shell spelling to a file tool.
+FILE_TOOLS_WITH_PATH_PARAMS = frozenset(
+    {
+        "write",
+        "edit",
+        "multi_edit",
+        "read",
+        "read_image",
+        "claude_edit",
+        "claude_write",
+        "hashline_edit",
+        "hashline_write",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -1246,6 +1272,7 @@ class ToolCollection(LogMixin):
         ordinary_parallel_dispatch = (
             method_name in self.agent_dispatch_tools and method_name not in self._legacy_only_extension_dispatch_tools
         )
+        path_params = FILE_TOOL_PATH_PARAMS if method_name in FILE_TOOLS_WITH_PATH_PARAMS else frozenset()
         return Tool(
             name=method_name,
             definition=definition,
@@ -1256,7 +1283,23 @@ class ToolCollection(LogMixin):
             parallel_safe=(method_name in (self.read_only_tools or []) or ordinary_parallel_dispatch)
             and not workflow_dispatch,
             log_debug=self._log_alias_hit,
+            path_params=path_params,
+            path_expander=self._expand_scratchpad_path if path_params else None,
         )
+
+    def _expand_scratchpad_path(self, path: str) -> str:
+        """Expand a ``$KOLEGA_SCRATCHPAD`` reference to the caller's scratchpad.
+
+        Applied at the dispatch choke point to file-tool path arguments, so a
+        literal ``$KOLEGA_SCRATCHPAD`` directory is never created in the
+        workspace when the model passes the shell spelling to a file tool.
+        Callers without a real scratchpad directory (including plain Mocks in
+        tests) leave the path untouched.
+        """
+        scratchpad = getattr(self.caller, "scratchpad_dir", None)
+        if not isinstance(scratchpad, (str, Path)):
+            return path
+        return expand_scratchpad_reference(path, scratchpad)
 
     async def _log_alias_hit(self, message: str) -> None:
         """Debug log_message sink for Tool param-alias hits (trajectory mining)."""

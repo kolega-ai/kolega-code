@@ -16,6 +16,7 @@ from kolega_code.scratchpad import (
     SCRATCHPAD_PROMPT_EXTENSION_ID,
     _user_suffix,
     ensure_scratchpad_dir,
+    expand_scratchpad_reference,
     scratchpad_dir_for,
     scratchpad_root,
 )
@@ -93,6 +94,55 @@ class TestScratchpadPaths:
 
     def test_session_id_is_stripped(self, tmp_path: Path) -> None:
         assert scratchpad_dir_for(tmp_path, "  s1  ") == scratchpad_dir_for(tmp_path, "s1")
+
+
+class TestExpandScratchpadReference:
+    """$KOLEGA_SCRATCHPAD references in model-provided paths expand to the real dir."""
+
+    def test_expands_dollar_form_at_start(self) -> None:
+        assert expand_scratchpad_reference("$KOLEGA_SCRATCHPAD/notes.md", "/sp") == "/sp/notes.md"
+
+    def test_expands_braced_form_at_start(self) -> None:
+        assert expand_scratchpad_reference("${KOLEGA_SCRATCHPAD}/notes.md", "/sp") == "/sp/notes.md"
+
+    def test_expands_bare_reference(self) -> None:
+        assert expand_scratchpad_reference("$KOLEGA_SCRATCHPAD", "/sp") == "/sp"
+
+    def test_expands_after_separator(self) -> None:
+        assert expand_scratchpad_reference("sub/$KOLEGA_SCRATCHPAD/x.py", "/sp") == "sub//sp/x.py"
+        assert expand_scratchpad_reference(r"sub\$KOLEGA_SCRATCHPAD\x.py", "/sp") == "sub\\/sp\\x.py"
+
+    def test_expands_dot_slash_prefix(self) -> None:
+        assert expand_scratchpad_reference("./$KOLEGA_SCRATCHPAD/x.py", "/sp") == ".//sp/x.py"
+
+    def test_expands_multiple_occurrences(self) -> None:
+        path = expand_scratchpad_reference("$KOLEGA_SCRATCHPAD/a/$KOLEGA_SCRATCHPAD/b", "/sp")
+        assert path == "/sp/a//sp/b"
+
+    def test_accepts_pathlike_scratchpad(self, tmp_path: Path) -> None:
+        assert expand_scratchpad_reference("$KOLEGA_SCRATCHPAD/x", tmp_path) == str(tmp_path / "x")
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "plain.txt",
+            "sub/plain.txt",
+            "$KOLEGA_SCRATCHPADISH/file.py",  # longer token: not a reference
+            "x$KOLEGA_SCRATCHPAD/file.py",  # token mid-segment: not a reference
+            "a-$KOLEGA_SCRATCHPAD-b/file.py",
+        ],
+    )
+    def test_without_whole_segment_reference_is_unchanged(self, path: str) -> None:
+        assert expand_scratchpad_reference(path, "/sp") == path
+
+    def test_without_scratchpad_is_unchanged(self) -> None:
+        assert expand_scratchpad_reference("$KOLEGA_SCRATCHPAD/x.py", None) == "$KOLEGA_SCRATCHPAD/x.py"
+
+    def test_non_pathlike_scratchpad_is_unchanged(self) -> None:
+        assert expand_scratchpad_reference("$KOLEGA_SCRATCHPAD/x.py", 42) == "$KOLEGA_SCRATCHPAD/x.py"  # pyright: ignore[reportArgumentType]
+
+    def test_empty_path_is_unchanged(self) -> None:
+        assert expand_scratchpad_reference("", "/sp") == ""
 
 
 class TestEnsureScratchpadDir:
