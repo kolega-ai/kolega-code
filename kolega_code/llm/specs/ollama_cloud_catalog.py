@@ -27,12 +27,15 @@ from typing import Any, Mapping, Optional, Sequence
 import httpx
 
 from .types import ThinkingEffortSpec
+from .validation import validate_model_spec
 
 PROVIDER = "ollama_cloud"
 MODELS_URL = "https://ollama.com/v1/models"
 SHOW_URL = "https://ollama.com/api/show"
 
-CACHE_SCHEMA_VERSION = 1
+# v2 adds the required input_budget convention. V1 entries are invalidated
+# rather than guessed because the old cache did not encode this semantic.
+CACHE_SCHEMA_VERSION = 2
 CACHE_FILENAME = "ollama_cloud_models.json"
 
 DEFAULT_TEMPERATURE = 1.0
@@ -268,6 +271,7 @@ def spec_from_jsonable(payload: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("default_temperature must be numeric")
     if not isinstance(spec.get("supports_vision"), bool):
         raise ValueError("supports_vision must be a boolean")
+    validate_model_spec(spec)
     return spec
 
 

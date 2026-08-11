@@ -6,6 +6,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Runtime model-catalog caches created before input-budget conventions were
+  introduced are now ignored safely instead of injecting incomplete model
+  specs that fail later with `KeyError: 'input_budget'`. Refreshing a catalog
+  rewrites it in the current schema.
+
 ### Added
 
 - ATIF v1.7 trajectory export: `sessions export --format atif` converts any

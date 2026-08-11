@@ -24,6 +24,7 @@ from kolega_code.llm.specs import MODEL_SPECS, is_featured_model
 from kolega_code.llm.specs import ollama_cloud_catalog as ollama_cloud
 from kolega_code.llm.specs import openrouter_catalog as openrouter
 from kolega_code.llm.specs import tinker_catalog as tinker
+from kolega_code.llm.specs.validation import validate_model_spec
 
 from .provider_registry import PROVIDER_LABELS, get_ui_model, rebuild_ui_model_options
 from .session_store import default_state_dir
@@ -114,6 +115,10 @@ def apply_catalog_overlay(
     for identifier, spec in entries:
         key = (module.PROVIDER, identifier)
         if key in MODEL_SPECS:
+            continue
+        try:
+            validate_model_spec(spec)
+        except ValueError:
             continue
         # Overlay models are never featured: the picker keeps showing the
         # release's reviewed most-used set.

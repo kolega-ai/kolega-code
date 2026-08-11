@@ -2,6 +2,8 @@ from typing import Any, Dict, Optional
 
 from .catalog import MODEL_SPECS, WILDCARD_MODEL_SPECS
 from .types import ThinkingEffortSpec
+from .validation import INPUT_BUDGET_CONVENTIONS as INPUT_BUDGET_CONVENTIONS
+from .validation import validate_model_spec
 
 # Every spec entry must declare which input-budget calculation applies:
 #   window_minus_output   — usable input = context_length − max_completion_tokens
@@ -9,7 +11,6 @@ from .types import ThinkingEffortSpec
 #   separate_output_limit — usable input = context_length (independent output cap)
 #   output_shares_window  — usable input = context_length (output may consume the
 #                           whole window, bounded only at generation time)
-INPUT_BUDGET_CONVENTIONS = ("window_minus_output", "separate_output_limit", "output_shares_window")
 
 
 def resolve_max_input_tokens(specs: Dict[str, Any]) -> int:
@@ -21,8 +22,10 @@ def resolve_max_input_tokens(specs: Dict[str, Any]) -> int:
 
 def _validate_input_budgets() -> None:
     for key, specs in list(MODEL_SPECS.items()) + list(WILDCARD_MODEL_SPECS.items()):
-        if specs.get("input_budget") not in INPUT_BUDGET_CONVENTIONS:
-            raise ValueError(f"Spec {key} missing or invalid input_budget (got {specs.get('input_budget')!r})")
+        try:
+            validate_model_spec(specs)
+        except ValueError as exc:
+            raise ValueError(f"Invalid spec {key}: {exc}") from exc
 
 
 _validate_input_budgets()

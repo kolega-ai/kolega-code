@@ -30,11 +30,14 @@ from typing import Any, Mapping, Sequence
 import httpx
 
 from .types import ThinkingEffortSpec
+from .validation import validate_model_spec
 
 PROVIDER = "tinker"
 MODELS_URL = "https://tinker-docs.thinkingmachines.ai/tinker/models.json"
 
-CACHE_SCHEMA_VERSION = 1
+# v2 adds the required input_budget convention. V1 entries are invalidated
+# rather than guessed because the old cache did not encode this semantic.
+CACHE_SCHEMA_VERSION = 2
 CACHE_FILENAME = "tinker_models.json"
 
 # Tinker's docs sit behind Cloudflare and return HTTP 403 (error 1010) for
@@ -164,6 +167,7 @@ def spec_from_jsonable(payload: Mapping[str, Any]) -> dict[str, Any]:
             default=str(thinking.get("default") or ""),
             mode="tinker_native_effort",
         )
+    validate_model_spec(spec)
     return spec
 
 
@@ -208,7 +212,10 @@ def load_cache(path: Path) -> list[tuple[str, dict[str, Any]]]:
         spec = item.get("spec")
         if not identifier or not isinstance(spec, Mapping):
             continue
-        entries.append((str(identifier), spec_from_jsonable(spec)))
+        try:
+            entries.append((str(identifier), spec_from_jsonable(spec)))
+        except (TypeError, ValueError):
+            continue
     return entries
 
 
