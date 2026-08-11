@@ -143,15 +143,15 @@ def test_ask_goal_loops_to_completion(tmp_path, capsys, monkeypatch, isolated_cl
     assert agent.evaluate_calls == 3
 
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
-    eval_lines = [line for line in lines if line["kind"] == "goal_eval"]
-    result_lines = [line for line in lines if line["kind"] == "goal_result"]
+    eval_lines = [line for line in lines if line.get("type") == "goal.evaluated"]
+    result_lines = [line for line in lines if line.get("type") == "goal.completed"]
     assert len(eval_lines) == 3
-    assert eval_lines[0]["data"]["met"] is False
-    assert eval_lines[1]["data"]["met"] is False
-    assert eval_lines[2]["data"]["met"] is True
+    assert eval_lines[0]["payload"]["met"] is False
+    assert eval_lines[1]["payload"]["met"] is False
+    assert eval_lines[2]["payload"]["met"] is True
     assert len(result_lines) == 1
-    assert result_lines[0]["data"]["met"] is True
-    assert result_lines[0]["data"]["turns"] == 3
+    assert result_lines[0]["payload"]["met"] is True
+    assert result_lines[0]["payload"]["turns"] == 3
 
 
 def test_ask_goal_cap_returns_nonzero(tmp_path, capsys, monkeypatch, isolated_cli_env):
@@ -184,12 +184,15 @@ def test_ask_goal_json_emits_eval_and_result_lines(tmp_path, capsys, monkeypatch
 
     assert exit_code == 0
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
-    eval_lines = [line for line in lines if line["kind"] == "goal_eval"]
-    result_lines = [line for line in lines if line["kind"] == "goal_result"]
+    eval_lines = [line for line in lines if line.get("type") == "goal.evaluated"]
+    result_lines = [line for line in lines if line.get("type") == "goal.completed"]
     assert len(eval_lines) == 1
-    assert eval_lines[0]["data"]["met"] is True
+    assert eval_lines[0]["payload"]["met"] is True
     assert len(result_lines) == 1
-    assert result_lines[0]["data"]["met"] is True
+    assert result_lines[0]["payload"]["met"] is True
+    run_lines = [line for line in lines if line.get("type") == "run.completed"]
+    assert len(run_lines) == 1
+    assert lines[-1]["type"] == "run.completed"
 
 
 def test_ask_goal_no_prompt_and_no_goal_returns_error(tmp_path, capsys, monkeypatch, isolated_cli_env):

@@ -57,18 +57,31 @@ kolega-code sessions delete <session_id>
 
 ## `sessions export`
 
-Print a session as JSON, or write it to a file.
+Export a session to stdout or a file, in one of two formats.
 
 ```bash
-kolega-code sessions export <session_id>                 # to stdout
+kolega-code sessions export <session_id>                          # replay JSON (default)
 kolega-code sessions export <session_id> --output run.json
+kolega-code sessions export <session_id> --format events-jsonl    # semantic event log
 ```
 
 | Argument / option | Description |
 | --- | --- |
 | `session_id` | The Resume ID shown by `sessions list` (required) |
-| `--output <PATH>` | Write JSON to a file instead of stdout |
+| `--format <json\|events-jsonl>` | `json` (default): effective-history replay snapshot. `events-jsonl`: the canonical public semantic event log |
+| `--output <PATH>` | Write the export to a file instead of stdout |
 | `--state-dir <PATH>` | Directory for CLI session state |
 
-The exported JSON includes the session metadata, model configuration summary, and
-full message history — handy for archiving, debugging, or analysis.
+The default `json` format includes the session metadata, model configuration
+summary, and full **effective** message history (superseded context epochs and
+rewound turns are omitted) — handy for archiving, debugging, or analysis.
+
+`events-jsonl` emits one v2 event envelope per line — the same records, ids,
+and sequence numbers `ask --json` streams live (see
+[JSON output](../ask/#json-output)). It is the complete auditable trajectory:
+turns, LLM responses with call ids, tool calls/results correlated by canonical
+id, subagent lineage, compactions, rewinds, and terminal records. Sessions
+recorded by older Kolega versions export with deterministic fallbacks (derived
+root agent identity); facts those sessions never captured are not invented.
+Secrets are scrubbed and provider-opaque replay state is excluded in both
+formats' event output.

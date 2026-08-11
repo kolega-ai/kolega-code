@@ -8,7 +8,9 @@ import contextlib
 import faulthandler
 import importlib.util
 import json
+import logging
 import sys
+import uuid
 import webbrowser
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -26,7 +28,8 @@ from kolega_code.extensions import (
 )
 from kolega_code.llm.ledger import UsageLedger
 
-from .ask_output import AskMessageEmitter, synthetic_text_message
+from .ask_output import InMemorySessionJournal, SemanticStdoutPrinter
+from .session_journal import SessionRecorder
 from .session_usage import SessionUsageSink
 from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
 from kolega_code.agent.orchestration.guide import gigacode_prompt_extension
@@ -151,14 +154,6 @@ CLI_BILLING_ERROR_MESSAGE = (
     "The selected provider could not run this request because it reported insufficient balance. "
     "Add credits to the provider account or switch to another provider/model in Settings or with /model."
 )
-CLI_BILLING_ERROR_PAYLOAD = {
-    "kind": "error",
-    "data": {
-        "type": "billing_error",
-        "message": CLI_BILLING_ERROR_MESSAGE,
-        "provider": "configured",
-    },
-}
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
@@ -549,9 +544,18 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     sessions_delete = sessions_sub.add_parser("delete", help="Delete a session.")
     sessions_delete.add_argument("session_id")
     sessions_delete.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
-    sessions_export = sessions_sub.add_parser("export", help="Print a session as JSON.")
+    sessions_export = sessions_sub.add_parser("export", help="Export a session (replay JSON or semantic events).")
     sessions_export.add_argument("session_id")
-    sessions_export.add_argument("--output", type=Path, help="Write JSON to a file instead of stdout.")
+    sessions_export.add_argument(
+        "--format",
+        choices=("json", "events-jsonl"),
+        default="json",
+        help=(
+            "json: effective-history replay snapshot (default, unchanged); "
+            "events-jsonl: the canonical public semantic event log, one v2 envelope per line."
+        ),
+    )
+    sessions_export.add_argument("--output", type=Path, help="Write the export to a file instead of stdout.")
     sessions_export.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
 
     share = subparsers.add_parser("share", help="Export a session as a shareable replay.")
@@ -1208,21 +1212,13 @@ def _permission_callback_for_ask(project_path: Path):
     return permission_callback
 
 
-async def _sleep_until_loop_fire(state: LoopState, json_mode: bool) -> None:
+async def _sleep_until_loop_fire(state: LoopState, recorder: SessionRecorder, json_mode: bool) -> None:
     """Wait until the loop's next fire time, in slices so Ctrl-C stays responsive."""
     remaining = state.seconds_until()
     if remaining <= 0:
         return
-    if json_mode:
-        print(
-            json.dumps(
-                {
-                    "kind": "loop_sleep",
-                    "data": {"seconds": round(remaining, 3), "next_fire_at": state.next_fire_at},
-                }
-            )
-        )
-    else:
+    recorder.record_loop_sleeping({"seconds": round(remaining, 3), "next_fire_at": state.next_fire_at})
+    if not json_mode:
         print(
             f"[loop] sleeping {format_duration_short(remaining)} until {state.next_fire_at}",
             file=sys.stderr,
@@ -1233,33 +1229,78 @@ async def _sleep_until_loop_fire(state: LoopState, json_mode: bool) -> None:
         remaining -= slice_seconds
 
 
-def _emit_loop_iteration(state: LoopState, json_mode: bool) -> None:
-    if json_mode:
-        print(
-            json.dumps(
-                {
-                    "kind": "loop_iteration",
-                    "data": {
-                        "iteration": state.iterations,
-                        "scheduled_at": state.last_fired_at,
-                        "prompt_source": state.prompt_source,
-                    },
-                }
-            )
-        )
-    else:
+def _emit_loop_iteration(state: LoopState, recorder: SessionRecorder, json_mode: bool) -> None:
+    recorder.record_loop_iteration_started(
+        {
+            "iteration": state.iterations,
+            "max_iterations": state.max_iterations,
+            "scheduled_at": state.last_fired_at,
+            "prompt_source": state.prompt_source,
+        }
+    )
+    if not json_mode:
         print(
             f"[loop] iteration {state.iterations}/{state.max_iterations} ({state.schedule_label()})",
             file=sys.stderr,
         )
 
 
-def _emit_loop_finished(state: LoopState, json_mode: bool) -> None:
+def _emit_loop_finished(state: LoopState, recorder: SessionRecorder, json_mode: bool) -> None:
     reason = "expired" if state.is_expired() else "reached the iteration cap"
-    if json_mode:
-        print(json.dumps({"kind": "loop_result", "data": {"iterations": state.iterations, "reason": reason}}))
-    else:
+    recorder.record_loop_completed({"iterations": state.iterations, "reason": reason})
+    if not json_mode:
         print(f"[loop] finished after {state.iterations} iteration(s): {reason}", file=sys.stderr)
+
+
+def _record_ask_run_terminal(
+    recorder: SessionRecorder,
+    *,
+    status: str,
+    exit_code: Optional[int],
+    started_at: str,
+    error: Optional[dict[str, Any]],
+    usage_ledger: UsageLedger,
+    provider: Optional[str],
+    model: Optional[str],
+) -> None:
+    """Best-effort ``run.*`` terminal record; never raises (runs in a finally).
+
+    ``exit_code`` is recorded only on paths that decide it locally; a run that
+    ends by propagating an exception omits it (the process code is decided
+    above this frame).
+    """
+    try:
+        from kolega_code import __version__ as kolega_version
+
+        totals = usage_ledger.snapshot()
+        payload: dict[str, Any] = {
+            "status": status,
+            "started_at": started_at,
+            "ended_at": now_iso(),
+            "kolega_version": kolega_version,
+            "provider": provider,
+            "model": model,
+            "totals": {
+                "requests": totals.requests,
+                "responses": totals.responses,
+                "reported": totals.reported,
+                "unreported": totals.unreported,
+                "failed": totals.failed,
+                "input_tokens": totals.input_tokens,
+                "output_tokens": totals.output_tokens,
+                "total_tokens": totals.total_tokens,
+                "cache_read_input_tokens": totals.cache_read_input_tokens,
+                "cache_write_input_tokens": totals.cache_write_input_tokens,
+                "reasoning_output_tokens": totals.reasoning_output_tokens,
+            },
+        }
+        if exit_code is not None:
+            payload["exit_code"] = exit_code
+        if error:
+            payload["error"] = error
+        recorder.record_run_terminal(status, payload)
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to record the run terminal event")
 
 
 async def _run_ask(args: argparse.Namespace) -> int:
@@ -1326,31 +1367,16 @@ async def _run_ask(args: argparse.Namespace) -> int:
         return 2
     skill_command = _parse_skill_prompt(raw_prompt, skill_catalog) if raw_prompt else None
 
+    # Pre-session informational output: no journal exists yet, so these print
+    # plain text regardless of --json rather than inventing envelope-less JSON.
     if skill_command and skill_command[0] == "skills":
         catalog_text = skill_catalog.format_catalog() if skills_enabled else messages.SKILLS_DISABLED
-        if args.json:
-            print(json.dumps({"kind": "skills", "data": catalog_text}, default=str))
-        else:
-            print(catalog_text)
+        print(catalog_text)
         return 0
 
     if skill_command and skill_command[0] != "skills" and not skill_command[1] and not (args.save or args.session):
         activation_content = skill_catalog.activation_content(skill_command[0])
-        if args.json:
-            print(
-                json.dumps(
-                    {
-                        "kind": "skill",
-                        "data": {
-                            "name": skill_command[0],
-                            "content": activation_content,
-                        },
-                    },
-                    default=str,
-                )
-            )
-        else:
-            print(activation_content)
+        print(activation_content)
         return 0
 
     custom_agent_catalog = discover_custom_agents(project_path, settings_store.root)
@@ -1393,10 +1419,46 @@ async def _run_ask(args: argparse.Namespace) -> int:
     else:
         session = SessionRecord.create(project_path, CLI_AGENT_MODE, summary)
 
-    session_recorder = None
+    # Every run records the semantic journal; unsaved runs use an in-memory
+    # sink with the same id/seq/schema rules and never touch the state dir.
     if args.save or args.session:
         session_recorder = store.recorder(session.session_id)
         session = store.load(session.session_id)
+        journal = store.journal(session.session_id)
+    else:
+        journal = InMemorySessionJournal(session.session_id)
+        session_recorder = None
+
+    json_printer: Optional[SemanticStdoutPrinter] = None
+    if args.json:
+        json_printer = SemanticStdoutPrinter(
+            secret_values=known_secret_values(settings, settings_store, project_path=launch_project_path)
+        )
+        journal.add_listener(json_printer)
+
+    if session_recorder is None:
+        from kolega_code import __version__ as _kolega_version
+
+        bootstrap_epoch = str(uuid.uuid4())
+        journal.append(
+            "session.created",
+            actor="system",
+            payload={"metadata": session.to_metadata_dict(), "kolega_version": _kolega_version},
+            epoch_id=bootstrap_epoch,
+        )
+        journal.append(
+            "context.epoch_started",
+            actor="system",
+            payload={"reason": "session_created"},
+            epoch_id=bootstrap_epoch,
+        )
+        session_recorder = SessionRecorder(journal, recover=False)
+    elif json_printer is not None and args.save and not args.session:
+        # A session created by this invocation journaled its bootstrap events
+        # before the printer attached; a resumed session streams from the tail.
+        json_printer.emit_backlog(journal.read_events())
+
+    run_started_at = now_iso()
 
     manager = CliConnectionManager()
     browser_manager = build_browser_manager(
@@ -1453,15 +1515,14 @@ async def _run_ask(args: argparse.Namespace) -> int:
         default=PermissionMode.AUTO,
     )
     usage_ledger = UsageLedger()
-    # When the session persists, journal every settled non-history response and
-    # failure. Attached before the SESSION_START hook below: hook prompts are
-    # paid LLM calls and must be covered from the first request.
+    # Journal every settled non-history response and failure (in-memory journal
+    # for unsaved runs). Attached before the SESSION_START hook below: hook
+    # prompts are paid LLM calls and must be covered from the first request.
     usage_sink: Optional[SessionUsageSink] = None
-    if session_recorder is not None:
-        sink = SessionUsageSink(store.journal(session.session_id), session_recorder, usage_ledger, mode="ask")
-        usage_sink = sink
-        usage_ledger.observer = sink
-        await sink.start()
+    sink = SessionUsageSink(journal, session_recorder, usage_ledger, mode="ask")
+    usage_sink = sink
+    usage_ledger.observer = sink
+    await sink.start()
     try:
         agent = CoderAgent(
             project_path=project_path,
@@ -1490,6 +1551,16 @@ async def _run_ask(args: argparse.Namespace) -> int:
             # With an extension loaded, a tool-name conflict at construction
             # refuses to start rather than running without the extension.
             print(f"Error: {exc}", file=sys.stderr)
+            _record_ask_run_terminal(
+                session_recorder,
+                status="failed",
+                exit_code=2,
+                started_at=run_started_at,
+                error={"code": "extension_error", "message": str(exc)[:500]},
+                usage_ledger=usage_ledger,
+                provider=str(getattr(config.long_context_config, "provider", None) or "") or None,
+                model=config.long_context_config.model,
+            )
             return 2
         raise
     agent_ref["agent"] = agent
@@ -1523,6 +1594,16 @@ async def _run_ask(args: argparse.Namespace) -> int:
             await cleanup_extension_bundle(extension_bundle)
             if usage_sink is not None:
                 await usage_sink.aclose()
+            _record_ask_run_terminal(
+                session_recorder,
+                status="failed",
+                exit_code=2,
+                started_at=run_started_at,
+                error={"code": "extension_error", "message": str(exc)[:500]},
+                usage_ledger=usage_ledger,
+                provider=str(getattr(config.long_context_config, "provider", None) or "") or None,
+                model=config.long_context_config.model,
+            )
             return 2
 
     fire_hook = getattr(agent, "fire_hook", None)
@@ -1541,29 +1622,17 @@ async def _run_ask(args: argparse.Namespace) -> int:
         active_names = activated_skill_names(agent.history)
         activation_content = skill_catalog.activation_content(skill_name, active_names=active_names)
         if skill_name not in active_names:
-            if session_recorder is not None:
-                session_recorder.record_context_message(
-                    Message(role="user", content=[TextBlock(text=activation_content)])
-                )
+            session_recorder.record_context_message(Message(role="user", content=[TextBlock(text=activation_content)]))
             agent.append_user_message([TextBlock(text=activation_content)])
-        if args.json:
-            print(
-                json.dumps(
-                    {
-                        "kind": "skill",
-                        "data": {
-                            "name": skill_name,
-                            "already_active": skill_name in active_names,
-                        },
-                    },
-                    default=str,
-                )
-            )
+        session_recorder.record_skill_activated(
+            name=skill_name,
+            source="prompt_command",
+            already_active=skill_name in active_names,
+        )
         prompt = skill_prompt
         if not prompt:
-            if args.json:
-                print(json.dumps({"kind": "message", "data": synthetic_text_message(activation_content)}))
-            else:
+            session_recorder.record_synthetic_assistant(activation_content, notice_code="skill_activation")
+            if not args.json:
                 print(activation_content)
             if args.save or args.session:
                 session.config = summary
@@ -1573,6 +1642,16 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 await cleanup_extension_bundle(extension_bundle)
             if usage_sink is not None:
                 await usage_sink.aclose()
+            _record_ask_run_terminal(
+                session_recorder,
+                status="completed",
+                exit_code=0,
+                started_at=run_started_at,
+                error=None,
+                usage_ledger=usage_ledger,
+                provider=str(getattr(config.long_context_config, "provider", None) or "") or None,
+                model=config.long_context_config.model,
+            )
             return 0
 
     # --goal: apply the goal-aware prompt extension and synthesise the first
@@ -1634,6 +1713,8 @@ async def _run_ask(args: argparse.Namespace) -> int:
 
     response_chunks: list[dict] = []
     exit_code = 0
+    run_status = "completed"
+    run_error: Optional[dict[str, Any]] = None
     # Pump connection-manager events concurrently so sub-agent activity is
     # reported in real time instead of all at once after streaming finishes.
     pump_task = asyncio.create_task(_pump_ask_events(manager, args.json))
@@ -1642,9 +1723,9 @@ async def _run_ask(args: argparse.Namespace) -> int:
         if loop_state is not None:
             # Interval schedules fire immediately; cron schedules wait for the
             # first matching wall-clock time.
-            await _sleep_until_loop_fire(loop_state, args.json)
+            await _sleep_until_loop_fire(loop_state, session_recorder, args.json)
             loop_state.mark_fired()
-            _emit_loop_iteration(loop_state, args.json)
+            _emit_loop_iteration(loop_state, session_recorder, args.json)
             turn_prompt = build_loop_iteration_prompt(
                 prompt or "",
                 iteration=loop_state.iterations,
@@ -1666,32 +1747,15 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 state.tokens_spent += delta.total_tokens
             usage_mark = current
 
-        # In --json mode, emit one line per COMPLETED assistant message rather
-        # than streaming chunks: the agent appends each message to history
-        # before yielding its final chunk, so a drain on every completed
-        # response chunk sees exactly the finished messages. Hosted web search
-        # also flushes a complete response chunk mid-stream (segment rotation
-        # at each web_search_call), before any message has landed — so the
-        # lost-text fallback applies only at end of turn, and only when the
-        # whole turn emitted no message; draining it mid-stream would emit the
-        # pre-search text twice (once synthetic, once inside the real message).
-        message_emitter = AskMessageEmitter(agent)
-
+        # In --json mode the journal tee is the only stdout writer: assistant
+        # messages, tool results, and terminal records print as semantic events
+        # the moment they are journaled. Consuming the stream drives the turn
+        # (and prints the answer text in plain mode).
         async def _consume_turn(stream) -> None:
-            emitted_before = message_emitter.emitted_total
-            last_text_chunk: Optional[dict] = None
             async for chunk in stream:
                 response_chunks.append(chunk)
-                if args.json:
-                    if chunk.get("type") == "response" and chunk.get("complete"):
-                        if chunk.get("content"):
-                            last_text_chunk = chunk
-                        message_emitter.drain()
-                elif chunk.get("type") == "response" and chunk.get("content"):
+                if not args.json and chunk.get("type") == "response" and chunk.get("content"):
                     print(chunk["content"], end="" if not chunk.get("complete") else "\n")
-            if args.json:
-                fallback = last_text_chunk if message_emitter.emitted_total == emitted_before else None
-                message_emitter.drain(fallback_chunk=fallback)
 
         stream = (
             agent.process_message_stream(turn_prompt, attachments)
@@ -1705,13 +1769,13 @@ async def _run_ask(args: argparse.Namespace) -> int:
             _drain_tokens(loop_state)
             loop_state.advance_after_completion()
             while loop_state.is_active:
-                await _sleep_until_loop_fire(loop_state, args.json)
+                await _sleep_until_loop_fire(loop_state, session_recorder, args.json)
                 if not loop_state.is_active:
                     break
                 loop_state.mark_fired()
                 if loop_state.fresh:
                     agent.clear_history()
-                _emit_loop_iteration(loop_state, args.json)
+                _emit_loop_iteration(loop_state, session_recorder, args.json)
                 turn_prompt = build_loop_iteration_prompt(
                     prompt or "",
                     iteration=loop_state.iterations,
@@ -1726,7 +1790,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 await _consume_turn(stream)
                 _drain_tokens(loop_state)
                 loop_state.advance_after_completion()
-            _emit_loop_finished(loop_state, args.json)
+            _emit_loop_finished(loop_state, session_recorder, args.json)
 
         # --goal: evaluate and auto-continue until the goal is met or the cap is hit.
         if goal_state is not None:
@@ -1736,20 +1800,10 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 goal_state.turns_evaluated += 1
                 goal_state.last_reason = verdict.reason
                 goal_state.last_evaluated_at = now_iso()
-                if args.json:
-                    print(
-                        json.dumps(
-                            {
-                                "kind": "goal_eval",
-                                "data": {
-                                    "met": verdict.met,
-                                    "turns": goal_state.turns_evaluated,
-                                    "reason": verdict.reason,
-                                },
-                            }
-                        )
-                    )
-                else:
+                session_recorder.record_goal_evaluated(
+                    {"met": verdict.met, "turns": goal_state.turns_evaluated, "reason": verdict.reason}
+                )
+                if not args.json:
                     tag = "MET" if verdict.met else f"not met — {verdict.reason}"
                     print(f"[goal] turn {goal_state.turns_evaluated}: {tag}", file=sys.stderr)
                 if verdict.met:
@@ -1762,21 +1816,12 @@ async def _run_ask(args: argparse.Namespace) -> int:
             # The loop above can exit on a met verdict or the turn cap; count the
             # final verifier either way.
             _drain_tokens(goal_state)
-            # Emit a final goal result line.
-            if args.json:
-                print(
-                    json.dumps(
-                        {
-                            "kind": "goal_result",
-                            "data": {
-                                "met": goal_state.met,
-                                "turns": goal_state.turns_evaluated,
-                                "reason": goal_state.last_reason,
-                            },
-                        }
-                    )
-                )
-            else:
+            # Record the final goal outcome. An unmet goal exits 1 but the run
+            # itself completed: the process finished; the goal did not.
+            session_recorder.record_goal_completed(
+                {"met": goal_state.met, "turns": goal_state.turns_evaluated, "reason": goal_state.last_reason}
+            )
+            if not args.json:
                 status = "met" if goal_state.met else "not met (turn cap reached)"
                 print(f"[goal] {status} after {goal_state.turns_evaluated} turn(s)", file=sys.stderr)
             if not goal_state.met:
@@ -1787,12 +1832,19 @@ async def _run_ask(args: argparse.Namespace) -> int:
             store.save(session)
     except LLMBillingError as exc:
         exit_code = 1
-        if args.json:
-            json.dump(CLI_BILLING_ERROR_PAYLOAD, sys.stdout, default=str)
-            print()
-        else:
-            message = billing_error_message(exc, model=config.long_context_config.model)
-            _print_styled(message, style="error", stderr=True)
+        run_status = "failed"
+        run_error = {"code": "billing_error", "message": CLI_BILLING_ERROR_MESSAGE}
+        message = billing_error_message(exc, model=config.long_context_config.model)
+        _print_styled(message, style="error", stderr=True)
+    except asyncio.CancelledError:
+        # Ctrl-C: asyncio.run cancels this coroutine; main() still exits 130.
+        run_status = "cancelled"
+        run_error = {"code": "cancelled"}
+        raise
+    except BaseException as exc:
+        run_status = "failed"
+        run_error = {"code": type(exc).__name__, "message": str(exc)[:500]}
+        raise
     finally:
         pump_task.cancel()
         try:
@@ -1816,15 +1868,24 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 print(f"Warning: extension cleanup failed: {exc}", file=sys.stderr)
         if usage_sink is not None:
             await usage_sink.aclose()
-
-    if exit_code:
-        return exit_code
-
-    if args.json:
-        print(
-            json.dumps({"kind": "summary", "messages": message_emitter.emitted_total, "session_id": session.session_id})
+        # The run terminal is recorded synchronously after the usage sink has
+        # drained, on every exit path — an await here could be re-cancelled
+        # while a CancelledError is already propagating.
+        raising = run_status == "cancelled" or (
+            run_status == "failed" and (run_error or {}).get("code") != "billing_error"
         )
-    return 0
+        _record_ask_run_terminal(
+            session_recorder,
+            status=run_status,
+            exit_code=None if raising else exit_code,
+            started_at=run_started_at,
+            error=run_error,
+            usage_ledger=usage_ledger,
+            provider=str(getattr(config.long_context_config, "provider", None) or "") or None,
+            model=config.long_context_config.model,
+        )
+
+    return exit_code
 
 
 async def _pump_ask_events(manager: CliConnectionManager, json_mode: bool) -> None:
@@ -1835,12 +1896,8 @@ async def _pump_ask_events(manager: CliConnectionManager, json_mode: bool) -> No
 
 def _print_ask_event(event, json_mode: bool) -> None:
     if json_mode:
-        # Streaming deltas duplicate prose that arrives as complete "message"
-        # lines; everything else (tools, sub-agents, workflows, lifecycle)
-        # stays on the event channel.
-        if event.event_type in ("assistant_delta", "thinking_delta"):
-            return
-        print(json.dumps({"kind": "event", "data": event.model_dump()}, default=str))
+        # Presentation events are not part of the semantic protocol; the
+        # journal tee owns stdout. Consuming them here keeps the queue drained.
         return
 
     # Plain mode: keep piped stdout as the pure answer; report concise
@@ -1974,7 +2031,15 @@ def _run_sessions(args: argparse.Namespace) -> int:
         print(f"Deleted session {args.session_id}")
         return 0
     if args.sessions_command == "export":
-        payload = store.export(args.session_id)
+        if getattr(args, "format", "json") == "events-jsonl":
+            settings_store = _settings_store_from_args(args)
+            settings = settings_store.load()
+            payload = store.export_events(
+                args.session_id,
+                secret_values=known_secret_values(settings, settings_store),
+            )
+        else:
+            payload = store.export(args.session_id)
         if args.output:
             args.output.write_text(payload, encoding="utf-8")
         else:

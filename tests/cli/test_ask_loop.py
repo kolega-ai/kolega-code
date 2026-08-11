@@ -217,17 +217,18 @@ def test_json_emits_loop_iteration_sleep_and_result_lines(ask_env, capsys, isola
     main_module.main(["ask", "poll", "--loop", "5m", "--loop-max-iterations", "2", "--json", "--project", str(ask_env)])
 
     payloads = json_lines(capsys.readouterr())
-    iterations = [item for item in payloads if item.get("kind") == "loop_iteration"]
-    sleeps = [item for item in payloads if item.get("kind") == "loop_sleep"]
-    results = [item for item in payloads if item.get("kind") == "loop_result"]
+    iterations = [item for item in payloads if item.get("type") == "loop.iteration_started"]
+    sleeps = [item for item in payloads if item.get("type") == "loop.sleeping"]
+    results = [item for item in payloads if item.get("type") == "loop.completed"]
 
-    assert [item["data"]["iteration"] for item in iterations] == [1, 2]
-    assert all(item["data"]["prompt_source"] == "inline" for item in iterations)
-    assert all(item["data"]["scheduled_at"] for item in iterations)
+    assert [item["payload"]["iteration"] for item in iterations] == [1, 2]
+    assert all(item["payload"]["prompt_source"] == "inline" for item in iterations)
+    assert all(item["payload"]["scheduled_at"] for item in iterations)
+    assert all(item["schema"] == "kolega.session.event" and item["seq"] for item in iterations)
     assert len(sleeps) == 1
-    assert sleeps[0]["data"]["seconds"] == pytest.approx(300, abs=2)
-    assert sleeps[0]["data"]["next_fire_at"]
-    assert results[0]["data"] == {"iterations": 2, "reason": "reached the iteration cap"}
+    assert sleeps[0]["payload"]["seconds"] == pytest.approx(300, abs=2)
+    assert sleeps[0]["payload"]["next_fire_at"]
+    assert results[0]["payload"] == {"iterations": 2, "reason": "reached the iteration cap"}
 
 
 # ---------------------------------------------------------------------------
@@ -252,8 +253,8 @@ def test_json_reports_the_loop_md_prompt_source(ask_env, capsys, isolated_cli_en
     main_module.main(["ask", "--loop", "5m", "--loop-max-iterations", "1", "--json", "--project", str(ask_env)])
 
     payloads = json_lines(capsys.readouterr())
-    iterations = [item for item in payloads if item.get("kind") == "loop_iteration"]
-    assert iterations[0]["data"]["prompt_source"] == "loop_md"
+    iterations = [item for item in payloads if item.get("type") == "loop.iteration_started"]
+    assert iterations[0]["payload"]["prompt_source"] == "loop_md"
 
 
 def test_missing_prompt_and_missing_loop_md_exits_two(ask_env, capsys, isolated_cli_env):

@@ -8,6 +8,21 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Changed
 
+- **Breaking:** `kolega-code ask --json` now streams the semantic session-event
+  protocol — one v2 event envelope per line (`schema: "kolega.session.event"`,
+  stable `id`/`seq`/`timestamp`, agent lineage, typed `payload`) — replacing
+  the former `{"kind": "message"|"event"|"summary"}` records with no
+  compatibility flag. Live output and the new
+  `sessions export --format events-jsonl` return the same records. Every run
+  records the full journal (LLM call ids, subagent turns and tool results,
+  `context.system`, compaction/rewind provenance, and `run.completed`/
+  `run.failed`/`run.cancelled` terminals on every exit path); unsaved runs use
+  an in-memory journal and leave no session state. Plain (non-JSON) `ask`
+  output is unchanged. Session journals now write schema v2 events (v1
+  sessions remain readable; resumed v1 sessions append v2 lines — older
+  kolega-code versions will refuse to read those journals rather than
+  mis-replaying them).
+
 - Tool definitions are now explicit, checked-in artifacts. Every built-in
   tool's model-visible description lives as data beside the prompt assets
   (`kolega_code/agent/prompt_templates/tools/`) and its input schema as a

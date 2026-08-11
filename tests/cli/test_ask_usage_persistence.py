@@ -75,10 +75,20 @@ def test_ask_with_session_journals_marker_and_internal_events(tmp_path, monkeypa
     assert record.usage["coverage"]["full"] is True
 
 
-def test_ask_without_persistence_attaches_no_observer(tmp_path, monkeypatch, isolated_cli_env):
+def test_ask_without_persistence_uses_an_in_memory_sink(tmp_path, monkeypatch, isolated_cli_env):
+    from kolega_code.cli.session_event_protocol import InMemorySessionJournal
+    from kolega_code.cli.session_store import SessionStore
+
     main_module, project = _setup(tmp_path, monkeypatch)
 
     exit_code = main_module.main(["ask", "do the thing", "--project", str(project)])
     assert exit_code == 0
     agent = UsageRecordingAskAgent.instances[0]
-    assert agent.kwargs["usage_ledger"].observer is None
+    # Unsaved runs still record: the sink observes the ledger but journals to
+    # an in-memory sink, so no session state ever reaches the filesystem.
+    sink = agent.kwargs["usage_ledger"].observer
+    assert sink is not None
+    assert isinstance(sink._journal, InMemorySessionJournal)
+    store = SessionStore(tmp_path / "state")
+    assert store.list() == []
+    assert not (tmp_path / "state" / "sessions").exists()
