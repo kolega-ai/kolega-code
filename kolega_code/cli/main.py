@@ -256,7 +256,7 @@ def _add_common_model_args(parser: argparse.ArgumentParser) -> None:
         metavar="PERCENT",
         help="Input-budget usage percentage that triggers automatic history compression "
         "(10-100; default 95). Overrides settings.json for this session; not persisted. "
-        "100 effectively disables automatic compression.",
+        "100 disables proactive compression; over-limit recovery and explicit context caps remain enforced.",
     )
     parser.add_argument(
         "--context-window-tokens",

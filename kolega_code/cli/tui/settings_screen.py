@@ -411,7 +411,8 @@ class SettingsScreen(ModalScreen[None]):
                 compression_section.border_title = "Context Compression"
                 yield Static(
                     "Summarize older conversation history once context-window usage crosses this "
-                    "threshold. 100% effectively disables automatic compression; /compress stays manual.",
+                    "threshold. 100% disables proactive compression; over-limit recovery and explicit "
+                    "context caps remain enforced; /compress stays manual.",
                     classes="settings-hint",
                 )
                 yield Static("", id="compression_status")
