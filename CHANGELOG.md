@@ -6,33 +6,7 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
-### Fixed
-
-- A session could be opened in two kolega-code instances at once, interleaving
-  duplicate event sequence numbers into the session journal until it became
-  unreadable (and `switch_worktree`/`save` failed with "Session event sequence
-  gap"). Resuming a session that is already open in another instance is now
-  refused with a clear error, journal appends allocate sequence numbers under
-  a cross-process lock, and `kolega-code sessions repair <id>` renumbers a
-  corrupted journal back into a contiguous sequence.
-
-- File tools (`read`, `write`, `edit`, `multi_edit`, `read_image`) now expand
-  a `$KOLEGA_SCRATCHPAD` (or `${KOLEGA_SCRATCHPAD}`) reference in path
-  arguments to the session scratchpad at the tool-dispatch choke point, so
-  the shell spelling no longer creates a literal `$KOLEGA_SCRATCHPAD`
-  directory in the workspace.
-
-- Runtime model-catalog caches created before input-budget conventions were
-  introduced are now ignored safely instead of injecting incomplete model
-  specs that fail later with `KeyError: 'input_budget'`. Refreshing a catalog
-  rewrites it in the current schema.
-
-- Kimi Coding Plan model IDs now match the provider's real wire IDs:
-  `k3-256k` (fixed 256K K3 route) and `kimi-for-coding-highspeed` are
-  recognized, and the fabricated `k3[1m]` ID is gone (Kimi's 1M context is
-  the same `k3` ID, tier-gated). Kimi and Moonshot input budgets treat output
-  as a separate allowance (verified by live probes), so the full context
-  window is usable as input instead of being cut down by the output cap.
+## 0.28.0 - 2026-08-11
 
 ### Added
 
@@ -44,6 +18,37 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   trajectories, per-step token metrics, hydrated oversized tool results, and
   atomic file+assets output; image trajectories require `--output`/a file
   destination for portable relative asset paths.
+
+- The interactive CLI and `ask` can now load one installed Python extension at
+  launch with `--extension MODULE:FACTORY` and an optional opaque
+  `--extension-config PATH`. An extension contributes ordinary prompt and tool
+  extensions, binds to each top-level agent generation before its first model
+  request, may observe structured LLM trace records (forwarded to every LLM
+  client like the usage ledger), and is cleaned up exactly once per generation,
+  including on interactive agent rebuilds. Extension contracts are exported
+  from the package root, alongside `llm_call_origin`/`helper_origin` and
+  `TinkerTraceRecord`; a minimal example package lives in `examples/extension`.
+
+- Agent Skills can now be enabled or disabled from Settings,
+  `settings.json`, `KOLEGA_CODE_SKILLS`, or `--skills on|off`.
+
+- The TUI status usage panel now shows the provider cache hit percentage
+  alongside the other usage figures.
+
+- After quitting, the CLI prints the exact
+  `kolega-code . --resume <id>` command to resume the session that was just
+  saved.
+
+- Hosts can now continue a restored conversation without inserting a user
+  message: `BaseAgent.continue_from_history_stream()` runs the ordinary agent
+  loop (compaction, tool execution, usage accounting, and cancellation
+  included) and yields the same chunk format. Sessions containing such a
+  continuation turn are not loadable by older kolega-code versions.
+
+- Oversized terminal command output is now spilled to a file instead of being
+  lost: the tool result keeps the bounded head/tail preview plus a path to
+  the full output, and the PTY is drained before detaching so a killed
+  command keeps its final output.
 
 ### Changed
 
@@ -85,23 +90,70 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   explicit `tool_descriptions` entry alongside `tool_schemas`; a tool missing
   either fails at registration with a clear error before any model request.
 
+- TUI responsiveness for long sessions is improved: the transcript scrollback
+  window is capped at 120 mounted entries (scroll-up still walks the full
+  history), flush cadences are unified and paced by event-loop lateness,
+  modal inspectors stay on the unpaced base cadence, and the native Tinker
+  stack no longer loads at package import time — faster startup and fewer
+  event-loop stalls.
+
 ### Removed
 
 - The `tool_definition_from_callable` helper (and the `Args:`-block
   strip/keep rules behind it) is gone, including its `kolega_code` package
   root export: definitions are declared, not derived.
 
-### Added
+### Fixed
 
-- The interactive CLI and `ask` can now load one installed Python extension at
-  launch with `--extension MODULE:FACTORY` and an optional opaque
-  `--extension-config PATH`. An extension contributes ordinary prompt and tool
-  extensions, binds to each top-level agent generation before its first model
-  request, may observe structured LLM trace records (forwarded to every LLM
-  client like the usage ledger), and is cleaned up exactly once per generation,
-  including on interactive agent rebuilds. Extension contracts are exported
-  from the package root, alongside `llm_call_origin`/`helper_origin` and
-  `TinkerTraceRecord`; a minimal example package lives in `examples/extension`.
+- A session could be opened in two kolega-code instances at once, interleaving
+  duplicate event sequence numbers into the session journal until it became
+  unreadable (and `switch_worktree`/`save` failed with "Session event sequence
+  gap"). Resuming a session that is already open in another instance is now
+  refused with a clear error, journal appends allocate sequence numbers under
+  a cross-process lock, and `kolega-code sessions repair <id>` renumbers a
+  corrupted journal back into a contiguous sequence.
+
+- File tools (`read`, `write`, `edit`, `multi_edit`, `read_image`) now expand
+  a `$KOLEGA_SCRATCHPAD` (or `${KOLEGA_SCRATCHPAD}`) reference in path
+  arguments to the session scratchpad at the tool-dispatch choke point, so
+  the shell spelling no longer creates a literal `$KOLEGA_SCRATCHPAD`
+  directory in the workspace.
+
+- Runtime model-catalog caches created before input-budget conventions were
+  introduced are now ignored safely instead of injecting incomplete model
+  specs that fail later with `KeyError: 'input_budget'`. Refreshing a catalog
+  rewrites it in the current schema.
+
+- Kimi Coding Plan model IDs now match the provider's real wire IDs:
+  `k3-256k` (fixed 256K K3 route) and `kimi-for-coding-highspeed` are
+  recognized, and the fabricated `k3[1m]` ID is gone (Kimi's 1M context is
+  the same `k3` ID, tier-gated). Kimi and Moonshot input budgets treat output
+  as a separate allowance (verified by live probes), so the full context
+  window is usable as input instead of being cut down by the output cap.
+
+- OpenAI and ChatGPT gpt-5.x requests that reproduced reserved Harmony
+  control-token spellings as data (for example after a tool result read a
+  file containing `<|channel|>`-style tokens) were rejected with
+  `APIError: Request blocked`, permanently poisoning the session. The
+  spellings are now escaped on the transport copy only — the persisted
+  transcript is unchanged — and already-poisoned sessions heal on the next
+  request.
+
+- Responses-based providers (OpenAI, ChatGPT, DeepSeek) now return multiple
+  tool calls per model round instead of one at a time.
+
+- After history compaction (automatic or `/compact`) the approved plan and
+  the shared task list are re-injected into the model's context as system
+  reminders, so the model no longer loses track of them mid-run.
+
+- Terminal sessions that end while a backgrounded `&` job still holds the PTY
+  are now reported as exited instead of spinning through the whole yield
+  window, and naturally exited sessions are hidden from the session listing
+  instead of lingering as stale entries.
+
+- The shared terminal-tools guidance now warns that `rg -r` means
+  `--replace` (recursion is the default), which previously made `rg -rn`
+  output look like a redaction layer.
 
 ## 0.27.1 - 2026-08-10
 
