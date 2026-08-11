@@ -702,7 +702,7 @@ def test_print_quit_resume_hint_shows_full_session_id(capsys) -> None:
     _print_quit_resume_hint(session_id)
 
     captured = capsys.readouterr()
-    assert captured.out.strip() == "Session saved. Resume it with: kolega-code . --resume " + session_id
+    assert captured.out.strip() == "Session saved. Resume it with: kolega-code --resume " + session_id
     assert captured.err == ""
 
 

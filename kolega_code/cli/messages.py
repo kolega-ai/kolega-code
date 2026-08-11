@@ -294,7 +294,7 @@ CHATGPT_LOGOUT_DONE = "Signed out of ChatGPT. Stored credentials were removed."
 CHATGPT_LOGOUT_NONE = "You are not signed in to ChatGPT."
 
 # Session quit hint
-SESSION_RESUME_HINT = "Session saved. Resume it with: kolega-code . --resume {session_id}"
+SESSION_RESUME_HINT = "Session saved. Resume it with: kolega-code --resume {session_id}"
 
 # Misc
 COPY_MACOS_FAILED = "Copied for supported terminals, but the macOS clipboard failed."
