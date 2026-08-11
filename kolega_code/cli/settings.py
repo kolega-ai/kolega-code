@@ -147,7 +147,7 @@ class CliSettings:
     skills_enabled: Optional[bool] = None
     # Context-window usage percent that triggers automatic history compression.
     # Additive optional field — absent in older files -> None -> the agent's
-    # built-in default (80%).
+    # built-in default (95%).
     compression_threshold: Optional[float] = None
     schema_version: int = SETTINGS_SCHEMA_VERSION
 
@@ -197,7 +197,7 @@ class CliSettings:
             subagents_enabled=data.get("subagents_enabled"),
             # Additive optional field; absent in older files -> None (enabled).
             skills_enabled=data.get("skills_enabled"),
-            # Additive optional field; absent in older files -> None (default 80%).
+            # Additive optional field; absent in older files -> None (default 95%).
             compression_threshold=_coerce_compression_threshold(data.get("compression_threshold")),
         )
 

@@ -27,7 +27,7 @@ kolega-code ask "<prompt>" [options]
 | `--lsp <on\|off>` | Force LSP tools on or off for this session (overrides settings; not persisted) |
 | `--subagents <on\|off>` | Force sub-agent dispatch (`dispatch_agent`) on or off for this session (overrides settings; not persisted; default on) |
 | `--skills <on\|off>` | Force [Agent Skills](../../skills/) on or off for this session (overrides settings; not persisted; default on). When off, skills are not discovered and the `skill` tool is not exposed |
-| `--compression-threshold PERCENT` | Context-window usage that triggers automatic history compression (`10`–`100`, default `80`; `100` disables proactive compression; over-limit recovery and explicit context caps remain enforced). Overrides settings for the session; not persisted |
+| `--compression-threshold PERCENT` | Context-window usage that triggers automatic history compression (`10`–`100`, default `95`; `100` disables proactive compression; over-limit recovery and explicit context caps remain enforced). Overrides settings for the session; not persisted |
 | `--session <ID>` | Resume or create a specific session |
 | `--state-dir <PATH>` | Directory for CLI session state |
 | `--extension <MODULE:FACTORY>` | Load one installed Python extension for this run (see [Extensions](../../concepts/extensions/)) |

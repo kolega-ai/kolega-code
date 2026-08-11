@@ -356,7 +356,7 @@ def _compression_threshold(
     """Resolve the compression threshold with flag-over-env-over-settings precedence.
 
     User-facing surfaces carry a percent (10-100); the returned value is the
-    fraction the agent compares against, or None for the built-in default (80%).
+    fraction the agent compares against, or None for the built-in default (95%).
     Explicit flag/env values are validated strictly (a typo must fail loudly);
     settings values were already range-coerced at load."""
     # Resolve presence per layer instead of via _explicit_value, whose truthiness

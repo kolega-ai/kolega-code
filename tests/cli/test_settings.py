@@ -399,7 +399,7 @@ def test_settings_store_round_trips_compression_threshold(tmp_path: Path) -> Non
     assert loaded.compression_threshold == 85.0
     assert loaded.to_dict()["compression_threshold"] == 85.0
 
-    # Absent in older files -> None -> the agent's built-in default (80%) applies.
+    # Absent in older files -> None -> the agent's built-in default (95%) applies.
     store.save(CliSettings())
     assert SettingsStore(tmp_path).load().compression_threshold is None
 

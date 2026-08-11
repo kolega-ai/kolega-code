@@ -82,7 +82,7 @@ MCP_TRANSPORT_OPTIONS = [
 MCP_ENABLED_OPTIONS = [("Enabled", "true"), ("Disabled", "false")]
 MCP_STATUS_MESSAGE_MAX = 96
 MCP_STATUS_NAME_MAX = 34
-# Compression threshold select: "default" maps to None (the agent's built-in 80%).
+# Compression threshold select: "default" maps to None (the agent's built-in 95%).
 COMPRESSION_THRESHOLD_DEFAULT_VALUE = "default"
 COMPRESSION_THRESHOLD_PRESET_PERCENTS = (50, 60, 70, 80, 90, 95, 100)
 MCP_ATTENTION_STATUSES = {"failed", "stale", "unverified"}
@@ -159,7 +159,7 @@ def _compression_threshold_option_value(percent: float) -> str:
 
 def compression_threshold_options(saved: Optional[float] = None) -> list[tuple[str, str]]:
     """Select options for the compression threshold, presets plus any saved off-list value."""
-    options: list[tuple[str, str]] = [("Default (80%)", COMPRESSION_THRESHOLD_DEFAULT_VALUE)]
+    options: list[tuple[str, str]] = [("Default (95%)", COMPRESSION_THRESHOLD_DEFAULT_VALUE)]
     options.extend((f"{percent}%", str(percent)) for percent in COMPRESSION_THRESHOLD_PRESET_PERCENTS)
     if saved is not None:
         saved_value = _compression_threshold_option_value(saved)
