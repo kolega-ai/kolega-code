@@ -91,6 +91,10 @@ class CliConfigError(ValueError):
     """Raised when CLI configuration is incomplete or invalid."""
 
 
+class StrictContextBudgetError(CliConfigError):
+    """Raised when the paired strict context-budget flags are invalid."""
+
+
 @dataclass(frozen=True)
 class CliConfigOverrides:
     """Model and provider overrides supplied by CLI flags."""
@@ -398,15 +402,15 @@ def _strict_context_budget(
     """Parse and validate the paired strict context-budget flags.
 
     Process-local by design: no env or settings layer. Validated against the
-    resolved active model here for an early error; BaseAgent re-validates
-    against its actual primary model (a saved role override can supersede the
-    global selection).
+    resolved active model here for an early error; build_agent_config then
+    re-validates against the resolved coder route after applying saved role
+    overrides. BaseAgent keeps the same check as defense in depth.
     """
     raw_window, raw_output = overrides.context_window_tokens, overrides.max_output_tokens
     if raw_window is None and raw_output is None:
         return None, None
     if raw_window is None or raw_output is None:
-        raise CliConfigError("--context-window-tokens and --max-output-tokens must be supplied together.")
+        raise StrictContextBudgetError("--context-window-tokens and --max-output-tokens must be supplied together.")
 
     def _positive_int(raw: str, flag: str) -> int:
         try:
@@ -414,27 +418,37 @@ def _strict_context_budget(
         except ValueError:
             value = 0
         if value <= 0 or str(value) != raw.strip():
-            raise CliConfigError(f"{flag} must be a positive integer, got '{raw}'.")
+            raise StrictContextBudgetError(f"{flag} must be a positive integer, got '{raw}'.")
         return value
 
     window = _positive_int(raw_window, "--context-window-tokens")
     output = _positive_int(raw_output, "--max-output-tokens")
     if output >= window:
-        raise CliConfigError(
+        raise StrictContextBudgetError(
             f"--max-output-tokens ({output}) must be strictly smaller than --context-window-tokens ({window})."
         )
+    _validate_strict_context_budget_limits(window, output, provider, model)
+    return window, output
+
+
+def _validate_strict_context_budget_limits(
+    window: int,
+    output: int,
+    provider: ModelProvider,
+    model: str,
+) -> None:
+    """Validate a strict context-budget pair against one resolved model."""
     specs = get_model_specs(provider.value, model)
     if window > specs["context_length"]:
-        raise CliConfigError(
+        raise StrictContextBudgetError(
             f"--context-window-tokens ({window}) exceeds the catalogued context length "
             f"({specs['context_length']}) for {provider.value}/{model}."
         )
     if output > specs["max_completion_tokens"]:
-        raise CliConfigError(
+        raise StrictContextBudgetError(
             f"--max-output-tokens ({output}) exceeds the catalogued completion maximum "
             f"({specs['max_completion_tokens']}) for {provider.value}/{model}."
         )
-    return window, output
 
 
 def _coerce_known_model(provider: ModelProvider, model: Optional[str]) -> str:
@@ -758,6 +772,19 @@ def build_agent_config(
         )
     except ValueError as exc:
         raise CliConfigError(str(exc)) from exc
+
+    # The active model was checked while parsing the flags above, but the coder
+    # route may be replaced by a saved "building" role override. Validate that
+    # resolved route before any session run marker or agent construction.
+    if config.context_window_tokens is not None:
+        assert config.max_output_tokens is not None
+        coder = config.model_config_for_agent("coder")
+        _validate_strict_context_budget_limits(
+            config.context_window_tokens,
+            config.max_output_tokens,
+            coder.provider,
+            coder.model,
+        )
 
     # Attach a persisting token manager so mid-session refreshes are written back
     # to settings.json (only possible when a store is supplied by the caller).
