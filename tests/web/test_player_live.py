@@ -93,9 +93,13 @@ async def test_a_share_link_follows_the_session_as_it_runs(tmp_path: Path) -> No
             await page.goto(url)
             await page.wait_for_selector(".kc-entry")
 
-            opened = await page.evaluate(_SNAPSHOT_JS)
+            # Entries render from the initial HTTP fetch while the live socket is
+            # still CONNECTING, so the first rendered state is "detached"; the
+            # badge only flips to "following" when the socket opens. Asserting
+            # right after the entries appeared raced on loaded CI runners.
+            opened = await _wait_for(page, lambda snap: snap["liveState"] == "following")
+            assert opened["liveState"] == "following", "the player never attached its live stream"
             assert not opened["liveHidden"], "a live session must advertise itself"
-            assert opened["liveState"] == "following"
 
             # Appended only now, with the page already open.
             await _append(
@@ -282,7 +286,8 @@ async def test_losing_the_network_stops_the_badge_claiming_to_be_live(tmp_path: 
             page = await context.new_page()
             await page.goto(url)
             await page.wait_for_selector(".kc-entry")
-            assert (await page.evaluate(_SNAPSHOT_JS))["liveState"] == "following"
+            attached = await _wait_for(page, lambda snap: snap["liveState"] == "following")
+            assert attached["liveState"] == "following", "the player never attached its live stream"
 
             await context.set_offline(True)
             dropped = await _wait_for(page, lambda snapshot: snapshot["liveState"] != "following")
