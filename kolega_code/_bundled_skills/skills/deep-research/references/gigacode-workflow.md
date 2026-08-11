@@ -192,7 +192,7 @@ The workflow derives every path deterministically:
 
 Scouts write their dossier with `exec_command` and return only a compact record
 plus `dossier_path`. Verification, coverage, drafting, and audit receive paths and
-read the depth they need with `read_file_section`. This is what keeps the
+read the depth they need with `read` (offset/limit for sections). This is what keeps the
 handoffs compact without starving later stages of evidence.
 
 The scratchpad is additive and best-effort. When `workspace` is omitted, a worker
