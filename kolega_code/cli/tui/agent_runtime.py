@@ -982,7 +982,17 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         self.config = config
         self.session.config = config_summary(config)
         await self._save_session_async()
-        await self._build_agent(config, rebuild=rebuild)
+        try:
+            await self._build_agent(config, rebuild=rebuild)
+        except KolegaExtensionLoadError as exc:
+            # The failed generation was already reclaimed by _build_agent; there
+            # is no live agent, so surface the error instead of crashing the
+            # worker that requested the rebuild.
+            self._set_chat_enabled(False)
+            self._refresh_status_dashboard()
+            self._log_status(f"extension error: {exc}", level="error")
+            self._ensure_startup_entry()
+            return
         self._set_chat_enabled(True)
         self._update_settings_status()
         self._ensure_startup_entry()
@@ -1095,8 +1105,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             history = self.session.history
             compaction = self.session.compaction
             if rebuild:
-                await self.agent.cleanup()
-                await self._cleanup_extension_bundle()
+                await self._cleanup_agent_generation()
 
         browser_manager = build_browser_manager(
             self.store.root,
@@ -1190,97 +1199,119 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         if self._goal is not None and self._goal.condition:
             prompt_extensions.append(self._goal_prompt_extension())
 
-        # Launch-selected extension: a fresh bundle for every agent generation,
-        # from the same factory. Assigned to self immediately so every exit path
-        # cleans up exactly this generation's bundle.
-        extension_bundle = None
-        if self.extension_selection is not None:
-            extension_host = KolegaExtensionHost(
-                project_path=self.active_project_path,
-                workspace_id=self.session.workspace_id,
-                thread_id=self.session.thread_id,
-                config=config,
-                agent_mode=AgentMode(self.mode),
-            )
-            extension_bundle = create_extension_bundle(self.extension_selection, extension_host)
-            self._extension_bundle = extension_bundle
-            prompt_extensions.extend(extension_bundle.prompt_extensions)
-            tool_extensions.extend(extension_bundle.tool_extensions)
-
         try:
-            self.agent = agent_class(
-                project_path=self.active_project_path,
-                workspace_id=self.session.workspace_id,
-                thread_id=self.session.thread_id,
-                connection_manager=self.recording_connection_manager,
-                config=config,
-                browser_manager=browser_manager,
-                agent_mode=AgentMode(self.mode),
-                prompt_extensions=prompt_extensions,
-                tool_extensions=tool_extensions,
-                memory_manager=self.memory_manager,
-                permission_mode=self.permission_mode,
-                # Permission policy lives in the session runtime, not the UI: mode
-                # checks and saved-rule matching are decisions about the session, so
-                # every frontend gets them and only real questions reach a person.
-                permission_callback=self.session_runtime.permission_callback,
-                session_recorder=self._session_recorder,
-                hook_dispatcher=self._session_hook_dispatcher(),
-                custom_agent_catalog=self.custom_agent_catalog,
-                usage_ledger=self._usage_ledger,
-                llm_trace_sink=extension_bundle.llm_trace_sink if extension_bundle else None,
-            )
-        except ValueError as exc:
+            # Launch-selected extension: a fresh bundle for every agent generation,
+            # from the same factory. Assigned to self immediately so every exit path
+            # cleans up exactly this generation's bundle.
+            extension_bundle = None
+            if self.extension_selection is not None:
+                extension_host = KolegaExtensionHost(
+                    project_path=self.active_project_path,
+                    workspace_id=self.session.workspace_id,
+                    thread_id=self.session.thread_id,
+                    config=config,
+                    agent_mode=AgentMode(self.mode),
+                )
+                extension_bundle = create_extension_bundle(self.extension_selection, extension_host)
+                self._extension_bundle = extension_bundle
+                prompt_extensions.extend(extension_bundle.prompt_extensions)
+                tool_extensions.extend(extension_bundle.tool_extensions)
+
+            try:
+                self.agent = agent_class(
+                    project_path=self.active_project_path,
+                    workspace_id=self.session.workspace_id,
+                    thread_id=self.session.thread_id,
+                    connection_manager=self.recording_connection_manager,
+                    config=config,
+                    browser_manager=browser_manager,
+                    agent_mode=AgentMode(self.mode),
+                    prompt_extensions=prompt_extensions,
+                    tool_extensions=tool_extensions,
+                    memory_manager=self.memory_manager,
+                    permission_mode=self.permission_mode,
+                    # Permission policy lives in the session runtime, not the UI: mode
+                    # checks and saved-rule matching are decisions about the session, so
+                    # every frontend gets them and only real questions reach a person.
+                    permission_callback=self.session_runtime.permission_callback,
+                    session_recorder=self._session_recorder,
+                    hook_dispatcher=self._session_hook_dispatcher(),
+                    custom_agent_catalog=self.custom_agent_catalog,
+                    usage_ledger=self._usage_ledger,
+                    llm_trace_sink=extension_bundle.llm_trace_sink if extension_bundle else None,
+                )
+            except ValueError as exc:
+                if extension_bundle is not None:
+                    # With an extension loaded, a tool-name conflict at construction
+                    # refuses the generation rather than continuing without the
+                    # requested extension.
+                    raise KolegaExtensionLoadError(str(exc)) from exc
+                raise
+            assert self.agent is not None
+            # The runtime owns the agent for control purposes while the CLI keeps
+            # composing it from settings, skills, hooks, and MCP configuration.
+            self.session_runtime.adopt(self.agent)
+            # The plan handle and shared task list are conversation-injected context (system
+            # reminders), so a compaction that summarizes them away is followed by re-injection
+            # on the next turn — see agent/volatile_context.py. Registered in both interaction
+            # modes: the planner sees the plan artifact while re-planning mid-build, and both
+            # modes keep the task list (read-only for the planner) in view. Each rebuild
+            # constructs a fresh agent, so providers never accumulate across rebuilds.
+            self.agent.add_volatile_section(self._plan_volatile_section)
+            self.agent.add_volatile_section(self._task_list_volatile_section)
+            if scratchpad_extension is not None:
+                # Expose the resolved directory for the KOLEGA_SCRATCHPAD session env
+                # and the terminal safety checker; the prompt extension above is what
+                # the model sees.
+                self.agent.scratchpad_dir = scratchpad_dir_for(self.project_path, self.session.session_id)
+            # Mid-turn queue delivery: the running turn drains composer messages
+            # queued while it works (main agent only; sub-agents never get this).
+            self.agent.set_queued_input_provider(self._provide_queued_user_inputs)
+            # Initialize LSP (language detection + server resolution)
+            agent = self.agent
+            assert agent.tool_collection is not None
+            await agent.tool_collection.initialize()
+            agent.gigacode_enabled = gigacode_active
+            # A session-level /web-search override outlives agent rebuilds (model
+            # switches); without one the config-resolved mode stands.
+            if self._web_search_mode:
+                agent.apply_web_search_mode(self._web_search_mode)
+            self._initialize_ledger_diff_tracker()
+            if history:
+                self.agent.restore_message_history(history)
+                self.agent.restore_compaction_state(compaction)
+                if restore_transcript:
+                    self._restore_conversation_history(history)
             if extension_bundle is not None:
-                # With an extension loaded, a tool-name conflict at construction
-                # refuses the generation rather than continuing without the
-                # requested extension.
-                raise KolegaExtensionLoadError(str(exc)) from exc
+                await bind_extension_agent(extension_bundle, self.agent)
+            self._update_mode_chrome()
+            self._ensure_startup_entry()
+            await self._fire_session_start_once()
+            # Refresh the Settings-tab LSP status now that the agent (and its
+            # initialized lsp_manager) exists. Without this the status is stale
+            # from startup, when it was computed before the agent was built.
+            self._update_lsp_settings_status()
+        except BaseException:
+            # Reclaim the partial generation (bundle is already installed on
+            # self; the agent may or may not be) before surfacing the failure.
+            await self._cleanup_agent_generation()
             raise
-        assert self.agent is not None
-        # The runtime owns the agent for control purposes while the CLI keeps
-        # composing it from settings, skills, hooks, and MCP configuration.
-        self.session_runtime.adopt(self.agent)
-        # The plan handle and shared task list are conversation-injected context (system
-        # reminders), so a compaction that summarizes them away is followed by re-injection
-        # on the next turn — see agent/volatile_context.py. Registered in both interaction
-        # modes: the planner sees the plan artifact while re-planning mid-build, and both
-        # modes keep the task list (read-only for the planner) in view. Each rebuild
-        # constructs a fresh agent, so providers never accumulate across rebuilds.
-        self.agent.add_volatile_section(self._plan_volatile_section)
-        self.agent.add_volatile_section(self._task_list_volatile_section)
-        if scratchpad_extension is not None:
-            # Expose the resolved directory for the KOLEGA_SCRATCHPAD session env
-            # and the terminal safety checker; the prompt extension above is what
-            # the model sees.
-            self.agent.scratchpad_dir = scratchpad_dir_for(self.project_path, self.session.session_id)
-        # Mid-turn queue delivery: the running turn drains composer messages
-        # queued while it works (main agent only; sub-agents never get this).
-        self.agent.set_queued_input_provider(self._provide_queued_user_inputs)
-        # Initialize LSP (language detection + server resolution)
+
+    async def _cleanup_agent_generation(self) -> None:
+        """Tear down the current agent generation (agent, then bundle) exactly once.
+
+        Both references are detached before anything is awaited, so repeated or
+        concurrent callers cannot clean the same generation twice. Each step is
+        guarded: a cleanup failure is reported, never raised.
+        """
         agent = self.agent
-        assert agent.tool_collection is not None
-        await agent.tool_collection.initialize()
-        agent.gigacode_enabled = gigacode_active
-        # A session-level /web-search override outlives agent rebuilds (model
-        # switches); without one the config-resolved mode stands.
-        if self._web_search_mode:
-            agent.apply_web_search_mode(self._web_search_mode)
-        self._initialize_ledger_diff_tracker()
-        if history:
-            self.agent.restore_message_history(history)
-            self.agent.restore_compaction_state(compaction)
-            if restore_transcript:
-                self._restore_conversation_history(history)
-        if extension_bundle is not None:
-            await bind_extension_agent(extension_bundle, self.agent)
-        self._update_mode_chrome()
-        self._ensure_startup_entry()
-        await self._fire_session_start_once()
-        # Refresh the Settings-tab LSP status now that the agent (and its
-        # initialized lsp_manager) exists. Without this the status is stale
-        # from startup, when it was computed before the agent was built.
-        self._update_lsp_settings_status()
+        self.agent = None
+        if agent is not None:
+            try:
+                await agent.cleanup()
+            except Exception as exc:  # noqa: BLE001 — reported, never masks the primary failure
+                self._log_status(f"agent cleanup failed: {exc}", level="warn")
+        await self._cleanup_extension_bundle()
 
     async def _cleanup_extension_bundle(self) -> None:
         """Release the current extension bundle exactly once (rebuild or app exit)."""

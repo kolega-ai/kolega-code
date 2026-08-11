@@ -162,8 +162,11 @@ def test_tui_selected_worktree_is_effective_before_project_services(
             calls.append(("app", kwargs["project_path"]))
             assert kwargs["session"] is session
 
-        def run(self) -> None:
+        async def run_async(self) -> None:
             calls.append(("run", None))
+
+        async def _cleanup_agent_generation(self) -> None:
+            calls.append(("cleanup_generation", None))
 
     monkeypatch.setattr(main_module, "resolve_worktree", fake_resolve)
     monkeypatch.setattr(main_module, "_store_from_args", lambda _args: FakeStore())

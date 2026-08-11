@@ -1096,8 +1096,23 @@ def _run_tui(args: argparse.Namespace) -> int:
         startup_config_error=startup_config_error,
         extension_selection=extension_selection,
     )
+
+    async def _run_app() -> None:
+        try:
+            await app.run_async()
+        finally:
+            # Awaited teardown for exits that bypass action_quit (startup
+            # errors, crashes); a no-op after a normal quit.
+            await app._cleanup_agent_generation()
+            usage_sink = getattr(app, "_usage_sink", None)
+            if usage_sink is not None:
+                try:
+                    await usage_sink.aclose()
+                except Exception as exc:  # noqa: BLE001 — reported, never masks the primary exception
+                    print(f"Warning: usage sink close failed: {exc}", file=sys.stderr)
+
     try:
-        app.run()
+        asyncio.run(_run_app())
     except Exception as exc:  # noqa: BLE001 — last-resort crash capture before re-raising
         _secrets = known_secret_values(
             settings, settings_store, project_path=project_path, mcp_config=getattr(config, "mcp_config", None)
@@ -1522,215 +1537,208 @@ async def _run_ask(args: argparse.Namespace) -> int:
             return 2
         prompt_extensions.extend(extension_bundle.prompt_extensions)
         tool_extensions.extend(extension_bundle.tool_extensions)
-    permission_mode = normalize_permission_mode(
-        getattr(args, "permission_mode", ASK_DEFAULT_PERMISSION_MODE),
-        default=PermissionMode.AUTO,
-    )
-    usage_ledger = UsageLedger()
-    # Journal every settled non-history response and failure (in-memory journal
-    # for unsaved runs). Attached before the SESSION_START hook below: hook
-    # prompts are paid LLM calls and must be covered from the first request.
+
+    # An extension bundle may exist from here on: every exit path below must
+    # flow through the finally, which tears down agent/bundle/sink exactly once
+    # and records the run terminal.
     usage_sink: Optional[SessionUsageSink] = None
-    sink = SessionUsageSink(journal, session_recorder, usage_ledger, mode="ask")
-    usage_sink = sink
-    usage_ledger.observer = sink
-    await sink.start()
-    try:
-        agent = CoderAgent(
-            project_path=project_path,
-            workspace_id=session.workspace_id,
-            thread_id=session.thread_id,
-            connection_manager=manager,
-            config=config,
-            browser_manager=browser_manager,
-            agent_mode=AgentMode.ASK,
-            prompt_extensions=prompt_extensions,
-            tool_extensions=tool_extensions,
-            permission_mode=permission_mode,
-            permission_callback=_permission_callback_for_ask(launch_project_path)
-            if permission_mode == PermissionMode.ASK
-            else None,
-            session_recorder=session_recorder,
-            hook_dispatcher=hook_dispatcher,
-            custom_agent_catalog=custom_agent_catalog,
-            memory_project_path=launch_project_path,
-            memory_enabled=not getattr(args, "no_memory_tools", False),
-            usage_ledger=usage_ledger,
-            llm_trace_sink=extension_bundle.llm_trace_sink if extension_bundle else None,
-        )
-    except ValueError as exc:
-        if extension_bundle is not None:
-            # With an extension loaded, a tool-name conflict at construction
-            # refuses to start rather than running without the extension.
-            print(f"Error: {exc}", file=sys.stderr)
-            _record_ask_run_terminal(
-                session_recorder,
-                status="failed",
-                exit_code=2,
-                started_at=run_started_at,
-                error={"code": "extension_error", "message": str(exc)[:500]},
-                usage_ledger=usage_ledger,
-                provider=str(getattr(config.long_context_config, "provider", None) or "") or None,
-                model=config.long_context_config.model,
-            )
-            return 2
-        raise
-    agent_ref["agent"] = agent
-    # --gigacode turns orchestration on for this run; a resumed session that had
-    # it on keeps it on, exactly as the TUI's /gigacode toggle persists.
-    gigacode_enabled = bool(getattr(args, "gigacode", False)) or bool(session.gigacode_enabled)
-    if gigacode_enabled:
-        agent.apply_gigacode(True, gigacode_prompt_extension())
-    session.gigacode_enabled = gigacode_enabled
-    # Web tool mode: an explicit --web-search flag already reached the agent via
-    # AgentConfig; otherwise a resumed session keeps its persisted mode, exactly
-    # as the TUI's /web-search toggle persists.
-    flag_web_search = getattr(args, "web_search", None)
-    if not flag_web_search and session.web_search_mode:
-        agent.apply_web_search_mode(session.web_search_mode)
-    session.web_search_mode = flag_web_search or session.web_search_mode
-    lsp_messages = await agent.tool_collection.initialize()
-    if not args.json:
-        for msg in lsp_messages:
-            print(msg, file=sys.stderr)
-    if session.history:
-        agent.restore_message_history(session.history)
-        agent.restore_compaction_state(session.compaction)
-
-    if extension_bundle is not None:
-        try:
-            await bind_extension_agent(extension_bundle, agent)
-        except KolegaExtensionLoadError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            await agent.cleanup()
-            await cleanup_extension_bundle(extension_bundle)
-            if usage_sink is not None:
-                await usage_sink.aclose()
-            _record_ask_run_terminal(
-                session_recorder,
-                status="failed",
-                exit_code=2,
-                started_at=run_started_at,
-                error={"code": "extension_error", "message": str(exc)[:500]},
-                usage_ledger=usage_ledger,
-                provider=str(getattr(config.long_context_config, "provider", None) or "") or None,
-                model=config.long_context_config.model,
-            )
-            return 2
-
-    fire_hook = getattr(agent, "fire_hook", None)
-    if fire_hook is not None:
-        session_start = await fire_hook(HookEvent.SESSION_START, {"source": "startup"})
-        if session_start.additional_context:
-            if session_recorder is not None:
-                session_recorder.record_context_message(
-                    Message(role="user", content=[TextBlock(text=session_start.additional_context)])
-                )
-            agent.append_user_message([TextBlock(text=session_start.additional_context)])
-
-    prompt = raw_prompt
-    if skill_command:
-        skill_name, skill_prompt = skill_command
-        active_names = activated_skill_names(agent.history)
-        activation_content = skill_catalog.activation_content(skill_name, active_names=active_names)
-        if skill_name not in active_names:
-            session_recorder.record_context_message(Message(role="user", content=[TextBlock(text=activation_content)]))
-            agent.append_user_message([TextBlock(text=activation_content)])
-        session_recorder.record_skill_activated(
-            name=skill_name,
-            source="prompt_command",
-            already_active=skill_name in active_names,
-        )
-        prompt = skill_prompt
-        if not prompt:
-            session_recorder.record_synthetic_assistant(activation_content, notice_code="skill_activation")
-            if not args.json:
-                print(activation_content)
-            if args.save or args.session:
-                session.config = summary
-                store.save(session)
-            await agent.cleanup()
-            if extension_bundle is not None:
-                await cleanup_extension_bundle(extension_bundle)
-            if usage_sink is not None:
-                await usage_sink.aclose()
-            _record_ask_run_terminal(
-                session_recorder,
-                status="completed",
-                exit_code=0,
-                started_at=run_started_at,
-                error=None,
-                usage_ledger=usage_ledger,
-                provider=str(getattr(config.long_context_config, "provider", None) or "") or None,
-                model=config.long_context_config.model,
-            )
-            return 0
-
-    # --goal: apply the goal-aware prompt extension and synthesise the first
-    # work-turn message when no explicit prompt was given.
-    goal_state: Optional[GoalState] = None
-    if goal_condition:
-        max_turns = getattr(args, "goal_max_turns", None) or DEFAULT_GOAL_MAX_TURNS
-        goal_state = GoalState.create(goal_condition, max_turns=max_turns, run_to_completion=True)
-        agent.apply_goal(
-            goal_condition,
-            PromptExtension(
-                id="cli-active-goal",
-                title="Active goal",
-                markdown=build_goal_prompt_extension_markdown(goal_condition),
-                modes=None,
-                propagate_to_sub_agents=True,
-            ),
-        )
-        if not prompt:
-            prompt = build_goal_task_prompt(goal_condition)
-
-    # --loop / --loop-cron: arm the schedule and apply the loop-aware prompt
-    # extension. The prompt itself is sent verbatim on every iteration.
-    loop_state: Optional[LoopState] = None
-    if loop_schedule is not None:
-        loop_prompt = loop_md_prompt if loop_md_prompt is not None else (prompt or "")
-        loop_state = LoopState.create(
-            loop_schedule,
-            loop_prompt,
-            prompt_source=PROMPT_SOURCE_LOOP_MD if loop_md_prompt is not None else PROMPT_SOURCE_INLINE,
-            fresh=bool(getattr(args, "loop_fresh", False)),
-            max_iterations=getattr(args, "loop_max_iterations", None) or DEFAULT_LOOP_MAX_ITERATIONS,
-            expires_seconds=loop_expires_seconds,
-        )
-        prompt = loop_prompt
-        agent.apply_loop(
-            True,
-            PromptExtension(
-                id="cli-active-loop",
-                title="Scheduled loop",
-                markdown=build_loop_prompt_extension_markdown(loop_state),
-                modes=None,
-                propagate_to_sub_agents=True,
-            ),
-        )
-
-    attachments, unresolved_mentions = build_file_attachments(prompt or "", project_path)
-    for mention in unresolved_mentions:
-        print(f"Note: @{mention} not found, sent as plain text", file=sys.stderr)
-    for image_path in getattr(args, "image", None) or []:
-        encoded = encode_image_file(image_path)
-        if encoded is not None:
-            attachments.append(encoded)
-        else:
-            print(
-                f"Warning: --image {image_path} could not be attached (not a supported image, missing, or too large)",
-                file=sys.stderr,
-            )
-
+    pump_task: Optional[asyncio.Task] = None
+    usage_ledger = UsageLedger()
     response_chunks: list[dict] = []
     exit_code = 0
     run_status = "completed"
     run_error: Optional[dict[str, Any]] = None
-    # Pump connection-manager events concurrently so sub-agent activity is
-    # reported in real time instead of all at once after streaming finishes.
-    pump_task = asyncio.create_task(_pump_ask_events(manager, args.json))
+    # Exit code stamped on the run terminal; stays None on paths that leave by
+    # a propagating exception (the caller owns the process exit code there).
+    terminal_exit_code: Optional[int] = None
+    generation_closed = False
+
+    async def _close_generation() -> None:
+        # At most once; agent before bundle; each step guarded so a cleanup
+        # failure never replaces the run's primary outcome.
+        nonlocal generation_closed
+        if generation_closed:
+            return
+        generation_closed = True
+        built_agent = agent_ref.get("agent")
+        if built_agent is not None:
+            try:
+                await built_agent.cleanup()
+            except Exception as exc:  # noqa: BLE001 — reported, never masks the primary exception
+                print(f"Warning: agent cleanup failed: {exc}", file=sys.stderr)
+        if extension_bundle is not None:
+            try:
+                await cleanup_extension_bundle(extension_bundle)
+            except Exception as exc:  # noqa: BLE001 — reported, never masks the primary exception
+                print(f"Warning: extension cleanup failed: {exc}", file=sys.stderr)
+
     try:
+        permission_mode = normalize_permission_mode(
+            getattr(args, "permission_mode", ASK_DEFAULT_PERMISSION_MODE),
+            default=PermissionMode.AUTO,
+        )
+        # Journal every settled non-history response and failure (in-memory journal
+        # for unsaved runs). Attached before the SESSION_START hook below: hook
+        # prompts are paid LLM calls and must be covered from the first request.
+        sink = SessionUsageSink(journal, session_recorder, usage_ledger, mode="ask")
+        usage_sink = sink
+        usage_ledger.observer = sink
+        await sink.start()
+        try:
+            agent = CoderAgent(
+                project_path=project_path,
+                workspace_id=session.workspace_id,
+                thread_id=session.thread_id,
+                connection_manager=manager,
+                config=config,
+                browser_manager=browser_manager,
+                agent_mode=AgentMode.ASK,
+                prompt_extensions=prompt_extensions,
+                tool_extensions=tool_extensions,
+                permission_mode=permission_mode,
+                permission_callback=_permission_callback_for_ask(launch_project_path)
+                if permission_mode == PermissionMode.ASK
+                else None,
+                session_recorder=session_recorder,
+                hook_dispatcher=hook_dispatcher,
+                custom_agent_catalog=custom_agent_catalog,
+                memory_project_path=launch_project_path,
+                memory_enabled=not getattr(args, "no_memory_tools", False),
+                usage_ledger=usage_ledger,
+                llm_trace_sink=extension_bundle.llm_trace_sink if extension_bundle else None,
+            )
+        except ValueError as exc:
+            if extension_bundle is None:
+                raise
+            # With an extension loaded, a tool-name conflict at construction
+            # refuses to start rather than running without the extension.
+            print(f"Error: {exc}", file=sys.stderr)
+            run_status = "failed"
+            run_error = {"code": "extension_error", "message": str(exc)[:500]}
+            exit_code = 2
+            terminal_exit_code = 2
+            return exit_code
+        agent_ref["agent"] = agent
+        # --gigacode turns orchestration on for this run; a resumed session that had
+        # it on keeps it on, exactly as the TUI's /gigacode toggle persists.
+        gigacode_enabled = bool(getattr(args, "gigacode", False)) or bool(session.gigacode_enabled)
+        if gigacode_enabled:
+            agent.apply_gigacode(True, gigacode_prompt_extension())
+        session.gigacode_enabled = gigacode_enabled
+        # Web tool mode: an explicit --web-search flag already reached the agent via
+        # AgentConfig; otherwise a resumed session keeps its persisted mode, exactly
+        # as the TUI's /web-search toggle persists.
+        flag_web_search = getattr(args, "web_search", None)
+        if not flag_web_search and session.web_search_mode:
+            agent.apply_web_search_mode(session.web_search_mode)
+        session.web_search_mode = flag_web_search or session.web_search_mode
+        lsp_messages = await agent.tool_collection.initialize()
+        if not args.json:
+            for msg in lsp_messages:
+                print(msg, file=sys.stderr)
+        if session.history:
+            agent.restore_message_history(session.history)
+            agent.restore_compaction_state(session.compaction)
+
+        if extension_bundle is not None:
+            await bind_extension_agent(extension_bundle, agent)
+
+        fire_hook = getattr(agent, "fire_hook", None)
+        if fire_hook is not None:
+            session_start = await fire_hook(HookEvent.SESSION_START, {"source": "startup"})
+            if session_start.additional_context:
+                if session_recorder is not None:
+                    session_recorder.record_context_message(
+                        Message(role="user", content=[TextBlock(text=session_start.additional_context)])
+                    )
+                agent.append_user_message([TextBlock(text=session_start.additional_context)])
+
+        prompt = raw_prompt
+        if skill_command:
+            skill_name, skill_prompt = skill_command
+            active_names = activated_skill_names(agent.history)
+            activation_content = skill_catalog.activation_content(skill_name, active_names=active_names)
+            if skill_name not in active_names:
+                session_recorder.record_context_message(
+                    Message(role="user", content=[TextBlock(text=activation_content)])
+                )
+                agent.append_user_message([TextBlock(text=activation_content)])
+            session_recorder.record_skill_activated(
+                name=skill_name,
+                source="prompt_command",
+                already_active=skill_name in active_names,
+            )
+            prompt = skill_prompt
+            if not prompt:
+                session_recorder.record_synthetic_assistant(activation_content, notice_code="skill_activation")
+                if not args.json:
+                    print(activation_content)
+                if args.save or args.session:
+                    session.config = summary
+                    store.save(session)
+                terminal_exit_code = 0
+                return exit_code
+
+        # --goal: apply the goal-aware prompt extension and synthesise the first
+        # work-turn message when no explicit prompt was given.
+        goal_state: Optional[GoalState] = None
+        if goal_condition:
+            max_turns = getattr(args, "goal_max_turns", None) or DEFAULT_GOAL_MAX_TURNS
+            goal_state = GoalState.create(goal_condition, max_turns=max_turns, run_to_completion=True)
+            agent.apply_goal(
+                goal_condition,
+                PromptExtension(
+                    id="cli-active-goal",
+                    title="Active goal",
+                    markdown=build_goal_prompt_extension_markdown(goal_condition),
+                    modes=None,
+                    propagate_to_sub_agents=True,
+                ),
+            )
+            if not prompt:
+                prompt = build_goal_task_prompt(goal_condition)
+
+        # --loop / --loop-cron: arm the schedule and apply the loop-aware prompt
+        # extension. The prompt itself is sent verbatim on every iteration.
+        loop_state: Optional[LoopState] = None
+        if loop_schedule is not None:
+            loop_prompt = loop_md_prompt if loop_md_prompt is not None else (prompt or "")
+            loop_state = LoopState.create(
+                loop_schedule,
+                loop_prompt,
+                prompt_source=PROMPT_SOURCE_LOOP_MD if loop_md_prompt is not None else PROMPT_SOURCE_INLINE,
+                fresh=bool(getattr(args, "loop_fresh", False)),
+                max_iterations=getattr(args, "loop_max_iterations", None) or DEFAULT_LOOP_MAX_ITERATIONS,
+                expires_seconds=loop_expires_seconds,
+            )
+            prompt = loop_prompt
+            agent.apply_loop(
+                True,
+                PromptExtension(
+                    id="cli-active-loop",
+                    title="Scheduled loop",
+                    markdown=build_loop_prompt_extension_markdown(loop_state),
+                    modes=None,
+                    propagate_to_sub_agents=True,
+                ),
+            )
+
+        attachments, unresolved_mentions = build_file_attachments(prompt or "", project_path)
+        for mention in unresolved_mentions:
+            print(f"Note: @{mention} not found, sent as plain text", file=sys.stderr)
+        for image_path in getattr(args, "image", None) or []:
+            encoded = encode_image_file(image_path)
+            if encoded is not None:
+                attachments.append(encoded)
+            else:
+                print(
+                    f"Warning: --image {image_path} could not be attached (not a supported image, missing, or too large)",
+                    file=sys.stderr,
+                )
+
+        # Pump connection-manager events concurrently so sub-agent activity is
+        # reported in real time instead of all at once after streaming finishes.
+        pump_task = asyncio.create_task(_pump_ask_events(manager, args.json))
         turn_prompt = prompt
         if loop_state is not None:
             # Interval schedules fire immediately; cron schedules wait for the
@@ -1778,74 +1786,46 @@ async def _run_ask(args: argparse.Namespace) -> int:
 
         # --loop: keep re-running the prompt until the cap or the expiry is hit.
         if loop_state is not None:
-            _drain_tokens(loop_state)
-            loop_state.advance_after_completion()
-            while loop_state.is_active:
-                await _sleep_until_loop_fire(loop_state, session_recorder, args.json)
-                if not loop_state.is_active:
-                    break
-                loop_state.mark_fired()
-                if loop_state.fresh:
-                    agent.clear_history()
-                _emit_loop_iteration(loop_state, session_recorder, args.json)
-                turn_prompt = build_loop_iteration_prompt(
-                    prompt or "",
-                    iteration=loop_state.iterations,
-                    max_iterations=loop_state.max_iterations,
-                    fresh=loop_state.fresh,
-                )
-                stream = (
-                    agent.process_message_stream(turn_prompt, attachments)
-                    if attachments
-                    else agent.process_message_stream(turn_prompt)
-                )
-                await _consume_turn(stream)
-                _drain_tokens(loop_state)
-                loop_state.advance_after_completion()
-            _emit_loop_finished(loop_state, session_recorder, args.json)
+            await _run_ask_loop_iterations(
+                agent=agent,
+                loop_state=loop_state,
+                prompt=prompt,
+                attachments=attachments,
+                session_recorder=session_recorder,
+                json_mode=args.json,
+                consume_turn=_consume_turn,
+                drain_tokens=_drain_tokens,
+            )
 
         # --goal: evaluate and auto-continue until the goal is met or the cap is hit.
         if goal_state is not None:
-            _drain_tokens(goal_state)
-            while not goal_state.met and goal_state.turns_evaluated < goal_state.max_turns:
-                verdict = await agent.evaluate_goal_condition(goal_state.condition)
-                goal_state.turns_evaluated += 1
-                goal_state.last_reason = verdict.reason
-                goal_state.last_evaluated_at = now_iso()
-                session_recorder.record_goal_evaluated(
-                    {"met": verdict.met, "turns": goal_state.turns_evaluated, "reason": verdict.reason}
-                )
-                if not args.json:
-                    tag = "MET" if verdict.met else f"not met — {verdict.reason}"
-                    print(f"[goal] turn {goal_state.turns_evaluated}: {tag}", file=sys.stderr)
-                if verdict.met:
-                    goal_state.met = True
-                    break
-                turns_remaining = goal_state.max_turns - goal_state.turns_evaluated
-                nudge = build_goal_nudge(goal_state.condition, verdict, turns_remaining)
-                await _consume_turn(agent.process_message_stream(nudge))
-                _drain_tokens(goal_state)
-            # The loop above can exit on a met verdict or the turn cap; count the
-            # final verifier either way.
-            _drain_tokens(goal_state)
-            # Record the final goal outcome. An unmet goal exits 1 but the run
-            # itself completed: the process finished; the goal did not.
-            session_recorder.record_goal_completed(
-                {"met": goal_state.met, "turns": goal_state.turns_evaluated, "reason": goal_state.last_reason}
+            exit_code = await _run_ask_goal_iterations(
+                agent=agent,
+                goal_state=goal_state,
+                session_recorder=session_recorder,
+                json_mode=args.json,
+                consume_turn=_consume_turn,
+                drain_tokens=_drain_tokens,
             )
-            if not args.json:
-                status = "met" if goal_state.met else "not met (turn cap reached)"
-                print(f"[goal] {status} after {goal_state.turns_evaluated} turn(s)", file=sys.stderr)
-            if not goal_state.met:
-                exit_code = 1
 
         if args.save or args.session:
             session.config = summary
             store.save(session)
+        terminal_exit_code = exit_code
+    except KolegaExtensionLoadError as exc:
+        # Only bind_extension_agent raises this here: refuse the run rather
+        # than continue with the extension unbound.
+        print(f"Error: {exc}", file=sys.stderr)
+        run_status = "failed"
+        run_error = {"code": "extension_error", "message": str(exc)[:500]}
+        exit_code = 2
+        terminal_exit_code = 2
+        return exit_code
     except LLMBillingError as exc:
         exit_code = 1
         run_status = "failed"
         run_error = {"code": "billing_error", "message": CLI_BILLING_ERROR_MESSAGE}
+        terminal_exit_code = 1
         message = billing_error_message(exc, model=config.long_context_config.model)
         _print_styled(message, style="error", stderr=True)
     except asyncio.CancelledError:
@@ -1858,38 +1838,34 @@ async def _run_ask(args: argparse.Namespace) -> int:
         run_error = {"code": type(exc).__name__, "message": str(exc)[:500]}
         raise
     finally:
-        pump_task.cancel()
-        try:
-            await pump_task
-        except asyncio.CancelledError:
-            pass
+        if pump_task is not None:
+            pump_task.cancel()
+            try:
+                await pump_task
+            except asyncio.CancelledError:
+                pass
         while not manager.events.empty():
             event = manager.events.get_nowait()
             _print_ask_event(event, args.json)
-        end_fire_hook = getattr(agent, "fire_hook", None)
+        end_fire_hook = getattr(agent_ref.get("agent"), "fire_hook", None)
         if end_fire_hook is not None:
             try:
                 await end_fire_hook(HookEvent.SESSION_END, {"reason": "ask_complete"})
             except Exception:
                 pass
-        await agent.cleanup()
-        if extension_bundle is not None:
-            try:
-                await cleanup_extension_bundle(extension_bundle)
-            except Exception as exc:  # noqa: BLE001 — reported, never masks the primary exception
-                print(f"Warning: extension cleanup failed: {exc}", file=sys.stderr)
+        await _close_generation()
         if usage_sink is not None:
-            await usage_sink.aclose()
+            try:
+                await usage_sink.aclose()
+            except Exception as exc:  # noqa: BLE001 — reported, never masks the primary exception
+                print(f"Warning: usage sink close failed: {exc}", file=sys.stderr)
         # The run terminal is recorded synchronously after the usage sink has
         # drained, on every exit path — an await here could be re-cancelled
         # while a CancelledError is already propagating.
-        raising = run_status == "cancelled" or (
-            run_status == "failed" and (run_error or {}).get("code") != "billing_error"
-        )
         _record_ask_run_terminal(
             session_recorder,
             status=run_status,
-            exit_code=None if raising else exit_code,
+            exit_code=terminal_exit_code,
             started_at=run_started_at,
             error=run_error,
             usage_ledger=usage_ledger,
@@ -1922,6 +1898,90 @@ async def _run_ask(args: argparse.Namespace) -> int:
                     exit_code = 1
 
     return exit_code
+
+
+async def _run_ask_loop_iterations(
+    *,
+    agent: "CoderAgent",
+    loop_state: LoopState,
+    prompt: Optional[str],
+    attachments: list,
+    session_recorder,
+    json_mode: bool,
+    consume_turn,
+    drain_tokens,
+) -> None:
+    """Re-run the loop prompt until the iteration cap or the expiry is hit."""
+    drain_tokens(loop_state)
+    loop_state.advance_after_completion()
+    while loop_state.is_active:
+        await _sleep_until_loop_fire(loop_state, session_recorder, json_mode)
+        if not loop_state.is_active:
+            break
+        loop_state.mark_fired()
+        if loop_state.fresh:
+            agent.clear_history()
+        _emit_loop_iteration(loop_state, session_recorder, json_mode)
+        turn_prompt = build_loop_iteration_prompt(
+            prompt or "",
+            iteration=loop_state.iterations,
+            max_iterations=loop_state.max_iterations,
+            fresh=loop_state.fresh,
+        )
+        stream = (
+            agent.process_message_stream(turn_prompt, attachments)
+            if attachments
+            else agent.process_message_stream(turn_prompt)
+        )
+        await consume_turn(stream)
+        drain_tokens(loop_state)
+        loop_state.advance_after_completion()
+    _emit_loop_finished(loop_state, session_recorder, json_mode)
+
+
+async def _run_ask_goal_iterations(
+    *,
+    agent: "CoderAgent",
+    goal_state: GoalState,
+    session_recorder,
+    json_mode: bool,
+    consume_turn,
+    drain_tokens,
+) -> int:
+    """Evaluate and auto-continue until the goal is met or the turn cap is hit.
+
+    Returns the process exit code. An unmet goal exits 1 but the run itself
+    completed: the process finished; the goal did not.
+    """
+    drain_tokens(goal_state)
+    while not goal_state.met and goal_state.turns_evaluated < goal_state.max_turns:
+        verdict = await agent.evaluate_goal_condition(goal_state.condition)
+        goal_state.turns_evaluated += 1
+        goal_state.last_reason = verdict.reason
+        goal_state.last_evaluated_at = now_iso()
+        session_recorder.record_goal_evaluated(
+            {"met": verdict.met, "turns": goal_state.turns_evaluated, "reason": verdict.reason}
+        )
+        if not json_mode:
+            tag = "MET" if verdict.met else f"not met — {verdict.reason}"
+            print(f"[goal] turn {goal_state.turns_evaluated}: {tag}", file=sys.stderr)
+        if verdict.met:
+            goal_state.met = True
+            break
+        turns_remaining = goal_state.max_turns - goal_state.turns_evaluated
+        nudge = build_goal_nudge(goal_state.condition, verdict, turns_remaining)
+        await consume_turn(agent.process_message_stream(nudge))
+        drain_tokens(goal_state)
+    # The loop above can exit on a met verdict or the turn cap; count the
+    # final verifier either way.
+    drain_tokens(goal_state)
+    session_recorder.record_goal_completed(
+        {"met": goal_state.met, "turns": goal_state.turns_evaluated, "reason": goal_state.last_reason}
+    )
+    if not json_mode:
+        status = "met" if goal_state.met else "not met (turn cap reached)"
+        print(f"[goal] {status} after {goal_state.turns_evaluated} turn(s)", file=sys.stderr)
+    return 0 if goal_state.met else 1
 
 
 async def _pump_ask_events(manager: CliConnectionManager, json_mode: bool) -> None:

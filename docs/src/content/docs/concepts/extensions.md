@@ -36,7 +36,9 @@ kolega-code ask "Inspect the repository" \
   error.
 
 Load and validation failures terminate before the first model request with a
-concise error and a nonzero exit status. A tool name contributed by the
+concise error and a nonzero exit status. Any ordinary exception raised while
+importing the module — not just an `ImportError` — is reported the same way,
+naming the module and the original exception. A tool name contributed by the
 extension that conflicts with a built-in or already-provisioned tool also
 refuses to start.
 
@@ -141,8 +143,14 @@ helper calls without extra plumbing.
 
 `cleanup` runs exactly once per bundle (awaited when awaitable), after the
 corresponding agent's own cleanup, on every exit path: completion, interactive
-agent rebuild, failure, or interrupt. A cleanup failure is reported without
-masking the primary error.
+agent rebuild, failure, or interrupt. Once a bundle exists, the rest of the
+generation is one transaction — a failure during agent construction, LSP
+initialization, binding, session-start hooks, inference, or output
+serialization, and cancellation at any of those points, all still release the
+bundle. A partially constructed generation is cleaned to the extent it exists:
+agent cleanup runs only when the agent was built, and bundle cleanup runs even
+when agent cleanup fails. A cleanup failure is reported without masking the
+primary error.
 
 ## Minimal example
 
