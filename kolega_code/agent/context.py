@@ -133,6 +133,8 @@ class AgentContext:
                 token_manager=self.config.get_chatgpt_token_manager(),
                 usage_ledger=self.telemetry.usage_ledger,
                 trace_sink=self.telemetry.llm_trace_sink,
+                context_window_tokens=self.config.context_window_tokens,
+                max_output_tokens=self.config.max_output_tokens,
             )
 
         return LLMClient(
@@ -145,4 +147,6 @@ class AgentContext:
             token_manager=self.config.get_chatgpt_token_manager(),
             usage_ledger=self.telemetry.usage_ledger,
             trace_sink=self.telemetry.llm_trace_sink,
+            context_window_tokens=self.config.context_window_tokens,
+            max_output_tokens=self.config.max_output_tokens,
         )

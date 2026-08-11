@@ -57,6 +57,8 @@ class InstrumentedLLMClient(LLMClient):
         model: Optional[str] = None,
         usage_ledger: Optional[Any] = None,
         trace_sink: Optional[Any] = None,
+        context_window_tokens: Optional[int] = None,
+        max_output_tokens: Optional[int] = None,
     ):
         super().__init__(
             provider,
@@ -68,6 +70,8 @@ class InstrumentedLLMClient(LLMClient):
             model=model,
             usage_ledger=usage_ledger,
             trace_sink=trace_sink,
+            context_window_tokens=context_window_tokens,
+            max_output_tokens=max_output_tokens,
         )
         self.langfuse = langfuse_client
         self.workspace_id = workspace_id
@@ -190,13 +194,23 @@ class InstrumentedLLMClient(LLMClient):
         tools: Optional[List[ToolDefinition]] = None,
         thinking: Optional[Union[int, str]] = None,
         params: Optional[GenerationParams] = None,
+        *,
+        _precomputed_input_tokens: Optional[int] = None,
         **kwargs: Any,
     ) -> Message:
         """Generate with Langfuse tracing."""
         if not self.langfuse:
             # Fallback to non-instrumented if Langfuse not configured
             return await super().generate(
-                messages, system, temperature, max_completion_tokens, tools, thinking, params, **kwargs
+                messages,
+                system,
+                temperature,
+                max_completion_tokens,
+                tools,
+                thinking,
+                params,
+                _precomputed_input_tokens=_precomputed_input_tokens,
+                **kwargs,
             )
 
         # Extract model from kwargs
@@ -259,7 +273,15 @@ class InstrumentedLLMClient(LLMClient):
         try:
             # Call parent generate method
             response = await super().generate(
-                messages, system, temperature, max_completion_tokens, tools, thinking, params, **kwargs
+                messages,
+                system,
+                temperature,
+                max_completion_tokens,
+                tools,
+                thinking,
+                params,
+                _precomputed_input_tokens=_precomputed_input_tokens,
+                **kwargs,
             )
 
             # Extract token usage from response
@@ -331,13 +353,23 @@ class InstrumentedLLMClient(LLMClient):
         tools: Optional[List[ToolDefinition]] = None,
         thinking: Optional[Union[int, str]] = None,
         params: Optional[GenerationParams] = None,
+        *,
+        _precomputed_input_tokens: Optional[int] = None,
         **kwargs: Any,
     ) -> Union[AsyncContextManager[Any], Coroutine[Any, Any, AsyncContextManager[Any]]]:
         """Stream a response with Langfuse tracing"""
         if not self.langfuse:
             # Fallback to non-instrumented if Langfuse not configured
             return super().stream(
-                messages, system, temperature, max_completion_tokens, tools, thinking, params, **kwargs
+                messages,
+                system,
+                temperature,
+                max_completion_tokens,
+                tools,
+                thinking,
+                params,
+                _precomputed_input_tokens=_precomputed_input_tokens,
+                **kwargs,
             )
 
         # ``self.langfuse`` is guaranteed non-None here (we returned early above).
@@ -408,7 +440,16 @@ class InstrumentedLLMClient(LLMClient):
 
             # Get stream from underlying client
             stream = LLMClient.stream(
-                self, messages, system, temperature, max_completion_tokens, tools, thinking, params, **kwargs
+                self,
+                messages,
+                system,
+                temperature,
+                max_completion_tokens,
+                tools,
+                thinking,
+                params,
+                _precomputed_input_tokens=_precomputed_input_tokens,
+                **kwargs,
             )
 
             # Check if stream is a coroutine (needs to be awaited)
