@@ -115,7 +115,7 @@ def test_kimi_k26_model_specs():
     "model,context_length",
     [
         ("k3", 262144),
-        ("k3[1m]", 1048576),
+        ("k3-256k", 262144),
     ],
 )
 def test_kimi_coding_k3_model_specs(model, context_length):
@@ -129,6 +129,18 @@ def test_kimi_coding_k3_model_specs(model, context_length):
     assert specs["thinking_effort"].options == ("max",)
     assert specs["thinking_effort"].default == "max"
     assert specs["thinking_effort"].mode == "kimi_coding_effort"
+
+
+def test_kimi_coding_highspeed_model_specs():
+    specs = get_model_specs("kimi_coding", "kimi-for-coding-highspeed")
+
+    assert specs["context_length"] == 262144
+    assert specs["max_completion_tokens"] == 32768
+    assert specs["default_temperature"] == 1.0
+    assert specs["supports_vision"] is True
+    assert specs["thinking_effort"].options == ("auto", "none")
+    assert specs["thinking_effort"].default == "auto"
+    assert specs["thinking_effort"].mode == "moonshot_toggle"
 
 
 @pytest.mark.parametrize(

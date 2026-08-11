@@ -37,8 +37,10 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert default_thinking_effort("kimi_coding", "kimi-for-coding") == "auto"
     assert thinking_effort_options("kimi_coding", "k3") == ("max",)
     assert default_thinking_effort("kimi_coding", "k3") == "max"
-    assert thinking_effort_options("kimi_coding", "k3[1m]") == ("max",)
-    assert default_thinking_effort("kimi_coding", "k3[1m]") == "max"
+    assert thinking_effort_options("kimi_coding", "k3-256k") == ("max",)
+    assert default_thinking_effort("kimi_coding", "k3-256k") == "max"
+    assert thinking_effort_options("kimi_coding", "kimi-for-coding-highspeed") == ("auto", "none")
+    assert default_thinking_effort("kimi_coding", "kimi-for-coding-highspeed") == "auto"
     assert thinking_effort_options("fireworks", "accounts/fireworks/models/glm-5p2") == (
         "none",
         "low",
@@ -184,7 +186,7 @@ def test_kimi_coding_thinking_toggle_serialization() -> None:
     assert disabled == {"model": "kimi-for-coding", "thinking": {"type": "disabled"}}
 
 
-@pytest.mark.parametrize("model", ["k3", "k3[1m]"])
+@pytest.mark.parametrize("model", ["k3", "k3-256k"])
 def test_kimi_coding_k3_reasoning_effort_serialization(model: str) -> None:
     provider = AnthropicProvider(api_key="test-key", provider_name="kimi_coding")
 
