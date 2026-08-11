@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 import inspect
 import json
@@ -319,6 +320,8 @@ class AgentTool(BaseTool):
         await self._send_status_event("GENERATING", f"Starting {agent_name} task", sub_agent_info=sub_agent_info)
         conversation_finished = False
         agent = None
+        scoped_recorder = None
+        agent_terminal_recorded = False
 
         try:
             # Create the agent instance
@@ -381,6 +384,19 @@ class AgentTool(BaseTool):
             if workflow_accounting is not None:
                 agent._workflow_accounting = workflow_accounting
                 agent._accounting_reservation = reservation
+
+            scoped_recorder = await asyncio.to_thread(
+                self._scoped_session_recorder,
+                agent_id=agent_id,
+                agent_name=agent_name,
+                class_name=class_name,
+                task=task,
+                tool_call_id=tool_call_id,
+                conversation_id=conversation_id,
+                sub_agent_info=sub_agent_info,
+            )
+            if scoped_recorder is not None:
+                agent.session_recorder = scoped_recorder
 
             # Track messages and their sequence
             last_saved_index = -1  # Track what we've already saved
@@ -469,6 +485,20 @@ class AgentTool(BaseTool):
             # SubagentStop is deferred; the per-agent Stop hook covers keep-working.)
             result = await self._apply_subagent_stop_hooks(agent_name, result, sub_agent_info)
 
+            if scoped_recorder is not None:
+                completed_tokens = getattr(agent, "total_tokens_used", None)
+                await asyncio.to_thread(
+                    scoped_recorder.record_agent_terminal,
+                    "completed",
+                    {
+                        "summary": str(result)[:2000],
+                        "message_count": len(final_history),
+                        "execution_time_seconds": time.time() - start_time,
+                        "total_tokens": completed_tokens if isinstance(completed_tokens, int) else None,
+                    },
+                )
+                agent_terminal_recorded = True
+
             # Update conversation with completion status
             if conversation_id:
                 execution_time = time.time() - start_time
@@ -499,6 +529,15 @@ class AgentTool(BaseTool):
             return result
 
         except Exception as e:
+            if scoped_recorder is not None and not agent_terminal_recorded:
+                try:
+                    scoped_recorder.record_agent_terminal(
+                        "failed",
+                        {"error": str(e)[:2000], "execution_time_seconds": time.time() - start_time},
+                    )
+                    agent_terminal_recorded = True
+                except Exception:  # noqa: BLE001 - journaling must not mask the dispatch failure
+                    pass
             # Update conversation with error status
             if conversation_id:
                 execution_time = time.time() - start_time
@@ -519,6 +558,16 @@ class AgentTool(BaseTool):
             raise
 
         finally:
+            if scoped_recorder is not None and not agent_terminal_recorded:
+                try:
+                    # Synchronous on purpose: an await here can be re-cancelled
+                    # while the CancelledError is already propagating.
+                    scoped_recorder.record_agent_terminal(
+                        "failed",
+                        {"error_code": "interrupted", "execution_time_seconds": time.time() - start_time},
+                    )
+                except Exception:  # noqa: BLE001 - never mask the primary outcome
+                    pass
             if reservation is not None:
                 total_tokens = getattr(agent, "total_tokens_used", None)
                 reservation.report_total(total_tokens if type(total_tokens) is int else None)
@@ -934,6 +983,44 @@ class AgentTool(BaseTool):
                 lines.append(self._render_workflow_message(message))
         path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
+    def _scoped_session_recorder(
+        self,
+        *,
+        agent_id: str,
+        agent_name: str,
+        class_name: str,
+        task: str,
+        tool_call_id: Optional[str],
+        conversation_id: Optional[str],
+        sub_agent_info: dict,
+    ):
+        """Create the subagent's scoped session recorder and journal ``agent.started``.
+
+        Returns None when the parent session is not being recorded. Synchronous
+        (one journal append) — call via ``asyncio.to_thread``.
+        """
+        parent_recorder = getattr(self.caller, "session_recorder", None) if self.caller else None
+        if parent_recorder is None:
+            return None
+        scoped = parent_recorder.scoped_child(
+            agent_id=agent_id,
+            agent_name=agent_name,
+            parent_tool_call_id=tool_call_id,
+            depth=sub_agent_info["depth"],
+        )
+        scoped.record_agent_started(
+            {
+                "agent_name": agent_name,
+                "class_name": class_name,
+                "task": task,
+                "requested_routing": sub_agent_info.get("requested_routing"),
+                "effective_routing": sub_agent_info.get("effective_routing"),
+                "conversation_id": conversation_id,
+            },
+            turn_id=parent_recorder.current_turn_id,
+        )
+        return scoped
+
     async def dispatch_workflow_agent(
         self,
         agent_class,
@@ -1009,6 +1096,8 @@ class AgentTool(BaseTool):
         await self._send_status_event("GENERATING", f"Starting {agent_name} task", sub_agent_info=sub_agent_info)
         conversation_finished = False
         agent = None
+        scoped_recorder = None
+        agent_terminal_recorded = False
 
         try:
             agent = self._construct_workflow_sub_agent(
@@ -1053,6 +1142,17 @@ class AgentTool(BaseTool):
             result = await self._apply_subagent_stop_hooks(agent_name, result, sub_agent_info)
 
             total_tokens = getattr(agent, "total_tokens_used", None)
+            if scoped_recorder is not None:
+                await asyncio.to_thread(
+                    scoped_recorder.record_agent_terminal,
+                    "completed",
+                    {
+                        "summary": str(result)[:2000],
+                        "execution_time_seconds": time.time() - start_time,
+                        "total_tokens": total_tokens if isinstance(total_tokens, int) else None,
+                    },
+                )
+                agent_terminal_recorded = True
             if conversation_id:
                 await self._complete_conversation(
                     conversation_id,
@@ -1090,6 +1190,15 @@ class AgentTool(BaseTool):
             return result, (total_tokens if isinstance(total_tokens, int) else 0), structured
 
         except Exception as e:
+            if scoped_recorder is not None and not agent_terminal_recorded:
+                try:
+                    scoped_recorder.record_agent_terminal(
+                        "failed",
+                        {"error": str(e)[:2000], "execution_time_seconds": time.time() - start_time},
+                    )
+                    agent_terminal_recorded = True
+                except Exception:  # noqa: BLE001 - journaling must not mask the dispatch failure
+                    pass
             failed_tokens = getattr(agent, "total_tokens_used", None)
             reservation.report_total(failed_tokens if type(failed_tokens) is int else None)
             if conversation_id:
@@ -1123,6 +1232,16 @@ class AgentTool(BaseTool):
             raise
 
         finally:
+            if scoped_recorder is not None and not agent_terminal_recorded:
+                try:
+                    # Synchronous on purpose: an await here can be re-cancelled
+                    # while the CancelledError is already propagating.
+                    scoped_recorder.record_agent_terminal(
+                        "failed",
+                        {"error_code": "interrupted", "execution_time_seconds": time.time() - start_time},
+                    )
+                except Exception:  # noqa: BLE001 - never mask the primary outcome
+                    pass
             total_tokens = getattr(agent, "total_tokens_used", None)
             reservation.report_total(total_tokens if type(total_tokens) is int else None)
             if conversation_id and not conversation_finished:

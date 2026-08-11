@@ -7,7 +7,13 @@ from unittest.mock import Mock
 import pytest
 
 from kolega_code.cli import session_journal as session_journal_module
-from kolega_code.cli.session_journal import SessionJournalError, SessionRecorder, TOOL_RESULT_PREVIEW_CHARS
+from kolega_code.cli.session_journal import (
+    DEFAULT_ROOT_AGENT_NAME,
+    TOOL_RESULT_PREVIEW_CHARS,
+    SessionJournalError,
+    SessionRecorder,
+    derive_root_agent_id,
+)
 from kolega_code.cli.session_store import SessionRecord, SessionStore, SessionStoreError, default_state_dir
 from kolega_code.llm.models import (
     ImageBlock,
@@ -206,9 +212,19 @@ def test_event_records_are_ordered_and_have_stable_envelope(tmp_path: Path) -> N
         "assistant.message",
         "turn.completed",
     ]
-    assert all(event.version == 1 for event in events)
+    assert all(event.version == 2 for event in events)
     assert all(event.session_id == record.session_id for event in events)
     assert all(event.event_id and event.timestamp and event.epoch_id for event in events)
+    root_id = derive_root_agent_id(record.session_id)
+    assert all(event.agent_id == root_id for event in events)
+    assert all(event.agent_name == DEFAULT_ROOT_AGENT_NAME for event in events)
+    assert all(event.depth == 0 for event in events)
+    assert all(event.parent_agent_id is None and event.parent_tool_call_id is None for event in events)
+    raw_lines = store.events_path_for(record.session_id).read_text(encoding="utf-8").splitlines()
+    for line in raw_lines:
+        data = json.loads(line)
+        assert data["schema"] == "kolega.session.event"
+        assert set(data) >= {"agent_id", "agent_name", "parent_agent_id", "parent_tool_call_id", "depth"}
 
 
 def test_incomplete_final_jsonl_fragment_is_repaired(tmp_path: Path) -> None:

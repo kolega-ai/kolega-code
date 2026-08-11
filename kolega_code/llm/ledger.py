@@ -270,6 +270,24 @@ class UsageLedger:
                 return
             record.state = _RequestState.RESPONDED
             record.usage = usage if isinstance(usage, NormalizedUsage) else None
+            if message is not None:
+                # Stamp the settled call identity onto the message so downstream
+                # recorders can expose it as `llm_call_id` without an observer.
+                # First-settle-wins above guarantees exactly one stamp. A message
+                # that cannot hold the stamp must still notify and settle.
+                try:
+                    metadata = getattr(message, "usage_metadata", None)
+                    if not isinstance(metadata, dict):
+                        metadata = {}
+                        message.usage_metadata = metadata
+                    metadata["llm_call"] = {
+                        "llm_call_id": request_id,
+                        "run_id": self.run_id,
+                        "provider": record.provider,
+                        "model": record.model,
+                    }
+                except Exception:
+                    logger.debug("UsageLedger: could not stamp llm_call onto the message", exc_info=True)
             self._notify(lambda observer: observer.on_response(self._settled(request_id, record), message))
         except Exception:
             logger.exception("UsageLedger.record_response failed for request %s", request_id)

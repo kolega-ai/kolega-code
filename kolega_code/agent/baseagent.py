@@ -340,6 +340,8 @@ class BaseAgent(LogMixin):
         self.sub_agent_recorder = context.telemetry.sub_agent_recorder
         self.usage_ledger = context.telemetry.usage_ledger
         self.llm_trace_sink = context.telemetry.llm_trace_sink
+        # Subagents start unrecorded; AgentTool assigns a scoped child recorder
+        # post-construction when the parent session is being recorded.
         self.session_recorder = None if sub_agent else session_recorder
         self.custom_agent_catalog = custom_agent_catalog
         self.memory_manager = context.services.memory_manager
@@ -579,6 +581,15 @@ class BaseAgent(LogMixin):
                 Message(role="user", content=[TextBlock(text=text)]),
             )
         self.append_user_message([TextBlock(text=text)])
+
+    async def _record_synthetic_notice(self, text: str, notice_code: str) -> None:
+        """Journal a deterministic assistant notice that never enters history."""
+        if self.session_recorder is not None:
+            await asyncio.to_thread(
+                self.session_recorder.record_synthetic_assistant,
+                text,
+                notice_code=notice_code,
+            )
 
     def extend_history(self, messages: List[Message]) -> None:
         """
@@ -1126,12 +1137,16 @@ class BaseAgent(LogMixin):
             message=message,
         )
 
-    async def compress_history(self) -> CompactionResult:
+    async def compress_history(
+        self, *, trigger: str = "manual", tokens_before: Optional[int] = None
+    ) -> CompactionResult:
         """
         Non-destructively summarize the current history, keeping recent turns
         verbatim. Emits a compaction_status event around the work so the UI can
         show progress, then recounts + emits a context_update so the gauge
         refreshes. Returns the structured outcome.
+
+        ``trigger``/``tokens_before`` are journaled as compaction provenance.
         """
         # Compacted-away web_search_call blocks stop being replayed, so the
         # server stops restoring their content. Reset the hosted-search residual
@@ -1180,7 +1195,16 @@ class BaseAgent(LogMixin):
                 # the manual /compact command gets the same re-injection as auto-compaction.
                 self._volatile_context.forget()
                 if self.session_recorder is not None:
-                    await asyncio.to_thread(self.session_recorder.record_compaction, self.dump_compaction_state())
+                    await asyncio.to_thread(
+                        self.session_recorder.record_compaction,
+                        self.dump_compaction_state(),
+                        info={
+                            "trigger": trigger,
+                            "reason": result.reason,
+                            "summarized_messages": result.summarized_messages,
+                            "input_tokens_before": tokens_before,
+                        },
+                    )
         finally:
             # Recount + emit so the context gauge reflects post-compaction reality
             # (even on a no-op the UI may have been stale).
@@ -1611,6 +1635,18 @@ class BaseAgent(LogMixin):
         them and no response is ever journaled twice.
         """
         if self.session_recorder is not None:
+            if self.sub_agent:
+                # Scoped subagent recording journals these responses too; keep
+                # the history dedup rule but preserve the agent lineage for
+                # failure attribution and usage breakdowns.
+                stamp = self.session_recorder.agent_stamp
+                return LlmCallOrigin(
+                    kind="history",
+                    agent_name=stamp.agent_name,
+                    agent_id=stamp.agent_id,
+                    parent_tool_call_id=stamp.parent_tool_call_id,
+                    depth=stamp.depth,
+                )
             return HISTORY_ORIGIN
         if self.sub_agent:
             context = getattr(self, "sub_agent_context", None) or {}
@@ -2145,6 +2181,7 @@ class BaseAgent(LogMixin):
 
         unsupported_attachment_message = self._unsupported_attachment_message(attachments)
         if unsupported_attachment_message:
+            await self._record_synthetic_notice(unsupported_attachment_message, "unsupported_attachment")
             yield {
                 "type": "response",
                 "content": unsupported_attachment_message,
@@ -2161,6 +2198,7 @@ class BaseAgent(LogMixin):
             submit = await self.fire_hook(HookEvent.USER_PROMPT_SUBMIT, {"user_message": message})
             if submit.blocked or submit.end_turn:
                 reason = submit.reason or "A hook blocked this prompt."
+                await self._record_synthetic_notice(reason, "hook_blocked")
                 yield {"type": "response", "content": reason, "complete": True, "uuid": str(uuid.uuid4())}
                 return
             if submit.additional_context:
@@ -2170,6 +2208,12 @@ class BaseAgent(LogMixin):
             await asyncio.to_thread(
                 self.session_recorder.start_turn,
                 Message(role="user", content=content_blocks),
+            )
+            # Journal the rendered provider-facing system context; deduplicated
+            # by fingerprint inside the recorder so only changes are recorded.
+            await asyncio.to_thread(
+                self.session_recorder.record_system_context,
+                self.system_prompt.get_text_content(),
             )
 
         self.append_user_message(content_blocks)
@@ -2229,7 +2273,7 @@ class BaseAgent(LogMixin):
                             "model_context_length": self.model_context_length,
                         },
                     )
-                    result = await self.compress_history()
+                    result = await self.compress_history(trigger="auto", tokens_before=before_tokens)
                     # compress_history forgets the volatile-context sent-state on success,
                     # so the next turn re-sends memory, guidance, and any host sections
                     # (plan handle, task list) the summary may have folded away.
@@ -2409,7 +2453,11 @@ class BaseAgent(LogMixin):
                     )
 
                 if self.session_recorder is not None:
-                    await asyncio.to_thread(self.session_recorder.record_assistant, assistant_message)
+                    await asyncio.to_thread(
+                        self.session_recorder.record_assistant,
+                        assistant_message,
+                        reasoning_effort=self.primary_model_config.thinking_effort,
+                    )
                 self.append_assistant_message(assistant_message)
                 # A clean stream resets the transient-failure budget, so the cap measures
                 # only consecutive failures, not lifetime failures across the turn.
@@ -2449,6 +2497,7 @@ class BaseAgent(LogMixin):
                                 content=f"Failed to process tool calls: {str(ex)}",
                                 name=tool_call.name,
                                 is_error=True,
+                                execution_id=tool_call.execution_id,
                                 input_kind=tool_call.input_kind,
                             )
                             for tool_call in assistant_message.tool_calls
@@ -2507,13 +2556,15 @@ class BaseAgent(LogMixin):
                             "Model returned no output after repeated reminders — ending the turn with no result.",
                         )
                         await self._record_context_user_message(SILENT_TURN_EXHAUSTED_NOTICE)
+                        silent_exhausted_text = (
+                            "[no output] The model ended its turn with no tool call and no visible "
+                            f"message {self.MAX_SILENT_TURN_NUDGES + 1} times in a row despite "
+                            "reminders. The turn was terminated without a result."
+                        )
+                        await self._record_synthetic_notice(silent_exhausted_text, "silent_turn_exhausted")
                         yield {
                             "type": "response",
-                            "content": (
-                                "[no output] The model ended its turn with no tool call and no visible "
-                                f"message {self.MAX_SILENT_TURN_NUDGES + 1} times in a row despite "
-                                "reminders. The turn was terminated without a result."
-                            ),
+                            "content": silent_exhausted_text,
                             "complete": True,
                             "uuid": str(uuid.uuid4()),
                         }

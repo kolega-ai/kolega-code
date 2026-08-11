@@ -183,6 +183,12 @@ class SessionUsageSink:
             refs: list[dict[str, Any]] = []
             if item.message_dict is not None:
                 prepared, refs = self._journal.prepare_message(item.message_dict)
+            if prepared is not None:
+                # The ledger's call-identity stamp duplicates this event's own
+                # top-level request_id; keep the journaled message clean.
+                metadata = prepared.get("usage_metadata")
+                if isinstance(metadata, dict):
+                    metadata.pop("llm_call", None)
             self._journal.append(
                 LLM_MESSAGE_EVENT,
                 actor="assistant",

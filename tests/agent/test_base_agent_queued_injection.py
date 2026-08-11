@@ -134,8 +134,9 @@ async def test_injection_journal_ordering_and_replay(base_agent, tmp_path) -> No
     event_types = [event.event_type for event in store.journal(session.session_id).read_events()]
     # Two context messages now: the volatile-context update at the start of the turn, and the
     # queued user input delivered mid-turn.
-    assert event_types[-7:] == [
+    assert event_types[-8:] == [
         "turn.started",
+        "context.system",
         "context.message",
         "assistant.message",
         "tool.results",

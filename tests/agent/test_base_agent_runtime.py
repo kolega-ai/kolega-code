@@ -205,8 +205,9 @@ class TestBaseAgent:
         assert chunks[-1]["complete"] is True
         # The volatile-context update is journalled inside the turn, after turn.started, so it is
         # attributed to the turn rather than dangling outside one. See agent/volatile_context.py.
-        assert [event.event_type for event in store.journal(session.session_id).read_events()][-4:] == [
+        assert [event.event_type for event in store.journal(session.session_id).read_events()][-5:] == [
             "turn.started",
+            "context.system",
             "context.message",
             "assistant.message",
             "turn.completed",
@@ -248,10 +249,13 @@ class TestBaseAgent:
             def start_turn(self, message):
                 self.current_turn_id = "turn"
 
+            def record_system_context(self, text):
+                return False
+
             def record_context_message(self, message, *, actor=None):
                 pass
 
-            def record_assistant(self, message):
+            def record_assistant(self, message, *, reasoning_effort=None):
                 raise OSError("assistant event failed")
 
             def finish_turn(self, status, *, error=None):
@@ -290,10 +294,13 @@ class TestBaseAgent:
             def start_turn(self, message):
                 self.current_turn_id = "turn"
 
+            def record_system_context(self, text):
+                return False
+
             def record_context_message(self, message, *, actor=None):
                 pass
 
-            def record_assistant(self, message):
+            def record_assistant(self, message, *, reasoning_effort=None):
                 return None
 
             def record_tool_results(self, results):
