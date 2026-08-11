@@ -293,6 +293,9 @@ CHATGPT_LOGIN_SWITCH_FAILED = "Signed in, but could not switch to the ChatGPT pr
 CHATGPT_LOGOUT_DONE = "Signed out of ChatGPT. Stored credentials were removed."
 CHATGPT_LOGOUT_NONE = "You are not signed in to ChatGPT."
 
+# Session quit hint
+SESSION_RESUME_HINT = "Session saved. Resume it with: kolega-code . --resume {session_id}"
+
 # Misc
 COPY_MACOS_FAILED = "Copied for supported terminals, but the macOS clipboard failed."
 STREAM_TRUNCATED = "[stream truncated to the last {chars} characters]"

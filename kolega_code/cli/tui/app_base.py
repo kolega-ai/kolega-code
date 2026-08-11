@@ -130,6 +130,9 @@ class KolegaAppBase(App):
         control_channel: ControlChannel
         _hook_dispatcher: HookDispatcher | None
         _session_started: bool
+        #: True once action_quit has saved the session; gates the post-quit
+        #: resume hint printed by main.py.
+        _quit_cleanly: bool
         agent: BaseAgent | None
         agent_worker: Worker | None
         conversation_entries: list[tui_state.ConversationEntry]
