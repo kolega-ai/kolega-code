@@ -501,7 +501,17 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         help="Force Agent Skills on or off for this session (overrides settings.json; not persisted).",
     )
     ask.add_argument("--save", action="store_true", help="Persist the session after the prompt completes.")
-    ask.add_argument("--json", action="store_true", help="Emit complete messages and events as JSON.")
+    ask.add_argument("--json", action="store_true", help="Stream the semantic event protocol as JSON lines.")
+    ask.add_argument(
+        "--atif-output",
+        type=Path,
+        default=None,
+        help=(
+            "After the run ends (completed, failed, or cancelled), write a validated ATIF v1.7 "
+            "trajectory to this file (image assets to <file-stem>.assets/). Works with or "
+            "without --save; stdout is unchanged."
+        ),
+    )
     ask.add_argument("--browser-visible", action="store_true", help="Launch visible Playwright browser windows.")
     ask.add_argument(
         "--permission-mode",
@@ -548,11 +558,13 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     sessions_export.add_argument("session_id")
     sessions_export.add_argument(
         "--format",
-        choices=("json", "events-jsonl"),
+        choices=("json", "events-jsonl", "atif"),
         default="json",
         help=(
             "json: effective-history replay snapshot (default, unchanged); "
-            "events-jsonl: the canonical public semantic event log, one v2 envelope per line."
+            "events-jsonl: the canonical public semantic event log, one v2 envelope per line; "
+            "atif: a validated ATIF v1.7 trajectory (image assets require --output and are "
+            "written to <output-stem>.assets/)."
         ),
     )
     sessions_export.add_argument("--output", type=Path, help="Write the export to a file instead of stdout.")
@@ -1884,6 +1896,30 @@ async def _run_ask(args: argparse.Namespace) -> int:
             provider=str(getattr(config.long_context_config, "provider", None) or "") or None,
             model=config.long_context_config.model,
         )
+        if getattr(args, "atif_output", None) is not None:
+            # After the run terminal so the trajectory carries the outcome.
+            # Synchronous and broadly guarded: this runs inside a finally and
+            # must never mask billing errors or a propagating cancellation.
+            try:
+                from kolega_code import __version__ as _kolega_version_atif
+
+                from .atif_export import export_atif_to_path
+
+                path = export_atif_to_path(
+                    journal,
+                    output=args.atif_output,
+                    session_metadata=session.to_metadata_dict(),
+                    kolega_version=_kolega_version_atif,
+                    secret_values=known_secret_values(settings, settings_store, project_path=launch_project_path),
+                    state_dirs=(store.root,),
+                )
+                _print_styled(f"Wrote ATIF trajectory to {path}", style="success", stderr=True)
+            except Exception as exc:  # noqa: BLE001 - reported; run outcome wins
+                _print_styled(f"ATIF export failed: {exc}", style="error", stderr=True)
+                if exit_code == 0:
+                    # A conversion failure on an otherwise-clean run exits 1;
+                    # a run that already failed keeps its own exit status.
+                    exit_code = 1
 
     return exit_code
 
@@ -2031,7 +2067,10 @@ def _run_sessions(args: argparse.Namespace) -> int:
         print(f"Deleted session {args.session_id}")
         return 0
     if args.sessions_command == "export":
-        if getattr(args, "format", "json") == "events-jsonl":
+        export_format = getattr(args, "format", "json")
+        if export_format == "atif":
+            return _run_sessions_export_atif(args, store)
+        if export_format == "events-jsonl":
             settings_store = _settings_store_from_args(args)
             settings = settings_store.load()
             payload = store.export_events(
@@ -2046,6 +2085,38 @@ def _run_sessions(args: argparse.Namespace) -> int:
             print(payload, end="")
         return 0
     raise ValueError(f"Unknown sessions command: {args.sessions_command}")
+
+
+def _run_sessions_export_atif(args: argparse.Namespace, store: SessionStore) -> int:
+    # Local import: the converter (and the pinned atif package) load only when
+    # an ATIF export is actually requested.
+    from kolega_code import __version__ as kolega_version
+
+    from .atif_export import AtifExportError, AtifImagesNeedOutputError, export_atif_to_path, export_atif_to_text
+
+    settings_store = _settings_store_from_args(args)
+    settings = settings_store.load()
+    record = store.load(args.session_id)
+    source = store.journal(record.session_id)
+    common: dict[str, Any] = {
+        "session_metadata": record.to_metadata_dict(),
+        "kolega_version": kolega_version,
+        "secret_values": known_secret_values(settings, settings_store, project_path=Path(record.project_path)),
+        "state_dirs": (store.root,),
+    }
+    try:
+        if args.output:
+            path = export_atif_to_path(source, output=args.output, **common)
+            print(f"Wrote ATIF trajectory to {path}", file=sys.stderr)
+        else:
+            sys.stdout.write(export_atif_to_text(source, **common))
+        return 0
+    except AtifImagesNeedOutputError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    except AtifExportError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
 
 
 def _run_prompts(args: argparse.Namespace) -> int:

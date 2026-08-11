@@ -29,6 +29,9 @@ classifiers = [
 ]
 dependencies = [
     "anthropic==0.101.0",
+    # ATIF v1.7 trajectory models: every `sessions export --format atif` /
+    # `ask --atif-output` document is validated before it is written.
+    "atif==1.7.0",
     "beautifulsoup4==4.14.3",
     # Not imported directly (google-auth/pdfminer-six pull it in); pinned for
     # security: 48.0.1 is vulnerable to CVE-2026-69247/-69248/-69249 (PKCS#7

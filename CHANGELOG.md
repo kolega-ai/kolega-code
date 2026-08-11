@@ -6,6 +6,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- ATIF v1.7 trajectory export: `sessions export --format atif` converts any
+  session (including pre-upgrade v1 sessions, with explicit conversion
+  warnings) into a validated [ATIF](https://github.com/harbor-framework/harbor/blob/main/rfcs/0001-trajectory-format.md)
+  document, and `ask --atif-output FILE` writes one directly when a run ends —
+  completed, failed, or cancelled, with or without `--save`. Embedded subagent
+  trajectories, per-step token metrics, hydrated oversized tool results, and
+  atomic file+assets output; image trajectories require `--output`/a file
+  destination for portable relative asset paths.
+
 ### Changed
 
 - **Breaking:** `kolega-code ask --json` now streams the semantic session-event
