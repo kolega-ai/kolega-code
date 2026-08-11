@@ -113,6 +113,10 @@ class HistoryCompressor:
             # Stream and drain rather than calling generate(): the Anthropic SDK
             # rejects non-streaming requests whose max_tokens is large enough to risk
             # a >10-minute response, which the model's full completion budget triggers.
+            #
+            # The helper origin spans the whole request: providers may sample and
+            # emit their trace record at context entry or final-message time, not
+            # at stream().
             with llm_call_origin(helper_origin("compression")):
                 stream_cm = await llm.stream(
                     messages=messages,
@@ -122,10 +126,10 @@ class HistoryCompressor:
                     max_completion_tokens=self.SUMMARY_MAX_TOKENS,
                     thinking=thinking,
                 )
-            async with stream_cm as stream:
-                async for _event in stream:
-                    pass
-            response = await stream.get_final_message()
+                async with stream_cm as stream:
+                    async for _event in stream:
+                        pass
+                response = await stream.get_final_message()
 
             summary_text = response.get_text_content()
             if not summary_text or not summary_text.strip():

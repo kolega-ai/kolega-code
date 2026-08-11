@@ -82,3 +82,66 @@ def test_create_llm_client_forwards_trace_sink_to_instrumented_client(tmp_path):
     client = agent.context.create_llm_client(agent.agent_name)
     assert isinstance(client, InstrumentedLLMClient)
     assert client._trace_sink is _sink
+
+
+# --- helper clients ---------------------------------------------------------------
+# Every LLM client a helper derives from an agent must carry the agent's sink.
+
+
+@pytest.mark.asyncio
+async def test_hook_prompt_client_receives_trace_sink(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from .compaction_helpers import build_agent
+
+    agent, _ = build_agent(tmp_path)
+    agent.llm_trace_sink = _sink
+    seen_kwargs = {}
+
+    class _Capturing:
+        def __init__(self, **kwargs):
+            seen_kwargs.update(kwargs)
+
+        async def generate(self, **kwargs):
+            return SimpleNamespace(get_text_content=lambda: "ok")
+
+    monkeypatch.setattr("kolega_code.llm.client.LLMClient", _Capturing)
+    await agent._run_hook_prompt("check", None)
+    assert seen_kwargs["trace_sink"] is _sink
+
+
+@pytest.mark.asyncio
+async def test_terminal_security_client_receives_trace_sink(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from kolega_code.agent.tool_backend import terminal_tool as terminal_tool_module
+    from kolega_code.agent.tool_backend.terminal_tool import TerminalTool
+
+    seen_kwargs = {}
+
+    class _Capturing:
+        def __init__(self, **kwargs):
+            seen_kwargs.update(kwargs)
+
+        async def generate(self, **kwargs):
+            return SimpleNamespace(get_text_content=lambda: "safe")
+
+    tool = object.__new__(TerminalTool)
+    tool.config = make_agent_config()
+    tool.caller = SimpleNamespace(usage_ledger=None, llm_trace_sink=_sink, scratchpad_dir=None, project_path=tmp_path)
+    monkeypatch.setattr(terminal_tool_module, "LLMClient", _Capturing)
+
+    await tool._run_command_security_check("ls")
+    assert seen_kwargs["trace_sink"] is _sink
+
+
+def test_web_fetch_client_receives_trace_sink():
+    from types import SimpleNamespace
+
+    from kolega_code.agent.tool_backend.web_fetch_tool import WebFetchTool
+
+    tool = object.__new__(WebFetchTool)
+    tool.config = make_agent_config()
+    tool.caller = SimpleNamespace(llm=None, usage_ledger=None, llm_trace_sink=_sink)
+    client = tool._build_client()
+    assert client._trace_sink is _sink

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import contextvars
 from dataclasses import dataclass
 import logging
@@ -1683,6 +1684,7 @@ class BaseAgent(LogMixin):
             tokens_per_minute=model_config.rate_limits.tokens_per_minute,
             token_manager=self.config.get_chatgpt_token_manager(),
             usage_ledger=self.usage_ledger,
+            trace_sink=self.llm_trace_sink,
         )
         with llm_call_origin(helper_origin("hook_prompt")):
             response = await client.generate(
@@ -2038,21 +2040,28 @@ class BaseAgent(LogMixin):
         no actual conversation. Mirroring here rather than at each ``yield`` keeps
         one choke point that cannot drift out of sync with the yields.
         """
-        async for chunk in self._run_recorded_turn(
-            self._process_message_stream_impl(message, attachments), user_text=message
-        ):
-            yield chunk
+        turn = self._run_recorded_turn(self._process_message_stream_impl(message, attachments), user_text=message)
+        async with contextlib.aclosing(turn):
+            async for chunk in turn:
+                yield chunk
 
     async def _run_recorded_turn(
         self, impl: AsyncGenerator[Dict[str, Any], None], *, user_text: Optional[str]
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Drive one recorded turn: boundaries, chunk mirroring, terminal bookkeeping."""
+        """Drive one recorded turn: boundaries, chunk mirroring, terminal bookkeeping.
+
+        ``aclosing`` propagates an early close of this generator into ``impl``
+        synchronously — an abandoned turn must not leave the inner loop (and the
+        provider stream context it holds) waiting for garbage-collection
+        finalization.
+        """
         turn_id = str(uuid.uuid4())
         await self._emit_turn_boundary("started", turn_id=turn_id, user_text=user_text)
         try:
-            async for chunk in impl:
-                await self._mirror_stream_chunk(chunk)
-                yield chunk
+            async with contextlib.aclosing(impl):
+                async for chunk in impl:
+                    await self._mirror_stream_chunk(chunk)
+                    yield chunk
         except asyncio.CancelledError:
             await self._finish_recorded_turn("cancelled")
             await self._emit_turn_boundary("ended", turn_id=turn_id, status="cancelled")
@@ -2253,8 +2262,10 @@ class BaseAgent(LogMixin):
                 )
             self.append_user_message([volatile_context])
 
-        async for chunk in self._agent_loop_stream():
-            yield chunk
+        loop_stream = self._agent_loop_stream()
+        async with contextlib.aclosing(loop_stream):
+            async for chunk in loop_stream:
+                yield chunk
 
     async def _agent_loop_stream(self) -> AsyncGenerator[Dict[str, Any], None]:
         """The shared agent loop: compaction, model streaming, tool execution.
@@ -2349,6 +2360,12 @@ class BaseAgent(LogMixin):
                 # provider is ``async def``, so the call is always a coroutine that we
                 # await into the context manager. Cast to the coroutine form for the type
                 # checker rather than awaiting the union directly.
+                #
+                # The origin must stay active for the whole request — entry into
+                # the stream context manager, event iteration, and
+                # get_final_message() — because providers may sample and emit
+                # their trace record at any of those points (the native Tinker
+                # provider does all of it in __aenter__), not at stream().
                 with llm_call_origin(self._main_loop_origin()):
                     stream_cm = await cast(
                         Coroutine[Any, Any, AbstractAsyncContextManager[Any]],
@@ -2363,84 +2380,84 @@ class BaseAgent(LogMixin):
                             hosted_web_search=self.hosted_web_search_active,
                         ),
                     )
-                async with stream_cm as stream:
-                    async for event in stream:
-                        if event.type == "text":
-                            current_response += event.text
+                    async with stream_cm as stream:
+                        async for event in stream:
+                            if event.type == "text":
+                                current_response += event.text
 
-                            # Send periodic updates as the response grows
-                            if len(current_response) >= 50:
+                                # Send periodic updates as the response grows
+                                if len(current_response) >= 50:
+                                    yield {
+                                        "type": "response",
+                                        "content": current_response,
+                                        "complete": False,
+                                        "uuid": response_uuid,
+                                    }
+                                    current_response = ""
+
+                            elif event.type == "thinking" and event.thinking:
+                                current_thinking += event.thinking
+
+                                if len(current_thinking) >= 50:
+                                    thinking_started = True
+                                    yield {
+                                        "type": "thinking",
+                                        "content": current_thinking,
+                                        "complete": False,
+                                        "uuid": thinking_uuid,
+                                    }
+                                    current_thinking = ""
+
+                            elif event.type == "tool_use_start" and event.tool_call_delta:
+                                # Flush accumulated text first so the user doesn't have to wait for it.
                                 yield {
                                     "type": "response",
                                     "content": current_response,
-                                    "complete": False,
+                                    "complete": True,
                                     "uuid": response_uuid,
                                 }
                                 current_response = ""
 
-                        elif event.type == "thinking" and event.thinking:
-                            current_thinking += event.thinking
+                                await self.on_tool_use_start(event.tool_call_delta)
 
-                            if len(current_thinking) >= 50:
-                                thinking_started = True
+                            elif event.type == "hosted_tool_call" and event.tool_call_delta:
+                                # A server-side web_search call completed on the
+                                # provider's infrastructure — no local execution.
+                                # Surface it as a normal tool_call/tool_result pair
+                                # so every transcript view renders it.
+                                #
+                                # Close the current thinking/response segment first
+                                # and rotate both uuids: transcript consumers key
+                                # streamed entries by uuid, so without rotation the
+                                # post-search reasoning folds into the bubble above
+                                # these rows instead of opening a new one below
+                                # them. Guards mirror the end-of-stream flushes: an
+                                # unopened thinking segment yields nothing, while
+                                # the response flush is unconditional (an empty
+                                # complete response chunk is a documented no-op for
+                                # every consumer) so a partially streamed response
+                                # entry is never stranded incomplete by rotation.
+                                if thinking_started or current_thinking:
+                                    yield {
+                                        "type": "thinking",
+                                        "content": current_thinking,
+                                        "complete": True,
+                                        "uuid": thinking_uuid,
+                                    }
+                                    current_thinking = ""
+                                    thinking_started = False
+                                    thinking_uuid = str(uuid.uuid4())
                                 yield {
-                                    "type": "thinking",
-                                    "content": current_thinking,
-                                    "complete": False,
-                                    "uuid": thinking_uuid,
-                                }
-                                current_thinking = ""
-
-                        elif event.type == "tool_use_start" and event.tool_call_delta:
-                            # Flush accumulated text first so the user doesn't have to wait for it.
-                            yield {
-                                "type": "response",
-                                "content": current_response,
-                                "complete": True,
-                                "uuid": response_uuid,
-                            }
-                            current_response = ""
-
-                            await self.on_tool_use_start(event.tool_call_delta)
-
-                        elif event.type == "hosted_tool_call" and event.tool_call_delta:
-                            # A server-side web_search call completed on the
-                            # provider's infrastructure — no local execution.
-                            # Surface it as a normal tool_call/tool_result pair
-                            # so every transcript view renders it.
-                            #
-                            # Close the current thinking/response segment first
-                            # and rotate both uuids: transcript consumers key
-                            # streamed entries by uuid, so without rotation the
-                            # post-search reasoning folds into the bubble above
-                            # these rows instead of opening a new one below
-                            # them. Guards mirror the end-of-stream flushes: an
-                            # unopened thinking segment yields nothing, while
-                            # the response flush is unconditional (an empty
-                            # complete response chunk is a documented no-op for
-                            # every consumer) so a partially streamed response
-                            # entry is never stranded incomplete by rotation.
-                            if thinking_started or current_thinking:
-                                yield {
-                                    "type": "thinking",
-                                    "content": current_thinking,
+                                    "type": "response",
+                                    "content": current_response,
                                     "complete": True,
-                                    "uuid": thinking_uuid,
+                                    "uuid": response_uuid,
                                 }
-                                current_thinking = ""
-                                thinking_started = False
-                                thinking_uuid = str(uuid.uuid4())
-                            yield {
-                                "type": "response",
-                                "content": current_response,
-                                "complete": True,
-                                "uuid": response_uuid,
-                            }
-                            current_response = ""
-                            response_uuid = str(uuid.uuid4())
-                            await self._emit_hosted_tool_call(event.tool_call_delta)
+                                current_response = ""
+                                response_uuid = str(uuid.uuid4())
+                                await self._emit_hosted_tool_call(event.tool_call_delta)
 
-                assistant_message = await stream.get_final_message()
+                    assistant_message = await stream.get_final_message()
                 self._normalize_freeform_tool_calls(assistant_message)
                 self._update_hosted_search_residual(assistant_message)
                 assistant_message.usage_metadata["edit_protocol"] = self.edit_protocol.value

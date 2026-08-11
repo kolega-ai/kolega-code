@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import pytest
 
 from kolega_code.llm.exceptions import LLMInvalidRequestError, map_tinker_errors as _map_errors
-from kolega_code.llm.ledger import helper_origin, llm_call_origin
+from kolega_code.llm.ledger import HISTORY_ORIGIN, helper_origin, llm_call_origin
 from kolega_code.llm.models import (
     Message,
     MessageChunk,
@@ -392,6 +392,28 @@ async def test_trace_sink_receives_full_record(monkeypatch: pytest.MonkeyPatch) 
     assert record.termination == "STOP_SEQUENCE"
     assert record.cache_hit_tokens == 3
     assert record.temperature == 0.5
+
+
+@pytest.mark.asyncio
+async def test_streaming_trace_record_carries_origin_active_at_context_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sampling and trace emission happen in __aenter__, so the origin that
+    matters is the one active when the stream context is entered — not the one
+    active at the stream() call."""
+    records: List[TinkerTraceRecord] = []
+    client = FakeSamplingClient(MODEL, FakeSampleResponse([FakeSequence([7, 8], [-0.4, -0.5])]))
+    _patch_provider(monkeypatch, client, FakeRenderer({"role": "assistant", "content": "ok"}))
+    provider = _make_provider(trace_sink=records.append)
+
+    stream_cm = await provider.stream(MESSAGES, SYSTEM, GenerationParams(), model=MODEL)
+    with llm_call_origin(HISTORY_ORIGIN):
+        async with stream_cm as stream:
+            async for _chunk in stream:
+                pass
+
+    assert len(records) == 1
+    assert records[0].request_role == {"kind": "history"}
 
 
 @pytest.mark.asyncio

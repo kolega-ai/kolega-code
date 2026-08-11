@@ -105,12 +105,25 @@ def current_llm_call_origin() -> Optional[LlmCallOrigin]:
 
 @contextmanager
 def llm_call_origin(origin: LlmCallOrigin) -> Generator[None]:
-    """Attribute LLM calls begun within this scope (and child tasks) to ``origin``."""
+    """Attribute LLM calls begun within this scope (and child tasks) to ``origin``.
+
+    The scope may span the yields of an async generator (the main agent loop
+    holds it across streaming). Two consequences: consumers observe the origin
+    between chunks (any code that makes its own LLM calls mid-stream must set
+    its own shadowing origin, as every current helper does), and teardown can
+    run in a different Context than entry — ``aclose()`` driven by another task
+    or the loop's ``shutdown_asyncgens`` — where ``reset(token)`` raises, so the
+    reset falls back to restoring the previously observed value.
+    """
+    previous = _llm_call_origin.get()
     token = _llm_call_origin.set(origin)
     try:
         yield
     finally:
-        _llm_call_origin.reset(token)
+        try:
+            _llm_call_origin.reset(token)
+        except ValueError:
+            _llm_call_origin.set(previous)
 
 
 class _RequestState(Enum):
