@@ -4,8 +4,6 @@ You have a private scratchpad working directory for this session at:
 
 This path is also exported as the environment variable `KOLEGA_SCRATCHPAD` in every shell command and eval kernel this session runs (login shells included), so in commands and scripts refer to it as `$KOLEGA_SCRATCHPAD` instead of re-declaring or retyping the literal path.
 
-The file tools (`read`, `write`, `edit`, `multi_edit`, `read_image`) expand the same `$KOLEGA_SCRATCHPAD` reference (or `${KOLEGA_SCRATCHPAD}`) in path arguments, so `$KOLEGA_SCRATCHPAD/notes.md` works there too — use the reference instead of the literal path in tool arguments as well.
-
 Use it for throwaway work that must not touch the user's working tree: one-off scripts, ad-hoc virtual environments, downloaded files, extracted archives, generated intermediates, and log captures. This is the only location outside the working directory where you may create files without asking.
 
 Rules:
