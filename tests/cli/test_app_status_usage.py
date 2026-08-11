@@ -52,8 +52,7 @@ async def test_fresh_session_renders_zero_usage_without_markers(tmp_path, monkey
     assert "Requests: 0" in card
     assert "(partial)" not in card
     assert "failed" not in card
-    assert "Cache reads" not in card
-    assert "Cache hit" not in card
+    assert "In 0 · Out 0\nCache reads 0 · Cache hit 0.00%" in card
     # Usage lives in its own card, not folded into the Status section.
     assert "Session:" not in dashboard
 

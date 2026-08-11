@@ -140,19 +140,16 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             f" · Out {self._format_token_count(combined('output_tokens'))}"
         )
         cache_reads = combined("cache_read_input_tokens")
-        if cache_reads:
-            split_line += f" · Cache reads {self._format_token_count(cache_reads)}"
-            input_total = combined("input_tokens")
-            if input_total:
-                hit_pct = 100.0 * cache_reads / input_total
-                split_line += f" · Cache hit {hit_pct:.2f}%"
+        input_total = combined("input_tokens")
+        hit_pct = 100.0 * cache_reads / input_total if input_total else 0.0
+        cache_line = f"Cache reads {self._format_token_count(cache_reads)} · Cache hit {hit_pct:.2f}%"
 
         requests_line = f"Requests: {combined('requests'):,}"
         failed = combined("failed")
         if failed:
             requests_line += " · " + theme.styled(f"{failed:,} failed", Color.ERROR)
 
-        return f"{session_line}\n{split_line}\n{requests_line}"
+        return f"{session_line}\n{split_line}\n{cache_line}\n{requests_line}"
 
     def _worktree_summary(self) -> str:
         """``name (branch)`` when this session runs in a linked worktree, else "".
