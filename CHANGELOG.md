@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.28.3 - 2026-08-12
+
 ### Changed
 
 - Claude-style `edit` and `write` tools are now the default model-facing edit

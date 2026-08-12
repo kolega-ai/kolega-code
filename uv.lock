@@ -1787,7 +1787,7 @@ wheels = [
 
 [[package]]
 name = "kolega-code"
-version = "0.28.2"
+version = "0.28.3"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
