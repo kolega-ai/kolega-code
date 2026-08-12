@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.28.2 - 2026-08-12
+
 ### Fixed
 
 - Native Tinker sessions now keep repeated provider tool-call IDs paired with
