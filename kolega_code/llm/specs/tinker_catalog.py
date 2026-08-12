@@ -51,6 +51,7 @@ _USER_AGENT = (
 # used across the direct-provider catalogs.
 MAX_COMPLETION_TOKENS = 32768
 DEFAULT_TEMPERATURE = 1.0
+PREFERRED_EDIT_PROTOCOL = "claude_code"
 
 # Named-effort spec for the Inkling family (tml-renderers effort floats).
 INKLING_EFFORT_SPEC = ThinkingEffortSpec(
@@ -131,6 +132,7 @@ def catalog_entries(payload: Any) -> list[tuple[str, dict[str, Any]]]:
             "input_budget": "output_shares_window",
             "default_temperature": DEFAULT_TEMPERATURE,
             "supports_vision": "Vision" in model_type,
+            "preferred_edit_protocol": PREFERRED_EDIT_PROTOCOL,
         }
         spec.update(_family_spec(str(identifier)))
         entries.append((str(identifier), spec))
@@ -160,6 +162,7 @@ def spec_to_jsonable(spec: Mapping[str, Any]) -> dict[str, Any]:
 def spec_from_jsonable(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Rebuild a runtime spec from ``spec_to_jsonable`` output."""
     spec = dict(payload)
+    spec.setdefault("preferred_edit_protocol", PREFERRED_EDIT_PROTOCOL)
     thinking = spec.get("thinking_effort")
     if isinstance(thinking, Mapping) and thinking.get("mode") == "tinker_native_effort":
         spec["thinking_effort"] = ThinkingEffortSpec(
@@ -236,5 +239,6 @@ TINKER_WILDCARD_SPECS = {
         "input_budget": "output_shares_window",
         "default_temperature": DEFAULT_TEMPERATURE,
         "supports_vision": False,
+        "preferred_edit_protocol": PREFERRED_EDIT_PROTOCOL,
     },
 }

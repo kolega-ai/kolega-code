@@ -110,4 +110,3 @@ def test_openrouter_entries_do_not_shadow_direct_provider_models() -> None:
             continue
         spec = MODEL_SPECS[(provider, model)]
         assert "featured" not in spec
-        assert "preferred_edit_protocol" not in spec
