@@ -92,7 +92,7 @@ served by different providers on different credentials.
 | `KOLEGA_CODE_PROVIDER` / `KOLEGA_CODE_MODEL` | Main (long-context) coding model |
 | `KOLEGA_CODE_FAST_PROVIDER` / `KOLEGA_CODE_FAST_MODEL` | Fast utility model |
 | `KOLEGA_CODE_THINKING_EFFORT` | Model-specific thinking effort |
-| `KOLEGA_CODE_EDIT_PROTOCOL` | Optional model-facing edit override: `search_replace`, `codex_apply_patch`, or `claude_code`; otherwise the model catalogue preference or `search_replace` fallback is used |
+| `KOLEGA_CODE_EDIT_PROTOCOL` | Optional model-facing edit override: `search_replace`, `codex_apply_patch`, or `claude_code`; otherwise the model catalogue preference or `claude_code` fallback is used |
 
 These outrank the Fast slot saved in Settings. Full precedence per role:
 CLI flag > environment variable > saved slot > the active model.

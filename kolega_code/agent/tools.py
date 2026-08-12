@@ -341,9 +341,7 @@ class ToolCollection(LogMixin):
                 model_config = config.long_context_config
             resolved_edit_protocol = config.resolve_edit_protocol(model_config)
             self.edit_protocol = (
-                resolved_edit_protocol
-                if isinstance(resolved_edit_protocol, EditProtocol)
-                else EditProtocol.SEARCH_REPLACE
+                resolved_edit_protocol if isinstance(resolved_edit_protocol, EditProtocol) else EditProtocol.CLAUDE_CODE
             )
         self.langfuse_client = langfuse_client
         self.tool_extensions = tool_extensions or []

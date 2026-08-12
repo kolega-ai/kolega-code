@@ -369,7 +369,7 @@ def test_general_agent_tool_inventory(project_path, mock_connection_manager, age
     # Full read/write/terminal access
     assert "read" in tool_names
     assert "edit" in tool_names
-    assert "multi_edit" in tool_names
+    assert "multi_edit" not in tool_names
     assert "write" in tool_names
     assert "lsp_edit" in tool_names
     assert "exec_command" in tool_names

@@ -8,8 +8,9 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Changed
 
-- Native Tinker and hosted Thinking Machines models now use Claude-style file
-  editing tools by default.
+- Claude-style `edit` and `write` tools are now the default model-facing edit
+  protocol. Explicit overrides and model-catalog preferences still take
+  precedence, and the legacy search/replace protocol remains available.
 
 ## 0.28.2 - 2026-08-12
 

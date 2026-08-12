@@ -50,7 +50,7 @@ def collection(
     )
 
 
-def test_default_protocol_keeps_search_replace_tools(tmp_path: Path) -> None:
+def test_search_replace_protocol_keeps_legacy_tools(tmp_path: Path) -> None:
     registry = collection(tmp_path, EditProtocol.SEARCH_REPLACE).registry()
 
     assert {"edit", "multi_edit", "write"}.issubset(registry.names())

@@ -2,6 +2,7 @@
 
 import pytest
 
+from kolega_code.config import EditProtocol
 from kolega_code.llm.models import ToolDefinition
 from kolega_code.tools import Tool, ToolError, ToolPolicy, ToolRegistry
 
@@ -176,7 +177,7 @@ class TestToolCollectionRegistry:
             "thread",
             Mock(),
             Mock(),
-            Mock(agent_name="test"),
+            Mock(agent_name="test", edit_protocol=EditProtocol.SEARCH_REPLACE),
         )
         registry = collection.registry()
 
