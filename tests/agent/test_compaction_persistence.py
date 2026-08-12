@@ -54,7 +54,7 @@ async def test_zero_tail_compaction_survives_dump_restore(tmp_path):
     summary_msg = Message(role="assistant", content=[TextBlock(text="ZERO-TAIL PERSISTED")], stop_reason="end_turn")
     primary_msg = Message(role="assistant", content=[TextBlock(text="PRIMARY RESPONSE")], stop_reason="end_turn")
     fake = FakeLLM(
-        token_script=[900, 1100, 1100, 400],
+        token_script=[900, 800, 1100, 1100, 800, 400],
         message_script=[summary_msg, summary_msg, primary_msg],
     )
     agent, _cm = build_agent(tmp_path, llm=fake)

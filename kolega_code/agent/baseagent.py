@@ -1208,6 +1208,7 @@ class BaseAgent(LogMixin):
                 on_error=on_error,
                 system_prompt_text=compaction_system_prompt,
                 keep_recent=keep_recent,
+                max_input_tokens=self.model_max_input_tokens,
             )
             if result.ok:
                 # Compaction summarizes the injected volatile-context blocks along with

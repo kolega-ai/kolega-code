@@ -1,11 +1,13 @@
 """Full agent-loop integration for compaction (hermetic, no network).
 
 FakeLLM token-script accounting: the loop counts once per iteration, and each
-compaction pass counts twice (``compress_history``'s finally recount for the
-gauge, then the loop's own post-pass recount on the rebuilt history). A script
-like ``[900, 1100, 1100, 400]`` therefore reads as: 900 triggers the ordinary
-pass, 1100 is its post-pass size (twice), 400 is the post-fallback size. The
-final scripted value repeats, so trailing reads stay deterministic.
+compaction pass counts three times (the summarization request's own budget
+check, then ``compress_history``'s finally recount for the gauge, then the
+loop's own post-pass recount on the rebuilt history). A script like
+``[900, 800, 1100, 1100, 800, 400]`` therefore reads as: 900 triggers the
+ordinary pass, 800 is its summarization request (fits), 1100 is its post-pass
+size (twice), 800 the fallback's summarization request, 400 the post-fallback
+size. The final scripted value repeats, so trailing reads stay deterministic.
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -117,7 +119,7 @@ async def test_full_loop_zero_tail_fallback_when_retained_tail_too_large(tmp_pat
     # The six-message retained tail alone still exceeds the resolved maximum
     # (1100 > 1000): one aggressive keep_recent=0 pass folds it and the request
     # proceeds (400 <= 1000).
-    fake = FakeLLM(token_script=[900, 1100, 1100, 400])
+    fake = FakeLLM(token_script=[900, 800, 1100, 1100, 800, 400])
     agent, _cm = build_agent(tmp_path, llm=fake)
     agent.session_recorder = MagicMock()
     agent.history = long_history(6)
@@ -173,7 +175,7 @@ async def test_full_loop_strict_cap_raises_when_fallback_insufficient(tmp_path):
 @pytest.mark.asyncio
 async def test_full_loop_strict_cap_allows_equality_with_max_input(tmp_path):
     # Equality with the resolved maximum input is allowed.
-    fake = FakeLLM(token_script=[700, 900, 900, 800])
+    fake = FakeLLM(token_script=[700, 750, 900, 900, 750, 800])
     agent, _cm = build_agent(tmp_path, llm=fake, strict_budget=(1000, 200))
     assert agent.model_max_input_tokens == 800
     agent.history = long_history(6)
