@@ -581,7 +581,12 @@ def _message_to_chunks(message: Message) -> List[MessageChunk]:
             chunks.append(
                 MessageChunk(
                     type="tool_use_start",
-                    tool_call_delta={"id": block.id, "name": block.name, "input": ""},
+                    tool_call_delta={
+                        "id": block.id,
+                        "name": block.name,
+                        "input": "",
+                        "execution_id": block.execution_id,
+                    },
                 )
             )
             chunks.append(

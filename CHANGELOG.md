@@ -6,6 +6,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Native Tinker sessions now keep repeated provider tool-call IDs paired with
+  their distinct executions after persistence, avoiding false interrupted-tool
+  placeholders and preserving every result in subsequent model history.
+
 ## 0.28.1 - 2026-08-12
 
 ### Fixed

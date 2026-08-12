@@ -381,6 +381,77 @@ class TestDuplicateToolResultPrevention:
         assert tool_results[0].content == "First successful execution"
         assert tool_results[0].is_error is False
 
+    def test_reused_provider_id_with_distinct_execution_ids_is_not_a_duplicate(self, base_agent):
+        """Provider IDs may repeat across responses; execution IDs identify the actual run."""
+        first_call = ToolCall(id="call_0", name="test_tool", input={}, execution_id="tool_exec_first")
+        second_call = ToolCall(id="call_0", name="test_tool", input={}, execution_id="tool_exec_second")
+        base_agent.history.append(Message(role="assistant", content=[first_call], tool_calls=[first_call]))
+        base_agent.append_user_message(
+            [
+                ToolResult(
+                    tool_use_id="call_0",
+                    name="test_tool",
+                    content="first result",
+                    is_error=False,
+                    execution_id="tool_exec_first",
+                )
+            ]
+        )
+        base_agent.history.append(Message(role="assistant", content=[second_call], tool_calls=[second_call]))
+
+        # SessionRecorder.record_tool_results returns a freshly hydrated object.
+        second_result = ToolResult.from_dict(
+            ToolResult(
+                tool_use_id="call_0",
+                name="test_tool",
+                content="second result",
+                is_error=False,
+                execution_id="tool_exec_second",
+            ).to_dict()
+        )
+        base_agent.append_user_message([second_result])
+
+        results = [
+            block
+            for message in base_agent.history
+            if isinstance(message.content, list)
+            for block in message.content
+            if isinstance(block, ToolResult)
+        ]
+        assert [(result.content, result.execution_id) for result in results] == [
+            ("first result", "tool_exec_first"),
+            ("second result", "tool_exec_second"),
+        ]
+
+    def test_repair_does_not_steal_reused_provider_id_from_another_execution(self, base_agent):
+        first_call = ToolCall(id="call_0", name="test_tool", input={}, execution_id="tool_exec_first")
+        second_call = ToolCall(id="call_0", name="test_tool", input={}, execution_id="tool_exec_second")
+        second_result = ToolResult(
+            tool_use_id="call_0",
+            name="test_tool",
+            content="second result",
+            is_error=False,
+            execution_id="tool_exec_second",
+        )
+
+        repaired = base_agent.fix_incomplete_tool_calls(
+            [
+                Message(role="assistant", content=[first_call], tool_calls=[first_call]),
+                Message(role="assistant", content=[second_call], tool_calls=[second_call]),
+                Message(role="user", content=[second_result]),
+            ]
+        )
+
+        result_messages = [message for message in repaired if message.role == "user"]
+        first_repaired = result_messages[0].content[0]
+        second_repaired = result_messages[1].content[0]
+        assert isinstance(first_repaired, ToolResult)
+        assert isinstance(second_repaired, ToolResult)
+        assert first_repaired.is_error is True
+        assert "Operation was interrupted" in first_repaired.content
+        assert first_repaired.execution_id == "tool_exec_first"
+        assert second_repaired is second_result
+
     def test_cross_message_tool_results_during_restoration(self, base_agent):
         """Test that tool results found in non-adjacent messages are handled correctly during restoration."""
         # Create a scenario where tool result is not in the immediately following message

@@ -1119,6 +1119,34 @@ class ToolResult(ContentBlock):
         return f"{status} from tool call (ID: {self.tool_use_id}):\n\n```\n{markdown_content}\n```"
 
 
+ToolExecutionBlock = Union[ToolCall, ToolResult]
+
+
+def provider_tool_call_id(block: ToolExecutionBlock) -> str:
+    """Return the provider-owned identifier used on the model wire."""
+    return block.id if isinstance(block, ToolCall) else block.tool_use_id
+
+
+def same_tool_execution(left: ToolExecutionBlock, right: ToolExecutionBlock) -> bool:
+    """Whether two call/result blocks describe one app-level execution.
+
+    Modern records carry the globally unique app ``execution_id`` on both
+    sides. Legacy records may lack it on the result (while restoring the call
+    generates one), so provider-ID matching remains the compatibility fallback
+    whenever either side has no durable execution ID.
+    """
+    if left.execution_id is not None and right.execution_id is not None:
+        return left.execution_id == right.execution_id
+    return provider_tool_call_id(left) == provider_tool_call_id(right)
+
+
+def tool_result_identity(result: ToolResult) -> tuple[str, str]:
+    """Stable de-duplication key for one result, with legacy fallback."""
+    if result.execution_id is not None:
+        return ("execution", result.execution_id)
+    return ("provider", result.tool_use_id)
+
+
 def _tool_result_blocks(tool_result: "ToolResult") -> List[ContentBlock]:
     if isinstance(tool_result.content, list):
         return tool_result.content
@@ -1905,31 +1933,46 @@ class MessageHistory(list):
 
     def to_openai(self, provider: Optional[str] = None, model: Optional[str] = None) -> list:
         processed_messages = []
-        consumed_tool_result_ids = set()
+        # A provider tool-call ID need not be globally unique (native Tinker
+        # emits call_0 in each response). Track their execution identities
+        # instead of treating wire IDs as conversation-global IDs.
+        consumed_tool_results: set[tuple[str, str]] = set()
         messages = list(self)
 
         def payload_has_content(payload: Dict[str, Any]) -> bool:
             content = payload.get("content")
             return (isinstance(content, str) and bool(content)) or (isinstance(content, list) and bool(content))
 
-        def collect_lookahead_tool_results(start_index: int, needed_ids: set) -> List[ToolResult]:
+        def unmatched_tool_calls(calls: List[ToolCall], results: List[ToolResult]) -> List[ToolCall]:
+            unmatched = list(calls)
+            for result in results:
+                matching_index = next(
+                    (index for index, call in enumerate(unmatched) if same_tool_execution(call, result)),
+                    None,
+                )
+                if matching_index is not None:
+                    unmatched.pop(matching_index)
+            return unmatched
+
+        def collect_lookahead_tool_results(start_index: int, needed_calls: List[ToolCall]) -> List[ToolResult]:
             found: List[ToolResult] = []
-            if not needed_ids:
+            unmatched = list(needed_calls)
+            if not unmatched:
                 return found
-            found_ids = set()
             for look_ahead in messages[start_index + 1 :]:
                 if not isinstance(look_ahead.content, list):
                     continue
                 for item in look_ahead.content:
-                    if (
-                        isinstance(item, ToolResult)
-                        and item.tool_use_id in needed_ids
-                        and item.tool_use_id not in consumed_tool_result_ids
-                        and item.tool_use_id not in found_ids
-                    ):
+                    if not isinstance(item, ToolResult) or tool_result_identity(item) in consumed_tool_results:
+                        continue
+                    matching_index = next(
+                        (index for index, call in enumerate(unmatched) if same_tool_execution(call, item)),
+                        None,
+                    )
+                    if matching_index is not None:
                         found.append(item)
-                        found_ids.add(item.tool_use_id)
-                if needed_ids.issubset(found_ids):
+                        unmatched.pop(matching_index)
+                if not unmatched:
                     break
             return found
 
@@ -1944,7 +1987,7 @@ class MessageHistory(list):
             tool_result_blocks = [
                 item
                 for item in message.content
-                if isinstance(item, ToolResult) and item.tool_use_id not in consumed_tool_result_ids
+                if isinstance(item, ToolResult) and tool_result_identity(item) not in consumed_tool_results
             ]
 
             if tool_result_blocks:
@@ -1964,22 +2007,21 @@ class MessageHistory(list):
 
                 # If this same message included tool_calls, pull any missing tool
                 # results forward so all role=tool messages stay contiguous.
-                tool_call_ids = [item.id for item in message.content if isinstance(item, ToolCall)]
-                found_ids = {tr.tool_use_id for tr in tool_result_blocks}
-                lookahead_results = collect_lookahead_tool_results(index, set(tool_call_ids) - found_ids)
+                tool_calls = [item for item in message.content if isinstance(item, ToolCall)]
+                missing_calls = unmatched_tool_calls(tool_calls, tool_result_blocks)
+                lookahead_results = collect_lookahead_tool_results(index, missing_calls)
                 batch_tool_results = tool_result_blocks + lookahead_results
 
                 processed_messages.extend(_openai_tool_result_message(tr) for tr in batch_tool_results)
                 for tr in batch_tool_results:
-                    consumed_tool_result_ids.add(tr.tool_use_id)
+                    consumed_tool_results.add(tool_result_identity(tr))
 
                 # If still missing, emit placeholder tool messages to satisfy API requirements.
                 # These must come before any image follow-up user messages so all required
                 # role=tool responses stay contiguous after the assistant tool calls.
-                added_ids = {tr.tool_use_id for tr in lookahead_results}
-                remaining = set(tool_call_ids) - (found_ids | added_ids)
-                for missing_id in remaining:
-                    processed_messages.append({"role": "tool", "content": "", "tool_call_id": missing_id})
+                remaining_calls = unmatched_tool_calls(missing_calls, lookahead_results)
+                for missing_call in remaining_calls:
+                    processed_messages.append({"role": "tool", "content": "", "tool_call_id": missing_call.id})
                 for tr in batch_tool_results:
                     followup = _openai_tool_result_image_followup(tr)
                     if followup is not None:
@@ -1997,20 +2039,19 @@ class MessageHistory(list):
 
                 tool_calls = temp_payload.get("tool_calls") or []
                 if tool_calls:
-                    tool_call_ids = [tc.get("id") for tc in tool_calls if tc.get("id")]
-                    lookahead_results = collect_lookahead_tool_results(index, set(tool_call_ids))
+                    content_tool_calls = [item for item in message.content if isinstance(item, ToolCall)]
+                    lookahead_results = collect_lookahead_tool_results(index, content_tool_calls)
 
                     processed_messages.extend(_openai_tool_result_message(tr) for tr in lookahead_results)
                     for tr in lookahead_results:
-                        consumed_tool_result_ids.add(tr.tool_use_id)
+                        consumed_tool_results.add(tool_result_identity(tr))
 
                     # If any are still missing, emit placeholder tool messages to satisfy API ordering.
                     # Placeholders also come before image follow-up user messages to keep all role=tool
                     # responses contiguous after the assistant tool-call message.
-                    added_ids = {tr.tool_use_id for tr in lookahead_results}
-                    remaining = [tc_id for tc_id in tool_call_ids if tc_id not in added_ids]
-                    for missing_id in remaining:
-                        processed_messages.append({"role": "tool", "content": "", "tool_call_id": missing_id})
+                    remaining_calls = unmatched_tool_calls(content_tool_calls, lookahead_results)
+                    for missing_call in remaining_calls:
+                        processed_messages.append({"role": "tool", "content": "", "tool_call_id": missing_call.id})
                     for tr in lookahead_results:
                         followup = _openai_tool_result_image_followup(tr)
                         if followup is not None:

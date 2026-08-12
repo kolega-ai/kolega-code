@@ -9,6 +9,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from kolega_code.agent.conversation import Conversation
 from kolega_code.cli import session_journal as session_journal_module
 from kolega_code.cli.session_journal import (
     DEFAULT_ROOT_AGENT_NAME,
@@ -356,6 +357,58 @@ def test_large_tool_result_uses_artifact_and_bounded_preview(tmp_path: Path) -> 
     assert full not in bug_export.session_json
     assert full not in bug_export.events_jsonl
     assert ref["sha256"] in bug_export.artifact_manifest_json
+
+
+def test_reused_provider_tool_call_id_preserves_execution_pairs_through_session_replay(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+    recorder = store.recorder(record.session_id)
+    recorder.start_turn(Message(role="user", content=[TextBlock("repeat")]))
+
+    for suffix in ("first", "second"):
+        execution_id = f"tool_exec_{suffix}"
+        call = ToolCall(id="call_0", name="read_file", input={}, execution_id=execution_id)
+        recorder.record_assistant(Message(role="assistant", content=[call], tool_calls=[call]))
+        replayed = recorder.record_tool_results(
+            [
+                ToolResult(
+                    tool_use_id="call_0",
+                    content=f"{suffix} result",
+                    name="read_file",
+                    is_error=False,
+                    execution_id=execution_id,
+                )
+            ]
+        )
+        assert replayed[0].execution_id == execution_id
+
+    recorder.finish_turn("completed")
+    messages = [Message.from_dict(item) for item in store.load(record.session_id).history]
+    repaired = Conversation(messages).repaired()
+    calls = [
+        block
+        for message in repaired
+        if isinstance(message.content, list)
+        for block in message.content
+        if isinstance(block, ToolCall)
+    ]
+    results = [
+        block
+        for message in repaired
+        if isinstance(message.content, list)
+        for block in message.content
+        if isinstance(block, ToolResult)
+    ]
+    assert [(call.id, call.execution_id) for call in calls] == [
+        ("call_0", "tool_exec_first"),
+        ("call_0", "tool_exec_second"),
+    ]
+    assert [(result.content, result.execution_id) for result in results] == [
+        ("first result", "tool_exec_first"),
+        ("second result", "tool_exec_second"),
+    ]
 
 
 def test_terminal_spill_path_round_trips_without_resume_rewriting(tmp_path: Path) -> None:

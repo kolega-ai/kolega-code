@@ -9,8 +9,9 @@ holding their own reference.
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 
+from kolega_code.agent.tool_backend.hashline_v2 import strip_hashline_read_output
 from kolega_code.llm.models import (
     ContentBlock,
     ImageBlock,
@@ -23,10 +24,10 @@ from kolega_code.llm.models import (
     ToolCall,
     ToolResult,
     WebSearchCallBlock,
+    same_tool_execution,
 )
 from kolega_code.llm.specs import prior_reasoning_is_replayable
 from kolega_code.utils import images as image_utils
-from kolega_code.agent.tool_backend.hashline_v2 import strip_hashline_read_output
 
 logger = logging.getLogger(__name__)
 
@@ -630,25 +631,48 @@ class Conversation:
             content_blocks = [content]
 
         if isinstance(content_blocks, list):
-            new_tool_results = {}
+            new_tool_results: List[ToolResult] = []
             other_blocks = []
 
             for block in content_blocks:
                 if isinstance(block, ToolResult):
-                    new_tool_results[block.tool_use_id] = block
+                    duplicate_index = next(
+                        (
+                            index
+                            for index, existing in enumerate(new_tool_results)
+                            if same_tool_execution(existing, block)
+                        ),
+                        None,
+                    )
+                    if duplicate_index is None:
+                        new_tool_results.append(block)
+                    else:
+                        new_tool_results[duplicate_index] = block
                 else:
                     other_blocks.append(block)
 
             if new_tool_results:
-                # Find and update any existing tool results with the same IDs
+                # Find and update any existing result for the same execution.
                 for i, msg in enumerate(self.history):
                     if msg.role == "user" and isinstance(msg.content, list):
                         updated_content = []
                         replaced_any = False
 
                         for block in msg.content:
-                            if isinstance(block, ToolResult) and block.tool_use_id in new_tool_results:
-                                new_result = new_tool_results[block.tool_use_id]
+                            matching_index = (
+                                next(
+                                    (
+                                        index
+                                        for index, candidate in enumerate(new_tool_results)
+                                        if same_tool_execution(block, candidate)
+                                    ),
+                                    None,
+                                )
+                                if isinstance(block, ToolResult)
+                                else None
+                            )
+                            if isinstance(block, ToolResult) and matching_index is not None:
+                                new_result = new_tool_results[matching_index]
                                 # Replace if: old is dummy error OR new is success and old is error
                                 should_replace = (block.is_error and "Operation was interrupted" in block.content) or (
                                     not new_result.is_error and block.is_error
@@ -658,14 +682,13 @@ class Conversation:
                                     updated_content.append(new_result)
                                     replaced_any = True
                                     logger.debug("Replaced tool result for tool_use_id: %s", block.tool_use_id)
-                                    del new_tool_results[block.tool_use_id]
+                                    del new_tool_results[matching_index]
                                 else:
                                     updated_content.append(block)
-                                    if block.tool_use_id in new_tool_results:
-                                        logger.debug(
-                                            "Skipping duplicate tool result for tool_use_id: %s", block.tool_use_id
-                                        )
-                                        del new_tool_results[block.tool_use_id]
+                                    logger.debug(
+                                        "Skipping duplicate tool result for tool_use_id: %s", block.tool_use_id
+                                    )
+                                    del new_tool_results[matching_index]
                             else:
                                 updated_content.append(block)
 
@@ -679,7 +702,7 @@ class Conversation:
                             )
 
                 # Add any remaining new tool results along with other blocks
-                content_blocks = list(new_tool_results.values()) + other_blocks
+                content_blocks = cast(List[ContentBlock], list(new_tool_results)) + other_blocks
 
                 # If all blocks were handled (replaced or skipped), don't add empty message
                 if not content_blocks:
@@ -826,10 +849,22 @@ class Conversation:
                     fixed_messages.append(current_message)
                     processed_indices.add(i)
 
-                    # Collect all tool results from the entire remaining conversation
-                    tool_call_ids = {call.id for call in tool_calls}
-                    all_tool_results = {}
+                    # Collect all tool results from the entire remaining conversation.
+                    # Provider IDs may repeat across responses, so correlate modern
+                    # records by their durable execution IDs and fall back to provider
+                    # IDs only when either side is legacy.
+                    all_tool_results: Dict[int, ToolResult] = {}
                     other_content_blocks = []  # Non-tool-result content from the next user message
+
+                    def unmatched_call_index(block: ToolResult) -> Optional[int]:
+                        return next(
+                            (
+                                index
+                                for index, call in enumerate(tool_calls)
+                                if index not in all_tool_results and same_tool_execution(call, block)
+                            ),
+                            None,
+                        )
 
                     # First, check the immediately following message (expected position)
                     next_user_message = None
@@ -837,8 +872,9 @@ class Conversation:
                         next_user_message = messages[i + 1]
                         if isinstance(next_user_message.content, list):
                             for block in next_user_message.content:
-                                if isinstance(block, ToolResult) and block.tool_use_id in tool_call_ids:
-                                    all_tool_results[block.tool_use_id] = block
+                                call_index = unmatched_call_index(block) if isinstance(block, ToolResult) else None
+                                if isinstance(block, ToolResult) and call_index is not None:
+                                    all_tool_results[call_index] = block
                                 else:
                                     other_content_blocks.append(block)
 
@@ -848,8 +884,7 @@ class Conversation:
                             processed_indices.add(i + 1)
 
                     # Search the entire remaining conversation for any missing tool results
-                    missing_ids = tool_call_ids - set(all_tool_results.keys())
-                    if missing_ids:
+                    if len(all_tool_results) < len(tool_calls):
                         for j in range(i + 1, len(messages)):
                             if j in processed_indices:
                                 continue
@@ -860,15 +895,15 @@ class Conversation:
                                 found_any = False
 
                                 for block in msg.content:
-                                    if isinstance(block, ToolResult) and block.tool_use_id in missing_ids:
+                                    call_index = unmatched_call_index(block) if isinstance(block, ToolResult) else None
+                                    if isinstance(block, ToolResult) and call_index is not None:
                                         logger.warning(
                                             "Found tool result %s at position %s instead of expected position %s",
                                             block.tool_use_id,
                                             j,
                                             i + 1,
                                         )
-                                        all_tool_results[block.tool_use_id] = block
-                                        missing_ids.remove(block.tool_use_id)
+                                        all_tool_results[call_index] = block
                                         found_any = True
                                     else:
                                         remaining_content.append(block)
@@ -890,9 +925,9 @@ class Conversation:
 
                     # Create the complete tool results list in the correct order
                     complete_tool_results = []
-                    for tool_call in tool_calls:
-                        if tool_call.id in all_tool_results:
-                            complete_tool_results.append(all_tool_results[tool_call.id])
+                    for call_index, tool_call in enumerate(tool_calls):
+                        if call_index in all_tool_results:
+                            complete_tool_results.append(all_tool_results[call_index])
                         else:
                             logger.warning("Adding placeholder result for missing tool call: %s", tool_call.id)
                             complete_tool_results.append(
@@ -901,6 +936,7 @@ class Conversation:
                                     content="Operation was interrupted. Please retry if needed.",
                                     name=tool_call.name,
                                     is_error=True,
+                                    execution_id=tool_call.execution_id,
                                     input_kind=tool_call.input_kind,
                                 )
                             )

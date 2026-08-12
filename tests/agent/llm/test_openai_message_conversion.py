@@ -40,6 +40,38 @@ def test_mixed_content_splits_tool_result_to_separate_tool_messages():
     assert messages[1]["content"] == "3"
 
 
+def test_reused_provider_tool_call_id_emits_each_execution_result() -> None:
+    history = MessageHistory()
+    for suffix in ("first", "second"):
+        execution_id = f"tool_exec_{suffix}"
+        call = ToolCall(id="call_0", name="lookup", input={}, execution_id=execution_id)
+        history.extend(
+            [
+                Message(role="assistant", content=[call], tool_calls=[call]),
+                Message(
+                    role="user",
+                    content=[
+                        ToolResult(
+                            tool_use_id="call_0",
+                            content=f"{suffix} result",
+                            name="lookup",
+                            is_error=False,
+                            execution_id=execution_id,
+                        )
+                    ],
+                ),
+            ]
+        )
+
+    payload = history.to_openai()
+
+    tool_messages = [message for message in payload if message["role"] == "tool"]
+    assert [(message["tool_call_id"], message["content"]) for message in tool_messages] == [
+        ("call_0", "first result"),
+        ("call_0", "second result"),
+    ]
+
+
 def test_image_tool_result_serializes_as_tool_text_plus_user_image():
     tool_call = ToolCall(id="call_img", name="read_image", input={"path": "shot.png"})
     assistant = Message(role="assistant", content=[tool_call])
