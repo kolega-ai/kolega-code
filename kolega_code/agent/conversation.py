@@ -1085,6 +1085,11 @@ class Conversation:
             return None
         return candidate
 
+    def snap_split_point(self, idx: int) -> int:
+        """Clamp ``idx`` to history bounds and snap it backward so a tool_use/
+        tool_result group is never split across a compaction boundary."""
+        return self._snap_to_safe_boundary(max(0, min(idx, len(self._history))))
+
     def _snap_to_safe_boundary(self, idx: int) -> int:
         """Move ``idx`` backward past any assistant tool_use so a tool_use/tool_result
         group is never split across the compaction boundary."""
