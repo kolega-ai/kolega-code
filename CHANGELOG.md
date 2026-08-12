@@ -6,6 +6,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.28.1 - 2026-08-12
+
+### Fixed
+
+- Restored native Tinker tool dispatch so generated tool calls execute through
+  the agent loop instead of being returned as plain assistant output.
+
 ## 0.28.0 - 2026-08-11
 
 ### Added
