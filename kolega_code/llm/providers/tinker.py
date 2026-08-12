@@ -166,6 +166,7 @@ def _parsed_to_message(parsed: Any, stop_reason: str) -> Message:
     are fabricated when the renderer does not emit one.
     """
     blocks: List[Any] = []
+    message_tool_calls: List[ToolCall] = []
 
     reasoning = (
         parsed.get("reasoning_content") if isinstance(parsed, dict) else getattr(parsed, "reasoning_content", None)
@@ -211,11 +212,18 @@ def _parsed_to_message(parsed: Any, stop_reason: str) -> Message:
                 tool_input = {"raw": arguments}
             raw_id = call.get("id") if isinstance(call, dict) else getattr(call, "id", None)
             call_id = str(raw_id) if raw_id else f"call_{index}"
-            blocks.append(ToolCall(id=call_id, name=name, input=tool_input))
+            tool_call = ToolCall(id=call_id, name=name, input=tool_input)
+            message_tool_calls.append(tool_call)
+            blocks.append(tool_call)
 
     if not blocks:
         blocks.append(TextBlock(text=""))
-    return Message(role="assistant", content=blocks, stop_reason=stop_reason)
+    return Message(
+        role="assistant",
+        content=blocks,
+        stop_reason="tool_use" if message_tool_calls else stop_reason,
+        tool_calls=message_tool_calls,
+    )
 
 
 def _kolega_stop_reason(sdk_reason: str, termination: Any) -> str:

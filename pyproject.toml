@@ -107,7 +107,8 @@ cli = []
 # tml-renderers >=2.10) and transformers; the base install stays torch-free.
 # tml-renderers ships abi3 wheels for Linux x86_64/aarch64 and macOS arm64 only.
 tinker = [
-    "tinker-cookbook==0.5.3",
+    "tinker==0.25.0",
+    "tinker-cookbook==0.5.4",
     "tml-renderers==0.1.0",
 ]
 dev = [
@@ -166,7 +167,16 @@ exclude-newer = "1 week"
 # h2 4.4.1 (released 2026-08-03) is the only release fixing GHSA-6hr6-w5qg-qmwg
 # (CVE-2026-71554, duplicate Host header request smuggling) and sits inside the
 # same quarantine; admit it the same way.
-exclude-newer-package = { cryptography = "2026-08-01T00:00:00Z", h2 = "2026-08-04T00:00:00Z" }
+# tinker 0.25.0 (released 2026-08-08) is required by the live service, which
+# warns that 0.24.0 is outdated; admit that SDK without widening the global window.
+# tinker-cookbook 0.5.4 (released 2026-08-11) is the matching current cookbook;
+# admit it through the same targeted exception.
+
+[tool.uv.exclude-newer-package]
+cryptography = "2026-08-01T00:00:00Z"
+h2 = "2026-08-04T00:00:00Z"
+tinker = "2026-08-09T00:00:00Z"
+tinker-cookbook = "2026-08-12T00:00:00Z"
 
 [tool.pyright]
 include = ["kolega_code", "benchmarks", "tests"]
