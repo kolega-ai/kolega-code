@@ -406,7 +406,12 @@ async def test_stream_final_message_exposes_tool_calls_and_fabricates_missing_id
     ]
     assert final.stop_reason == "tool_use"
     assert [chunk.type for chunk in chunks] == ["tool_use_start", "tool_use_delta"]
-    assert chunks[0].tool_call_delta == {"id": "call_0", "name": "get_weather", "input": ""}
+    assert chunks[0].tool_call_delta == {
+        "id": "call_0",
+        "name": "get_weather",
+        "input": "",
+        "execution_id": final.tool_calls[0].execution_id,
+    }
 
 
 @pytest.mark.asyncio
