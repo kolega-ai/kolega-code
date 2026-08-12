@@ -313,7 +313,7 @@ class AgentConfig(BaseModel):
         preferred = preferred_edit_protocol(effective_model.provider, effective_model.model)
         if preferred is not None:
             return EditProtocol(preferred), "model_catalog"
-        return EditProtocol.SEARCH_REPLACE, "default"
+        return EditProtocol.CLAUDE_CODE, "default"
 
     def get_api_key(self, provider: ModelProvider) -> Optional[str]:
         """Get the API key for a specific provider."""

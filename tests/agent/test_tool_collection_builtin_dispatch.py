@@ -6,7 +6,7 @@ import uuid
 import pytest
 
 from kolega_code.agent.baseagent import BaseAgent
-from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.config import AgentConfig, EditProtocol, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentConnectionManager
 from kolega_code.agent.tool_backend.memory_tool import MemoryTool
 from kolega_code.agent.tools import ToolCollection, ToolDefinition, ToolCollectionConfig
@@ -31,6 +31,7 @@ def agent_config() -> AgentConfig:
             provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()
         ),
         fast_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()),
+        edit_protocol=EditProtocol.SEARCH_REPLACE,
     )
 
 

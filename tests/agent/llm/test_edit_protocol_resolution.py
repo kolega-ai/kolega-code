@@ -12,11 +12,11 @@ def config(*, edit_protocol: EditProtocol | None = None) -> AgentConfig:
     )
 
 
-def test_protocol_defaults_to_search_replace_without_catalog_preference() -> None:
+def test_protocol_defaults_to_claude_code_without_catalog_preference() -> None:
     value = config()
 
     assert value.edit_protocol is None
-    assert value.resolve_edit_protocol_with_source() == (EditProtocol.SEARCH_REPLACE, "default")
+    assert value.resolve_edit_protocol_with_source() == (EditProtocol.CLAUDE_CODE, "default")
 
 
 def test_catalog_preference_is_provider_and_model_specific(monkeypatch) -> None:

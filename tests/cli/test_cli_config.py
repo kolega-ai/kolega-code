@@ -170,7 +170,7 @@ def test_build_agent_config_leaves_protocol_unset_for_catalog_resolution(tmp_pat
     summary = config_summary(config)
 
     assert config.edit_protocol is None
-    assert summary["edit_protocol"] == "search_replace"
+    assert summary["edit_protocol"] == "claude_code"
     assert summary["edit_protocol_source"] == "default"
 
 

@@ -321,7 +321,7 @@ class BaseAgent(LogMixin):
         self.primary_model_config = self.config.model_config_for_agent(self.agent_name)
         resolved_edit_protocol = self.config.resolve_edit_protocol(self.primary_model_config)
         self.edit_protocol = (
-            resolved_edit_protocol if isinstance(resolved_edit_protocol, EditProtocol) else EditProtocol.SEARCH_REPLACE
+            resolved_edit_protocol if isinstance(resolved_edit_protocol, EditProtocol) else EditProtocol.CLAUDE_CODE
         )
         self.filesystem = context.services.filesystem
         self.terminal_manager = context.services.terminal_manager
