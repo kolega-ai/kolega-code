@@ -240,6 +240,14 @@ async def test_generate_parses_tool_calls_and_fabricates_missing_ids(monkeypatch
     assert calls[1].id == "call_1"  # fabricated from the index
     assert calls[1].name == "get_time"
     assert calls[1].input == {"raw": "not json"}
+    assert message.tool_calls == calls
+    assert message.stop_reason == "tool_use"
+
+    restored = Message.from_dict(message.to_dict())
+    assert [(call.id, call.name, call.input) for call in restored.tool_calls] == [
+        ("call_1", "get_weather", {"city": "Paris"}),
+        ("call_1", "get_time", {"raw": "not json"}),
+    ]
 
 
 @pytest.mark.asyncio
@@ -365,6 +373,40 @@ async def test_stream_falls_back_to_block_replay_without_streaming_parser(
 
     assert [c.type for c in chunks] == ["text"]
     assert chunks[0].text == "Block text."
+
+
+@pytest.mark.asyncio
+async def test_stream_final_message_exposes_tool_calls_and_fabricates_missing_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parsed = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "type": "function",
+                "id": None,
+                "function": {"name": "get_weather", "arguments": '{"city": "Paris"}'},
+            }
+        ],
+    }
+    renderer = FakeRenderer(parsed, supports_streaming=False)
+    client = FakeSamplingClient(MODEL, FakeSampleResponse([FakeSequence([1, 2], [0.1] * 2)]))
+    _patch_provider(monkeypatch, client, renderer)
+
+    stream_cm = await _make_provider().stream(MESSAGES, SYSTEM, GenerationParams(), model=MODEL)
+    async with stream_cm as stream:
+        chunks = [chunk async for chunk in stream]
+    final = await stream.get_final_message()
+
+    content_calls = [block for block in final.content if isinstance(block, ToolCall)]
+    assert final.tool_calls == content_calls
+    assert [(call.id, call.name, call.input) for call in final.tool_calls] == [
+        ("call_0", "get_weather", {"city": "Paris"})
+    ]
+    assert final.stop_reason == "tool_use"
+    assert [chunk.type for chunk in chunks] == ["tool_use_start", "tool_use_delta"]
+    assert chunks[0].tool_call_delta == {"id": "call_0", "name": "get_weather", "input": ""}
 
 
 @pytest.mark.asyncio

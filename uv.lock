@@ -21,7 +21,9 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P1W"
 
 [options.exclude-newer-package]
+tinker-cookbook = "2026-08-12T00:00:00Z"
 cryptography = "2026-08-01T00:00:00Z"
+tinker = "2026-08-09T00:00:00Z"
 h2 = "2026-08-04T00:00:00Z"
 
 [[package]]
@@ -1841,6 +1843,7 @@ dev = [
     { name = "twine" },
 ]
 tinker = [
+    { name = "tinker" },
     { name = "tinker-cookbook" },
     { name = "tml-renderers" },
 ]
@@ -1895,7 +1898,8 @@ requires-dist = [
     { name = "tenacity", specifier = "==9.1.4" },
     { name = "textual", specifier = "==8.2.5" },
     { name = "tiktoken", specifier = "==0.12.0" },
-    { name = "tinker-cookbook", marker = "extra == 'tinker'", specifier = "==0.5.3" },
+    { name = "tinker", marker = "extra == 'tinker'", specifier = "==0.25.0" },
+    { name = "tinker-cookbook", marker = "extra == 'tinker'", specifier = "==0.5.4" },
     { name = "tml-renderers", marker = "extra == 'tinker'", specifier = "==0.1.0" },
     { name = "trafilatura", specifier = "==2.0.0" },
     { name = "twine", marker = "extra == 'dev'", specifier = "==6.2.0" },
@@ -4649,7 +4653,7 @@ wheels = [
 
 [[package]]
 name = "tinker"
-version = "0.24.0"
+version = "0.25.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -4668,14 +4672,14 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/51/de/971aee9a8dc5257b99f097c6384961d405455fc8d1804c99bf8db438c921/tinker-0.24.0.tar.gz", hash = "sha256:78ce15620078e8b9e19db29df93f675adf864dea9959e5fd836dd46f86baecfe", size = 259515, upload-time = "2026-07-29T03:07:53.012Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9e/4f/567cca8d9b87ac507f128bddc3a720ca7df5bf7bbe522be8da6670f73657/tinker-0.25.0.tar.gz", hash = "sha256:6c53009d3fb94d0f84ee9d0387882bb422a39a1c2a095878a8a3678333099b9f", size = 259638, upload-time = "2026-08-08T03:36:41.114Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0a/d8/56b8997df0f2e28e7efd81032e32bcc7c6411c6c19ba1c8a87e8c4a7d9f7/tinker-0.24.0-py3-none-any.whl", hash = "sha256:0b535ad393a04f8d22024c7e04d8d81094ffb9d78f6ea4446d0a3afb286e3be0", size = 249174, upload-time = "2026-07-29T03:07:54.308Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/b0/7792f0e3a4308aabb3badf4c068b92eb07672c470ad885d8126e31bf161c/tinker-0.25.0-py3-none-any.whl", hash = "sha256:edc452500592fe78ae9d2928540737e3700765c6658032caa68705c5188e2d69", size = 247660, upload-time = "2026-08-08T03:36:39.677Z" },
 ]
 
 [[package]]
 name = "tinker-cookbook"
-version = "0.5.3"
+version = "0.5.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -4694,13 +4698,14 @@ dependencies = [
     { name = "termcolor" },
     { name = "tiktoken" },
     { name = "tinker" },
+    { name = "tml-renderers" },
     { name = "torch" },
     { name = "tqdm" },
     { name = "transformers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/15/49/41bcdb36098ec0bb3c9428445b9cc1d46758d4c749defb76a1ef627365b9/tinker_cookbook-0.5.3.tar.gz", hash = "sha256:d66d32b12c4c07de1ab1cd09cac8f86c8788e6b88882f4de9282a8eed4f9f1b3", size = 4821854, upload-time = "2026-07-30T17:38:19.473Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fc/d3/f2a351cbdf8529413ec94b3134ff77ebf06a4b33a1f336c68011a6f4c7cb/tinker_cookbook-0.5.4.tar.gz", hash = "sha256:d7147f8e5d0ffb3d307727ad54e56e9607b6df7fc869c103e7ffe3a78453477a", size = 4831775, upload-time = "2026-08-11T20:38:13.436Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0f/90/5ff7212eff07a962facd5e7ea66262e6ef6397a84474d13692e9fd926c4d/tinker_cookbook-0.5.3-py3-none-any.whl", hash = "sha256:40c54b741ffe6af2387ca0797b3261ba8019b507d1c6c17064a50359772ec3ac", size = 1110902, upload-time = "2026-07-30T17:38:17.43Z" },
+    { url = "https://files.pythonhosted.org/packages/34/32/fb87b4d3f3117d14f95ca2819fca5849b8d0a9400b8a6c5067b047a0077a/tinker_cookbook-0.5.4-py3-none-any.whl", hash = "sha256:34342accec6c2919843fd883308b42336a2c37406122ff4feca9690fcf63b4d3", size = 1114056, upload-time = "2026-08-11T20:38:11.74Z" },
 ]
 
 [[package]]
