@@ -15,6 +15,7 @@ THINKING_MACHINES_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh", "max"),
             default="high",
@@ -27,6 +28,7 @@ THINKING_MACHINES_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh", "max"),
             default="high",

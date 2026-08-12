@@ -52,6 +52,7 @@ TINKER_WILDCARD_SPECS = {{
         "max_completion_tokens": 32768,
         "default_temperature": 1.0,
         "supports_vision": False,
+        "preferred_edit_protocol": "claude_code",
     }},
 }}
 """

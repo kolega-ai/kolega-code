@@ -16,6 +16,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh", "max"),
             default="high",
@@ -28,6 +29,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh", "max"),
             default="high",
@@ -40,6 +42,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh", "max"),
             default="high",
@@ -52,6 +55,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh", "max"),
             default="high",
@@ -64,6 +68,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
+        "preferred_edit_protocol": "claude_code",
     },
     ("tinker", "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16:peft:262144"): {
         "context_length": 262144,
@@ -71,6 +76,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
+        "preferred_edit_protocol": "claude_code",
     },
     ("tinker", "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"): {
         "context_length": 65536,
@@ -78,6 +84,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
+        "preferred_edit_protocol": "claude_code",
     },
     ("tinker", "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:peft:262144"): {
         "context_length": 262144,
@@ -85,6 +92,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
+        "preferred_edit_protocol": "claude_code",
     },
     ("tinker", "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"): {
         "context_length": 65536,
@@ -92,6 +100,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
+        "preferred_edit_protocol": "claude_code",
     },
     ("tinker", "moonshotai/Kimi-K2.6"): {
         "context_length": 32768,
@@ -99,6 +108,7 @@ TINKER_SPECS = {
         "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": True,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "auto"),
             default="auto",
@@ -111,6 +121,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "auto"),
             default="auto",
@@ -123,6 +134,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "auto"),
             default="auto",
@@ -135,6 +147,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "auto"),
             default="auto",
@@ -147,6 +160,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "auto"),
             default="auto",
@@ -159,6 +173,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "auto"),
             default="auto",
@@ -171,6 +186,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "auto"),
             default="auto",
@@ -183,6 +199,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "auto"),
             default="auto",
@@ -195,6 +212,7 @@ TINKER_SPECS = {
         "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
+        "preferred_edit_protocol": "claude_code",
     },
     ("tinker", "openai/gpt-oss-120b"): {
         "context_length": 32768,
@@ -202,6 +220,7 @@ TINKER_SPECS = {
         "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
+        "preferred_edit_protocol": "claude_code",
     },
     ("tinker", "openai/gpt-oss-120b:peft:131072"): {
         "context_length": 131072,
@@ -209,6 +228,7 @@ TINKER_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
+        "preferred_edit_protocol": "claude_code",
     },
     ("tinker", "openai/gpt-oss-20b"): {
         "context_length": 32768,
@@ -216,6 +236,7 @@ TINKER_SPECS = {
         "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
+        "preferred_edit_protocol": "claude_code",
     },
     ("tinker", "deepseek-ai/DeepSeek-V3.1"): {
         "context_length": 32768,
@@ -223,6 +244,7 @@ TINKER_SPECS = {
         "input_budget": "output_shares_window",
         "default_temperature": 1.0,
         "supports_vision": False,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "auto"),
             default="auto",
@@ -240,5 +262,6 @@ TINKER_WILDCARD_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
+        "preferred_edit_protocol": "claude_code",
     },
 }
