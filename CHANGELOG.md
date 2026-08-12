@@ -6,6 +6,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.28.4 - 2026-08-12
+
+### Fixed
+
+- Conversation compaction now keeps the summarization request within the run's
+  input token budget, so auto-compaction no longer fails on long conversations
+  and lets the run continue instead of aborting.
+
 ## 0.28.3 - 2026-08-12
 
 ### Changed
