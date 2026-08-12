@@ -5,6 +5,11 @@ from .types import ThinkingEffortSpec
 from .validation import INPUT_BUDGET_CONVENTIONS as INPUT_BUDGET_CONVENTIONS
 from .validation import validate_model_spec
 
+_PROVIDER_DEFAULT_EDIT_PROTOCOLS = {
+    "thinking_machines": "claude_code",
+    "tinker": "claude_code",
+}
+
 # Every spec entry must declare which input-budget calculation applies:
 #   window_minus_output   — usable input = context_length − max_completion_tokens
 #                           (one shared pool; we reserve what we request)
@@ -171,11 +176,13 @@ def preferred_edit_protocol(provider: str, model_name: str) -> Optional[str]:
     """
 
     provider_str = _provider_value(provider)
-    specs = MODEL_SPECS.get((provider_str, model_name))
+    specs = _resolve_specs(provider_str, model_name)
     if specs is None:
         return None
     value = specs.get("preferred_edit_protocol")
-    return str(value) if value is not None else None
+    if value is not None:
+        return str(value)
+    return _PROVIDER_DEFAULT_EDIT_PROTOCOLS.get(provider_str)
 
 
 # DeepSeek's published max_completion_tokens (384000) is fiction. Probed

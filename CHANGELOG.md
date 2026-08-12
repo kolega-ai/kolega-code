@@ -6,6 +6,11 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Changed
+
+- Native Tinker and hosted Thinking Machines models now use Claude-style file
+  editing tools by default.
+
 ## 0.28.2 - 2026-08-12
 
 ### Fixed
