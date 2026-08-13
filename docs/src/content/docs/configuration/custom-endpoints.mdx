@@ -1,0 +1,172 @@
+---
+title: Custom Endpoints
+description: Point Kolega Code at any OpenAI-, Responses-, or Anthropic-compatible server — LM Studio, Ollama, vLLM, or your own gateway.
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+Kolega Code can use models served by **any** OpenAI Chat Completions, OpenAI
+Responses, or Anthropic Messages-compatible server — LM Studio, Ollama, vLLM,
+llama.cpp, or a self-hosted gateway. These are **custom endpoints**, addressed as
+providers named `custom:<id>` and usable wherever a built-in provider is: the
+active model, agent-role overrides, model slots, `/model`, CLI flags, and
+environment variables.
+
+## The settings.json schema
+
+Custom endpoints live in `settings.json` under `custom_endpoints`, keyed by a
+lowercase slug:
+
+```json
+"custom_endpoints": {
+  "lmstudio": {
+    "api_style": "openai_chat",
+    "base_url": "http://localhost:1234/v1",
+    "api_key": "",
+    "label": "LM Studio",
+    "default_model": "qwen2.5-coder-7b-instruct",
+    "context_length": 32768,
+    "max_output_tokens": 8192,
+    "supports_vision": false,
+    "reasoning_replay": "auto",
+    "thinking": {
+      "mode": "thinking_toggle",
+      "options": ["none", "enabled"],
+      "default": "enabled"
+    },
+    "models": {
+      "qwen2.5-coder-7b-instruct": { "context_length": 32768, "max_output_tokens": 8192 }
+    }
+  },
+  "vllm": {
+    "api_style": "openai_responses",
+    "base_url": "http://192.168.1.50:8000/v1",
+    "thinking": { "mode": "openai_responses_reasoning" }
+  }
+}
+```
+
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `api_style` | `openai_chat`, `openai_responses`, or `anthropic` | required |
+| `base_url` | See the per-style conventions below | required |
+| `api_key` | Optional Bearer credential (most local servers need none) | none |
+| `label` | Display name in pickers | the id |
+| `default_model` | Model used by connection probes | none |
+| `context_length` | Context window used for budgeting/compression | 32768 |
+| `max_output_tokens` | Output cap used for budgeting | 8192 |
+| `supports_vision` | Whether models accept images | false |
+| `reasoning_replay` | See [Reasoning replay](#reasoning-replay) | `auto` |
+| `thinking` | See [Thinking](#thinking) | none |
+| `models` | Per-model overrides of the fields above (including `thinking`) | none |
+
+The provider is referenced as `"active_provider": "custom:lmstudio"` — the same
+`custom:<id>` value works in `agent_models[].provider`, `model_slots[].provider`,
+`--provider`, and `KOLEGA_CODE_PROVIDER`. Any model id is accepted for a custom
+endpoint; `models` entries add per-model specs, and the endpoint defaults cover
+everything else.
+
+<Aside type="tip">
+Ollama: `http://localhost:11434/v1` · LM Studio: `http://localhost:1234/v1` ·
+vLLM: `http://localhost:8000/v1`.
+</Aside>
+
+### Base-URL conventions per style
+
+- **`openai_chat` / `openai_responses`** — include the `/v1` path (the SDK appends
+  `/chat/completions` or `/responses`): `http://localhost:11434/v1`.
+- **`anthropic`** — the API root (the SDK appends `/v1/messages`):
+  `http://localhost:8080`.
+
+## Thinking
+
+The optional `thinking` block declares an effort control in the wire dialect the
+endpoint speaks:
+
+| Mode | Wire shape | Typical use |
+| --- | --- | --- |
+| `thinking_toggle` | `{"thinking": {"type": "enabled" \| "disabled"}}` | Qwen3 on Ollama/vLLM |
+| `openai_reasoning_effort` | flat `reasoning_effort` | OpenAI-compatible reasoning models |
+| `openai_responses_reasoning` | `{"reasoning": {"effort", "summary"}}` | Responses-API reasoning models |
+| `anthropic_budget` | `{"thinking": {"type": "enabled", "budget_tokens": N}}` | Anthropic-style gateways |
+
+Each mode has preset `options` and a `default`; `thinking_toggle` ships `["none",
+"enabled"]`. For `anthropic_budget` you must supply a `budgets` map with a token
+budget per non-`none` option, and every budget must stay **below**
+`max_output_tokens` (Anthropic requires `max_tokens > budget_tokens`):
+
+```json
+"thinking": {
+  "mode": "anthropic_budget",
+  "options": ["none", "low", "medium", "high"],
+  "default": "medium",
+  "budgets": { "low": 2048, "medium": 8192, "high": 16384 }
+}
+```
+
+The declared options appear in the thinking-effort pickers for that endpoint.
+
+## Reasoning replay
+
+Reasoning the model emits is sent back on the next turn so it does not re-derive
+its chain-of-thought every request. For `openai_chat` endpoints this is **on by
+default**: reasoning is echoed in whichever field the server emitted it in
+(`reasoning_content` or `reasoning`, detected from the stream), falling back to
+`reasoning`.
+
+`reasoning_replay` accepts:
+
+- `auto` (default) — echo in the emitted field, fallback `reasoning`
+- `reasoning_content` — force that field
+- `reasoning` — force that field
+- `off` — keep reasoning as visible `*Thinking:*` text
+
+`openai_responses` and `anthropic` endpoints do not replay reasoning (their
+continuity mechanisms are provider-specific and are not implemented by generic
+servers).
+
+## Configuring
+
+<Steps>
+1. Add the endpoint under `custom_endpoints` in `settings.json`, or use the TUI:
+   **Settings → Custom Endpoints → New endpoint**.
+2. Select the provider (`custom:<id>`) in **Settings → Models**, and type the
+   model id in the **Other…** field.
+3. **Apply Changes**. The endpoint appears in every provider picker and accepts
+   free-text model ids.
+</Steps>
+
+## One-off use without a saved config
+
+Everything above can be supplied per process without touching `settings.json`.
+
+<Tabs>
+<TabItem label="Flat flags">
+
+```bash
+kolega-code --model qwen2.5-coder --endpoint-url http://localhost:11434/v1 \
+  --endpoint-style openai_chat --endpoint-thinking thinking_toggle
+```
+
+`--endpoint-url` defines an ephemeral endpoint named `custom:cli`; when no
+provider is set, it becomes the active provider. Companion flags:
+`--endpoint-style`, `--endpoint-api-key`, `--endpoint-context`,
+`--endpoint-max-output`, `--endpoint-vision`, `--endpoint-thinking`,
+`--endpoint-reasoning` (all mirrored by `KOLEGA_CODE_ENDPOINT_*` environment
+variables).
+
+</TabItem>
+<TabItem label="JSON">
+
+```bash
+kolega-code --provider custom:vllm --model gpt-oss \
+  --custom-endpoints '{"vllm": {"api_style": "openai_responses", "base_url": "http://localhost:8000/v1"}}'
+```
+
+The same JSON object works via `KOLEGA_CODE_CUSTOM_ENDPOINTS`.
+
+</TabItem>
+</Tabs>
+
+Layers merge per endpoint id with **flag > environment > settings.json**; nothing
+from the flag/environment layers is ever persisted.

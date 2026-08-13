@@ -93,6 +93,14 @@ served by different providers on different credentials.
 | `KOLEGA_CODE_FAST_PROVIDER` / `KOLEGA_CODE_FAST_MODEL` | Fast utility model |
 | `KOLEGA_CODE_THINKING_EFFORT` | Model-specific thinking effort |
 | `KOLEGA_CODE_EDIT_PROTOCOL` | Optional model-facing edit override: `search_replace`, `codex_apply_patch`, or `claude_code`; otherwise the model catalogue preference or `claude_code` fallback is used |
+| `KOLEGA_CODE_CUSTOM_ENDPOINTS` | JSON object of [custom endpoint](../custom-endpoints/) definitions, merged over `settings.json` per endpoint id (never persisted) |
+| `KOLEGA_CODE_ENDPOINT_URL` | Base URL defining the ephemeral `custom:cli` endpoint |
+| `KOLEGA_CODE_ENDPOINT_STYLE` | Wire style for that endpoint: `openai_chat`, `openai_responses`, or `anthropic` (default `openai_chat`) |
+| `KOLEGA_CODE_ENDPOINT_API_KEY` | Optional credential for that endpoint |
+| `KOLEGA_CODE_ENDPOINT_CONTEXT` / `KOLEGA_CODE_ENDPOINT_MAX_OUTPUT` | Context window / max output tokens for that endpoint (defaults 32768 / 8192) |
+| `KOLEGA_CODE_ENDPOINT_VISION` | Non-empty marks that endpoint's models as vision-capable |
+| `KOLEGA_CODE_ENDPOINT_THINKING` | Thinking-effort mode for that endpoint (`thinking_toggle`, `openai_reasoning_effort`, `openai_responses_reasoning`, `anthropic_budget`) |
+| `KOLEGA_CODE_ENDPOINT_REASONING` | Reasoning replay field for that endpoint: `auto`, `reasoning_content`, `reasoning`, or `off` |
 
 These outrank the Fast slot saved in Settings. Full precedence per role:
 CLI flag > environment variable > saved slot > the active model.
