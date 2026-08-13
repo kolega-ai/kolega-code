@@ -1649,6 +1649,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             model_select = self._settings_query_one(f"#{model_id}", Select)
         except NoMatches:
             return
+        manual_switch = model_value is None
         if model_value is None:
             current = model_select.value
             model_value = None if current is Select.NULL else str(current)
@@ -1666,6 +1667,13 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                     # saved non-vision models).
                     model_value = CUSTOM_MODEL_SENTINEL
                     custom_value = stale_option.model
+                    if manual_switch and provider.startswith(CUSTOM_PROVIDER_PREFIX):
+                        # A manual provider switch would carry the previous
+                        # provider's model id into the free-text input; seed the
+                        # endpoint's default model instead.
+                        endpoint_id = provider[len(CUSTOM_PROVIDER_PREFIX) :]
+                        endpoint_default = self._merged_endpoints_for_probe().get(endpoint_id, {}).get("default_model")
+                        custom_value = str(endpoint_default) if endpoint_default else ""
                 elif browser_role:
                     # Non-gateway Browser row: keep the explicit stale option so a
                     # saved non-vision model stays visible and selectable.

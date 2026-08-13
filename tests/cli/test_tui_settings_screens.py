@@ -1460,3 +1460,41 @@ async def test_settings_endpoint_temperature_round_trip(
         from textual.widgets import Static
 
         assert "up to 1" in str(screen2.query_one("#endpoint_status", Static).render())
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_switch_seeds_custom_endpoint_default_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, _ = _configured_app(
+        tmp_path,
+        monkeypatch,
+        provider="deepseek",
+        model=DEEPSEEK_DEFAULT_MODEL,
+        custom_endpoints={
+            "lmstudio": {
+                "api_style": "openai_chat",
+                "base_url": "http://localhost:1234/v1",
+                "default_model": "qwen/qwen3.6-35b-a3b",
+            }
+        },
+    )
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+
+        screen.query_one("#provider_select", Select).value = "custom:lmstudio"
+        await _wait_for_select_values(
+            pilot, screen, {"provider_select": "custom:lmstudio", "model_select": CUSTOM_MODEL_SENTINEL}
+        )
+        await pilot.pause()
+        assert screen.query_one("#model_custom_input", Input).value == "qwen/qwen3.6-35b-a3b"
