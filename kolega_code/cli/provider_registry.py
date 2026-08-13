@@ -9,12 +9,15 @@ separate whitelist to maintain.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 
 from kolega_code.config import AgentRole, ModelProvider
 from kolega_code.llm.specs import (
     MODEL_SPECS,
+    CUSTOM_PROVIDER_PREFIX,
     default_thinking_effort,
     get_model_specs,
+    is_custom_provider,
     is_featured_model,
     model_is_known,
     provider_has_featured_models,
@@ -192,8 +195,11 @@ def _api_key_env(provider: ModelProvider) -> str:
     """Env var name holding the provider's API key (matches cli/config.API_KEY_ENV).
 
     OAuth providers (ChatGPT subscription) authenticate via sign-in, not an env
-    key, so they have no API-key env var.
+    key, so they have no API-key env var. Custom endpoints carry their optional
+    key on the endpoint definition.
     """
+    if is_custom_provider(provider):
+        return ""
     if provider == ModelProvider.OPENAI_CHATGPT:
         return ""
     if provider == ModelProvider.OLLAMA_CLOUD:
@@ -206,6 +212,23 @@ def _api_key_env(provider: ModelProvider) -> str:
     return f"{provider.value.upper()}_API_KEY"
 
 
+# Display labels for custom endpoint providers, keyed by endpoint id. Refreshed
+# by build_agent_config from the resolved endpoint definitions.
+CUSTOM_PROVIDER_LABELS: dict[str, str] = {}
+
+
+def set_custom_provider_labels(labels: Mapping[str, str]) -> None:
+    CUSTOM_PROVIDER_LABELS.clear()
+    CUSTOM_PROVIDER_LABELS.update(labels)
+
+
+def _provider_label(provider: ModelProvider) -> str:
+    if is_custom_provider(provider):
+        endpoint_id = provider.value[len(CUSTOM_PROVIDER_PREFIX) :]
+        return CUSTOM_PROVIDER_LABELS.get(endpoint_id, endpoint_id)
+    return PROVIDER_LABELS[provider]
+
+
 def _model_label(model: str) -> str:
     return MODEL_LABELS.get(model, model)
 
@@ -214,7 +237,7 @@ def _model_option(provider: ModelProvider, model: str) -> ModelOption:
     specs = get_model_specs(provider, model)
     return ModelOption(
         provider=provider.value,
-        provider_label=PROVIDER_LABELS[provider],
+        provider_label=_provider_label(provider),
         model=model,
         model_label=_model_label(model),
         api_key_env=_api_key_env(provider),
@@ -239,6 +262,9 @@ def _build_ui_model_options() -> list[ModelOption]:
     for provider in PROVIDER_LABELS:
         for model in models_by_provider.get(provider.value, []):
             options.append(_model_option(provider, model))
+    for provider_value in sorted(value for value in models_by_provider if value.startswith(CUSTOM_PROVIDER_PREFIX)):
+        for model in models_by_provider[provider_value]:
+            options.append(_model_option(ModelProvider(provider_value), model))
     return options
 
 
@@ -265,6 +291,12 @@ def ui_provider_options() -> list[tuple[str, str]]:
             continue
         seen.add(option.provider)
         options.append((option.provider_label, option.provider))
+    # Custom endpoints without exact model entries (wildcard-only) still belong
+    # in the provider picker; their models are typed via the "Other…" entry.
+    for endpoint_id in sorted(CUSTOM_PROVIDER_LABELS):
+        provider_value = f"{CUSTOM_PROVIDER_PREFIX}{endpoint_id}"
+        if provider_value not in seen:
+            options.append((CUSTOM_PROVIDER_LABELS[endpoint_id], provider_value))
     return options
 
 
@@ -320,6 +352,7 @@ def _thinking_effort_label(effort: str) -> str:
     return {
         "auto": "Auto",
         "none": "None",
+        "enabled": "Enabled",
         "minimal": "Minimal",
         "low": "Low",
         "medium": "Medium",
