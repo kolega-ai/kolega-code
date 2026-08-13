@@ -8,7 +8,7 @@ import re
 import shlex
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Literal, Optional, TypeVar, cast, overload
+from typing import Any, Literal, Mapping, Optional, TypeVar, cast, overload
 from urllib.parse import urlparse
 
 from textual.css.query import NoMatches
@@ -25,6 +25,13 @@ from kolega_code.agent.tool_backend.search_backends import (
     SearchBackendError,
     available_backends,
     get_backend_class,
+)
+from kolega_code.llm.specs.custom_endpoints import (
+    API_STYLES,
+    CUSTOM_PROVIDER_PREFIX,
+    CUSTOM_THINKING_PRESETS,
+    REASONING_REPLAY_VALUES,
+    valid_custom_endpoint_id,
 )
 from kolega_code.mcp.config import (
     MCPConfigError,
@@ -44,9 +51,12 @@ from ..config import (
     SKILLS_MODE_ENV,
     SUBAGENTS_MODE_ENV,
     CliConfigError,
+    CliConfigOverrides,
+    _merged_custom_endpoints,
     active_model_override_message,
     build_agent_config,
     key_status,
+    load_cli_env,
     probe_token_manager,
     resolved_api_key,
 )
@@ -74,6 +84,14 @@ from ..settings import WEB_SEARCH_KEY_NAMES, CliSettings
 from ..theme import Color, Glyph
 
 MCP_NEW_SERVER_VALUE = "__new_mcp_server__"
+ENDPOINT_NEW_VALUE = "__new_endpoint__"
+ENDPOINT_NEW_VALUE_LABEL = "New endpoint"
+ENDPOINT_THINKING_OPTIONS = [
+    ("Reasoning effort (Chat)", "openai_reasoning_effort"),
+    ("Responses reasoning", "openai_responses_reasoning"),
+    ("Thinking toggle (Qwen3)", "thinking_toggle"),
+    ("Anthropic budget tokens", "anthropic_budget"),
+]
 MCP_TRANSPORT_OPTIONS = [
     ("Streamable HTTP", "streamable_http"),
     ("Server-Sent Events (legacy/deprecated)", "sse"),
@@ -365,6 +383,18 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._update_search_backend_fields(str(event.value))
             return
 
+        if select_id == "endpoint_select":
+            if str(event.select.value) != str(event.value):
+                return
+            self._populate_endpoint_form(str(event.value))
+            return
+
+        if select_id in {"ep_style_select", "ep_thinking_mode_select"}:
+            if str(event.select.value) != str(event.value):
+                return
+            self._update_endpoint_field_visibility()
+            return
+
         if select_id == "mcp_server_select":
             self._populate_mcp_server_form(str(event.value))
             return
@@ -506,6 +536,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             else theme.DEFAULT_THEME_NAME
         )
         self._populate_provider_rows()
+        self._populate_endpoint_controls()
         self._populate_agent_model_rows()
         self._populate_slot_model_rows()
         self._update_browser_model_hint()
@@ -628,11 +659,19 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             return
         draft = self._draft_credential_settings()
         for label, value in ui_provider_options():
-            provider_list.replace_option_prompt(f"provider_row_{value}", self._provider_row_prompt(label, value, draft))
+            try:
+                provider_list.replace_option_prompt(
+                    f"provider_row_{value}", self._provider_row_prompt(label, value, draft)
+                )
+            except Exception:
+                # The list lags the registry after an apply that adds endpoints;
+                # _populate_provider_rows rebuilds it in that path.
+                continue
 
     def _update_provider_credential_controls(self, provider: str) -> None:
-        """Swap the editor between API-key and ChatGPT sign-in shape, and restate status."""
+        """Swap the editor between API-key, ChatGPT sign-in, and custom-endpoint shape."""
         oauth = provider == chatgpt_constants.PROVIDER_KEY
+        custom = provider.startswith(CUSTOM_PROVIDER_PREFIX)
         for widget_id in ("provider_chatgpt_login", "provider_chatgpt_logout"):
             try:
                 self._settings_query_one(f"#{widget_id}").display = oauth
@@ -640,7 +679,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                 pass
         for widget_id in ("provider_api_key_label", "provider_api_key_input"):
             try:
-                self._settings_query_one(f"#{widget_id}").display = not oauth
+                self._settings_query_one(f"#{widget_id}").display = not oauth and not custom
             except NoMatches:
                 pass
         try:
@@ -650,7 +689,14 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         except NoMatches:
             pass
         try:
-            self._settings_query_one("#provider_api_key_input", Input).placeholder = self._api_key_placeholder(provider)
+            self._settings_query_one("#provider_endpoint_key_hint").display = custom
+        except NoMatches:
+            pass
+        try:
+            if not custom:
+                self._settings_query_one("#provider_api_key_input", Input).placeholder = self._api_key_placeholder(
+                    provider
+                )
             section = self._settings_query_one("#settings_provider_credential")
             # ui_provider_options() is (label, value); index it the other way round.
             labels = {value: label for label, value in ui_provider_options()}
@@ -661,7 +707,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             remove_key = self._settings_query_one("#provider_remove_api_key", Button)
         except NoMatches:
             return
-        remove_key.display = not oauth
+        remove_key.display = not oauth and not custom
         screen = getattr(self, "_settings_screen", None)
         pending_removals = getattr(screen, "pending_api_key_removals", set())
         remove_key.disabled = not self.settings.has_api_key(provider) or provider in pending_removals
@@ -678,6 +724,242 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             signed_in = draft.has_oauth_token(chatgpt_constants.PROVIDER_KEY)
             login.label = "Sign in again" if signed_in else "Sign in with ChatGPT"
             logout.disabled = not signed_in
+        except NoMatches:
+            pass
+
+    # --- Custom Endpoints page -------------------------------------------------
+
+    def _populate_endpoint_controls(self) -> None:
+        """Rebuild the endpoint selector from the pending draft and open its form."""
+        screen = getattr(self, "_settings_screen", None)
+        if screen is None:
+            return
+        try:
+            endpoint_select = self._settings_query_one("#endpoint_select", Select)
+        except NoMatches:
+            return
+        pending = getattr(screen, "pending_custom_endpoints", {}) or {}
+        selected = getattr(self, "_ep_selected", None)
+        if selected is None:
+            selected = sorted(pending)[0] if pending else ENDPOINT_NEW_VALUE
+        options = [(ENDPOINT_NEW_VALUE_LABEL, ENDPOINT_NEW_VALUE)]
+        options.extend((endpoint_id, endpoint_id) for endpoint_id in sorted(pending))
+        endpoint_select.set_options(options)
+        endpoint_select.value = selected if selected in {value for _, value in options} else ENDPOINT_NEW_VALUE
+        self._populate_endpoint_form(endpoint_select.value)
+
+    def _populate_endpoint_form(self, endpoint_id: str) -> None:
+        self._ep_selected = endpoint_id
+        screen = getattr(self, "_settings_screen", None)
+        pending = getattr(screen, "pending_custom_endpoints", {}) if screen else {}
+        entry = pending.get(endpoint_id) or {} if endpoint_id != ENDPOINT_NEW_VALUE else {}
+        thinking = entry.get("thinking") or {}
+        try:
+            self._settings_query_one("#ep_id_input", Input).value = endpoint_id if entry else ""
+            self._settings_query_one("#ep_id_input", Input).disabled = bool(entry)
+            self._settings_query_one("#ep_label_input", Input).value = str(entry.get("label") or "")
+            self._settings_query_one("#ep_style_select", Select).value = entry.get("api_style", "openai_chat")
+            self._settings_query_one("#ep_base_url_input", Input).value = str(entry.get("base_url") or "")
+            self._settings_query_one("#ep_api_key_input", Input).value = str(entry.get("api_key") or "")
+            self._settings_query_one("#ep_default_model_input", Input).value = str(entry.get("default_model") or "")
+            self._settings_query_one("#ep_context_input", Input).value = str(entry.get("context_length") or "")
+            self._settings_query_one("#ep_max_output_input", Input).value = str(entry.get("max_output_tokens") or "")
+            self._settings_query_one("#ep_vision_select", Select).value = (
+                "true" if entry.get("supports_vision") else "false"
+            )
+            self._settings_query_one("#ep_thinking_mode_select", Select).value = thinking.get("mode", "")
+            self._settings_query_one("#ep_thinking_budgets_input", Input).value = self._format_thinking_budgets(
+                thinking
+            )
+            self._settings_query_one("#ep_reasoning_select", Select).value = entry.get("reasoning_replay", "auto")
+        except NoMatches:
+            return
+        self._update_endpoint_field_visibility()
+        self._update_endpoint_status()
+
+    @staticmethod
+    def _format_thinking_budgets(thinking: Mapping[str, Any]) -> str:
+        budgets = thinking.get("budgets") if isinstance(thinking, dict) else None
+        if not isinstance(budgets, dict):
+            return ""
+        return ", ".join(f"{option}={budgets[option]}" for option in sorted(budgets))
+
+    def _update_endpoint_field_visibility(self) -> None:
+        try:
+            style = str(self._settings_query_one("#ep_style_select", Select).value)
+            thinking = str(self._settings_query_one("#ep_thinking_mode_select", Select).value)
+        except NoMatches:
+            return
+        budgets = thinking == "anthropic_budget"
+        for widget_id, visible in (
+            ("ep_thinking_budgets_label", budgets),
+            ("ep_thinking_budgets_input", budgets),
+            ("ep_reasoning_label", style == "openai_chat"),
+            ("ep_reasoning_select", style == "openai_chat"),
+        ):
+            try:
+                self._settings_query_one(f"#{widget_id}").display = visible
+            except NoMatches:
+                pass
+
+    @staticmethod
+    def _optional_positive_int(raw: str, label: str) -> Optional[int]:
+        if not raw:
+            return None
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 0
+        if value <= 0:
+            raise ValueError(f"{label} must be a positive integer.")
+        return value
+
+    @staticmethod
+    def _parse_thinking_budgets(raw: str, cap: int) -> dict[str, int]:
+        budgets: dict[str, int] = {}
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "=" not in part:
+                raise ValueError("Budgets must be effort=tokens pairs, e.g. 'low=2048, medium=8192'.")
+            option, _, value = part.partition("=")
+            option = option.strip()
+            try:
+                budget = int(value.strip())
+            except ValueError:
+                budget = 0
+            if budget <= 0:
+                raise ValueError(f"Budget for '{option}' must be a positive integer.")
+            if budget >= cap:
+                raise ValueError(f"Budget for '{option}' must stay below max output tokens ({cap}).")
+            budgets[option] = budget
+        if not budgets:
+            raise ValueError("anthropic_budget needs budgets, e.g. 'low=2048, medium=8192'.")
+        return budgets
+
+    def _collect_endpoint_from_ui(self) -> tuple[str, dict[str, Any]]:
+        def input_value(widget_id: str) -> str:
+            return self._settings_query_one(f"#{widget_id}", Input).value.strip()
+
+        endpoint_id = input_value("ep_id_input").lower()
+        if not valid_custom_endpoint_id(endpoint_id):
+            raise ValueError("Endpoint id must be a lowercase slug (letters, digits, '-', '_').")
+        base_url = input_value("ep_base_url_input")
+        if not base_url.startswith(("http://", "https://")):
+            raise ValueError("Base URL must be an http(s) URL.")
+        style = str(self._settings_query_one("#ep_style_select", Select).value)
+        if style not in API_STYLES:
+            raise ValueError("API style is required.")
+        context = self._optional_positive_int(input_value("ep_context_input"), "Context length")
+        max_output = self._optional_positive_int(input_value("ep_max_output_input"), "Max output tokens")
+
+        entry: dict[str, Any] = {"api_style": style, "base_url": base_url.rstrip("/")}
+        label = input_value("ep_label_input")
+        if label:
+            entry["label"] = label
+        api_key = self._settings_query_one("#ep_api_key_input", Input).value
+        if api_key:
+            entry["api_key"] = api_key
+        default_model = input_value("ep_default_model_input")
+        if default_model:
+            entry["default_model"] = default_model
+        if context is not None:
+            entry["context_length"] = context
+        if max_output is not None:
+            entry["max_output_tokens"] = max_output
+        if str(self._settings_query_one("#ep_vision_select", Select).value) == "true":
+            entry["supports_vision"] = True
+        thinking_mode = str(self._settings_query_one("#ep_thinking_mode_select", Select).value)
+        if thinking_mode:
+            preset = CUSTOM_THINKING_PRESETS[thinking_mode]
+            thinking: dict[str, Any] = {
+                "mode": thinking_mode,
+                "options": list(preset["options"]),
+                "default": preset["default"],
+            }
+            if preset["budgets_required"]:
+                cap = max_output if max_output is not None else 8192
+                thinking["budgets"] = self._parse_thinking_budgets(input_value("ep_thinking_budgets_input"), cap)
+            entry["thinking"] = thinking
+        if style == "openai_chat":
+            replay = str(self._settings_query_one("#ep_reasoning_select", Select).value)
+            if replay in REASONING_REPLAY_VALUES:
+                entry["reasoning_replay"] = replay
+        screen = getattr(self, "_settings_screen", None)
+        existing = (getattr(screen, "pending_custom_endpoints", {}) or {}).get(endpoint_id) or {}
+        if existing.get("models"):
+            entry["models"] = existing["models"]
+        return endpoint_id, entry
+
+    def _save_endpoint_from_ui(self) -> None:
+        try:
+            endpoint_id, entry = self._collect_endpoint_from_ui()
+        except ValueError as exc:
+            self._set_endpoint_status(str(exc), "warning")
+            return
+        screen = getattr(self, "_settings_screen", None)
+        if screen is None:
+            return
+        previous = deepcopy(screen.pending_custom_endpoints)
+        screen.pending_custom_endpoints[endpoint_id] = entry
+        if screen.pending_custom_endpoints != previous:
+            self._ep_selected = endpoint_id
+            self._populate_endpoint_controls()
+        if self.settings.active_provider == f"{CUSTOM_PROVIDER_PREFIX}{endpoint_id}":
+            self._set_endpoint_status(
+                f"{messages.ENDPOINT_APPLY_REQUIRED} It is the active provider, so this edit applies to it too.",
+                "ok",
+            )
+        else:
+            self._set_endpoint_status(messages.ENDPOINT_APPLY_REQUIRED, "ok")
+        screen.call_after_refresh(screen._refresh_apply_label)
+
+    def _delete_endpoint_from_ui(self) -> None:
+        screen = getattr(self, "_settings_screen", None)
+        if screen is None:
+            return
+        endpoint_id = getattr(self, "_ep_selected", ENDPOINT_NEW_VALUE)
+        if endpoint_id == ENDPOINT_NEW_VALUE:
+            self._set_endpoint_status("Select an endpoint to delete.", "warning")
+            return
+        screen.pending_custom_endpoints.pop(endpoint_id, None)
+        self._ep_selected = ENDPOINT_NEW_VALUE
+        self._populate_endpoint_controls()
+        if self.settings.active_provider == f"{CUSTOM_PROVIDER_PREFIX}{endpoint_id}":
+            self._set_endpoint_status(
+                f"{messages.ENDPOINT_DELETED} It is the active provider; pick another model before applying.", "warning"
+            )
+        else:
+            self._set_endpoint_status(messages.ENDPOINT_DELETED, "ok")
+        screen.call_after_refresh(screen._refresh_apply_label)
+
+    def _handle_endpoint_settings_button(self, button_id: str) -> None:
+        if self._turn_active or self.agent_worker is not None:
+            self._set_endpoint_status("Stop the active turn before changing endpoints.", "warning")
+            return
+        if button_id == "ep_save":
+            self._save_endpoint_from_ui()
+        elif button_id == "ep_delete":
+            self._delete_endpoint_from_ui()
+
+    def _update_endpoint_status(self) -> None:
+        screen = getattr(self, "_settings_screen", None)
+        pending = getattr(screen, "pending_custom_endpoints", {}) if screen else {}
+        if not pending:
+            self._set_endpoint_status(messages.ENDPOINT_NONE)
+
+    def _set_endpoint_status(self, text: str, tone: str = "info") -> None:
+        glyph, style = {
+            "ok": (Glyph.CHECK, Color.SUCCESS),
+            "error": (Glyph.CROSS, Color.ERROR),
+            "warning": (Glyph.STATUS, Color.WARNING),
+        }.get(tone, (Glyph.STATUS, Color.MUTED))
+        content = Text()
+        content.append(theme.g(glyph) + " ", style=style)
+        content.append(text)
+        try:
+            self._settings_query_one("#endpoint_status", Static).update(content)
         except NoMatches:
             pass
 
@@ -1710,6 +1992,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         screen = getattr(self, "_settings_screen", None)
         if screen is not None:
             candidate.oauth_tokens = deepcopy(screen.pending_oauth_tokens)
+            candidate.custom_endpoints = deepcopy(screen.pending_custom_endpoints)
             for removed_provider in screen.pending_api_key_removals:
                 candidate.api_keys.pop(removed_provider, None)
             # Removals first, so re-typing a key for a provider you just cleared wins.
@@ -1783,10 +2066,10 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         if screen is not None:
             memory_applied = await screen.apply_memory_draft()
             screen.mark_clean(preserve_memory_draft=not memory_applied)
-            selected = self._selected_credential_provider()
-            if selected is not None:
-                self._update_provider_credential_controls(selected)
-            self._refresh_provider_row_labels()
+            # New/changed endpoints alter the provider set and pickers; rebuild.
+            self._populate_provider_rows()
+            self._populate_endpoint_controls()
+            self._update_provider_credential_controls(self._selected_credential_provider() or "")
             if not memory_applied:
                 self._set_settings_status(
                     "Other settings were saved, but project memory changes failed. Review and retry them.",
@@ -1898,6 +2181,11 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         status.update("ChatGPT sign-out will be saved when you Apply." if removed else "You are not signed in.")
         screen._refresh_apply_label()
 
+    def _merged_endpoints_for_probe(self) -> dict[str, dict]:
+        env = load_cli_env(self.project_path)
+        overrides = getattr(self, "overrides", None) or CliConfigOverrides()
+        return _merged_custom_endpoints(env, overrides, self.settings)
+
     def _credential_probe_model(self, provider: str) -> str:
         """Which model to probe a provider's credential with.
 
@@ -1907,6 +2195,17 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         """
         if self.settings.active_provider == provider and self.settings.active_model:
             return self.settings.active_model
+        if provider.startswith(CUSTOM_PROVIDER_PREFIX):
+            endpoint_id = provider[len(CUSTOM_PROVIDER_PREFIX) :]
+            entry = self._merged_endpoints_for_probe().get(endpoint_id) or {}
+            if entry.get("default_model"):
+                return str(entry["default_model"])
+            models = entry.get("models") or {}
+            if models:
+                return str(next(iter(models)))
+            raise ValueError(
+                f"Custom endpoint '{endpoint_id}' has no default model; add one on the Custom Endpoints page."
+            )
         return default_model_for_provider(ModelProvider(provider))
 
     async def _test_settings_connection(self) -> None:
@@ -1925,6 +2224,13 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         except ValueError as exc:
             status.update(str(exc))
             return
+        base_url = None
+        api_style = None
+        if provider.startswith(CUSTOM_PROVIDER_PREFIX):
+            endpoint_id = provider[len(CUSTOM_PROVIDER_PREFIX) :]
+            entry = self._merged_endpoints_for_probe().get(endpoint_id) or {}
+            base_url = entry.get("base_url")
+            api_style = entry.get("api_style")
         button.disabled = True
         status.update(messages.PROVIDER_TEST_RUNNING.format(provider=provider, model=model))
         result = await test_model_connection(
@@ -1933,6 +2239,8 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             api_key=resolved_api_key(provider, self.project_path, draft) or "",
             token_manager=probe_token_manager(draft),
             usage_ledger=getattr(self, "_usage_ledger", None),
+            base_url=base_url,
+            api_style=api_style,
         )
         status.update(result.message)
         button.disabled = False

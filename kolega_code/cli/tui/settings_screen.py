@@ -42,6 +42,7 @@ SETTINGS_CATEGORIES = (
     # (connection, then model). The "model" value is load-bearing: /model and
     # action_open_settings(category=...) both key off it, so only the label changed.
     ("Providers", "providers"),
+    ("Custom Endpoints", "endpoints"),
     ("Models", "model"),
     ("Agent Models", "agents"),
     ("Tools", "tools"),
@@ -148,6 +149,8 @@ class SettingsScreen(ModalScreen[None]):
         self._original_theme = owner.settings.active_theme or theme.DEFAULT_THEME_NAME
         self.pending_oauth_tokens = deepcopy(owner.settings.oauth_tokens)
         self._oauth_baseline = deepcopy(self.pending_oauth_tokens)
+        self.pending_custom_endpoints = deepcopy(owner.settings.custom_endpoints)
+        self._endpoints_baseline = deepcopy(self.pending_custom_endpoints)
         self.pending_api_key_removals: set[str] = set()
         # Keys typed on the Providers page, keyed by provider. The page lets several
         # providers be edited before Apply, so staging cannot live in the Input alone —
@@ -169,6 +172,7 @@ class SettingsScreen(ModalScreen[None]):
             )
             with Vertical(id="settings_screen_detail"):
                 yield from self._compose_providers_page()
+                yield from self._compose_endpoints_page()
                 yield from self._compose_model_page()
                 yield from self._compose_agent_page()
                 yield from self._compose_tools_page()
@@ -221,7 +225,88 @@ class SettingsScreen(ModalScreen[None]):
                     "Connection testing sends a tiny, potentially billable model request.",
                     classes="settings-hint",
                 )
+                endpoint_key_hint = Static(
+                    messages.ENDPOINT_KEY_EDITED_ON_PAGE, id="provider_endpoint_key_hint", classes="settings-hint"
+                )
+                endpoint_key_hint.display = False
+                yield endpoint_key_hint
                 yield Static("", id="provider_credential_status")
+
+    def _compose_endpoints_page(self) -> ComposeResult:
+        with VerticalScroll(id="settings_page_endpoints", classes="settings-page"):
+            with Vertical(classes="settings-section", id="settings_endpoints") as section:
+                section.border_title = "Custom Endpoints"
+                yield Static(messages.ENDPOINTS_HINT, classes="settings-hint")
+                yield Static("", id="endpoint_status", classes="settings-hint")
+                yield Label("Endpoint")
+                yield Select(
+                    [(settings_panel.ENDPOINT_NEW_VALUE_LABEL, settings_panel.ENDPOINT_NEW_VALUE)],
+                    id="endpoint_select",
+                    allow_blank=False,
+                    value=settings_panel.ENDPOINT_NEW_VALUE,
+                )
+                yield Label("Endpoint id")
+                yield Input(id="ep_id_input", placeholder="lmstudio")
+                yield Label("Label")
+                yield Input(id="ep_label_input", placeholder="LM Studio")
+                yield Label("API style")
+                yield Select(
+                    [
+                        ("OpenAI Chat Completions", "openai_chat"),
+                        ("OpenAI Responses", "openai_responses"),
+                        ("Anthropic Messages", "anthropic"),
+                    ],
+                    id="ep_style_select",
+                    allow_blank=False,
+                    value="openai_chat",
+                )
+                yield Label("Base URL")
+                yield Input(id="ep_base_url_input", placeholder="http://localhost:1234/v1")
+                yield Label("API key (optional)")
+                yield Input(password=True, id="ep_api_key_input", placeholder="Leave blank for keyless servers")
+                yield Label("Default model (optional)")
+                yield Input(id="ep_default_model_input", placeholder="qwen2.5-coder-7b-instruct")
+                yield Label("Context length")
+                yield Input(id="ep_context_input", placeholder="32768")
+                yield Label("Max output tokens")
+                yield Input(id="ep_max_output_input", placeholder="8192")
+                yield Label("Vision")
+                yield Select(
+                    [("No", "false"), ("Yes", "true")],
+                    id="ep_vision_select",
+                    allow_blank=False,
+                    value="false",
+                )
+                yield Label("Thinking")
+                yield Select(
+                    [("Off", "")] + [(label, mode) for label, mode in settings_panel.ENDPOINT_THINKING_OPTIONS],
+                    id="ep_thinking_mode_select",
+                    allow_blank=False,
+                    value="",
+                )
+                budgets_label = Label("Thinking budgets (effort=tokens)", id="ep_thinking_budgets_label")
+                budgets_label.display = False
+                yield budgets_label
+                budgets_input = Input(id="ep_thinking_budgets_input", placeholder="low=2048, medium=8192, high=16384")
+                budgets_input.display = False
+                yield budgets_input
+                reasoning_label = Label("Reasoning replay", id="ep_reasoning_label")
+                yield reasoning_label
+                yield Select(
+                    [
+                        ("Auto (detect emitted field)", "auto"),
+                        ("reasoning_content", "reasoning_content"),
+                        ("reasoning", "reasoning"),
+                        ("Off (visible text)", "off"),
+                    ],
+                    id="ep_reasoning_select",
+                    allow_blank=False,
+                    value="auto",
+                )
+                yield Static(messages.ENDPOINT_APPLY_REQUIRED, classes="settings-hint")
+                with Horizontal(classes="settings-button-row"):
+                    yield Button("Save Endpoint", id="ep_save", classes="quiet")
+                    yield Button("Delete", id="ep_delete", classes="quiet danger")
 
     def _compose_model_page(self) -> ComposeResult:
         with VerticalScroll(id="settings_page_model", classes="settings-page"):
@@ -633,6 +718,7 @@ class SettingsScreen(ModalScreen[None]):
         return not self._initializing and (
             self._snapshot() != self._baseline
             or self.pending_oauth_tokens != self._oauth_baseline
+            or self.pending_custom_endpoints != self._endpoints_baseline
             or bool(self.pending_api_key_removals)
             or bool(self.pending_api_keys)
         )
@@ -647,6 +733,7 @@ class SettingsScreen(ModalScreen[None]):
                 baseline[widget_id] = previous.get(widget_id)
         self._baseline = tuple(sorted(baseline.items()))
         self._oauth_baseline = deepcopy(self.pending_oauth_tokens)
+        self._endpoints_baseline = deepcopy(self.pending_custom_endpoints)
         self._original_theme = self.owner.settings.active_theme or theme.DEFAULT_THEME_NAME
         self._refresh_apply_label()
 
@@ -670,6 +757,9 @@ class SettingsScreen(ModalScreen[None]):
         elif event.button.id == "memory_settings_inspect":
             event.stop()
             self.owner.action_open_memory(inspect_disabled=True)
+        elif event.button.id in {"ep_save", "ep_delete"}:
+            event.stop()
+            self.owner._handle_endpoint_settings_button(event.button.id)
         elif event.button.id in {"mcp_delete_server", "mcp_clear_tokens", "mcp_trust_project"}:
             if self._confirm_immediate_action(event.button.id):
                 event.stop()
