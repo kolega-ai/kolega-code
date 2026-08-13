@@ -28,8 +28,8 @@ class AnthropicStreamWrapper:
         # Track tool calls being streamed
         self.tool_execution_ids = ToolExecutionIdRegistry()
         self.current_tool_calls = {}  # Maps tool_call_id to accumulated data
-        self.tool_call_order = []  # Track order of tool calls
-        self.current_block_index = None  # Track which content block we're processing
+        self.tool_call_order = []
+        self.current_block_index = None
 
     async def __aenter__(self):
         self.generator = await self.anthropic_stream.__aenter__()
@@ -145,8 +145,8 @@ class AnthropicProvider(BaseLLMProvider):
     def _prepare_generation_params(self, params: Optional[GenerationParams] = None) -> Dict[str, Any]:
         """Convert common parameters to provider-specific format"""
         generation_params = {
-            "model": "claude-opus-5",  # Default model
-            "max_tokens": 1024,  # Default max tokens
+            "model": "claude-opus-5",
+            "max_tokens": 1024,
         }
 
         if params:

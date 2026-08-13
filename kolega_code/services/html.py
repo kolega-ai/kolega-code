@@ -19,7 +19,6 @@ def extract_interactive_elements_from_html(html_content: str) -> List[Dict]:
     """
     soup = BeautifulSoup(html_content, "html.parser")
 
-    # Define interactive elements to look for
     interactive_elements = [
         # Links
         "a",
@@ -48,16 +47,13 @@ def extract_interactive_elements_from_html(html_content: str) -> List[Dict]:
 
     results = []
 
-    # Process each type of interactive element
     for selector in interactive_elements:
         try:
             if "[" in selector:
-                # Handle attribute-based selectors
                 tag_name, attr_part = selector.split("[", 1)
                 attr_part = attr_part.rstrip("]")
 
                 if "=" in attr_part:
-                    # Attribute with specific value
                     attr_name, attr_value = attr_part.split("=", 1)
                     attr_value = attr_value.strip("\"'")
                     # Use find_all with attrs dict instead of select to avoid selector syntax issues
@@ -70,27 +66,21 @@ def extract_interactive_elements_from_html(html_content: str) -> List[Dict]:
                             # If select fails, continue with empty list
                             elements = []
                 else:
-                    # Just the presence of an attribute
                     elements = soup.find_all(lambda tag: tag.has_attr(attr_part))
             else:
-                # Simple tag selector
                 elements = soup.find_all(selector)
         except Exception as e:
             print(f"Warning: Error processing selector '{selector}': {e}")
             elements = []
 
         for element in elements:
-            # Build a unique CSS selector for this element
             element_selector = build_css_selector(element)
 
-            # Get the text associated with this element
             element_text = get_associated_text(element)
 
-            # Get element type and attributes
             element_type = element.name
             attributes = {k: v for k, v in element.attrs.items()}
 
-            # Add to results
             results.append(
                 {
                     "element_type": element_type,
@@ -113,7 +103,6 @@ def get_associated_text(element) -> str:
         if not text and element.get("value") and element["type"] not in ["password", "hidden"]:
             text = element["value"]
 
-        # Try to find associated label
         element_id = element.get("id")
         if element_id:
             label = element.find_parent().find("label", attrs={"for": element_id})
@@ -123,11 +112,9 @@ def get_associated_text(element) -> str:
         return text
 
     elif element.name == "button":
-        # Get button text or value
         return element.get_text(strip=True) or element.get("value", "")
 
     elif element.name == "a":
-        # Get link text or title
         return element.get_text(strip=True) or element.get("title", "")
 
     elif element.name == "select":
@@ -135,7 +122,6 @@ def get_associated_text(element) -> str:
         option_texts = [opt.get_text(strip=True) for opt in element.find_all("option")]
         return ", ".join(filter(None, option_texts))
 
-    # Default: just return the text content
     return element.get_text(strip=True)
 
 
@@ -149,7 +135,6 @@ def build_css_selector(element) -> str:
     if element.get("id"):
         return f"#{element['id']}"
 
-    # If element has classes, try to use them
     if element.get("class"):
         # Create individual class selectors and escape colons with backslashes
         escaped_classes = []
@@ -167,7 +152,6 @@ def build_css_selector(element) -> str:
             # If selector is invalid, fall back to other methods
             pass
 
-    # Try with tag name and attribute combinations
     tag_name = element.name
     attributes = element.attrs
 
@@ -206,12 +190,9 @@ def build_css_selector(element) -> str:
         if current is None or current.name == "html":
             break
 
-    # Construct the selector path
     selector = " > ".join(reversed(parents))
 
-    # Validate the selector to make sure it's valid CSS
     try:
-        # Test if the selector is valid by attempting to use it
         soup = BeautifulSoup("<html><body></body></html>", "html.parser")
         soup.select(selector)
         return selector

@@ -268,7 +268,6 @@ class LspManager:
         if spec and spec.family:
             effective_id = spec.family
 
-        # Get or start session
         try:
             client = await self._get_session(effective_id, rl)
             if client is None:
@@ -1267,7 +1266,6 @@ class LspManager:
             if not resolved_bin:
                 continue
 
-            # Build a ResolvedLanguage for the extra server
             extra_rl = ResolvedLanguage(
                 language_id=lang_id,
                 display_name=spec.display_name,

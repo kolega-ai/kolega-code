@@ -608,7 +608,7 @@ class LocalFileSystem(FileSystem):
             "accessed_time": stat_result.st_atime,
             "is_directory": resolved_path.is_dir(),
             "is_file": resolved_path.is_file(),
-            "stat_result": stat_result,  # Include the full stat result for advanced operations
+            "stat_result": stat_result,
         }
 
     def mkdir(self, path: str, parents: bool = False, exist_ok: bool = False) -> None:
@@ -652,7 +652,6 @@ class LocalFileSystem(FileSystem):
         # If we have a root path, we need to make the pattern relative to it
         if self.root_path:
             paths = list(self.root_path.glob(pattern))
-            # Return paths relative to the root path
             return [str(p.relative_to(self.root_path)) for p in paths]
         else:
             return [str(p) for p in Path().glob(pattern)]
@@ -660,7 +659,6 @@ class LocalFileSystem(FileSystem):
     def is_binary_file(self, path: str) -> bool:
         resolved_path = self._resolve_path(path)
 
-        # Check extension for common binary formats
         binary_extensions = {
             ".pyc",
             ".so",
@@ -698,7 +696,6 @@ class LocalFileSystem(FileSystem):
         if resolved_path.suffix.lower() in binary_extensions:
             return True
 
-        # Sample file content to check for null bytes
         try:
             with resolved_path.open("rb") as f:
                 sample = f.read(1024)

@@ -35,7 +35,6 @@ class LspRegistry:
         if config:
             self._apply_user_config(config)
 
-        # Build reverse indexes
         for lang_id, spec in self._languages.items():
             if lang_id in (config.disabled_languages if config else []):
                 continue

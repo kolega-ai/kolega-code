@@ -16,7 +16,6 @@ class TerminalStateSerializer:
         if not hasattr(terminal_manager, "terminals"):
             return state  # Can't serialize local terminal managers
 
-        # Serialize terminals
         for terminal_id, info in terminal_manager.terminals.items():
             state.terminals[terminal_id] = TerminalInfo(
                 terminal_id=terminal_id,
@@ -44,12 +43,10 @@ class TerminalStateSerializer:
                 )
                 output_size = len(output["data"].encode("utf-8"))
 
-                # Check if adding this output would exceed limits
                 if (
                     terminal_size + output_size > state.MAX_OUTPUT_PER_TERMINAL
                     or total_size + output_size > state.MAX_OUTPUT_SIZE
                 ):
-                    # Add truncation notice at the beginning
                     if not any(o.type == "truncation" for o in terminal_outputs):
                         terminal_outputs.insert(
                             0,
@@ -63,13 +60,12 @@ class TerminalStateSerializer:
                         )
                     break
 
-                terminal_outputs.insert(0, terminal_output)  # Insert at beginning to maintain order
+                terminal_outputs.insert(0, terminal_output)
                 terminal_size += output_size
                 total_size += output_size
 
             state.outputs[terminal_id] = terminal_outputs
 
-            # Break if we've hit total size limit
             if total_size >= state.MAX_OUTPUT_SIZE:
                 break
 
@@ -84,11 +80,9 @@ class TerminalStateSerializer:
         if not state or not hasattr(terminal_manager, "terminals"):
             return
 
-        # Clear existing state
         terminal_manager.terminals.clear()
         terminal_manager.outputs.clear()
 
-        # Restore terminals
         for terminal_id, terminal_info in state.terminals.items():
             terminal_manager.terminals[terminal_id] = {
                 "created_at": terminal_info.created_at,
@@ -100,7 +94,6 @@ class TerminalStateSerializer:
                 "active_commands": {},  # Active commands start fresh
             }
 
-        # Restore outputs
         for terminal_id, outputs in state.outputs.items():
             restored_outputs = [
                 {
@@ -111,12 +104,11 @@ class TerminalStateSerializer:
                     "exit_code": output.exit_code,
                 }
                 for output in outputs
-                if output.type != "truncation"  # Skip truncation notices
+                if output.type != "truncation"
             ]
             output_buffer_type = getattr(type(terminal_manager), "output_buffer_type", list)
             terminal_manager.outputs[terminal_id] = output_buffer_type(restored_outputs)
 
-        # Restore default terminal ID
         if hasattr(terminal_manager, "_default_terminal_id"):
             terminal_manager._default_terminal_id = state.default_terminal_id
 
@@ -139,8 +131,8 @@ class TerminalStateSerializer:
                 elif output.type == "exit":
                     content += f"{output.data}\n"
 
-            if content:  # Only add tabs with content
-                terminal_tabs.append({"id": terminal_id, "content": content.rstrip()})  # Remove trailing whitespace
+            if content:
+                terminal_tabs.append({"id": terminal_id, "content": content.rstrip()})
 
         return {"terminals": terminal_tabs}
 
@@ -153,7 +145,6 @@ class TerminalStateSerializer:
         recent_outputs = []
         line_count = 0
 
-        # Process outputs in reverse order
         for output in reversed(outputs):
             if output["type"] in ["stdout", "stderr"]:
                 lines = output["data"].count("\n") + 1

@@ -324,7 +324,7 @@ class OpenAIProvider(BaseLLMProvider):
     def _prepare_generation_params(self, params: Optional[GenerationParams] = None) -> Dict[str, Any]:
         """Convert common parameters to provider-specific format"""
         generation_params: Dict[str, Any] = {
-            "model": "gpt-5.5",  # Default model
+            "model": "gpt-5.5",
         }
 
         if params:
