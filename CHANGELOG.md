@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.29.0 - 2026-08-13
+
 ### Added
 
 - Custom endpoints: use models from any OpenAI Chat Completions, OpenAI
