@@ -190,6 +190,7 @@ async def test_fireworks_stream_final_message_maps_openai_usage():
         "total_tokens": 33,
         "cache_read_input_tokens": 33,
         "provider": "fireworks",
+        "reasoning_field": "reasoning_content",
     }
 
 

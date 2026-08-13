@@ -97,6 +97,7 @@ class TerminalTool(BaseTool):
         provider = self.config.fast_config.provider
         api_key = self.config.get_api_key(provider)
         rate_limits = self.config.fast_config.rate_limits
+        endpoint = self.config.custom_endpoint_for(self.config.fast_config)
 
         client = LLMClient(
             provider=provider.value,
@@ -108,6 +109,8 @@ class TerminalTool(BaseTool):
             token_manager=self.config.get_chatgpt_token_manager(),
             usage_ledger=getattr(self.caller, "usage_ledger", None),
             trace_sink=getattr(self.caller, "llm_trace_sink", None),
+            base_url=endpoint.base_url if endpoint else None,
+            api_style=endpoint.api_style if endpoint else None,
         )
 
         try:

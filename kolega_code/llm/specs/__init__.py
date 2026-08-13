@@ -17,7 +17,16 @@ from .accessors import (
     thinking_effort_options,
 )
 from .catalog import MODEL_SPECS
+from .custom_endpoints import (
+    CUSTOM_PROVIDER_PREFIX,
+    CUSTOM_THINKING_MODES,
+    CUSTOM_THINKING_PRESETS,
+    custom_endpoint_id,
+    is_custom_provider,
+    sync_custom_endpoint_specs,
+)
 from .thinking import (
+    REASONING_REPLAY_VALUES,
     build_thinking_request_params,
     normalize_thinking_effort,
     validate_thinking_effort,
@@ -47,4 +56,11 @@ __all__ = [
     "validate_thinking_effort",
     "normalize_thinking_effort",
     "build_thinking_request_params",
+    "CUSTOM_PROVIDER_PREFIX",
+    "CUSTOM_THINKING_MODES",
+    "CUSTOM_THINKING_PRESETS",
+    "REASONING_REPLAY_VALUES",
+    "is_custom_provider",
+    "custom_endpoint_id",
+    "sync_custom_endpoint_specs",
 ]

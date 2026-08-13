@@ -122,6 +122,7 @@ class AnthropicProvider(BaseLLMProvider):
         # Billing/accounting must use provider response usage metadata instead.
         self.use_local_token_counting = (
             provider_name in {"moonshot", "kimi_coding"}
+            or provider_name.startswith("custom:")
             or os.getenv("ANTHROPIC_USE_LOCAL_TOKEN_COUNTING", "false").lower() == "true"
         )
 

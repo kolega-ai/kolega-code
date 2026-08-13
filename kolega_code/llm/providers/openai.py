@@ -127,6 +127,9 @@ class OpenAIStreamWrapper:
         # buffers over thousands of tiny chunks. Lists make accumulation O(n).
         self._content_parts: List[str] = []
         self._reasoning_parts: List[str] = []
+        # Which delta field carried reasoning ("reasoning_content" | "reasoning"),
+        # recorded for auto replay on custom endpoints.
+        self._reasoning_field: Optional[str] = None
         # Per-index tool-call: the first delta's object (kept for id/name/index) plus
         # its argument fragments collected separately so the JSON arg string (which can
         # be large, e.g. a file-writing tool) is also joined once instead of grown.
@@ -177,11 +180,14 @@ class OpenAIStreamWrapper:
                     if content:
                         self._content_parts.append(content)
 
-                    reasoning_content = (
-                        getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None) or ""
-                    )
+                    reasoning_content = getattr(delta, "reasoning_content", None)
+                    reasoning = getattr(delta, "reasoning", None)
                     if reasoning_content:
+                        self._reasoning_field = "reasoning_content"
                         self._reasoning_parts.append(reasoning_content)
+                    elif reasoning:
+                        self._reasoning_field = "reasoning"
+                        self._reasoning_parts.append(reasoning)
 
                     for tool_call in getattr(delta, "tool_calls", []) or []:
                         index = tool_call.index
@@ -236,6 +242,9 @@ class OpenAIStreamWrapper:
             stop_reason=self.stop_reason,
             tool_execution_ids=self.tool_execution_ids,
         )
+
+        if self._reasoning_field is not None:
+            message.usage_metadata["reasoning_field"] = self._reasoning_field
 
         # Add usage data if available
         if self.usage_data:
