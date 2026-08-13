@@ -13,6 +13,7 @@ from .validation import validate_model_spec
 CUSTOM_PROVIDER_PREFIX = "custom:"
 DEFAULT_CONTEXT_LENGTH = 32768
 DEFAULT_MAX_OUTPUT_TOKENS = 8192
+API_STYLES = ("openai_chat", "openai_responses", "anthropic")
 
 _CUSTOM_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]*\Z")
 

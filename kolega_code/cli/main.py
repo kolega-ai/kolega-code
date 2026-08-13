@@ -27,6 +27,8 @@ from kolega_code.extensions import (
     resolve_extension_selection,
 )
 from kolega_code.llm.ledger import UsageLedger
+from kolega_code.llm.specs.custom_endpoints import CUSTOM_THINKING_PRESETS
+from kolega_code.llm.specs.thinking import REASONING_REPLAY_VALUES
 
 from .ask_output import InMemorySessionJournal, SemanticStdoutPrinter
 from .session_journal import SessionRecorder
@@ -251,6 +253,40 @@ def _add_common_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--fast-model", help="Fast utility model.")
     parser.add_argument("--thinking-effort", help="Model-specific thinking effort for the active model.")
     parser.add_argument("--thinking-tokens", dest="deprecated_thinking_tokens", type=int, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--custom-endpoints",
+        metavar="JSON",
+        help="Custom endpoint definitions as a JSON object, merged over settings.json per endpoint id. Not persisted.",
+    )
+    parser.add_argument(
+        "--endpoint-url",
+        metavar="URL",
+        help="Base URL of an ephemeral custom endpoint (provider 'custom:cli'). When no --provider is set "
+        "and a model is named, this endpoint becomes the active provider. Not persisted.",
+    )
+    parser.add_argument(
+        "--endpoint-style",
+        choices=["openai_chat", "openai_responses", "anthropic"],
+        help="Wire style for --endpoint-url (default openai_chat).",
+    )
+    parser.add_argument("--endpoint-api-key", help="Optional credential for --endpoint-url.")
+    parser.add_argument(
+        "--endpoint-context", metavar="TOKENS", help="Context length for --endpoint-url (default 32768)."
+    )
+    parser.add_argument(
+        "--endpoint-max-output", metavar="TOKENS", help="Max output tokens for --endpoint-url (default 8192)."
+    )
+    parser.add_argument("--endpoint-vision", action="store_true", help="Mark --endpoint-url models as vision-capable.")
+    parser.add_argument(
+        "--endpoint-thinking",
+        choices=sorted(CUSTOM_THINKING_PRESETS),
+        help="Thinking-effort mode for --endpoint-url.",
+    )
+    parser.add_argument(
+        "--endpoint-reasoning",
+        choices=list(REASONING_REPLAY_VALUES),
+        help="Reasoning replay field for --endpoint-url (auto detects the emitted field).",
+    )
     parser.add_argument("--environment", help="Environment label for tracing/metadata.")
     parser.add_argument(
         "--compression-threshold",
@@ -759,6 +795,15 @@ def _overrides_from_args(args: argparse.Namespace) -> CliConfigOverrides:
         compression_threshold=getattr(args, "compression_threshold", None),
         context_window_tokens=getattr(args, "context_window_tokens", None),
         max_output_tokens=getattr(args, "max_output_tokens", None),
+        custom_endpoints_json=getattr(args, "custom_endpoints", None),
+        endpoint_url=getattr(args, "endpoint_url", None),
+        endpoint_style=getattr(args, "endpoint_style", None),
+        endpoint_api_key=getattr(args, "endpoint_api_key", None),
+        endpoint_context=getattr(args, "endpoint_context", None),
+        endpoint_max_output=getattr(args, "endpoint_max_output", None),
+        endpoint_vision=bool(getattr(args, "endpoint_vision", False)),
+        endpoint_thinking=getattr(args, "endpoint_thinking", None),
+        endpoint_reasoning=getattr(args, "endpoint_reasoning", None),
     )
 
 

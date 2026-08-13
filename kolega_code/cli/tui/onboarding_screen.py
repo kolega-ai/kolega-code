@@ -24,6 +24,7 @@ from kolega_code.cli.provider_registry import (
     ui_thinking_effort_options,
 )
 from kolega_code.config import ModelProvider
+from kolega_code.llm.specs import CUSTOM_PROVIDER_PREFIX
 
 if TYPE_CHECKING:
     from ..app import KolegaCodeApp
@@ -154,7 +155,12 @@ class OnboardingScreen(ModalScreen[None]):
             self.owner._onboarding_screen = None
 
     def _api_provider_options(self) -> list[tuple[str, str]]:
-        return [(label, value) for label, value in ui_provider_options() if value != chatgpt_constants.PROVIDER_KEY]
+        # Custom endpoints are configured in Settings, not onboarding.
+        return [
+            (label, value)
+            for label, value in ui_provider_options()
+            if value != chatgpt_constants.PROVIDER_KEY and not value.startswith(CUSTOM_PROVIDER_PREFIX)
+        ]
 
     def _initial_auth_method(self) -> str:
         return "chatgpt" if self.draft.active_provider == chatgpt_constants.PROVIDER_KEY else "api"

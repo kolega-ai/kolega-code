@@ -5,9 +5,15 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from kolega_code.local_state import write_private_text
+from kolega_code.llm.specs.custom_endpoints import (
+    API_STYLES,
+    CUSTOM_THINKING_MODES,
+    REASONING_REPLAY_VALUES,
+    valid_custom_endpoint_id,
+)
 from kolega_code.permissions import PermissionMode
 
 from .session_store import default_state_dir
@@ -73,6 +79,48 @@ def _coerce_permission_mode(raw: object) -> str:
         return PermissionMode(str(raw).lower()).value
     except ValueError:
         return PermissionMode.ASK.value
+
+
+def _coerce_custom_endpoints(raw: object) -> dict[str, dict]:
+    """Normalize a stored endpoint-id -> endpoint-definition mapping.
+
+    Tolerant of hand-edits: entries with an invalid id, api_style, or base_url are
+    dropped; invalid numerics are dropped so defaults apply; an invalid thinking
+    block or reasoning_replay value is dropped/coerced. A malformed file can never
+    crash startup."""
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, dict] = {}
+    for endpoint_id, entry in raw.items():
+        if not isinstance(endpoint_id, str) or not valid_custom_endpoint_id(endpoint_id):
+            continue
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("api_style") not in API_STYLES:
+            continue
+        base_url = entry.get("base_url")
+        if not isinstance(base_url, str) or not base_url.strip():
+            continue
+        cleaned: dict[str, Any] = {key: value for key, value in entry.items() if value is not None and key != "models"}
+        for key in ("context_length", "max_output_tokens"):
+            value = cleaned.get(key)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                cleaned.pop(key, None)
+        thinking = cleaned.get("thinking")
+        if not isinstance(thinking, dict) or thinking.get("mode") not in CUSTOM_THINKING_MODES:
+            cleaned.pop("thinking", None)
+        replay = cleaned.get("reasoning_replay")
+        if replay not in REASONING_REPLAY_VALUES:
+            cleaned["reasoning_replay"] = "auto"
+        models = entry.get("models")
+        if isinstance(models, dict):
+            cleaned["models"] = {
+                str(name): dict(spec)
+                for name, spec in models.items()
+                if isinstance(name, str) and isinstance(spec, dict)
+            }
+        result[endpoint_id] = cleaned
+    return result
 
 
 # Valid range (inclusive) for the user-facing compression threshold, in percent.
@@ -149,6 +197,9 @@ class CliSettings:
     # Additive optional field — absent in older files -> None -> the agent's
     # built-in default (95%).
     compression_threshold: Optional[float] = None
+    # Custom model endpoints keyed by endpoint id (provider value "custom:<id>").
+    # Additive optional field — absent in older files -> empty mapping.
+    custom_endpoints: dict[str, dict] = field(default_factory=dict)
     schema_version: int = SETTINGS_SCHEMA_VERSION
 
     @classmethod
@@ -199,6 +250,8 @@ class CliSettings:
             skills_enabled=data.get("skills_enabled"),
             # Additive optional field; absent in older files -> None (default 95%).
             compression_threshold=_coerce_compression_threshold(data.get("compression_threshold")),
+            # Additive optional field; absent in older files -> empty mapping.
+            custom_endpoints=_coerce_custom_endpoints(data.get("custom_endpoints")),
         )
 
     def to_dict(self) -> dict:
@@ -224,6 +277,7 @@ class CliSettings:
             "subagents_enabled": self.subagents_enabled,
             "skills_enabled": self.skills_enabled,
             "compression_threshold": self.compression_threshold,
+            "custom_endpoints": self.custom_endpoints,
         }
 
     def get_api_key(self, provider: str) -> Optional[str]:

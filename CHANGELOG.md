@@ -6,6 +6,16 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- Custom endpoints: use models from any OpenAI Chat Completions, OpenAI
+  Responses, or Anthropic Messages-compatible server (LM Studio, Ollama, vLLM,
+  ...). Define endpoints under `custom_endpoints` in settings.json or via the
+  `--custom-endpoints` / `--endpoint-url` flags and `KOLEGA_CODE_CUSTOM_ENDPOINTS`
+  / `KOLEGA_CODE_ENDPOINT_*` environment variables (never persisted), then select
+  them as `custom:<id>` anywhere a provider is chosen. Supports thinking-effort
+  modes per wire dialect and native reasoning replay.
+
 ### Fixed
 
 - Together models (e.g. Kimi K2.7-Code) now replay prior reasoning through the

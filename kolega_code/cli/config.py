@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,12 +11,29 @@ from typing import Any, Mapping, NoReturn, Optional
 from pydantic import ValidationError
 
 from kolega_code.auth.tokens import ChatGPTTokenManager, OAuthTokens
-from kolega_code.config import AgentConfig, AgentRole, EditProtocol, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.config import (
+    AgentConfig,
+    AgentRole,
+    CustomEndpointConfig,
+    EditProtocol,
+    ModelConfig,
+    ModelProvider,
+    RateLimitConfig,
+)
 from kolega_code.llm.specs import MODEL_SPECS, get_model_specs, model_is_known, normalize_thinking_effort
+from kolega_code.llm.specs.custom_endpoints import (
+    API_STYLES,
+    CUSTOM_PROVIDER_PREFIX,
+    CUSTOM_THINKING_PRESETS,
+    REASONING_REPLAY_VALUES,
+    custom_endpoint_id,
+    is_custom_provider,
+    sync_custom_endpoint_specs,
+)
 from kolega_code.mcp.config import load_mcp_config
 from kolega_code.services.lsp.config import LspConfig
 
-from .provider_registry import default_model_for_provider
+from .provider_registry import default_model_for_provider, rebuild_ui_model_options, set_custom_provider_labels
 from .settings import (
     COMPRESSION_THRESHOLD_MAX_PERCENT,
     COMPRESSION_THRESHOLD_MIN_PERCENT,
@@ -86,6 +104,20 @@ SEARCH_BACKEND_KEY_ENV = {
     "tavily": "TAVILY_API_KEY",
 }
 
+# Custom-endpoint definition layers: full JSON object, or flat fields describing
+# one ephemeral endpoint under the id below. Never persisted to settings.json.
+CUSTOM_ENDPOINTS_ENV = "KOLEGA_CODE_CUSTOM_ENDPOINTS"
+ENDPOINT_URL_ENV = "KOLEGA_CODE_ENDPOINT_URL"
+ENDPOINT_STYLE_ENV = "KOLEGA_CODE_ENDPOINT_STYLE"
+ENDPOINT_API_KEY_ENV = "KOLEGA_CODE_ENDPOINT_API_KEY"
+ENDPOINT_CONTEXT_ENV = "KOLEGA_CODE_ENDPOINT_CONTEXT"
+ENDPOINT_MAX_OUTPUT_ENV = "KOLEGA_CODE_ENDPOINT_MAX_OUTPUT"
+ENDPOINT_VISION_ENV = "KOLEGA_CODE_ENDPOINT_VISION"
+ENDPOINT_THINKING_ENV = "KOLEGA_CODE_ENDPOINT_THINKING"
+ENDPOINT_REASONING_ENV = "KOLEGA_CODE_ENDPOINT_REASONING"
+CLI_ENDPOINT_ID = "cli"
+CLI_ENDPOINT_PROVIDER = f"{CUSTOM_PROVIDER_PREFIX}{CLI_ENDPOINT_ID}"
+
 
 class CliConfigError(ValueError):
     """Raised when CLI configuration is incomplete or invalid."""
@@ -121,6 +153,18 @@ class CliConfigOverrides:
     # validated as a pair in _strict_context_budget. Never persisted.
     context_window_tokens: Optional[str] = None
     max_output_tokens: Optional[str] = None
+    # Custom endpoint definition layers. --custom-endpoints carries the full JSON
+    # object; the --endpoint-* flags define one ephemeral endpoint "custom:cli".
+    # Neither is ever persisted.
+    custom_endpoints_json: Optional[str] = None
+    endpoint_url: Optional[str] = None
+    endpoint_style: Optional[str] = None
+    endpoint_api_key: Optional[str] = None
+    endpoint_context: Optional[str] = None
+    endpoint_max_output: Optional[str] = None
+    endpoint_vision: bool = False
+    endpoint_thinking: Optional[str] = None
+    endpoint_reasoning: Optional[str] = None
 
 
 def load_cli_env(project_path: Path, env: Optional[Mapping[str, str]] = None) -> dict[str, str]:
@@ -132,6 +176,98 @@ def load_cli_env(project_path: Path, env: Optional[Mapping[str, str]] = None) ->
     """
     _ = project_path
     return dict(env if env is not None else os.environ)
+
+
+def _parse_endpoints_json(raw: str, source: str) -> dict[str, dict]:
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise CliConfigError(f"{source} must be valid JSON: {exc.msg}") from exc
+    if not isinstance(parsed, dict) or not all(
+        isinstance(endpoint_id, str) and isinstance(entry, dict) for endpoint_id, entry in parsed.items()
+    ):
+        raise CliConfigError(f"{source} must be a JSON object of endpoint definitions.")
+    return dict(parsed)
+
+
+def _flat_endpoint_fields(env: Mapping[str, str], overrides: CliConfigOverrides) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for name, env_key, value in (
+        ("api_style", ENDPOINT_STYLE_ENV, overrides.endpoint_style),
+        ("api_key", ENDPOINT_API_KEY_ENV, overrides.endpoint_api_key),
+        ("context_length", ENDPOINT_CONTEXT_ENV, overrides.endpoint_context),
+        ("max_output_tokens", ENDPOINT_MAX_OUTPUT_ENV, overrides.endpoint_max_output),
+        ("thinking", ENDPOINT_THINKING_ENV, overrides.endpoint_thinking),
+        ("reasoning_replay", ENDPOINT_REASONING_ENV, overrides.endpoint_reasoning),
+    ):
+        resolved = value or env.get(env_key)
+        if resolved:
+            fields[name] = resolved
+    return fields
+
+
+def _cli_endpoint(url: str, env: Mapping[str, str], overrides: CliConfigOverrides) -> dict[str, Any]:
+    """Build the ephemeral `custom:cli` endpoint from --endpoint-url and friends."""
+    if not url.strip():
+        raise CliConfigError("--endpoint-url/KOLEGA_CODE_ENDPOINT_URL must not be empty.")
+    if not url.startswith(("http://", "https://")):
+        raise CliConfigError(f"--endpoint-url must be an http(s) URL, got '{url}'.")
+    flat = _flat_endpoint_fields(env, overrides)
+    api_style = flat.get("api_style", "openai_chat")
+    if api_style not in API_STYLES:
+        raise CliConfigError(f"Unsupported endpoint style '{api_style}'. Valid styles: {', '.join(API_STYLES)}")
+    entry: dict[str, Any] = {"api_style": api_style, "base_url": url.rstrip("/")}
+    if flat.get("api_key"):
+        entry["api_key"] = flat["api_key"]
+    for key, flag in (("context_length", "context"), ("max_output_tokens", "max-output")):
+        raw = flat.get(key)
+        if raw is None:
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 0
+        if value <= 0:
+            raise CliConfigError(f"--endpoint-{flag} must be a positive integer, got '{raw}'.")
+        entry[key] = value
+    thinking = flat.get("thinking")
+    if thinking:
+        if thinking not in CUSTOM_THINKING_PRESETS:
+            valid = ", ".join(sorted(CUSTOM_THINKING_PRESETS))
+            raise CliConfigError(f"Unsupported --endpoint-thinking '{thinking}'. Valid modes: {valid}")
+        preset = CUSTOM_THINKING_PRESETS[thinking]
+        if preset["budgets_required"]:
+            raise CliConfigError(
+                f"--endpoint-thinking {thinking} needs per-effort budgets; define it with --custom-endpoints JSON."
+            )
+        entry["thinking"] = {"mode": thinking, "options": list(preset["options"]), "default": preset["default"]}
+    reasoning = flat.get("reasoning_replay")
+    if reasoning:
+        if reasoning not in REASONING_REPLAY_VALUES:
+            valid = ", ".join(REASONING_REPLAY_VALUES)
+            raise CliConfigError(f"Unsupported --endpoint-reasoning '{reasoning}'. Valid values: {valid}")
+        entry["reasoning_replay"] = reasoning
+    if overrides.endpoint_vision or env.get(ENDPOINT_VISION_ENV):
+        entry["supports_vision"] = True
+    return entry
+
+
+def _merged_custom_endpoints(
+    env: Mapping[str, str],
+    overrides: CliConfigOverrides,
+    settings: Optional[CliSettings],
+) -> dict[str, dict]:
+    """Custom endpoints from settings.json overlaid with env JSON then flag JSON (per id)."""
+    merged: dict[str, dict] = dict(settings.custom_endpoints) if settings else {}
+    env_json = env.get(CUSTOM_ENDPOINTS_ENV)
+    if env_json:
+        merged.update(_parse_endpoints_json(env_json, CUSTOM_ENDPOINTS_ENV))
+    if overrides.custom_endpoints_json:
+        merged.update(_parse_endpoints_json(overrides.custom_endpoints_json, "--custom-endpoints"))
+    endpoint_url = overrides.endpoint_url or env.get(ENDPOINT_URL_ENV)
+    if endpoint_url:
+        merged[CLI_ENDPOINT_ID] = _cli_endpoint(endpoint_url, env, overrides)
+    return merged
 
 
 def _provider(value: str) -> ModelProvider:
@@ -197,6 +333,13 @@ def _ensure_explicit_model_supported(
     provider_source: Optional[str],
 ) -> None:
     """Raise a targeted error when an explicit model is paired with the wrong provider."""
+    if is_custom_provider(provider) and not model_is_known(provider, model):
+        # A custom provider resolves any model only through its endpoint's
+        # wildcard; its absence here means the endpoint is not defined.
+        raise CliConfigError(
+            f"Custom endpoint '{custom_endpoint_id(provider)}' is not defined. Add it under custom_endpoints in "
+            "settings.json, or via --custom-endpoints/--endpoint-url for this session."
+        )
     if model_is_known(provider, model):
         return
 
@@ -226,7 +369,13 @@ def _api_key_for_provider(
     provider: ModelProvider,
     env: Mapping[str, str],
     settings: Optional[CliSettings],
+    custom_endpoints: Optional[Mapping[str, Any]] = None,
 ) -> Optional[str]:
+    endpoint_id = custom_endpoint_id(provider)
+    if endpoint_id is not None:
+        merged = custom_endpoints or _merged_custom_endpoints(env, CliConfigOverrides(), settings)
+        entry = merged.get(endpoint_id) or {}
+        return entry.get("api_key") or None
     env_name = API_KEY_ENV.get(provider)
     if env_name and env.get(env_name):
         return env[env_name]
@@ -451,16 +600,20 @@ def _validate_strict_context_budget_limits(
         )
 
 
-def _coerce_known_model(provider: ModelProvider, model: Optional[str]) -> str:
+def _coerce_known_model(provider: ModelProvider, model: Optional[str]) -> Optional[str]:
     """Return ``model`` if it's a known spec for ``provider``, else the default.
 
     Guards against a settings.json that points at a model which has since been
     renamed or removed (e.g. an old ChatGPT slug): without this, config building
     raises and the TUI disables the composer, locking the user out. Wildcard-
-    addressed models (Tinker checkpoint paths) count as known and are kept.
+    addressed models (Tinker checkpoint paths, custom endpoints) count as known
+    and are kept. A custom provider whose endpoint was deleted has no default:
+    return None so the caller degrades to unconfigured.
     """
     if model and model_is_known(provider, model):
         return model
+    if is_custom_provider(provider):
+        return None
     return default_model_for_provider(provider)
 
 
@@ -468,6 +621,7 @@ def _active_provider_model(
     env: Mapping[str, str],
     overrides: CliConfigOverrides,
     settings: Optional[CliSettings],
+    default_custom_provider: Optional[str] = None,
 ) -> tuple[Optional[ModelProvider], Optional[str]]:
     provider_value, provider_source = _explicit_value(overrides.provider, env, "KOLEGA_CODE_PROVIDER", "--provider")
     model_value, model_source = _explicit_value(overrides.model, env, "KOLEGA_CODE_MODEL", "--model")
@@ -475,7 +629,11 @@ def _active_provider_model(
     if provider_value or model_value:
         if not provider_value:
             assert model_value is not None
-            _require_provider_for_model(model_value, model_source, "--provider or KOLEGA_CODE_PROVIDER")
+            if default_custom_provider:
+                provider_value = default_custom_provider
+                provider_source = None
+            else:
+                _require_provider_for_model(model_value, model_source, "--provider or KOLEGA_CODE_PROVIDER")
         if not model_value:
             _require_model_for_provider(provider_value, provider_source, "--model or KOLEGA_CODE_MODEL")
         provider = _provider(provider_value)
@@ -492,7 +650,10 @@ def _active_provider_model(
             provider = _provider(settings.active_provider)
         except CliConfigError:
             return None, None
-        return provider, _coerce_known_model(provider, settings.active_model)
+        model = _coerce_known_model(provider, settings.active_model)
+        if model is None:
+            return None, None
+        return provider, model
 
     return None, None
 
@@ -506,6 +667,7 @@ def _slot_provider_model(
     active_provider: ModelProvider,
     active_model: str,
     saved: Optional[Mapping[str, str]] = None,
+    default_custom_provider: Optional[str] = None,
 ) -> tuple[ModelProvider, str]:
     """Resolve one operational slot: CLI flag > env var > saved slot > active model.
 
@@ -531,7 +693,11 @@ def _slot_provider_model(
     if provider_value and not model_value:
         _require_model_for_provider(provider_value, provider_source, f"{model_flag} or {model_env_key}")
     if model_value and not provider_value:
-        _require_provider_for_model(model_value, model_source, f"{provider_flag} or {provider_env_key}")
+        if default_custom_provider:
+            provider_value = default_custom_provider
+            provider_source = None
+        else:
+            _require_provider_for_model(model_value, model_source, f"{provider_flag} or {provider_env_key}")
 
     if provider_value:
         assert model_value is not None
@@ -549,18 +715,42 @@ def _slot_provider_model(
     if saved_provider and saved_model:
         provider = _provider(saved_provider)
         if not model_is_known(provider, saved_model):
+            if is_custom_provider(provider):
+                # Endpoint deleted from settings: drop the override, inherit the active.
+                return active_provider, active_model
             saved_model = default_model_for_provider(provider)
         return provider, saved_model
 
     return active_provider, active_model
 
 
-def _model_config(provider: ModelProvider, model: str, thinking_effort: Optional[str] = None) -> ModelConfig:
+def _model_config(
+    provider: ModelProvider,
+    model: str,
+    thinking_effort: Optional[str] = None,
+    custom_endpoints: Optional[Mapping[str, Any]] = None,
+) -> ModelConfig:
+    endpoint_id = custom_endpoint_id(provider)
+    if endpoint_id is not None and endpoint_id not in (custom_endpoints or {}):
+        raise CliConfigError(
+            f"Custom endpoint '{endpoint_id}' is not defined. Add it under custom_endpoints in settings.json, "
+            "or via --custom-endpoints/--endpoint-url for this session."
+        )
     try:
-        get_model_specs(provider, model)
+        specs = get_model_specs(provider, model)
         resolved_thinking_effort = normalize_thinking_effort(provider, model, thinking_effort)
     except ValueError as exc:
         raise CliConfigError(str(exc)) from exc
+    if endpoint_id is not None:
+        thinking_spec = specs.get("thinking_effort")
+        if thinking_spec is not None and thinking_spec.mode == "anthropic_budget":
+            cap = specs["max_completion_tokens"]
+            over = [f"{option}={budget}" for option, budget in thinking_spec.budgets.items() if budget >= cap]
+            if over:
+                raise CliConfigError(
+                    f"Custom endpoint '{endpoint_id}': anthropic_budget budgets must stay below max_output_tokens "
+                    f"({cap}); over-limit: {', '.join(over)}."
+                )
 
     return ModelConfig(
         provider=provider,
@@ -602,6 +792,7 @@ def _agent_role_env_keys(role: AgentRole) -> tuple[str, str, str]:
 def _agent_model_overrides(
     env: Mapping[str, str],
     settings: Optional[CliSettings],
+    custom_endpoints: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, ModelConfig]:
     """Resolve per-agent-role model overrides from env vars over saved settings.
 
@@ -640,8 +831,13 @@ def _agent_model_overrides(
                 provider_source=provider_key if provider_env_value else None,
             )
         elif not model_is_known(provider, model_value):
+            if is_custom_provider(provider):
+                # Endpoint deleted from settings: drop the override, role inherits.
+                continue
             model_value = default_model_for_provider(provider)
-        overrides[role.value] = _model_config(provider, model_value, thinking_effort=effort_value)
+        overrides[role.value] = _model_config(
+            provider, model_value, thinking_effort=effort_value, custom_endpoints=custom_endpoints
+        )
     return overrides
 
 
@@ -663,7 +859,18 @@ def build_agent_config(
     if "KOLEGA_CODE_THINKING_TOKENS" in loaded_env:
         raise CliConfigError(DEPRECATED_THINKING_TOKENS_MESSAGE)
 
-    active_provider, active_model = _active_provider_model(loaded_env, overrides, settings)
+    if not (overrides.endpoint_url or loaded_env.get(ENDPOINT_URL_ENV)) and (
+        _flat_endpoint_fields(loaded_env, overrides) or overrides.endpoint_vision
+    ):
+        raise CliConfigError("--endpoint-* flags require --endpoint-url or KOLEGA_CODE_ENDPOINT_URL.")
+
+    merged_endpoints = _merged_custom_endpoints(loaded_env, overrides, settings)
+    sync_custom_endpoint_specs(merged_endpoints)
+    default_custom_provider = CLI_ENDPOINT_PROVIDER if CLI_ENDPOINT_ID in merged_endpoints else None
+
+    active_provider, active_model = _active_provider_model(
+        loaded_env, overrides, settings, default_custom_provider=default_custom_provider
+    )
     if active_provider is None or active_model is None:
         raise CliConfigError(MISSING_MODEL_SELECTION_MESSAGE)
 
@@ -675,6 +882,7 @@ def build_agent_config(
         overrides.model,
         active_provider,
         active_model,
+        default_custom_provider=default_custom_provider,
     )
     fast_provider, fast_model = _slot_provider_model(
         loaded_env,
@@ -694,7 +902,7 @@ def build_agent_config(
         settings,
     )
 
-    agent_model_overrides = _agent_model_overrides(loaded_env, settings)
+    agent_model_overrides = _agent_model_overrides(loaded_env, settings, custom_endpoints=merged_endpoints)
     web_search_backend, web_search_api_key, web_search_base_url = _search_config(loaded_env, settings)
     web_search_mode = _web_search_mode(loaded_env, settings, overrides.web_search_mode)
     compression_threshold = _compression_threshold(loaded_env, settings, overrides.compression_threshold)
@@ -709,12 +917,13 @@ def build_agent_config(
 
     required_providers = {long_provider, fast_provider}
     required_providers.update(override.provider for override in agent_model_overrides.values())
-    # API-key providers: env/settings key required. OAuth and local providers are
-    # exempt (OAuth is checked via stored tokens below; LLAMA is keyless).
+    # API-key providers: env/settings key required. OAuth, local, and custom
+    # endpoint providers are exempt (endpoint keys are optional).
     missing_keys = [
         API_KEY_ENV[provider]
         for provider in sorted(required_providers, key=lambda item: item.value)
         if provider != ModelProvider.LLAMA
+        and not is_custom_provider(provider)
         and provider not in OAUTH_PROVIDERS
         and not _api_key_for_provider(provider, loaded_env, settings)
     ]
@@ -752,9 +961,15 @@ def build_agent_config(
             thinking_machines_api_key=_api_key_for_provider(ModelProvider.THINKING_MACHINES, loaded_env, settings),
             environment=overrides.environment or loaded_env.get("KOLEGA_CODE_ENVIRONMENT", "development"),
             edit_protocol=edit_protocol,
-            long_context_config=_model_config(long_provider, long_model, thinking_effort=active_thinking_effort),
-            fast_config=_model_config(fast_provider, fast_model),
+            long_context_config=_model_config(
+                long_provider, long_model, thinking_effort=active_thinking_effort, custom_endpoints=merged_endpoints
+            ),
+            fast_config=_model_config(fast_provider, fast_model, custom_endpoints=merged_endpoints),
             agent_models=agent_model_overrides,
+            custom_endpoints={
+                endpoint_id: CustomEndpointConfig.model_validate(entry)
+                for endpoint_id, entry in merged_endpoints.items()
+            },
             web_search_mode=web_search_mode,
             web_search_backend=web_search_backend,
             web_search_api_key=web_search_api_key,
@@ -790,6 +1005,13 @@ def build_agent_config(
     # to settings.json (only possible when a store is supplied by the caller).
     if chatgpt_tokens is not None and settings is not None and settings_store is not None:
         config.attach_chatgpt_token_manager(_build_chatgpt_token_manager(chatgpt_tokens, settings, settings_store))
+
+    # Keep the UI picker registry in sync with the endpoints resolved for this
+    # process (includes env/flag-defined ones for the session).
+    set_custom_provider_labels(
+        {endpoint_id: endpoint.label or endpoint_id for endpoint_id, endpoint in config.custom_endpoints.items()}
+    )
+    rebuild_ui_model_options()
     return config
 
 
@@ -798,6 +1020,19 @@ def key_status(provider: str, project_path: Path, settings: Optional[CliSettings
     provider_value = _provider(provider)
     if provider_value == ModelProvider.LLAMA:
         return "not required for the local provider"
+    endpoint_id = custom_endpoint_id(provider_value)
+    if endpoint_id is not None:
+        env = load_cli_env(project_path)
+        merged = _merged_custom_endpoints(env, CliConfigOverrides(), settings)
+        entry = merged.get(endpoint_id) or {}
+        if endpoint_id not in merged:
+            return "endpoint not defined"
+        if entry.get("api_key"):
+            saved_entry = (settings.custom_endpoints if settings else {}).get(endpoint_id) or {}
+            if saved_entry.get("api_key") == entry["api_key"]:
+                return "present in local settings"
+            return "present via environment override"
+        return "key not set (optional)"
     if provider_value in OAUTH_PROVIDERS:
         if settings and settings.has_oauth_token(provider_value.value):
             token = settings.get_oauth_token(provider_value.value) or {}
@@ -842,6 +1077,14 @@ def active_model_override_message(
     """Describe an explicit CLI/process-env active-model override, if one is in effect."""
     overrides = overrides or CliConfigOverrides()
     loaded_env = load_cli_env(project_path, env)
+    endpoint_override = any(
+        (
+            overrides.custom_endpoints_json,
+            overrides.endpoint_url,
+            loaded_env.get(CUSTOM_ENDPOINTS_ENV),
+            loaded_env.get(ENDPOINT_URL_ENV),
+        )
+    )
     explicit_active_override = any(
         (
             overrides.provider,
@@ -850,14 +1093,18 @@ def active_model_override_message(
             loaded_env.get("KOLEGA_CODE_MODEL"),
         )
     )
-    if not explicit_active_override:
+    if not explicit_active_override and not endpoint_override:
         return None
     if not settings or not (settings.active_provider and settings.active_model):
+        if endpoint_override and is_custom_provider(config.long_context_config.provider):
+            return "CLI/environment-defined custom endpoints apply to this session."
         return None
 
     effective_provider = config.long_context_config.provider.value
     effective_model = config.long_context_config.model
     if settings.active_provider == effective_provider and settings.active_model == effective_model:
+        if endpoint_override and is_custom_provider(config.long_context_config.provider):
+            return "CLI/environment-defined custom endpoints apply to this session."
         return None
 
     return (

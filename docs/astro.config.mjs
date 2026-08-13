@@ -57,6 +57,10 @@ export default defineConfig({
               slug: "configuration/providers-and-models",
             },
             {
+              label: "Custom Endpoints",
+              slug: "configuration/custom-endpoints",
+            },
+            {
               label: "Sign in with ChatGPT",
               slug: "configuration/sign-in-with-chatgpt",
             },

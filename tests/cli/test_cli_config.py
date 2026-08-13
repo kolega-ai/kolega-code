@@ -8,6 +8,7 @@ from kolega_code.cli.config import (
     CliConfigOverrides,
     build_agent_config,
     config_summary,
+    key_status,
 )
 from kolega_code.cli.provider_registry import (
     DEEPSEEK_DEFAULT_MODEL,
@@ -16,7 +17,7 @@ from kolega_code.cli.provider_registry import (
     UI_DEFAULT_PROVIDER,
     default_model_for_provider,
 )
-from kolega_code.cli.settings import CliSettings
+from kolega_code.cli.settings import CliSettings, SettingsStore
 from kolega_code.llm.specs import MODEL_SPECS, default_thinking_effort, is_featured_model
 
 # Anthropic's registry default, used throughout as a convenient known-good model.
@@ -813,3 +814,202 @@ def test_model_slot_override_requires_the_slot_providers_api_key(tmp_path: Path)
 
     with pytest.raises(CliConfigError, match="DEEPSEEK_API_KEY"):
         build_agent_config(tmp_path, settings=settings, env={})
+
+
+# --- custom endpoints -----------------------------------------------------
+
+
+def _saved_endpoint_settings() -> CliSettings:
+    settings = CliSettings(active_provider="custom:lmstudio", active_model="qwen2.5")
+    settings.custom_endpoints = {"lmstudio": {"api_style": "openai_chat", "base_url": "http://localhost:1234/v1"}}
+    return settings
+
+
+def test_build_agent_config_with_custom_endpoint(tmp_path: Path) -> None:
+    config = build_agent_config(tmp_path, env={}, settings=_saved_endpoint_settings())
+
+    assert config.long_context_config.provider.value == "custom:lmstudio"
+    assert config.long_context_config.model == "qwen2.5"
+    endpoint = config.custom_endpoint_for(config.long_context_config)
+    assert endpoint is not None and endpoint.base_url == "http://localhost:1234/v1"
+
+
+def test_build_agent_config_custom_endpoint_keyless_passes_key_check(tmp_path: Path) -> None:
+    config = build_agent_config(tmp_path, env={}, settings=_saved_endpoint_settings())
+    assert config.get_api_key(config.long_context_config.provider) is None
+
+
+def test_build_agent_config_custom_endpoint_api_key_resolves(tmp_path: Path) -> None:
+    settings = _saved_endpoint_settings()
+    settings.custom_endpoints["lmstudio"]["api_key"] = "secret"
+    config = build_agent_config(tmp_path, env={}, settings=settings)
+    assert config.get_api_key(config.long_context_config.provider) == "secret"
+
+
+def test_build_agent_config_custom_endpoint_agent_and_slot_overrides(tmp_path: Path) -> None:
+    settings = _saved_endpoint_settings()
+    settings.set_agent_model("investigation", "custom:lmstudio", "qwen2.5")
+    settings.set_model_slot("fast", "custom:lmstudio", "qwen2.5")
+
+    config = build_agent_config(tmp_path, env={}, settings=settings)
+    assert config.agent_models["investigation"].provider.value == "custom:lmstudio"
+    assert config.fast_config.provider.value == "custom:lmstudio"
+    assert config.fast_config.model == "qwen2.5"
+
+
+def test_build_agent_config_deleted_endpoint_degrades_to_unconfigured(tmp_path: Path) -> None:
+    settings = CliSettings(active_provider="custom:gone", active_model="m")
+    with pytest.raises(CliConfigError, match="No provider/model configured"):
+        build_agent_config(tmp_path, env={}, settings=settings)
+
+
+def test_build_agent_config_deleted_endpoint_slot_inherits(tmp_path: Path) -> None:
+    settings = _saved_endpoint_settings()
+    settings.set_model_slot("fast", "custom:gone", "m")
+    config = build_agent_config(tmp_path, env={}, settings=settings)
+    assert config.fast_config.provider.value == "custom:lmstudio"
+    assert config.fast_config.model == "qwen2.5"
+
+
+def test_build_agent_config_explicit_undefined_endpoint_targeted_error(tmp_path: Path) -> None:
+    with pytest.raises(CliConfigError, match="Custom endpoint 'nope' is not defined"):
+        build_agent_config(
+            tmp_path,
+            env={},
+            settings=CliSettings(),
+            overrides=CliConfigOverrides(provider="custom:nope", model="m"),
+        )
+
+
+def test_build_agent_config_endpoint_flags_define_custom_cli(tmp_path: Path) -> None:
+    config = build_agent_config(
+        tmp_path,
+        env={},
+        settings=CliSettings(),
+        overrides=CliConfigOverrides(
+            endpoint_url="http://localhost:11434/v1",
+            endpoint_style="openai_chat",
+            endpoint_context="32768",
+            endpoint_max_output="8192",
+            endpoint_thinking="thinking_toggle",
+            endpoint_reasoning="auto",
+            model="qwen2.5",
+        ),
+    )
+
+    assert config.long_context_config.provider.value == "custom:cli"
+    assert config.long_context_config.model == "qwen2.5"
+    endpoint = config.custom_endpoint_for(config.long_context_config)
+    assert endpoint is not None
+    assert endpoint.base_url == "http://localhost:11434/v1"
+    assert endpoint.context_length == 32768
+    assert endpoint.max_output_tokens == 8192
+    assert endpoint.thinking == {"mode": "thinking_toggle", "options": ["none", "enabled"], "default": "enabled"}
+
+
+def test_build_agent_config_explicit_provider_wins_over_custom_cli_default(tmp_path: Path) -> None:
+    config = build_agent_config(
+        tmp_path,
+        env={},
+        settings=CliSettings(),
+        overrides=CliConfigOverrides(endpoint_url="http://localhost:11434/v1", provider="custom:cli", model="qwen2.5"),
+    )
+    assert config.long_context_config.provider.value == "custom:cli"
+
+
+def test_build_agent_config_env_json_overrides_saved_endpoint(tmp_path: Path) -> None:
+    settings = _saved_endpoint_settings()
+    config = build_agent_config(
+        tmp_path,
+        env={
+            "KOLEGA_CODE_CUSTOM_ENDPOINTS": '{"lmstudio": {"api_style": "openai_chat", "base_url": "http://new:2/v1"}}'
+        },
+        settings=settings,
+    )
+    endpoint = config.custom_endpoint_for(config.long_context_config)
+    assert endpoint is not None and endpoint.base_url == "http://new:2/v1"
+
+
+def test_build_agent_config_custom_endpoints_never_persisted(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    settings = CliSettings(active_provider="custom:lmstudio", active_model="qwen2.5")
+    store.save(settings)
+
+    build_agent_config(
+        tmp_path,
+        env={},
+        settings=store.load(),
+        settings_store=store,
+        overrides=CliConfigOverrides(endpoint_url="http://localhost:11434/v1", model="qwen2.5"),
+    )
+
+    reloaded = store.load()
+    assert reloaded.custom_endpoints == {}
+    assert reloaded.active_provider == "custom:lmstudio"
+
+
+def test_build_agent_config_endpoint_flags_require_url(tmp_path: Path) -> None:
+    with pytest.raises(CliConfigError, match="require --endpoint-url"):
+        build_agent_config(
+            tmp_path,
+            env={},
+            settings=CliSettings(),
+            overrides=CliConfigOverrides(endpoint_context="100"),
+        )
+
+
+def test_build_agent_config_invalid_endpoint_style_and_thinking(tmp_path: Path) -> None:
+    with pytest.raises(CliConfigError, match="endpoint style"):
+        build_agent_config(
+            tmp_path,
+            env={},
+            settings=CliSettings(),
+            overrides=CliConfigOverrides(endpoint_url="http://x/v1", endpoint_style="grpc", model="m"),
+        )
+    with pytest.raises(CliConfigError, match="endpoint-thinking"):
+        build_agent_config(
+            tmp_path,
+            env={},
+            settings=CliSettings(),
+            overrides=CliConfigOverrides(endpoint_url="http://x/v1", endpoint_thinking="nope", model="m"),
+        )
+
+
+def test_build_agent_config_anthropic_budget_cap_validated(tmp_path: Path) -> None:
+    settings = CliSettings(active_provider="custom:ap", active_model="m")
+    settings.custom_endpoints = {
+        "ap": {
+            "api_style": "anthropic",
+            "base_url": "http://x:1",
+            "max_output_tokens": 8192,
+            "thinking": {
+                "mode": "anthropic_budget",
+                "options": ["none", "low"],
+                "default": "low",
+                "budgets": {"low": 9000},
+            },
+        }
+    }
+    with pytest.raises(CliConfigError, match="budgets must stay below max_output_tokens"):
+        build_agent_config(tmp_path, env={}, settings=settings)
+
+
+def test_build_agent_config_custom_endpoint_requires_defined_endpoint_for_saved_active(tmp_path: Path) -> None:
+    settings = CliSettings(active_provider="custom:lmstudio", active_model="qwen2.5")
+    with pytest.raises(CliConfigError, match="Custom endpoint 'lmstudio' is not defined"):
+        build_agent_config(
+            tmp_path,
+            env={},
+            settings=settings,
+            overrides=CliConfigOverrides(provider="custom:lmstudio", model="qwen2.5"),
+        )
+
+
+def test_key_status_reports_custom_endpoint_keys(tmp_path: Path) -> None:
+    settings = _saved_endpoint_settings()
+    assert key_status("custom:lmstudio", tmp_path, settings) == "key not set (optional)"
+
+    settings.custom_endpoints["lmstudio"]["api_key"] = "secret"
+    assert key_status("custom:lmstudio", tmp_path, settings) == "present in local settings"
+
+    assert key_status("custom:gone", tmp_path, settings) == "endpoint not defined"
