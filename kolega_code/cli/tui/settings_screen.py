@@ -270,6 +270,8 @@ class SettingsScreen(ModalScreen[None]):
                 yield Input(id="ep_context_input", placeholder="32768")
                 yield Label("Max output tokens")
                 yield Input(id="ep_max_output_input", placeholder="8192")
+                yield Label("Temperature", id="ep_temperature_label")
+                yield Input(id="ep_temperature_input", placeholder="1.0 (leave blank for default)")
                 yield Label("Vision")
                 yield Select(
                     [("No", "false"), ("Yes", "true")],

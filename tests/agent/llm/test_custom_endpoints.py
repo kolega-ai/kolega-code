@@ -394,3 +394,30 @@ def test_normalize_usage_for_custom_endpoints_by_shape():
     assert usage_token_fields("custom:chat", metadata=openai_shaped) == ("prompt_tokens", "completion_tokens")
     assert usage_token_fields("custom:anthropic", metadata=anthropic_shaped) == ("input_tokens", "output_tokens")
     assert usage_token_fields("custom:chat") == ("prompt_tokens", "completion_tokens")
+
+
+# --- temperature ----------------------------------------------------------
+
+
+def test_sync_maps_endpoint_temperature_into_spec():
+    sync_custom_endpoint_specs(
+        {
+            "hot": {**CHAT_ENDPOINT, "temperature": 0.3},
+            "default": CHAT_ENDPOINT,
+            "bad": {**CHAT_ENDPOINT, "temperature": 7},
+            "override": {**CHAT_ENDPOINT, "temperature": 0.4, "models": {"m": {"temperature": 0.9}}},
+        }
+    )
+    assert get_model_specs("custom:hot", "m")["default_temperature"] == 0.3
+    assert get_model_specs("custom:default", "m")["default_temperature"] == 1.0
+    assert get_model_specs("custom:bad", "m")["default_temperature"] == 1.0
+    assert get_model_specs("custom:override", "m")["default_temperature"] == 0.9
+
+
+def test_custom_endpoint_config_temperature_validation():
+    CustomEndpointConfig(api_style="openai_chat", base_url="http://x/v1", temperature=0.5)
+    CustomEndpointConfig(api_style="openai_chat", base_url="http://x/v1", temperature=2)
+    with pytest.raises(ValueError):
+        CustomEndpointConfig(api_style="openai_chat", base_url="http://x/v1", temperature=0)
+    with pytest.raises(ValueError):
+        CustomEndpointConfig(api_style="openai_chat", base_url="http://x/v1", temperature=2.5)

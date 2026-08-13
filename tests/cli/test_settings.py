@@ -598,3 +598,23 @@ def test_custom_endpoints_coercion_tolerates_hand_edits() -> None:
     assert "thinking" not in settings.custom_endpoints["bad-thinking"]
     assert settings.custom_endpoints["bad-replay"]["reasoning_replay"] == "auto"
     assert settings.custom_endpoints["bad-models"]["models"] == {"a": {"context_length": 1}}
+
+
+def test_custom_endpoints_temperature_coercion() -> None:
+    settings = CliSettings.from_dict(
+        {
+            "schema_version": 3,
+            "custom_endpoints": {
+                "good": {"api_style": "openai_chat", "base_url": "http://x/v1", "temperature": 0.5},
+                "int": {"api_style": "openai_chat", "base_url": "http://x/v1", "temperature": 1},
+                "high": {"api_style": "openai_chat", "base_url": "http://x/v1", "temperature": 3},
+                "zero": {"api_style": "openai_chat", "base_url": "http://x/v1", "temperature": 0},
+                "str": {"api_style": "openai_chat", "base_url": "http://x/v1", "temperature": "0.5"},
+            },
+        }
+    )
+    assert settings.custom_endpoints["good"]["temperature"] == 0.5
+    assert settings.custom_endpoints["int"]["temperature"] == 1
+    assert "temperature" not in settings.custom_endpoints["high"]
+    assert "temperature" not in settings.custom_endpoints["zero"]
+    assert "temperature" not in settings.custom_endpoints["str"]

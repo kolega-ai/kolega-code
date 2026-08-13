@@ -140,6 +140,12 @@ class CustomEndpointConfig(BaseModel):
     context_length: int = Field(default=DEFAULT_CONTEXT_LENGTH, gt=0)
     max_output_tokens: int = Field(default=DEFAULT_MAX_OUTPUT_TOKENS, gt=0)
     supports_vision: bool = Field(default=False)
+    temperature: Optional[float] = Field(
+        default=None,
+        gt=0,
+        le=2,
+        description="Sampling temperature (keep <= 1 for anthropic style; ignored by openai_responses)",
+    )
     models: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="Per-model spec overrides")
     thinking: Optional[Dict[str, Any]] = Field(default=None, description="Thinking-effort spec for this endpoint")
     reasoning_replay: str = Field(

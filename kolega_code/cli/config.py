@@ -115,6 +115,7 @@ ENDPOINT_MAX_OUTPUT_ENV = "KOLEGA_CODE_ENDPOINT_MAX_OUTPUT"
 ENDPOINT_VISION_ENV = "KOLEGA_CODE_ENDPOINT_VISION"
 ENDPOINT_THINKING_ENV = "KOLEGA_CODE_ENDPOINT_THINKING"
 ENDPOINT_REASONING_ENV = "KOLEGA_CODE_ENDPOINT_REASONING"
+ENDPOINT_TEMPERATURE_ENV = "KOLEGA_CODE_ENDPOINT_TEMPERATURE"
 CLI_ENDPOINT_ID = "cli"
 CLI_ENDPOINT_PROVIDER = f"{CUSTOM_PROVIDER_PREFIX}{CLI_ENDPOINT_ID}"
 
@@ -165,6 +166,7 @@ class CliConfigOverrides:
     endpoint_vision: bool = False
     endpoint_thinking: Optional[str] = None
     endpoint_reasoning: Optional[str] = None
+    endpoint_temperature: Optional[str] = None
 
 
 def load_cli_env(project_path: Path, env: Optional[Mapping[str, str]] = None) -> dict[str, str]:
@@ -199,6 +201,7 @@ def _flat_endpoint_fields(env: Mapping[str, str], overrides: CliConfigOverrides)
         ("max_output_tokens", ENDPOINT_MAX_OUTPUT_ENV, overrides.endpoint_max_output),
         ("thinking", ENDPOINT_THINKING_ENV, overrides.endpoint_thinking),
         ("reasoning_replay", ENDPOINT_REASONING_ENV, overrides.endpoint_reasoning),
+        ("temperature", ENDPOINT_TEMPERATURE_ENV, overrides.endpoint_temperature),
     ):
         resolved = value or env.get(env_key)
         if resolved:
@@ -230,6 +233,15 @@ def _cli_endpoint(url: str, env: Mapping[str, str], overrides: CliConfigOverride
         if value <= 0:
             raise CliConfigError(f"--endpoint-{flag} must be a positive integer, got '{raw}'.")
         entry[key] = value
+    raw_temperature = flat.get("temperature")
+    if raw_temperature is not None:
+        try:
+            temperature = float(raw_temperature)
+        except ValueError:
+            temperature = 0.0
+        if not (0 < temperature <= 2):
+            raise CliConfigError(f"--endpoint-temperature must be between 0 and 2, got '{raw_temperature}'.")
+        entry["temperature"] = temperature
     thinking = flat.get("thinking")
     if thinking:
         if thinking not in CUSTOM_THINKING_PRESETS:
