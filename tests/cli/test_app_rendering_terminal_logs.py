@@ -874,8 +874,15 @@ async def test_flush_pacing_stretches_terminal_flush_under_loop_load(
         app._queue_terminal_output("paced output\n")
         assert app._terminal_flush_timer is not None
         assert app._terminal_flush_timer._interval == pacing.PACING_CEILING
+        # Queueing never flushes synchronously: the only drain path in an idle app
+        # is the armed ceiling timer (0.5s), not the healthy base cadence.
+        assert app._terminal_output_buffer == ["paced output\n"]
+
+        # Stop the timer so a real-time pause can never race its firing on a loaded
+        # runner (a 0.1s sleep stretched past the 0.5s ceiling would otherwise
+        # drain the buffer); still verify nothing else flushes during an idle wait.
+        app._terminal_flush_timer.stop()
         await pilot.pause(0.1)
-        # At the healthy cadence this would already have flushed.
         assert app._terminal_output_buffer == ["paced output\n"]
 
         app._flush_terminal_output()  # forced drains bypass pacing

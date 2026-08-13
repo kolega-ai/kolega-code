@@ -48,17 +48,24 @@ from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config
 from kolega_code.llm.exceptions import LLMBillingError, billing_error_message
 from kolega_code.llm.models import Message, TextBlock
 from kolega_code.mcp.config import (
+    _SERVER_ID_MAX_LENGTH,
+    LoadedMCPConfig,
     MCPConfigError,
     MCPServerConfig,
     global_mcp_config_path,
     load_mcp_config,
     project_mcp_config_path,
     remove_server_config,
+    sanitize_mcp_server_id,
     server_fingerprint,
     set_server_enabled,
     upsert_server_config,
 )
-from kolega_code.mcp.service import MCP_FAILURE_MESSAGE_GENERIC, MCPService
+from kolega_code.mcp.service import (
+    MCP_FAILURE_MESSAGE_GENERIC,
+    MCPService,
+    mcp_tool_name_adjustment_note,
+)
 from kolega_code.mcp.tools import build_mcp_tool_extension
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.permissions import (
@@ -1606,6 +1613,8 @@ async def _run_ask(args: argparse.Namespace) -> int:
     )
     if mcp_extension is not None:
         tool_extensions.append(mcp_extension)
+        if mcp_config is not None:
+            _print_mcp_tool_name_warnings(mcp_config, settings_store.root, project_path)
     extension_bundle = None
     if extension_selection is not None:
         extension_host = KolegaExtensionHost(
@@ -2335,6 +2344,8 @@ async def _run_mcp(args: argparse.Namespace) -> int:
         return 0
 
     if args.mcp_command == "verify":
+        if getattr(args, "server_id", None):
+            args.server_id = sanitize_mcp_server_id(args.server_id)
         server_ids = _mcp_verify_server_ids(args, config)
         if not server_ids:
             raise ValueError("No MCP servers to verify.")
@@ -2366,33 +2377,41 @@ async def _run_mcp(args: argparse.Namespace) -> int:
         except MCPConfigError as exc:
             raise ValueError(str(exc)) from exc
         print(f"Saved MCP server {server.id} to {path}")
+        if args.server_id.strip() != server.id:
+            print(
+                f"mcp: server id '{args.server_id}' exceeds {_SERVER_ID_MAX_LENGTH} characters; "
+                f"saved as '{server.id}'.",
+                file=sys.stderr,
+            )
         if source == "project" and not settings.is_mcp_project_trusted(project_path):
             print("Project MCP config is not trusted yet. Re-run with --trust-mcp to enable it.", file=sys.stderr)
         return 0
 
     if args.mcp_command == "remove":
         path, source = _mcp_mutation_target(args, project_path, settings_store.root)
+        server_id = sanitize_mcp_server_id(args.server_id)
         try:
-            removed = remove_server_config(path, args.server_id, source=source)
+            removed = remove_server_config(path, server_id, source=source)
         except MCPConfigError as exc:
             raise ValueError(str(exc)) from exc
         if not removed:
-            raise ValueError(f"MCP server not found in {path}: {args.server_id}")
-        service.status_store.clear(args.server_id)
-        service.oauth_store.clear(args.server_id)
-        print(f"Removed MCP server {args.server_id} from {path}")
+            raise ValueError(f"MCP server not found in {path}: {server_id}")
+        service.status_store.clear(server_id)
+        service.oauth_store.clear(server_id)
+        print(f"Removed MCP server {server_id} from {path}")
         return 0
 
     if args.mcp_command in {"enable", "disable"}:
         path, source = _mcp_mutation_target(args, project_path, settings_store.root)
         enabled = args.mcp_command == "enable"
+        server_id = sanitize_mcp_server_id(args.server_id)
         try:
-            changed = set_server_enabled(path, args.server_id, enabled, source=source)
+            changed = set_server_enabled(path, server_id, enabled, source=source)
         except MCPConfigError as exc:
             raise ValueError(str(exc)) from exc
         if not changed:
-            raise ValueError(f"MCP server not found in {path}: {args.server_id}")
-        print(f"{'Enabled' if enabled else 'Disabled'} MCP server {args.server_id} in {path}")
+            raise ValueError(f"MCP server not found in {path}: {server_id}")
+        print(f"{'Enabled' if enabled else 'Disabled'} MCP server {server_id} in {path}")
         return 0
 
     raise ValueError(f"Unknown mcp command: {args.mcp_command}")
@@ -2411,21 +2430,41 @@ def _print_mcp_list(config, service: MCPService) -> None:
         return
     print("ID\tSOURCE\tTRANSPORT\tENABLED\tOAUTH\tSTATUS\tTOOLS\tMESSAGE")
     for server in config.servers.values():
-        status_text, tool_count, message = _mcp_cli_status_parts(server, service)
+        status_text, tool_count, message, _ = _mcp_cli_status_parts(server, service)
         print(
             f"{server.id}\t{server.source}\t{server.transport}\t{server.enabled}\t{server.oauth.enabled}\t"
             f"{status_text}\t{tool_count}\t{message}"
         )
 
 
-def _mcp_cli_status_parts(server: MCPServerConfig, service: MCPService) -> tuple[str, int, str]:
+def _print_mcp_tool_name_warnings(config: LoadedMCPConfig, state_dir: Path, project_path: Path) -> None:
+    """Warn on stderr when verified MCP tools get provider-adjusted wire names.
+
+    Mirrors the ``mcp: {diagnostic}`` startup output: the model-facing names are
+    sanitized, and silently renaming them would be confusing.
+    """
+    service = MCPService(config, state_dir=state_dir, project_path=project_path)
+    for server in config.enabled_servers:
+        status = service.server_status(server)
+        if not status or status.status != "verified":
+            continue
+        if status.fingerprint != server_fingerprint(server):
+            continue
+        note = mcp_tool_name_adjustment_note(server.id, status.tools)
+        if note:
+            print(f"mcp: warning: server '{server.id}': {note}", file=sys.stderr)
+
+
+def _mcp_cli_status_parts(server: MCPServerConfig, service: MCPService) -> tuple[str, int, str, str]:
     status = service.server_status(server)
     current_fingerprint = server_fingerprint(server)
     verified = bool(status and status.status == "verified" and status.fingerprint == current_fingerprint)
     stale = bool(status and status.fingerprint and status.fingerprint != current_fingerprint)
+    note = ""
     if verified and status:
         status_text = "verified"
         tool_count = status.tool_count
+        note = mcp_tool_name_adjustment_note(server.id, status.tools)
     elif stale:
         status_text = "stale"
         tool_count = 0
@@ -2435,12 +2474,13 @@ def _mcp_cli_status_parts(server: MCPServerConfig, service: MCPService) -> tuple
     else:
         status_text = "unverified"
         tool_count = 0
-    return status_text, tool_count, _mcp_cli_list_message(status_text, tool_count)
+    return status_text, tool_count, _mcp_cli_list_message(status_text, tool_count, note), note
 
 
-def _mcp_cli_list_message(status: str, tool_count: int) -> str:
+def _mcp_cli_list_message(status: str, tool_count: int, note: str = "") -> str:
     if status == "verified":
-        return f"Verified {tool_count} tool(s)."
+        message = f"Verified {tool_count} tool(s)."
+        return f"{message} {note}" if note else message
     if status == "stale":
         return "Configuration changed since last verification. Verify again."
     if status == "failed":
@@ -2586,6 +2626,27 @@ def _run_doctor(args: argparse.Namespace) -> int:
     line("Long model", f"{summary['long_provider']}/{summary['long_model']}")
     line("Fast model", f"{summary['fast_provider']}/{summary['fast_model']}")
     line("Thinking effort", summary["thinking_effort"])
+
+    # MCP servers: offline status from config + local verification state (no network).
+    mcp_config = load_mcp_config(
+        project_path, settings_store.root, project_trusted=settings.is_mcp_project_trusted(project_path)
+    )
+    mcp_service = MCPService(mcp_config, state_dir=settings_store.root, project_path=project_path)
+    for diagnostic in mcp_config.diagnostics:
+        print(f"mcp: {diagnostic}", file=sys.stderr)
+    if not mcp_config.servers:
+        line("MCP servers", "none configured", "muted")
+    for server in mcp_config.servers.values():
+        status_text, tool_count, _, note = _mcp_cli_status_parts(server, mcp_service)
+        status_style = "success" if status_text == "verified" else ("error" if status_text == "failed" else "muted")
+        line(
+            f"MCP {server.id}",
+            f"{server.transport} · {'enabled' if server.enabled else 'disabled'} · {status_text} · "
+            f"{tool_count} tool(s)",
+            status_style,
+        )
+        if note:
+            line(f"MCP {server.id} tool names", f"{note} See `kolega-code mcp list` for detail.", "warning")
     return 0
 
 

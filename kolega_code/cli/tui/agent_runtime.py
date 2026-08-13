@@ -34,6 +34,8 @@ from kolega_code.agent.prompts import (
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config, project_hooks_present
 from kolega_code.scratchpad import SCRATCHPAD_PROMPT_EXTENSION_ID, ensure_scratchpad_dir, scratchpad_dir_for
 from kolega_code.llm.exceptions import LLMError, llm_error_message
+from kolega_code.mcp.config import LoadedMCPConfig, server_fingerprint
+from kolega_code.mcp.service import MCPService, mcp_tool_name_adjustment_note
 from kolega_code.mcp.tools import build_mcp_tool_extension
 from kolega_code.permissions import PermissionDecision
 from kolega_code.session.runtime import deserialize_permission_request
@@ -966,6 +968,23 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         if self._scheduled_loop is not None and self._scheduled_loop.is_active:
             self._request_loop_stop(messages.LOOP_STOPPED_BY_USER.format(iterations=self._scheduled_loop.iterations))
 
+    def _log_mcp_tool_name_warnings(self, mcp_config: LoadedMCPConfig) -> None:
+        """Warn in the log pane when verified MCP tools get provider-adjusted wire names.
+
+        Mirrors the ``mcp: {diagnostic}`` startup warnings: the model-facing names
+        are sanitized, and silently renaming them would be confusing.
+        """
+        service = MCPService(mcp_config, state_dir=self.settings_store.root, project_path=self.active_project_path)
+        for server in mcp_config.enabled_servers:
+            status = service.server_status(server)
+            if not status or status.status != "verified":
+                continue
+            if status.fingerprint != server_fingerprint(server):
+                continue
+            note = mcp_tool_name_adjustment_note(server.id, status.tools)
+            if note:
+                self._log_status(f"mcp: warning: server '{server.id}': {note}", level="warn")
+
     async def _ensure_agent_from_settings(self, rebuild: bool = False) -> None:
         try:
             config = build_agent_config(
@@ -1186,6 +1205,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         )
         if mcp_extension is not None:
             tool_extensions.append(mcp_extension)
+            if mcp_config is not None and self.active_project_path == self.project_path:
+                self._log_mcp_tool_name_warnings(mcp_config)
 
         # gigacode applies to any top-level agent and is carried across rebuilds.
         # In plan mode the orchestrating agent is read-only, so its workflow

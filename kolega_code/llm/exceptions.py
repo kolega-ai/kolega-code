@@ -217,9 +217,44 @@ def llm_error_message(error: LLMError, model: str | None = None) -> str:
             LLMUnprocessableEntityError,
         ),
     ):
+        detail = _provider_error_detail(error)
+        if detail:
+            return f"{provider_model} could not process this request: {detail}"
         return f"{provider_model} could not process this request. Check the selected provider/model and try again."
 
     return f"{provider_model} returned an error: {error}"
+
+
+_PROVIDER_ERROR_PREFIXES = (
+    "OpenAI APIError: ",
+    "AnthropicError: ",
+    "GoogleAPIError: ",
+    "Google APIError: ",
+    "Tinker request error: ",
+    "Invalid parameter: ",
+    "Missing required parameter: ",
+    "Invalid parameter type: ",
+)
+_MAX_PROVIDER_DETAIL_CHARS = 300
+
+
+def _provider_error_detail(error: LLMError) -> str:
+    """Extract a concise, single-line version of the provider's raw error detail.
+
+    Provider bodies are multiline JSON wrapped in a known prefix (e.g.
+    ``"OpenAI APIError: Error code: 400 - {...}"``); strip the prefix, collapse
+    whitespace, and bound the length so a 400's real cause is visible in the
+    turn error instead of only in the diagnostics JSONL.
+    """
+    detail = str(error)
+    for prefix in _PROVIDER_ERROR_PREFIXES:
+        if detail.startswith(prefix):
+            detail = detail[len(prefix) :]
+            break
+    detail = " ".join(detail.split())
+    if len(detail) > _MAX_PROVIDER_DETAIL_CHARS:
+        detail = detail[:_MAX_PROVIDER_DETAIL_CHARS].rstrip() + "…"
+    return detail
 
 
 def _is_billing_status(error: Exception) -> bool:
