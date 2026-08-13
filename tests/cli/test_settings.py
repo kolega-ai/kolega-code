@@ -245,9 +245,13 @@ def test_ui_provider_registry_is_derived_from_model_specs() -> None:
         else:
             assert option.api_key_env == ""
 
-    # Every provider that has specs appears in the provider dropdown.
+    # Every provider that has specs appears in the provider dropdown, plus any
+    # custom endpoints registered for this process (via CUSTOM_PROVIDER_LABELS).
     spec_providers = {provider_value for provider_value, _ in MODEL_SPECS}
-    assert {value for _, value in ui_provider_options()} == spec_providers
+    option_providers = {value for _, value in ui_provider_options()}
+    assert spec_providers <= option_providers
+    for provider_value in option_providers - spec_providers:
+        assert provider_value.startswith("custom:")
 
     # The Moonshot default and its models are present with friendly labels.
     assert ("Moonshot AI", UI_DEFAULT_PROVIDER) in ui_provider_options()
@@ -531,3 +535,66 @@ def test_gateway_providers_list_featured_models_but_resolve_every_catalogued_id(
 def test_non_gateway_providers_still_list_every_model() -> None:
     anthropic_models = [model for provider_value, model in MODEL_SPECS if provider_value == "anthropic"]
     assert [model for _label, model in ui_model_options("anthropic")] == anthropic_models
+
+
+# --- custom endpoints -----------------------------------------------------
+
+
+def test_settings_store_round_trips_custom_endpoints(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    settings = CliSettings()
+    settings.custom_endpoints = {
+        "lmstudio": {
+            "api_style": "openai_chat",
+            "base_url": "http://localhost:1234/v1",
+            "api_key": "k",
+            "label": "LM Studio",
+            "context_length": 32768,
+            "max_output_tokens": 8192,
+            "supports_vision": False,
+            "thinking": {"mode": "thinking_toggle", "options": ["none", "enabled"], "default": "enabled"},
+            "reasoning_replay": "auto",
+            "models": {"big": {"context_length": 65536}},
+        }
+    }
+    store.save(settings)
+
+    loaded = store.load()
+    assert loaded.custom_endpoints == settings.custom_endpoints
+    assert loaded.to_dict()["custom_endpoints"] == settings.custom_endpoints
+    store.save(CliSettings())
+    assert SettingsStore(tmp_path).load().custom_endpoints == {}
+
+
+def test_custom_endpoints_coercion_tolerates_hand_edits() -> None:
+    settings = CliSettings.from_dict(
+        {
+            "schema_version": 3,
+            "custom_endpoints": {
+                "good": {"api_style": "openai_chat", "base_url": "http://x/v1"},
+                "Bad Slug!": {"api_style": "openai_chat", "base_url": "http://x/v1"},
+                "no-style": {"base_url": "http://x/v1"},
+                "bad-style": {"api_style": "grpc", "base_url": "http://x/v1"},
+                "no-url": {"api_style": "openai_chat"},
+                "not-dict": "nope",
+                "bad-int": {"api_style": "openai_chat", "base_url": "http://x/v1", "context_length": "huge"},
+                "bad-thinking": {
+                    "api_style": "openai_chat",
+                    "base_url": "http://x/v1",
+                    "thinking": {"mode": "not-a-mode"},
+                },
+                "bad-replay": {"api_style": "openai_chat", "base_url": "http://x/v1", "reasoning_replay": "sideways"},
+                "bad-models": {
+                    "api_style": "openai_chat",
+                    "base_url": "http://x/v1",
+                    "models": {"a": {"context_length": 1}, "b": "not-dict"},
+                },
+            },
+        }
+    )
+
+    assert set(settings.custom_endpoints) == {"good", "bad-int", "bad-thinking", "bad-replay", "bad-models"}
+    assert "context_length" not in settings.custom_endpoints["bad-int"]
+    assert "thinking" not in settings.custom_endpoints["bad-thinking"]
+    assert settings.custom_endpoints["bad-replay"]["reasoning_replay"] == "auto"
+    assert settings.custom_endpoints["bad-models"]["models"] == {"a": {"context_length": 1}}
