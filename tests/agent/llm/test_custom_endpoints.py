@@ -372,3 +372,25 @@ def test_custom_endpoint_config_validation():
         CustomEndpointConfig(api_style="openai_chat", base_url="http://x/v1", reasoning_replay="sideways")
     with pytest.raises(ValueError):
         CustomEndpointConfig.model_validate({"api_style": "grpc", "base_url": "http://x/v1"})
+
+
+# --- usage normalization --------------------------------------------------
+
+
+def test_normalize_usage_for_custom_endpoints_by_shape():
+    from kolega_code.llm.usage import normalize_usage, usage_token_fields
+
+    openai_shaped = {"prompt_tokens": 11, "completion_tokens": 22, "total_tokens": 33}
+    norm = normalize_usage(openai_shaped, "custom:chat", "m")
+    assert (norm.input_tokens, norm.output_tokens, norm.total_tokens) == (11, 22, 33)
+
+    anthropic_shaped = {"input_tokens": 11, "output_tokens": 22}
+    norm = normalize_usage(anthropic_shaped, "custom:anthropic", "m")
+    assert (norm.input_tokens, norm.output_tokens) == (11, 22)
+
+    unreported = normalize_usage({}, "custom:chat", "m")
+    assert unreported.reported is False
+
+    assert usage_token_fields("custom:chat", metadata=openai_shaped) == ("prompt_tokens", "completion_tokens")
+    assert usage_token_fields("custom:anthropic", metadata=anthropic_shaped) == ("input_tokens", "output_tokens")
+    assert usage_token_fields("custom:chat") == ("prompt_tokens", "completion_tokens")

@@ -84,8 +84,14 @@ _TOKEN_FIELDS = (
 )
 
 
-def usage_token_fields(provider: object) -> Optional[tuple[str, str]]:
-    """Return the provider-shaped input/output field names for a known provider."""
+def usage_token_fields(provider: object, *, metadata: Optional[Mapping[str, Any]] = None) -> Optional[tuple[str, str]]:
+    """Return the provider-shaped input/output field names for a known provider.
+
+    Custom endpoints are not registered per id; their wire family is detected
+    from the usage metadata itself (Anthropic-style reports input_tokens/
+    output_tokens, OpenAI-style prompt_tokens/completion_tokens), defaulting to
+    the OpenAI shape.
+    """
     if not isinstance(provider, str):
         return None
     if provider in ANTHROPIC_USAGE_PROVIDERS:
@@ -94,6 +100,11 @@ def usage_token_fields(provider: object) -> Optional[tuple[str, str]]:
         return "prompt_tokens", "completion_tokens"
     if provider in GOOGLE_USAGE_PROVIDERS:
         return "prompt_token_count", "candidates_token_count"
+    if provider.startswith("custom:"):
+        metadata = metadata or {}
+        if "output_tokens" in metadata:
+            return "input_tokens", "output_tokens"
+        return "prompt_tokens", "completion_tokens"
     return None
 
 
@@ -237,11 +248,16 @@ def normalize_usage(
     for family selection; ``usage_metadata["provider"]`` is not consulted (it is
     absent on some no-usage paths). Unknown providers are a programming error —
     the guard test enumerates every ModelProvider value against the family map.
+    Custom endpoints are the exception: their family is detected from the raw
+    metadata shape (Anthropic-style vs OpenAI-style), defaulting to the OpenAI
+    shape when no usage was reported.
     """
     metadata = usage_metadata or {}
-    if provider_name in ANTHROPIC_USAGE_PROVIDERS:
+    if provider_name in ANTHROPIC_USAGE_PROVIDERS or (
+        provider_name.startswith("custom:") and "input_tokens" in metadata
+    ):
         return _normalize_anthropic(metadata, provider_name, model)
-    if provider_name in OPENAI_USAGE_PROVIDERS:
+    if provider_name in OPENAI_USAGE_PROVIDERS or provider_name.startswith("custom:"):
         return _normalize_openai(metadata, provider_name, model)
     if provider_name in GOOGLE_USAGE_PROVIDERS:
         return _normalize_google(metadata, provider_name, model)

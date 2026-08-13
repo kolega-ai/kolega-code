@@ -270,6 +270,15 @@ MODEL_SLOT_HINT = (
     "Utility slots used outside the main conversation. Default inherits the active model; "
     "a slot may use a different provider, which needs that provider's API key."
 )
+ENDPOINTS_HINT = (
+    "Point Kolega Code at any OpenAI/Responses/Anthropic-compatible server (LM Studio, Ollama, vLLM, ...). "
+    "Each endpoint becomes a provider named custom:<id> and accepts any model id. "
+    "Apply Changes to make new or changed endpoints available in the model pickers."
+)
+ENDPOINT_KEY_EDITED_ON_PAGE = "Endpoint API keys are edited on the Custom Endpoints page."
+ENDPOINT_APPLY_REQUIRED = "Saved to the draft. Apply Changes to make it available in the model pickers."
+ENDPOINT_DELETED = "Endpoint deleted from the draft. Apply Changes to persist."
+ENDPOINT_NONE = "No endpoints yet. Fill in the form and Save Endpoint."
 
 # Status dashboard
 STATUS_TOKENS_UNKNOWN = "Token counts unavailable."
