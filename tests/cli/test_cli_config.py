@@ -1013,3 +1013,30 @@ def test_key_status_reports_custom_endpoint_keys(tmp_path: Path) -> None:
     assert key_status("custom:lmstudio", tmp_path, settings) == "present in local settings"
 
     assert key_status("custom:gone", tmp_path, settings) == "endpoint not defined"
+
+
+def test_build_agent_config_endpoint_temperature_flag(tmp_path: Path) -> None:
+    config = build_agent_config(
+        tmp_path,
+        env={},
+        settings=CliSettings(),
+        overrides=CliConfigOverrides(endpoint_url="http://localhost:11434/v1", endpoint_temperature="0.3", model="m"),
+    )
+    endpoint = config.custom_endpoint_for(config.long_context_config)
+    assert endpoint is not None and endpoint.temperature == 0.3
+    from kolega_code.llm.specs import get_model_specs
+
+    assert get_model_specs("custom:cli", "m")["default_temperature"] == 0.3
+
+
+def test_build_agent_config_endpoint_temperature_validation(tmp_path: Path) -> None:
+    for bad in ("0", "2.5", "hot"):
+        with pytest.raises(CliConfigError, match="endpoint-temperature"):
+            build_agent_config(
+                tmp_path,
+                env={},
+                settings=CliSettings(),
+                overrides=CliConfigOverrides(
+                    endpoint_url="http://localhost:11434/v1", endpoint_temperature=bad, model="m"
+                ),
+            )

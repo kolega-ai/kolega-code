@@ -55,6 +55,7 @@ lowercase slug:
 | `default_model` | Model used by connection probes | none |
 | `context_length` | Context window used for budgeting/compression | 32768 |
 | `max_output_tokens` | Output cap used for budgeting | 8192 |
+| `temperature` | Sampling temperature sent with each request (0–2; keep ≤ 1 for `anthropic`; ignored by `openai_responses`) | 1.0 |
 | `supports_vision` | Whether models accept images | false |
 | `reasoning_replay` | See [Reasoning replay](#reasoning-replay) | `auto` |
 | `thinking` | See [Thinking](#thinking) | none |

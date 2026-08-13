@@ -16,6 +16,11 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   them as `custom:<id>` anywhere a provider is chosen. Supports thinking-effort
   modes per wire dialect and native reasoning replay.
 
+- Custom endpoints accept a `temperature` field (per endpoint, or per model in
+  its `models` map; default 1.0), exposed in the TUI endpoint editor, via
+  `--endpoint-temperature`, and via `KOLEGA_CODE_ENDPOINT_TEMPERATURE`. Sent on
+  Chat Completions and Anthropic requests; ignored by Responses-style endpoints.
+
 ### Fixed
 
 - Together models (e.g. Kimi K2.7-Code) now replay prior reasoning through the

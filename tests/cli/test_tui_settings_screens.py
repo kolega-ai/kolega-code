@@ -1418,3 +1418,45 @@ async def test_settings_env_defined_endpoints_in_pickers_but_not_the_page(
         endpoint_select = screen.query_one("#endpoint_select", Select)
         option_values = {value for _label, value in endpoint_select._options}  # type: ignore[attr-defined]
         assert option_values == {ENDPOINT_NEW_VALUE}
+
+
+@pytest.mark.asyncio
+async def test_settings_endpoint_temperature_round_trip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+
+        _fill_endpoint_form(screen, endpoint_id="lmstudio")
+        screen.query_one("#ep_temperature_input", Input).value = "0.4"
+        app._handle_endpoint_settings_button("ep_save")
+        await app._save_settings_from_ui()
+
+    assert settings_store.load().custom_endpoints["lmstudio"]["temperature"] == 0.4
+
+    # Anthropic style rejects temperatures above 1.
+    second_dir = tmp_path / "second"
+    second_dir.mkdir()
+    app2, _ = _configured_app(second_dir, monkeypatch)
+    async with app2.run_test(size=(140, 40)) as pilot:
+        app2.action_open_settings()
+        await pilot.pause()
+        screen2 = app2.screen
+        assert isinstance(screen2, SettingsScreen)
+        _fill_endpoint_form(screen2, endpoint_id="ap", style="anthropic")
+        screen2.query_one("#ep_temperature_input", Input).value = "1.5"
+        app2._handle_endpoint_settings_button("ep_save")
+        await pilot.pause()
+        from textual.widgets import Static
+
+        assert "up to 1" in str(screen2.query_one("#endpoint_status", Static).render())

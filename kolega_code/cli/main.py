@@ -287,6 +287,11 @@ def _add_common_model_args(parser: argparse.ArgumentParser) -> None:
         choices=list(REASONING_REPLAY_VALUES),
         help="Reasoning replay field for --endpoint-url (auto detects the emitted field).",
     )
+    parser.add_argument(
+        "--endpoint-temperature",
+        metavar="T",
+        help="Sampling temperature for --endpoint-url (0-2; default 1.0).",
+    )
     parser.add_argument("--environment", help="Environment label for tracing/metadata.")
     parser.add_argument(
         "--compression-threshold",
@@ -804,6 +809,7 @@ def _overrides_from_args(args: argparse.Namespace) -> CliConfigOverrides:
         endpoint_vision=bool(getattr(args, "endpoint_vision", False)),
         endpoint_thinking=getattr(args, "endpoint_thinking", None),
         endpoint_reasoning=getattr(args, "endpoint_reasoning", None),
+        endpoint_temperature=getattr(args, "endpoint_temperature", None),
     )
 
 

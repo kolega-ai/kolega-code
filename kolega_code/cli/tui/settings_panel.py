@@ -764,6 +764,10 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._settings_query_one("#ep_default_model_input", Input).value = str(entry.get("default_model") or "")
             self._settings_query_one("#ep_context_input", Input).value = str(entry.get("context_length") or "")
             self._settings_query_one("#ep_max_output_input", Input).value = str(entry.get("max_output_tokens") or "")
+            temperature = entry.get("temperature")
+            self._settings_query_one("#ep_temperature_input", Input).value = (
+                str(temperature) if temperature is not None else ""
+            )
             self._settings_query_one("#ep_vision_select", Select).value = (
                 "true" if entry.get("supports_vision") else "false"
             )
@@ -796,6 +800,8 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             ("ep_thinking_budgets_input", budgets),
             ("ep_reasoning_label", style == "openai_chat"),
             ("ep_reasoning_select", style == "openai_chat"),
+            ("ep_temperature_label", style != "openai_responses"),
+            ("ep_temperature_input", style != "openai_responses"),
         ):
             try:
                 self._settings_query_one(f"#{widget_id}").display = visible
@@ -868,6 +874,17 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             entry["context_length"] = context
         if max_output is not None:
             entry["max_output_tokens"] = max_output
+        raw_temperature = input_value("ep_temperature_input")
+        if raw_temperature and style != "openai_responses":
+            try:
+                temperature = float(raw_temperature)
+            except ValueError:
+                temperature = 0.0
+            if not (0 < temperature <= 2):
+                raise ValueError("Temperature must be a number between 0 and 2.")
+            if style == "anthropic" and temperature > 1:
+                raise ValueError("Anthropic-style endpoints accept temperature up to 1.")
+            entry["temperature"] = temperature
         if str(self._settings_query_one("#ep_vision_select", Select).value) == "true":
             entry["supports_vision"] = True
         thinking_mode = str(self._settings_query_one("#ep_thinking_mode_select", Select).value)

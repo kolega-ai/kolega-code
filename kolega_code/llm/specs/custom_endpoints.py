@@ -13,6 +13,7 @@ from .validation import validate_model_spec
 CUSTOM_PROVIDER_PREFIX = "custom:"
 DEFAULT_CONTEXT_LENGTH = 32768
 DEFAULT_MAX_OUTPUT_TOKENS = 8192
+DEFAULT_TEMPERATURE = 1.0
 API_STYLES = ("openai_chat", "openai_responses", "anthropic")
 
 _CUSTOM_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]*\Z")
@@ -97,15 +98,23 @@ def _thinking_spec(raw: Any) -> Optional[ThinkingEffortSpec]:
     return ThinkingEffortSpec(options=options, default=default, mode=mode, budgets=budgets)
 
 
+def _valid_temperature(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and 0 < float(value) <= 2
+
+
 def _endpoint_spec(entry: Mapping[str, Any], model_override: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
     merged: Mapping[str, Any] = {**entry, **model_override} if model_override else entry
+    temperature = merged.get("temperature")
+    if not _valid_temperature(temperature):
+        temperature = DEFAULT_TEMPERATURE
+    assert isinstance(temperature, (int, float))
     spec: dict[str, Any] = {
         "context_length": _positive_int(merged.get("context_length"), DEFAULT_CONTEXT_LENGTH),
         "max_completion_tokens": _positive_int(merged.get("max_output_tokens"), DEFAULT_MAX_OUTPUT_TOKENS),
         "input_budget": "window_minus_output",
         "supports_vision": bool(merged.get("supports_vision", False)),
         "supports_temperature": True,
-        "default_temperature": 0.7,
+        "default_temperature": float(temperature),
     }
     thinking = _thinking_spec(merged.get("thinking"))
     if thinking is not None:

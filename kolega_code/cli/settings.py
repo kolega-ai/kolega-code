@@ -106,6 +106,13 @@ def _coerce_custom_endpoints(raw: object) -> dict[str, dict]:
             value = cleaned.get(key)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 cleaned.pop(key, None)
+        temperature = cleaned.get("temperature")
+        if (
+            isinstance(temperature, bool)
+            or not isinstance(temperature, (int, float))
+            or not (0 < float(temperature) <= 2)
+        ):
+            cleaned.pop("temperature", None)
         thinking = cleaned.get("thinking")
         if not isinstance(thinking, dict) or thinking.get("mode") not in CUSTOM_THINKING_MODES:
             cleaned.pop("thinking", None)
