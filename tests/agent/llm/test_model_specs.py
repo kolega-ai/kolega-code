@@ -73,7 +73,7 @@ def test_grok_46_model_specs():
     assert specs["max_completion_tokens"] == 32768
     assert specs["default_temperature"] == 0.7
     assert specs["supports_vision"] is True
-    assert specs["thinking_effort"].options == ("low", "medium", "high")
+    assert specs["thinking_effort"].options == ("low", "medium", "high", "xhigh")
     assert specs["thinking_effort"].default == "medium"
     assert specs["thinking_effort"].mode == "openai_reasoning_effort"
 
