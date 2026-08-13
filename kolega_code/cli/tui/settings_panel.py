@@ -42,7 +42,7 @@ from kolega_code.mcp.config import (
     remove_server_config,
     upsert_server_config,
 )
-from kolega_code.mcp.service import MCPService
+from kolega_code.mcp.service import MCPService, mcp_tool_name_adjustment_note
 from kolega_code.mcp.state import MCPStatusStore, MCPOAuthTokenStore
 
 from .. import messages, theme
@@ -1589,7 +1589,12 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         self._populate_mcp_controls()
         await self._ensure_agent_from_settings(rebuild=True)
         if result.ok:
-            self._notify_user(f"Verified MCP server '{selected}' ({result.tool_count} tool(s)).")
+            message = f"Verified MCP server '{selected}' ({result.tool_count} tool(s))."
+            if result.status is not None:
+                note = mcp_tool_name_adjustment_note(selected, result.status.tools)
+                if note:
+                    message = f"{message} {note}"
+            self._notify_user(message)
         else:
             self._notify_user(f"MCP verification failed for '{selected}': {result.message}", severity="warning")
 
