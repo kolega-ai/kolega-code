@@ -18,6 +18,29 @@ MCP_GLOBAL_CONFIG_FILENAME = "mcp_servers.json"
 MCP_CONFIG_RELATIVE_PATH = Path(".kolega") / MCP_GLOBAL_CONFIG_FILENAME
 MCP_TRANSPORTS = ("streamable_http", "sse", "stdio")
 _SERVER_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+# Tool wire names are capped at 64 chars total; a 32-char server id leaves at
+# least 25 chars of budget for the tool id after the ``mcp__{server}__`` prefix.
+_SERVER_ID_MAX_LENGTH = 32
+_SERVER_ID_PREFIX_LENGTH = 24
+
+
+def sanitize_mcp_server_id(value: str) -> str:
+    """Validate a server id, rewriting over-long ids so they fit provider budgets.
+
+    Ids longer than ``_SERVER_ID_MAX_LENGTH`` are rewritten deterministically as
+    ``{first 24 chars}_{7-char hash of the original}`` so existing config files
+    keep loading (instead of failing) and distinct long ids stay distinct. Ids
+    within the limit pass through unchanged; invalid characters still raise.
+    """
+    value = str(value).strip()
+    if not value:
+        raise ValueError("server id is required")
+    if not _SERVER_ID_RE.match(value):
+        raise ValueError("server id may contain only letters, numbers, '_' and '-'")
+    if len(value) <= _SERVER_ID_MAX_LENGTH:
+        return value
+    digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:7]
+    return f"{value[:_SERVER_ID_PREFIX_LENGTH]}_{digest}"
 
 
 class MCPConfigError(ValueError):
@@ -63,12 +86,7 @@ class MCPServerConfig(BaseModel):
     @field_validator("id")
     @classmethod
     def _validate_id(cls, value: str) -> str:
-        value = str(value).strip()
-        if not value:
-            raise ValueError("server id is required")
-        if not _SERVER_ID_RE.match(value):
-            raise ValueError("server id may contain only letters, numbers, '_' and '-'")
-        return value
+        return sanitize_mcp_server_id(value)
 
     @field_validator("headers", "env", mode="before")
     @classmethod
@@ -192,6 +210,24 @@ def load_mcp_config_file(path: Path, *, source: str) -> MCPConfigFile:
     return parse_mcp_config_text(path.read_text(encoding="utf-8"), source=source)
 
 
+def _raw_mcp_server_ids(path: Path) -> list[str]:
+    """Raw server ids from a config file before validation, in file order.
+
+    Used to diagnose ids that ``sanitize_mcp_server_id`` rewrote for length.
+    Returns [] on any read/parse error (the caller reports those separately).
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return []
+    servers = data.get("servers")
+    if isinstance(servers, list):
+        return [str(entry.get("id")) for entry in servers if isinstance(entry, dict) and entry.get("id") is not None]
+    if isinstance(servers, dict):
+        return [str(key) for key in servers]
+    return []
+
+
 def load_mcp_config(project_path: Path, state_dir: Path, *, project_trusted: bool) -> LoadedMCPConfig:
     """Load global MCP config plus trusted project config.
 
@@ -220,7 +256,13 @@ def load_mcp_config(project_path: Path, state_dir: Path, *, project_trusted: boo
         except (OSError, json.JSONDecodeError, ValidationError, ValueError) as exc:
             diagnostics.append(f"Could not load {source} MCP config {path}: {exc}")
             continue
-        for server in config_file.servers:
+        raw_ids = _raw_mcp_server_ids(path)
+        for position, server in enumerate(config_file.servers):
+            raw_id = raw_ids[position] if position < len(raw_ids) else ""
+            if raw_id and server.id != raw_id:
+                diagnostics.append(
+                    f"MCP server id '{raw_id}' exceeds {_SERVER_ID_MAX_LENGTH} characters; using '{server.id}' instead."
+                )
             if server.id in merged:
                 diagnostics.append(f"MCP server '{server.id}' from {source} overrides earlier configuration.")
             merged[server.id] = server

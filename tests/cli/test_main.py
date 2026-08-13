@@ -641,6 +641,47 @@ def test_doctor_uses_stored_kimi_settings(
     assert "moonshot-key" not in output
 
 
+def test_doctor_reports_mcp_tool_name_adjustments(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    from kolega_code.cli import main as main_module
+    from kolega_code.mcp.config import MCPServerConfig, global_mcp_config_path, server_fingerprint
+    from kolega_code.mcp.state import MCPServerStatus, MCPStatusStore, MCPToolStatus
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state_dir = tmp_path / "state"
+    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
+    settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")
+    SettingsStore(state_dir).save(settings)
+    monkeypatch.setattr(main_module, "check_for_update", no_update_result)
+
+    server = MCPServerConfig(id="docs", transport="streamable_http", url="https://docs.example/mcp")
+    global_mcp_config_path(state_dir).parent.mkdir(parents=True, exist_ok=True)
+    global_mcp_config_path(state_dir).write_text(
+        json.dumps({"schema_version": 1, "servers": [server.model_dump(mode="json")]}),
+        encoding="utf-8",
+    )
+    MCPStatusStore(state_dir).update(
+        server.id,
+        MCPServerStatus.verified(
+            fingerprint=server_fingerprint(server),
+            transport=server.transport,
+            source="global",
+            tools=[MCPToolStatus(id="get.file")],
+        ),
+    )
+
+    exit_code = main_module.main(["doctor", "--project", str(project), "--state-dir", str(state_dir)])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "MCP docs" in output
+    assert "verified" in output
+    assert "mcp__docs__get.file → mcp__docs__get_file" in output
+    assert "mcp list" in output
+
+
 def test_doctor_requires_model_selection_even_with_api_key(
     tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
 ) -> None:

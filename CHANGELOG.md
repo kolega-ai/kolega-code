@@ -11,6 +11,9 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 - DeepSeek V4-Pro now routes to the Responses API by default (joining V4-Flash),
   removing the model-name carve-out. Both DeepSeek models support `none`, `low`,
   `high`, and `max` reasoning effort (`low` is new; `none` disables reasoning).
+- Added support for xAI Grok 4.6 (`grok-4.6`): 500K-token context, vision input,
+  and `low`/`medium`/`high`/`xhigh` reasoning effort. Selectable in the Settings
+  UI, `/model` picker, CLI flags, and env vars.
 
 ## 0.29.0 - 2026-08-13
 

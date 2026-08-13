@@ -23,6 +23,7 @@ from kolega_code.llm.exceptions import (
     LLMTimeout,
     LLMUnprocessableEntityError,
     LLMUnsupportedParamsError,
+    llm_error_message,
     map_to_llm_error,
     map_anthropic_errors,
     map_google_errors,
@@ -293,3 +294,44 @@ def test_map_deepseek_anthropic_api_status_error_insufficient_balance():
     assert isinstance(mapped, LLMBillingError)
     assert mapped.provider == ModelProvider.DEEPSEEK.value
     assert "AnthropicError:" in str(mapped)
+
+
+def test_llm_error_message_surfaces_provider_400_detail() -> None:
+    error = LLMInvalidRequestError(
+        "OpenAI APIError: Error code: 400 - {'error': {'message': \"Invalid 'tools': tool name "
+        "'mcp__docs__get.file' does not match '^[a-zA-Z0-9_-]{1,64}$'\"}}",
+        provider=ModelProvider.OPENAI.value,
+    )
+    message = llm_error_message(error, model="gpt-x")
+    assert message.startswith("OpenAI/gpt-x could not process this request: ")
+    detail = message.split("could not process this request: ", 1)[1]
+    assert "OpenAI APIError:" not in detail
+    assert "Error code: 400" in detail
+    assert "does not match '^[a-zA-Z0-9_-]{1,64}$'" in detail
+
+
+def test_llm_error_message_collapses_and_truncates_long_provider_detail() -> None:
+    error = LLMInvalidRequestError(
+        "OpenAI APIError: Error code: 400 - " + "word " * 500,
+        provider=ModelProvider.OPENAI.value,
+    )
+    message = llm_error_message(error, model="gpt-x")
+    detail = message.split("could not process this request: ", 1)[1]
+    assert detail.endswith("…")
+    assert len(detail) <= 301
+    assert "\n" not in detail
+
+
+def test_llm_error_message_falls_back_to_generic_copy_without_detail() -> None:
+    error = LLMInvalidRequestError("", provider=ModelProvider.OPENAI.value)
+    message = llm_error_message(error, model="gpt-x")
+    assert message == ("OpenAI/gpt-x could not process this request. Check the selected provider/model and try again.")
+
+
+def test_llm_error_message_other_branches_unchanged() -> None:
+    billing = llm_error_message(LLMBillingError("OpenAI APIError: no credits", provider=ModelProvider.OPENAI.value))
+    assert "insufficient balance" in billing
+    context = llm_error_message(
+        LLMContextWindowExceededError("OpenAI APIError: context", provider=ModelProvider.OPENAI.value)
+    )
+    assert "context became too large" in context
