@@ -156,6 +156,7 @@ _REASONING_REPLAY_FIELDS: Dict[str, str] = {
     # OpenRouter emits reasoning as delta.reasoning and requires it echoed back on
     # assistant tool-call turns whenever reasoning is enabled.
     "openrouter": "reasoning",
+    "together": "reasoning",
     # xAI's Chat Completions endpoint returns and accepts reasoning_content even
     # though its public docs only describe the Responses API (verified live
     # against grok-4.3: streaming emits reasoning_content deltas and replaying it
@@ -190,6 +191,9 @@ def reasoning_replay_field(provider: str, model_name: str) -> Optional[str]:
     except ValueError:
         # get_model_specs raises for unknown provider/model; treat as non-reasoning.
         return None
-    if spec is None or spec.mode not in _REASONING_REPLAY_MODES:
+    # A declared spec gates on its mode (flat-field replay only). Models without a
+    # spec may still reason by default; their reasoning arrives in the provider's
+    # own field, so replay is allowed.
+    if spec is not None and spec.mode not in _REASONING_REPLAY_MODES:
         return None
     return field

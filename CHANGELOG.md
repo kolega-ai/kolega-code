@@ -6,6 +6,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Together models (e.g. Kimi K2.7-Code) now replay prior reasoning through the
+  native `reasoning` field instead of visible `*Thinking:*` text, avoiding a full
+  re-derivation of the chain-of-thought on every turn. Reasoning models without a
+  declared thinking-effort spec now resolve their provider's replay field.
+
 ## 0.28.4 - 2026-08-12
 
 ### Fixed

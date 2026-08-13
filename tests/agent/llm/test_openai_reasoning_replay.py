@@ -70,12 +70,37 @@ def test_reasoning_replay_field_ollama_uses_reasoning(ollama_reasoning_model: st
 
 def test_reasoning_replay_field_none_for_unmapped_provider_unknown_and_non_reasoning():
     # Provider not in the map at all.
-    assert reasoning_replay_field("together", "anything") is None
     assert reasoning_replay_field("groq", "anything") is None
-    # Mapped provider but a non-reasoning model on it (no thinking_effort spec).
-    assert reasoning_replay_field("xai", "grok-build-0.1") is None
     # Unknown provider/model pair (get_model_specs raises -> None).
     assert reasoning_replay_field("deepseek", "no-such-model") is None
+    assert reasoning_replay_field("together", "no-such-model") is None
+
+
+def test_reasoning_replay_field_without_effort_spec_uses_provider_field():
+    assert reasoning_replay_field("together", "moonshotai/Kimi-K2.7-Code") == "reasoning"
+    assert reasoning_replay_field("xai", "grok-build-0.1") == "reasoning_content"
+    assert reasoning_replay_field("openrouter", "minimax/minimax-m3") == "reasoning"
+
+
+def test_reasoning_replay_field_declared_non_replayable_mode_still_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    model = "together/custom-mode-model"
+    monkeypatch.setitem(
+        MODEL_SPECS,
+        ("together", model),
+        {
+            "context_length": 131072,
+            "max_completion_tokens": 32768,
+            "input_budget": "window_minus_output",
+            "thinking_effort": ThinkingEffortSpec(
+                options=("low", "high"),
+                default="low",
+                mode="moonshot_toggle",
+            ),
+        },
+    )
+    assert reasoning_replay_field("together", model) is None
 
 
 # --- native serialization -------------------------------------------------
@@ -116,6 +141,16 @@ def test_fireworks_uses_reasoning_content():
     out = MessageHistory([asst]).to_openai(provider="fireworks", model=FIREWORKS_MODEL)[0]
 
     assert out["reasoning_content"] == "r"
+    assert out["content"] == [{"type": "text", "text": "a"}]
+
+
+def test_together_uses_reasoning():
+    asst = _assistant(ThinkingBlock(thinking="r"), TextBlock("a"), provider="together")
+
+    out = MessageHistory([asst]).to_openai(provider="together", model="moonshotai/Kimi-K2.7-Code")[0]
+
+    assert out["reasoning"] == "r"
+    assert "reasoning_content" not in out
     assert out["content"] == [{"type": "text", "text": "a"}]
 
 
@@ -259,8 +294,10 @@ def test_reasoning_replay_field_openrouter_anthropic_models_opt_out():
 
 
 def test_reasoning_replay_field_openrouter_non_reasoning_model():
-    # minimax/minimax-m3 exposes no effort control, so there is nothing to replay.
-    assert reasoning_replay_field("openrouter", "minimax/minimax-m3") is None
+    # minimax/minimax-m3 exposes no effort control but may still reason by
+    # default (spec-None relaxation): its reasoning, if any, arrives in
+    # OpenRouter's flat `reasoning` field.
+    assert reasoning_replay_field("openrouter", "minimax/minimax-m3") == "reasoning"
     assert reasoning_replay_field("openrouter", "nope/not-a-model") is None
 
 
