@@ -98,6 +98,7 @@ served by different providers on different credentials.
 | `KOLEGA_CODE_ENDPOINT_STYLE` | Wire style for that endpoint: `openai_chat`, `openai_responses`, or `anthropic` (default `openai_chat`) |
 | `KOLEGA_CODE_ENDPOINT_API_KEY` | Optional credential for that endpoint |
 | `KOLEGA_CODE_ENDPOINT_CONTEXT` / `KOLEGA_CODE_ENDPOINT_MAX_OUTPUT` | Context window / max output tokens for that endpoint (defaults 32768 / 8192) |
+| `KOLEGA_CODE_ENDPOINT_TEMPERATURE` | Sampling temperature for that endpoint (0–2; default 1.0) |
 | `KOLEGA_CODE_ENDPOINT_VISION` | Non-empty marks that endpoint's models as vision-capable |
 | `KOLEGA_CODE_ENDPOINT_THINKING` | Thinking-effort mode for that endpoint (`thinking_toggle`, `openai_reasoning_effort`, `openai_responses_reasoning`, `anthropic_budget`) |
 | `KOLEGA_CODE_ENDPOINT_REASONING` | Reasoning replay field for that endpoint: `auto`, `reasoning_content`, `reasoning`, or `off` |
