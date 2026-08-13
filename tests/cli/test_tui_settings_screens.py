@@ -23,6 +23,8 @@ def _configured_app(
     agent_models: dict | None = None,
     model_slots: dict | None = None,
     extra_key_providers: tuple[str, ...] = (),
+    custom_endpoints: dict | None = None,
+    env: dict | None = None,
 ):
     from kolega_code.cli.app import KolegaCodeApp
 
@@ -39,8 +41,10 @@ def _configured_app(
         settings.agent_models = agent_models
     if model_slots:
         settings.model_slots = model_slots
+    if custom_endpoints:
+        settings.custom_endpoints = custom_endpoints
     settings_store.save(settings)
-    config = build_agent_config(project, env={}, settings=settings, settings_store=settings_store)
+    config = build_agent_config(project, env=env or {}, settings=settings, settings_store=settings_store)
     store = SessionStore(state_dir)
     session = store.create(project, "code", config_summary(config))
     return (
@@ -100,7 +104,7 @@ async def test_settings_screen_is_categorized_and_stages_credentials_atomically(
         assert isinstance(screen, SettingsScreen)
         await pilot.pause()
         assert screen.dirty is False
-        assert screen.query_one("#settings_categories", OptionList).option_count == 7
+        assert screen.query_one("#settings_categories", OptionList).option_count == 8
         assert screen.query_one("#settings_page_model").display is True
         assert screen.query_one("#settings_page_tools").display is False
         apply_button = screen.query_one("#save_settings", Button)
@@ -1174,3 +1178,243 @@ async def test_chatgpt_provider_row_offers_sign_in_instead_of_a_key_field(
         assert screen.query_one("#provider_remove_api_key").display is False
         assert screen.query_one("#provider_chatgpt_login").display is True
         assert screen.query_one("#provider_chatgpt_logout").display is True
+
+
+# --- Custom Endpoints page -------------------------------------------------
+
+
+def _fill_endpoint_form(
+    screen, *, endpoint_id: str, base_url: str = "http://localhost:1234/v1", style: str = "openai_chat"
+) -> None:
+    from textual.widgets import Input, Select
+
+    screen.query_one("#ep_id_input", Input).value = endpoint_id
+    screen.query_one("#ep_base_url_input", Input).value = base_url
+    screen.query_one("#ep_style_select", Select).value = style
+
+
+@pytest.mark.asyncio
+async def test_settings_adds_endpoint_and_apply_persists_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.provider_registry import ui_provider_options, ui_thinking_effort_options
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+
+        _fill_endpoint_form(screen, endpoint_id="lmstudio")
+        screen.query_one("#ep_thinking_mode_select", Select).value = "anthropic_budget"
+        screen.query_one("#ep_max_output_input", Input).value = "8192"
+        screen.query_one(
+            "#ep_thinking_budgets_input", Input
+        ).value = "low=2048, medium=4096, high=7168, xhigh=7168, max=7168"
+        screen.query_one("#ep_reasoning_select", Select).value = "auto"
+        await pilot.pause()
+        app._handle_endpoint_settings_button("ep_save")
+
+        await app._save_settings_from_ui()
+
+    saved = settings_store.load().custom_endpoints["lmstudio"]
+    assert saved["api_style"] == "openai_chat"
+    assert saved["base_url"] == "http://localhost:1234/v1"
+    assert saved["max_output_tokens"] == 8192
+    assert saved["reasoning_replay"] == "auto"
+    assert saved["thinking"]["mode"] == "anthropic_budget"
+    assert saved["thinking"]["budgets"]["low"] == 2048
+    assert "custom:lmstudio" in {value for _, value in ui_provider_options()}
+    assert [value for _label, value in ui_thinking_effort_options("custom:lmstudio", "any-model")] == list(
+        saved["thinking"]["options"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_endpoint_edit_and_delete_round_trip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(
+        tmp_path,
+        monkeypatch,
+        custom_endpoints={"lmstudio": {"api_style": "openai_chat", "base_url": "http://localhost:1234/v1"}},
+    )
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+
+        # Editing an existing endpoint: id input is locked, base URL updates.
+        assert screen.query_one("#ep_id_input", Input).disabled is True
+        screen.query_one("#ep_base_url_input", Input).value = "http://localhost:4321/v1"
+        app._handle_endpoint_settings_button("ep_save")
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().custom_endpoints["lmstudio"]["base_url"] == "http://localhost:4321/v1"
+
+        # Delete round trip: staging then apply.
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        app._handle_endpoint_settings_button("ep_delete")
+        await pilot.pause()
+        await app._save_settings_from_ui()
+
+    assert settings_store.load().custom_endpoints == {}
+
+
+@pytest.mark.asyncio
+async def test_settings_endpoint_staging_without_apply_leaves_file_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+
+        _fill_endpoint_form(screen, endpoint_id="lmstudio")
+        app._handle_endpoint_settings_button("ep_save")
+        await pilot.pause()
+        # The draft holds the endpoint but nothing is persisted until Apply.
+        assert screen.pending_custom_endpoints["lmstudio"]["base_url"] == "http://localhost:1234/v1"
+
+    assert settings_store.load().custom_endpoints == {}
+
+
+@pytest.mark.asyncio
+async def test_settings_endpoint_validation_rejects_bad_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Static
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+
+        _fill_endpoint_form(screen, endpoint_id="Bad Slug!", base_url="localhost:1234")
+        app._handle_endpoint_settings_button("ep_save")
+        await pilot.pause()
+        assert "slug" in str(screen.query_one("#endpoint_status", Static).render())
+
+    assert settings_store.load().custom_endpoints == {}
+
+
+@pytest.mark.asyncio
+async def test_settings_deleting_active_endpoint_blocks_apply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Static
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(
+        tmp_path,
+        monkeypatch,
+        provider="custom:lmstudio",
+        model="qwen2.5",
+        custom_endpoints={"lmstudio": {"api_style": "openai_chat", "base_url": "http://localhost:1234/v1"}},
+    )
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+
+        app._handle_endpoint_settings_button("ep_delete")
+        await pilot.pause()
+        await app._save_settings_from_ui()
+
+        status_text = str(screen.query_one("#settings_status", Static).render())
+        assert "No provider/model configured" in status_text
+
+    # The failed apply must not have persisted the deletion.
+    assert "lmstudio" in settings_store.load().custom_endpoints
+
+
+@pytest.mark.asyncio
+async def test_settings_custom_provider_model_uses_other_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(
+        tmp_path,
+        monkeypatch,
+        provider="custom:lmstudio",
+        model="qwen2.5",
+        custom_endpoints={"lmstudio": {"api_style": "openai_chat", "base_url": "http://localhost:1234/v1"}},
+    )
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+
+        # The active custom model is restored through the free-text "Other…" entry.
+        assert str(screen.query_one("#model_select", Select).value) == CUSTOM_MODEL_SENTINEL
+        assert screen.query_one("#model_custom_input", Input).value == "qwen2.5"
+
+        screen.query_one("#model_custom_input", Input).value = "qwen3-coder"
+        await pilot.pause()
+        await app._save_settings_from_ui()
+
+    assert settings_store.load().active_model == "qwen3-coder"
+
+
+@pytest.mark.asyncio
+async def test_settings_env_defined_endpoints_in_pickers_but_not_the_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Select
+
+    from kolega_code.cli.provider_registry import ui_provider_options
+    from kolega_code.cli.tui.settings_panel import ENDPOINT_NEW_VALUE
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    env_json = '{"envlocal": {"api_style": "openai_chat", "base_url": "http://localhost:9999/v1"}}'
+    app, _ = _configured_app(tmp_path, monkeypatch, env={"KOLEGA_CODE_CUSTOM_ENDPOINTS": env_json})
+
+    assert "custom:envlocal" in {value for _, value in ui_provider_options()}
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        endpoint_select = screen.query_one("#endpoint_select", Select)
+        option_values = {value for _label, value in endpoint_select._options}  # type: ignore[attr-defined]
+        assert option_values == {ENDPOINT_NEW_VALUE}
