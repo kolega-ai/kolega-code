@@ -28,7 +28,7 @@ def get_output_tokens(usage_metadata: Optional[Mapping[str, Any]], provider: Opt
     """Extract a provider-shaped, non-negative output-token count."""
     if not usage_metadata:
         return 0
-    fields = _usage_token_fields(usage_metadata.get("provider", provider))
+    fields = _usage_token_fields(usage_metadata.get("provider", provider), metadata=usage_metadata)
     if fields is None:
         return 0
     value = usage_metadata.get(fields[1], 0)
@@ -129,7 +129,7 @@ class InstrumentedLLMClient(LLMClient):
 
         provider = usage_metadata.get("provider", self.provider_name)
 
-        fields = _usage_token_fields(provider)
+        fields = _usage_token_fields(provider, metadata=usage_metadata)
         if fields is None:
             logger.warning(f"Unknown provider for usage recording: {provider}")
             return None
