@@ -1,9 +1,19 @@
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional, cast
 
-from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 from kolega_code.auth.tokens import OAuthTokens
+from kolega_code.llm.specs.custom_endpoints import (
+    CUSTOM_PROVIDER_PREFIX,
+    DEFAULT_CONTEXT_LENGTH,
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    REASONING_REPLAY_VALUES,
+    custom_endpoint_id,
+    is_custom_provider,
+    sync_custom_endpoint_specs,
+    valid_custom_endpoint_id,
+)
 from kolega_code.services.lsp.config import LspConfig
 
 
@@ -28,6 +38,19 @@ class ModelProvider(str, Enum):
     OPENROUTER = "openrouter"  # Gateway in front of many vendors' models
     THINKING_MACHINES = "thinking_machines"  # Thinking Machines Lab (Tinker API)
     TINKER = "tinker"  # Native Tinker SamplingClient (agentic-RL trajectory source)
+
+    @classmethod
+    def _missing_(cls, value: object) -> Optional["ModelProvider"]:
+        # Dynamic members for user-defined endpoints; __members__ iteration stays built-ins only.
+        if isinstance(value, str) and value.startswith(CUSTOM_PROVIDER_PREFIX):
+            endpoint = value[len(CUSTOM_PROVIDER_PREFIX) :]
+            if valid_custom_endpoint_id(endpoint):
+                member = cast("ModelProvider", str.__new__(cls, value))
+                member._name_ = value  # type: ignore[attr-defined]
+                member._value_ = value  # type: ignore[attr-defined]
+                cls._value2member_map_[value] = member  # type: ignore[attr-defined]
+                return member
+        return None
 
 
 class EditProtocol(str, Enum):
@@ -97,6 +120,46 @@ class ModelConfig(BaseModel):
         default=None,
         description="Model-specific thinking or reasoning effort level",
     )
+
+
+class CustomEndpointConfig(BaseModel):
+    """A user-defined OpenAI/Responses/Anthropic-compatible server endpoint.
+
+    Referenced by provider value ``custom:<id>`` where ``id`` is the key in
+    ``AgentConfig.custom_endpoints``. Any model id is accepted; the endpoint's
+    defaults (and optional per-model ``models`` overrides) supply context specs.
+    """
+
+    api_style: Literal["openai_chat", "openai_responses", "anthropic"] = Field(
+        description="Wire dialect: Chat Completions, Responses API, or Anthropic Messages"
+    )
+    base_url: str = Field(description="Base URL; OpenAI styles include /v1, Anthropic style is the API root")
+    api_key: Optional[str] = Field(default=None, description="Optional Bearer credential")
+    label: Optional[str] = Field(default=None, description="Display name in pickers")
+    default_model: Optional[str] = Field(default=None, description="Model used by connection probes")
+    context_length: int = Field(default=DEFAULT_CONTEXT_LENGTH, gt=0)
+    max_output_tokens: int = Field(default=DEFAULT_MAX_OUTPUT_TOKENS, gt=0)
+    supports_vision: bool = Field(default=False)
+    models: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="Per-model spec overrides")
+    thinking: Optional[Dict[str, Any]] = Field(default=None, description="Thinking-effort spec for this endpoint")
+    reasoning_replay: str = Field(
+        default="auto", description="Reasoning replay field: auto|reasoning_content|reasoning|off"
+    )
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base_url(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("base_url must be an http(s) URL")
+        return value
+
+    @field_validator("reasoning_replay")
+    @classmethod
+    def _validate_reasoning_replay(cls, value: str) -> str:
+        if value not in REASONING_REPLAY_VALUES:
+            raise ValueError(f"reasoning_replay must be one of {', '.join(REASONING_REPLAY_VALUES)}")
+        return value
 
 
 class AgentConfig(BaseModel):
@@ -282,6 +345,12 @@ class AgentConfig(BaseModel):
     # the skill catalog prompt and model-facing activation tool.
     skills_enabled: bool = Field(default=True, exclude=True, description="Enable CLI Agent Skills")
 
+    # Custom model endpoints keyed by endpoint id (provider value "custom:<id>").
+    # Excluded from serialization like mcp_config: entries can carry API keys.
+    custom_endpoints: Dict[str, CustomEndpointConfig] = Field(
+        default_factory=dict, exclude=True, description="User-defined OpenAI/Responses/Anthropic-compatible endpoints"
+    )
+
     def model_config_for_agent(self, agent_name: Optional[str]) -> ModelConfig:
         """Return the model configuration an agent should use for its main loop.
 
@@ -295,6 +364,13 @@ class AgentConfig(BaseModel):
             if override is not None:
                 return override
         return self.long_context_config
+
+    def custom_endpoint_for(self, model_config: ModelConfig) -> Optional[CustomEndpointConfig]:
+        """Return the endpoint definition backing a model config, if it is a custom endpoint."""
+        endpoint_id = custom_endpoint_id(model_config.provider)
+        if endpoint_id is None:
+            return None
+        return self.custom_endpoints.get(endpoint_id)
 
     def resolve_edit_protocol(self, model_config: Optional[ModelConfig] = None) -> EditProtocol:
         """Resolve the model-facing edit protocol for one effective model."""
@@ -317,6 +393,10 @@ class AgentConfig(BaseModel):
 
     def get_api_key(self, provider: ModelProvider) -> Optional[str]:
         """Get the API key for a specific provider."""
+        if is_custom_provider(provider):
+            endpoint_id = custom_endpoint_id(provider)
+            endpoint = self.custom_endpoints.get(endpoint_id) if endpoint_id else None
+            return endpoint.api_key if endpoint and endpoint.api_key else None
         api_key_map = {
             ModelProvider.ANTHROPIC: self.anthropic_api_key,
             ModelProvider.OPENAI: self.openai_api_key,
@@ -357,6 +437,9 @@ class AgentConfig(BaseModel):
             provider = config.provider
             if provider == ModelProvider.LLAMA:
                 continue
+            if is_custom_provider(provider):
+                # Endpoint keys are optional (local servers are usually keyless).
+                continue
             if provider == ModelProvider.OPENAI_CHATGPT:
                 # OAuth provider: satisfied by stored ChatGPT tokens, not an api key.
                 if self.openai_chatgpt_tokens is None:
@@ -365,6 +448,17 @@ class AgentConfig(BaseModel):
             if self.get_api_key(provider) is None:
                 raise ValueError(f"Missing API key for {config_name} provider '{provider.value}'")
 
+        return self
+
+    @model_validator(mode="after")
+    def _sync_custom_endpoint_specs(self) -> "AgentConfig":
+        """Register runtime model specs so library hosts don't need a separate sync call."""
+        sync_custom_endpoint_specs(
+            {
+                endpoint_id: endpoint.model_dump(mode="python", exclude_none=True)
+                for endpoint_id, endpoint in self.custom_endpoints.items()
+            }
+        )
         return self
 
     def attach_chatgpt_token_manager(self, manager: Any) -> None:

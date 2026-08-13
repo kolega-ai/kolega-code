@@ -3,10 +3,14 @@ from typing import Any, Dict, Optional
 from .accessors import (
     _provider_value,
     default_thinking_effort,
+    get_model_specs,
     get_thinking_effort_spec,
     prior_reasoning_is_replayable,
     thinking_effort_options,
 )
+
+# "auto" resolves at serialization time to the field the server emitted reasoning in.
+REASONING_REPLAY_VALUES = ("auto", "reasoning_content", "reasoning", "off")
 
 
 def validate_thinking_effort(provider: str, model_name: str, effort: Optional[Any]) -> Optional[str]:
@@ -138,6 +142,15 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
         # reasoning.encrypted_content (see the ChatGPT provider), not the summary.
         return {"reasoning": {"effort": normalized, "summary": "auto"}}
 
+    if spec.mode == "thinking_toggle":
+        # Qwen3-style servers: "thinking" object via extra_body.
+        return {"extra_body": {"thinking": {"type": "enabled" if normalized != "none" else "disabled"}}}
+
+    if spec.mode == "anthropic_budget":
+        if normalized == "none":
+            return {"thinking": {"type": "disabled"}}
+        return {"thinking": {"type": "enabled", "budget_tokens": spec.budgets[normalized]}}
+
     raise ValueError(f"Unknown thinking effort mode '{spec.mode}' for {_provider_value(provider)}/{model_name}.")
 
 
@@ -179,6 +192,17 @@ def reasoning_replay_field(provider: str, model_name: str) -> Optional[str]:
     non-reasoning models, unknown provider/model pairs, and providers whose
     reasoning is not replayable via a flat field.
     """
+    # Spec-declared replay (custom endpoints) takes precedence over the provider map.
+    try:
+        specs = get_model_specs(provider, model_name)
+    except ValueError:
+        specs = None
+    if specs and specs.get("reasoning_replay") is not None:
+        if not prior_reasoning_is_replayable(provider, model_name):
+            return None
+        value = str(specs["reasoning_replay"])
+        return None if value == "off" else value
+
     field = _REASONING_REPLAY_FIELDS.get(_provider_value(provider))
     if field is None:
         return None
@@ -191,9 +215,7 @@ def reasoning_replay_field(provider: str, model_name: str) -> Optional[str]:
     except ValueError:
         # get_model_specs raises for unknown provider/model; treat as non-reasoning.
         return None
-    # A declared spec gates on its mode (flat-field replay only). Models without a
-    # spec may still reason by default; their reasoning arrives in the provider's
-    # own field, so replay is allowed.
+    # A declared spec gates on its mode; spec-less models may reason by default.
     if spec is not None and spec.mode not in _REASONING_REPLAY_MODES:
         return None
     return field

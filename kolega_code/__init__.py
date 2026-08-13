@@ -22,7 +22,7 @@ from .agent.errors import AgentError, MaxAgentIterationsExceeded
 from .events import AgentEventEmitter
 
 # Configuration
-from .config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from .config import AgentConfig, CustomEndpointConfig, ModelConfig, ModelProvider, RateLimitConfig
 
 # Events and connection management
 from .events import AgentConnectionManager
@@ -108,6 +108,7 @@ __all__ = [
     "AgentEventEmitter",
     # Configuration
     "AgentConfig",
+    "CustomEndpointConfig",
     "ModelConfig",
     "ModelProvider",
     "RateLimitConfig",
