@@ -90,7 +90,6 @@ class SandboxFileSystem(FileSystem):
             # to avoid E2B files API text encoding issues
             encoded_content = base64.b64encode(content).decode("ascii")
 
-            # Write the base64 encoded content and decode it
             result = self.sandbox.commands.run(f"echo '{encoded_content}' | base64 -d > {full_path}")
 
             if result.exit_code != 0:
@@ -249,7 +248,6 @@ class SandboxFileSystem(FileSystem):
     def glob(self, pattern: str) -> List[str]:
         """Find paths matching pattern."""
         try:
-            # Handle different types of glob patterns
             if pattern.startswith("**/"):
                 # Recursive pattern like **/*.py or **/*
                 remaining_pattern = pattern[3:]  # Remove '**/'
@@ -294,7 +292,6 @@ class SandboxFileSystem(FileSystem):
                 else:
                     return []
 
-            # Process the result
             if result.exit_code == 0 and result.stdout.strip():
                 paths = [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
                 # Filter out empty strings and current directory

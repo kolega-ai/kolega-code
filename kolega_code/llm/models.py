@@ -1569,8 +1569,6 @@ class Message:
             if thinking is not None:
                 usage_metadata["reasoning_output_tokens"] = thinking
 
-        # print(f"Stop reason: {message.stop_reason if hasattr(message, 'stop_reason') else ''}")
-
         return cls(
             role=message.role,
             content=content_blocks,
@@ -1844,7 +1842,7 @@ class Message:
         """Deserializes a Message object from a dictionary."""
         deserialized_content: Union[str, List[ContentBlock]]
         raw_content = data.get("content")
-        tool_calls = []  # Initialize tool_calls
+        tool_calls = []
 
         if isinstance(raw_content, str):
             deserialized_content = raw_content

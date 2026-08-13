@@ -93,7 +93,6 @@ async def get_modified_files_from_sandbox(sandbox_manager: SandboxManager, sandb
         List of modified file paths
     """
     try:
-        # Get the sandbox's terminal manager
         terminal_manager = sandbox_manager.get_terminal_manager(sandbox_id)
 
         # Run git status with core.quotePath=false to get raw filenames without escaping
@@ -125,7 +124,6 @@ async def get_git_diff_from_sandbox(
         Git diff output as string
     """
     try:
-        # Get the sandbox's terminal manager
         terminal_manager = sandbox_manager.get_terminal_manager(sandbox_id)
 
         # Include untracked files in the diff without staging their contents.
@@ -134,7 +132,6 @@ async def get_git_diff_from_sandbox(
         except Exception as add_error:
             logger.warning(f"Failed to mark untracked files for diff in sandbox {sandbox_id}: {add_error}")
 
-        # Build git diff command
         if files:
             # Diff specific files
             files_arg = " ".join(shlex.quote(f) for f in files)
@@ -168,7 +165,6 @@ async def run_project_tests_in_sandbox(
         Dictionary with test results
     """
     try:
-        # Get the terminal manager
         terminal_manager = sandbox_manager.get_terminal_manager(sandbox_id)
 
         # Try to read project manifest

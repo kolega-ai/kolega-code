@@ -302,16 +302,13 @@ class ToolCollection(LogMixin):
         self.workspace_id = workspace_id
         self.thread_id = thread_id
 
-        # Convert string path to Path object if needed
         self.project_path = Path(project_path) if isinstance(project_path, str) else project_path
 
-        # Create filesystem instance if not provided
         if filesystem is None:
             self.filesystem = LocalFileSystem(root_path=self.project_path)
         else:
             self.filesystem = filesystem
 
-        # Create terminal manager instance if not provided
         if terminal_manager is None:
             self.terminal_manager = LocalTerminalManager(
                 workspace_id, thread_id, connection_manager, default_workdir=self.project_path
@@ -319,7 +316,6 @@ class ToolCollection(LogMixin):
         else:
             self.terminal_manager = terminal_manager
 
-        # Create browser manager instance if not provided
         if browser_manager is None:
             self.browser_manager = PlaywrightBrowserManager()
         else:
@@ -388,7 +384,6 @@ class ToolCollection(LogMixin):
         }
         self.tool_exclusions.extend(tool_config.tool_exclusions)
 
-        # Initialize tool backends
         self._initialize_tools()
         self._register_tool_extensions()
 
@@ -619,7 +614,6 @@ class ToolCollection(LogMixin):
             browser_manager=self.browser_manager,
         )
 
-        # Build tool
         self.build_tool = BuildTool(
             self.project_path,
             self.workspace_id,

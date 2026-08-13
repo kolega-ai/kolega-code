@@ -384,7 +384,6 @@ class SandboxTerminalManager(TerminalManager):
             current_dir: The current working directory
             terminal_info: Terminal info dict to update
         """
-        # Check if this is a cd command
         # Match cd followed by path, stopping at ; or && or ||
         cd_match = re.match(r"^\s*cd\s+([^;&|]+)", command.strip())
         if not cd_match:
@@ -392,27 +391,20 @@ class SandboxTerminalManager(TerminalManager):
 
         new_dir = cd_match.group(1).strip()
 
-        # Remove quotes if present
         if (new_dir.startswith('"') and new_dir.endswith('"')) or (new_dir.startswith("'") and new_dir.endswith("'")):
             new_dir = new_dir[1:-1]
 
-        # Handle relative and absolute paths
         if new_dir.startswith("/"):
-            # Absolute path
             new_working_dir = new_dir
         elif new_dir == "..":
-            # Parent directory
             new_working_dir = os.path.dirname(current_dir.rstrip("/"))
             if not new_working_dir:
                 new_working_dir = "/"
         elif new_dir == ".":
-            # Current directory (no change)
             new_working_dir = current_dir
         elif new_dir == "~":
-            # Home directory
             new_working_dir = "/home/user"
         else:
-            # Relative path
             new_working_dir = os.path.join(current_dir, new_dir)
 
         # Normalize the path (handle double slashes)
@@ -421,7 +413,6 @@ class SandboxTerminalManager(TerminalManager):
         if new_working_dir.startswith("//"):
             new_working_dir = new_working_dir[1:]
 
-        # Update the terminal's stored working directory
         terminal_info["cwd"] = new_working_dir
 
     async def _create_output_handler(
@@ -442,7 +433,6 @@ class SandboxTerminalManager(TerminalManager):
         """
 
         async def handler(data: str) -> None:
-            # Store output
             self.outputs[terminal_id].append(
                 {"type": output_type, "data": data, "timestamp": datetime.now(timezone.utc)}
             )
@@ -493,19 +483,16 @@ class SandboxTerminalManager(TerminalManager):
         # Ensure the working directory exists (E2B specific fix)
         if working_dir != "/home/user":
             try:
-                # Try to create the directory if it doesn't exist
                 await self.sandbox.commands.run(f"test -d {working_dir} || mkdir -p {working_dir}")
             except Exception:
                 # If we can't create it, fall back to /home/user
                 working_dir = "/home/user"
 
         try:
-            # Determine timeout settings
             sandbox_timeout = timeout if timeout is not None else 60  # Default to 60s for backward compatibility
 
             # For utility commands, we don't need streaming
             if sandbox_timeout == 0:
-                # No timeout - let it run indefinitely
                 result = await self.sandbox.commands.run(command, cwd=working_dir, timeout=0)
             else:
                 # Use timeout with buffer for asyncio
@@ -514,7 +501,6 @@ class SandboxTerminalManager(TerminalManager):
                     timeout=sandbox_timeout + 5,  # Give 5 seconds more than the sandbox timeout
                 )
 
-            # Return the combined output (stdout + stderr)
             output = ""
             if result.stdout:
                 output += result.stdout
@@ -546,23 +532,18 @@ class SandboxTerminalManager(TerminalManager):
         if terminal_id is None:
             terminal_id = str(uuid.uuid4())
 
-        # Extract terminal options
         cwd = terminal_kwargs.get("cwd", "/home/user/workspace")
         env = terminal_kwargs.get("env", {})
 
         # Convert Path objects to strings for E2B compatibility
-        if hasattr(cwd, "__fspath__"):  # Check if it's a Path-like object
+        if hasattr(cwd, "__fspath__"):
             cwd = str(cwd)
 
-        # Ensure the directory exists (try to create if it doesn't)
         try:
-            # Check if directory exists
             await self.sandbox.commands.run(f"test -d {cwd}")
         except Exception:
-            # Directory doesn't exist, try to create it
             try:
                 await self.sandbox.commands.run(f"mkdir -p {cwd}")
-                # Directory now exists (either already existed or was created)
             except Exception as e:
                 # If we can't create the directory, fall back to /home/user
                 print(f"Warning: Could not ensure directory {cwd} exists: {e}")
@@ -575,7 +556,7 @@ class SandboxTerminalManager(TerminalManager):
             "process": None,
             "last_command": "",
             "last_command_purpose": "",
-            "active_commands": {},  # Track commands for this terminal
+            "active_commands": {},
         }
         self.outputs[terminal_id] = BoundedTerminalOutputs()
 
@@ -604,42 +585,34 @@ class SandboxTerminalManager(TerminalManager):
 
         terminal_info = self.terminals[terminal_id]
 
-        # Update last command info
-        terminal_info["last_command"] = command.rstrip("\n")  # Strip trailing newline for consistency
+        terminal_info["last_command"] = command.rstrip("\n")
         terminal_info["last_command_purpose"] = purpose or ""
 
-        # Use terminal's working directory
         working_dir = terminal_info["cwd"]
 
         # Convert Path objects to strings for E2B compatibility
-        if hasattr(working_dir, "__fspath__"):  # Check if it's a Path-like object
+        if hasattr(working_dir, "__fspath__"):
             working_dir = str(working_dir)
 
         # Forward the terminal's environment to the sandbox command.
         env = terminal_info.get("env") or {}
 
-        # Store command in output
         self.outputs[terminal_id].append(
             {"type": "command", "data": command, "timestamp": datetime.now(timezone.utc), "purpose": purpose}
         )
 
-        # Broadcast command if connection manager available
         if self.connection_manager:
             try:
                 await self._broadcast_output(terminal_id, f"$ {command}\n")
             except Exception:
                 pass  # Don't fail if broadcast fails
 
-        # Create streaming output handlers
         stdout_handler = await self._create_output_handler(terminal_id, "stdout")
         stderr_handler = await self._create_output_handler(terminal_id, "stderr")
 
-        # Execute command in sandbox with streaming
         try:
-            # Determine timeout settings
-            sandbox_timeout = timeout if timeout is not None else 0  # Default to no timeout
+            sandbox_timeout = timeout if timeout is not None else 0
 
-            # If no timeout requested (0), don't use asyncio.wait_for
             if sandbox_timeout == 0:
                 result = await self.sandbox.commands.run(
                     command,
@@ -647,7 +620,7 @@ class SandboxTerminalManager(TerminalManager):
                     envs=env,
                     on_stdout=stdout_handler,
                     on_stderr=stderr_handler,
-                    timeout=0,  # No timeout for sandbox
+                    timeout=0,
                 )
             else:
                 # Use timeout with buffer for asyncio
@@ -663,7 +636,6 @@ class SandboxTerminalManager(TerminalManager):
                     timeout=sandbox_timeout + 5,  # Give 5 seconds more than the sandbox timeout
                 )
 
-            # Store exit code
             self.outputs[terminal_id].append(
                 {
                     "type": "exit",
@@ -673,24 +645,20 @@ class SandboxTerminalManager(TerminalManager):
                 }
             )
 
-            # Broadcast exit status
             if self.connection_manager:
                 await self._broadcast_output(terminal_id, f"Process exited with code {result.exit_code}\n")
 
-            # If it was a successful cd command, update the terminal's working directory
             if result.exit_code == 0:
                 self._handle_cd_command(command, working_dir, terminal_info)
 
-            return result.exit_code == 0  # Return True only if command succeeded
+            return result.exit_code == 0
 
         except asyncio.TimeoutError:
-            # Handle timeout specifically
             error_msg = f"Command execution timed out after {sandbox_timeout + 5} seconds"
             self.outputs[terminal_id].append(
                 {"type": "stderr", "data": error_msg, "timestamp": datetime.now(timezone.utc)}
             )
 
-            # Broadcast error
             if self.connection_manager:
                 await self._broadcast_output(terminal_id, error_msg)
 
@@ -703,20 +671,17 @@ class SandboxTerminalManager(TerminalManager):
                 }
             )
 
-            # Broadcast exit status
             if self.connection_manager:
                 await self._broadcast_output(terminal_id, "Process exited with code 1\n")
 
             return False  # Command failed due to timeout
 
         except Exception as e:
-            # Store error
             error_msg = f"Command failed: {str(e)}"
             self.outputs[terminal_id].append(
                 {"type": "stderr", "data": error_msg, "timestamp": datetime.now(timezone.utc)}
             )
 
-            # Broadcast error
             if self.connection_manager:
                 await self._broadcast_output(terminal_id, error_msg)
 
@@ -729,7 +694,6 @@ class SandboxTerminalManager(TerminalManager):
                 }
             )
 
-            # Broadcast exit status
             if self.connection_manager:
                 await self._broadcast_output(terminal_id, "Process exited with code 1\n")
 
@@ -815,11 +779,9 @@ class SandboxTerminalManager(TerminalManager):
         if terminal_id not in self.terminals:
             raise KeyError(f"Terminal {terminal_id} not found")
 
-        # Generate command ID
         self.command_counter += 1
         command_id = f"{terminal_id}_{self.command_counter}"
 
-        # Record command in history
         start_time = datetime.now(timezone.utc)
         self.command_history[command_id] = {
             "command": command.strip(),
@@ -834,23 +796,18 @@ class SandboxTerminalManager(TerminalManager):
         }
         self._output_accumulators[command_id] = TerminalOutputAccumulator(self._spill_store)
 
-        # Also track in terminal's active commands
         self.terminals[terminal_id]["active_commands"][command_id] = self.command_history[command_id]
 
-        # Get terminal info
         terminal_info = self.terminals[terminal_id]
         working_dir = terminal_info["cwd"]
 
-        # Store command in output
         self.outputs[terminal_id].append(
             {"type": "command", "data": command, "timestamp": datetime.now(timezone.utc), "purpose": purpose}
         )
 
-        # Broadcast command
         if self.connection_manager:
             await self._broadcast_output(terminal_id, f"$ {command}\n")
 
-        # Start command execution asynchronously without waiting
         task = asyncio.create_task(self._execute_command_async(command_id, terminal_id, command, working_dir, timeout))
         self._command_tasks[command_id] = task
 
@@ -862,7 +819,7 @@ class SandboxTerminalManager(TerminalManager):
         """Execute a command asynchronously and track its status."""
         try:
             # Convert Path objects to strings for E2B compatibility
-            if hasattr(working_dir, "__fspath__"):  # Check if it's a Path-like object
+            if hasattr(working_dir, "__fspath__"):
                 working_dir = str(working_dir)
 
             # Forward the terminal's environment to the sandbox command.
@@ -872,8 +829,7 @@ class SandboxTerminalManager(TerminalManager):
             stdout_handler = await self._create_output_handler(terminal_id, "stdout", command_id)
             stderr_handler = await self._create_output_handler(terminal_id, "stderr", command_id)
 
-            # Determine timeout settings
-            sandbox_timeout = timeout if timeout is not None else 0  # Default to no timeout
+            sandbox_timeout = timeout if timeout is not None else 0
 
             # Execute with streaming and keep stdin open for interactive prompts.
             try:
@@ -920,7 +876,6 @@ class SandboxTerminalManager(TerminalManager):
             if accumulator is not None:
                 accumulator.finalize()
 
-            # Command completed
             if self.command_history[command_id].get("kill_requested"):
                 self.command_history[command_id]["status"] = "terminated"
             else:
@@ -928,7 +883,6 @@ class SandboxTerminalManager(TerminalManager):
             self.command_history[command_id]["return_code"] = result.exit_code
             self.command_history[command_id]["end_time"] = datetime.now(timezone.utc)
 
-            # Store exit code
             self.outputs[terminal_id].append(
                 {
                     "type": "exit",
@@ -938,25 +892,20 @@ class SandboxTerminalManager(TerminalManager):
                 }
             )
 
-            # Broadcast exit status
             if self.connection_manager:
                 await self._broadcast_output(terminal_id, f"Process exited with code {result.exit_code}\n")
 
-            # If it was a successful cd command, update the terminal's working directory
             if result.exit_code == 0 and terminal_id in self.terminals:
                 terminal_info = self.terminals[terminal_id]
                 self._handle_cd_command(command, working_dir, terminal_info)
 
-            # Remove from active commands
             if terminal_id in self.terminals:
                 self.terminals[terminal_id]["active_commands"].pop(command_id, None)
         except Exception as e:
-            # Command failed
             self.command_history[command_id]["status"] = "failed"
             self.command_history[command_id]["return_code"] = 1
             self.command_history[command_id]["end_time"] = datetime.now(timezone.utc)
 
-            # Store error
             error_msg = f"Command failed: {str(e)}"
             self.outputs[terminal_id].append(
                 {"type": "stderr", "data": error_msg, "timestamp": datetime.now(timezone.utc)}
@@ -966,11 +915,9 @@ class SandboxTerminalManager(TerminalManager):
                 accumulator.append_text(error_msg)
                 accumulator.finalize()
 
-            # Broadcast error
             if self.connection_manager:
                 await self._broadcast_output(terminal_id, error_msg)
 
-            # Store exit info
             self.outputs[terminal_id].append(
                 {
                     "type": "exit",
@@ -980,11 +927,9 @@ class SandboxTerminalManager(TerminalManager):
                 }
             )
 
-            # Broadcast exit status
             if self.connection_manager:
                 await self._broadcast_output(terminal_id, "Process exited with code 1\n")
 
-            # Remove from active commands
             if terminal_id in self.terminals:
                 self.terminals[terminal_id]["active_commands"].pop(command_id, None)
         finally:
@@ -1008,7 +953,6 @@ class SandboxTerminalManager(TerminalManager):
         if terminal_id not in self.terminals:
             raise KeyError(f"Terminal {terminal_id} not found")
 
-        # Reconstruct full output from stored outputs
         full_output = ""
         for output in self.outputs[terminal_id]:
             if output["type"] == "command":
@@ -1027,7 +971,6 @@ class SandboxTerminalManager(TerminalManager):
             return ""
 
         if offset == 0:
-            # Default behavior: read last num_chars characters
             if total_chars <= num_chars:
                 return full_output
             else:
@@ -1064,7 +1007,6 @@ class SandboxTerminalManager(TerminalManager):
 
         command_info = self.command_history[command_id]
 
-        # Calculate duration
         if "end_time" in command_info:
             duration = (command_info["end_time"] - command_info["start_time"]).total_seconds()
         else:
@@ -1076,7 +1018,7 @@ class SandboxTerminalManager(TerminalManager):
             "purpose": command_info.get("purpose"),
             "duration": duration,
             "return_code": command_info.get("return_code"),
-            "child_pids": [],  # No child process tracking in sandbox
+            "child_pids": [],
         }
 
     async def get_terminal_status(self, terminal_id: str) -> dict:
@@ -1097,7 +1039,6 @@ class SandboxTerminalManager(TerminalManager):
 
         terminal_info = self.terminals[terminal_id]
 
-        # Get active commands for this terminal
         active_commands = {}
         for cmd_id, cmd_info in terminal_info["active_commands"].items():
             active_commands[cmd_id] = self.get_command_status(terminal_id, cmd_id)
@@ -1151,7 +1092,6 @@ class SandboxTerminalManager(TerminalManager):
 
         outputs = self.outputs[terminal_id]
 
-        # Apply filters if provided
         last_n_lines = kwargs.get("last_n_lines")
         since_timestamp = kwargs.get("since_timestamp")
 
@@ -1160,7 +1100,6 @@ class SandboxTerminalManager(TerminalManager):
         if since_timestamp:
             filtered_outputs = [o for o in filtered_outputs if o["timestamp"] > since_timestamp]
 
-        # Convert to string
         lines = []
         for output in filtered_outputs:
             if output["type"] in ["stdout", "stderr"]:
@@ -1188,7 +1127,6 @@ class SandboxTerminalManager(TerminalManager):
         if terminal_id not in self.terminals:
             raise KeyError(f"Terminal {terminal_id} not found")
 
-        # Clean up
         for command_id in list(self.terminals[terminal_id]["active_commands"]):
             try:
                 await self.kill_session(command_id, "TERM")

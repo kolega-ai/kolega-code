@@ -399,7 +399,7 @@ class AgentTool(BaseTool):
                 agent.session_recorder = scoped_recorder
 
             # Track messages and their sequence
-            last_saved_index = -1  # Track what we've already saved
+            last_saved_index = -1
             streamed_messages = {}  # Track messages by UUID for assembly
 
             # Process the task and stream messages

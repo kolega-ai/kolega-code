@@ -36,24 +36,24 @@ class Color:
 class Glyph:
     """Unicode glyphs used in the UI. Use g() to apply ASCII fallbacks."""
 
-    USER = "❯"  # ❯
-    AGENT = "●"  # ●
-    STATUS = "●"  # ●
-    TOOL = "⏺"  # ⏺
-    SUB_AGENT = "◆"  # ◆
-    PLAN = "◆"  # ◆
+    USER = "❯"
+    AGENT = "●"
+    STATUS = "●"
+    TOOL = "⏺"
+    SUB_AGENT = "◆"
+    PLAN = "◆"
     QUESTION = "?"
-    INSET_BAR = "│"  # │
-    INSET_ELBOW = "└"  # └
-    ELLIPSIS = "…"  # …
-    BULLET_SEP = "·"  # ·
-    BAR_FILLED = "█"  # █
-    BAR_EMPTY = "░"  # ░
-    CHECK = "✓"  # ✓
-    CROSS = "✗"  # ✗
-    DOWN = "↓"  # ↓
-    PENDING = "○"  # ○ — phase not started
-    RUNNING = "▶"  # ▶ — phase in progress
+    INSET_BAR = "│"
+    INSET_ELBOW = "└"
+    ELLIPSIS = "…"
+    BULLET_SEP = "·"
+    BAR_FILLED = "█"
+    BAR_EMPTY = "░"
+    CHECK = "✓"
+    CROSS = "✗"
+    DOWN = "↓"
+    PENDING = "○"  # phase not started
+    RUNNING = "▶"  # phase in progress
 
 
 ASCII_FALLBACKS = {
@@ -74,7 +74,7 @@ ASCII_FALLBACKS = {
     Glyph.RUNNING: ">",
 }
 
-SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"  # ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏
+SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 SPINNER_FRAMES_ASCII = "|/-\\"
 SPINNER_INTERVAL = 0.25
 
