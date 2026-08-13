@@ -69,6 +69,7 @@ read-only too.
 
 You don't have to use the keyboard shortcut — the
 [slash commands](../slash-commands/) `/plan` and `/build` switch modes too.
+`/plan <task>` switches to Plan mode and starts planning that task in one step.
 
 :::note
 All CLI sessions — including resumed ones — use the CLI-specific coding-agent
