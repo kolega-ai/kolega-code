@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -122,6 +124,95 @@ def parse_mcp_tool_name(name: str) -> Optional[tuple[str, str]]:
     if not server_id or not tool_id:
         return None
     return server_id, tool_id
+
+
+# Providers reject tool names that don't match ^[a-zA-Z0-9_-]{1,N}$ — OpenAI and
+# Google cap N at 64, Anthropic at 128. Clamp to the strictest so one bad MCP
+# server can't 400 every provider.
+MCP_TOOL_NAME_MAX_LENGTH = 64
+_INVALID_TOOL_NAME_CHAR_RE = re.compile(r"[^A-Za-z0-9_-]")
+
+
+def sanitize_mcp_tool_name(name: str) -> str:
+    """Return a provider-safe wire name for a composed ``mcp__server__tool`` name.
+
+    Every character outside ``[A-Za-z0-9_-]`` becomes ``_`` and the result is
+    clamped to ``MCP_TOOL_NAME_MAX_LENGTH``. The ``mcp__{server_id}__`` prefix
+    is preserved: only the tool-id segment is truncated unless the server id
+    alone exhausts the budget (then the whole name is truncated).
+    """
+    sanitized = _INVALID_TOOL_NAME_CHAR_RE.sub("_", name)
+    if len(sanitized) <= MCP_TOOL_NAME_MAX_LENGTH:
+        return sanitized
+
+    prefix = ""
+    tool_id = sanitized
+    if sanitized.startswith(MCP_TOOL_PREFIX):
+        rest = sanitized[len(MCP_TOOL_PREFIX) :]
+        if MCP_TOOL_SEPARATOR in rest:
+            server_id, tool_id = rest.split(MCP_TOOL_SEPARATOR, 1)
+            prefix = f"{MCP_TOOL_PREFIX}{server_id}{MCP_TOOL_SEPARATOR}"
+    budget = MCP_TOOL_NAME_MAX_LENGTH - len(prefix)
+    if budget <= 0:
+        return sanitized[:MCP_TOOL_NAME_MAX_LENGTH]
+    return f"{prefix}{tool_id[:budget]}"
+
+
+def exposed_tool_names_for(server_id: str, tools: list[MCPToolStatus]) -> list[tuple[str, str]]:
+    """Return ``(raw_name, final_name)`` pairs for one server's tools.
+
+    Final names are unique and match ``^[a-zA-Z0-9_-]{1,64}$``. Dedupe is
+    content-based (hash of the raw name), so names are stable across
+    re-verifications regardless of the order the server lists its tools.
+    """
+    candidates: list[tuple[str, str]] = []
+    for tool in tools:
+        raw = mcp_tool_name(server_id, tool.id)
+        candidates.append((raw, sanitize_mcp_tool_name(raw)))
+    counts: dict[str, int] = {}
+    for _, sanitized in candidates:
+        counts[sanitized] = counts.get(sanitized, 0) + 1
+
+    pairs: list[tuple[str, str]] = []
+    taken: set[str] = set()
+    for raw, sanitized in candidates:
+        final = sanitized
+        if counts[sanitized] > 1:
+            digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
+            suffix = f"_{digest}"
+            final = f"{sanitized[: MCP_TOOL_NAME_MAX_LENGTH - len(suffix)]}{suffix}"
+        # Identical raw names (the server listed a tool twice) would collide
+        # even after hashing; disambiguate by position.
+        counter = 2
+        base = final
+        while final in taken:
+            position_suffix = f"_{counter}"
+            final = f"{base[: MCP_TOOL_NAME_MAX_LENGTH - len(position_suffix)]}{position_suffix}"
+            counter += 1
+        taken.add(final)
+        pairs.append((raw, final))
+    return pairs
+
+
+def mcp_tool_name_adjustments(server_id: str, tools: list[MCPToolStatus]) -> list[tuple[str, str]]:
+    """The subset of a server's tool names that changed, as ``(raw, final)`` pairs."""
+    return [(raw, final) for raw, final in exposed_tool_names_for(server_id, tools) if raw != final]
+
+
+def mcp_tool_name_adjustment_note(server_id: str, tools: list[MCPToolStatus]) -> str:
+    """User-visible sentence describing adjusted tool names, or '' when none.
+
+    Example: ``"2 tool names were adjusted for provider compatibility
+    (mcp__docs__get.file → mcp__docs__get_file)."``
+    """
+    adjustments = mcp_tool_name_adjustments(server_id, tools)
+    if not adjustments:
+        return ""
+    examples = ", ".join(f"{raw} → {final}" for raw, final in adjustments[:3])
+    if len(adjustments) > 3:
+        examples += f", and {len(adjustments) - 3} more"
+    count = "tool name was" if len(adjustments) == 1 else "tool names were"
+    return f"{len(adjustments)} {count} adjusted for provider compatibility ({examples})."
 
 
 @contextlib.contextmanager
@@ -274,13 +365,17 @@ def _dedupe_messages(messages: list[str]) -> list[str]:
     return unique
 
 
-def _status_row_message(status: Optional[MCPServerStatus], *, verified: bool, stale: bool) -> str:
+def _status_row_message(
+    server: MCPServerConfig, status: Optional[MCPServerStatus], *, verified: bool, stale: bool
+) -> str:
     if status is None:
         return "Not verified."
     if stale:
         return "Configuration changed since last verification. Verify again."
     if verified:
-        return f"Verified {status.tool_count} tool(s)."
+        message = f"Verified {status.tool_count} tool(s)."
+        note = mcp_tool_name_adjustment_note(server.id, status.tools)
+        return f"{message} {note}" if note else message
     if status.status == "failed":
         return _safe_failed_status_message(status.message)
     return "Not verified."
@@ -334,7 +429,7 @@ class MCPService:
                     if verified
                     else ("stale" if stale else (status.status if status else "unverified")),
                     "tool_count": status.tool_count if verified and status else 0,
-                    "message": _status_row_message(status, verified=verified, stale=stale),
+                    "message": _status_row_message(server, status, verified=verified, stale=stale),
                 }
             )
         return rows
@@ -364,11 +459,16 @@ class MCPService:
                     ) as session:
                         tools = await self._list_all_tools(session)
             tool_statuses = [_tool_status_from_mcp_tool(tool) for tool in tools]
+            note = mcp_tool_name_adjustment_note(server.id, tool_statuses)
+            message = f"Verified {len(tool_statuses)} tool(s)."
+            if note:
+                message = f"{message} {note}"
             status = MCPServerStatus.verified(
                 fingerprint=fingerprint,
                 transport=server.transport,
                 source=server.source,
                 tools=tool_statuses,
+                message=message,
                 oauth=server.oauth.enabled,
             )
             self.status_store.update(server.id, status)
