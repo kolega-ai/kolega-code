@@ -4,13 +4,11 @@ from kolega_code.llm.specs.types import ThinkingEffortSpec
 XAI_SPECS = {
     ("xai", "grok-4.6"): {
         "context_length": 500000,
-        # xAI documents no text output limit; this is the client-side request cap.
         "max_completion_tokens": 32768,
         "input_budget": "window_minus_output",
         "default_temperature": 0.7,
         "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
-            # "none" is rejected ("reasoning cannot be disabled"); "xhigh" is new in 4.6.
             options=("low", "medium", "high", "xhigh"),
             default="medium",
             mode="openai_reasoning_effort",
