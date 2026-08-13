@@ -358,9 +358,9 @@ async def test_textual_app_effort_slash_command_selects_from_action_list(
         effort_actions = app.query_one("#effort_actions", ActionList)
         assert effort_actions.display is True
         assert app.focused is effort_actions
-        assert effort_actions.option_count == 3
+        assert effort_actions.option_count == 4
 
-        await pilot.press("down", "down", "enter")
+        await pilot.press("down", "down", "down", "enter")
         await pilot.pause()
         assert settings_store.load().active_thinking_effort == "max"
         assert effort_actions.display is False

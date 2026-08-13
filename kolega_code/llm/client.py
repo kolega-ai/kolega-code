@@ -103,11 +103,6 @@ class LLMClient:
         # Process-wide usage accounting; every invocation on this client settles
         # into it exactly once (see kolega_code/llm/ledger.py). None disables it.
         self._usage_ledger = usage_ledger
-        # Routing hint only: nearly every model shares its provider's API surface, so
-        # the client is provider-scoped and the model id is passed per call. The one
-        # exception is deepseek-v4-flash (Responses API vs the deepseek Chat default),
-        # which must be known at construction to pick the right provider class. The
-        # per-call `model=` kwarg still governs the request body.
         self._model = model
         self.provider = self._initialize_provider(
             provider,
@@ -138,6 +133,10 @@ class LLMClient:
             from .providers.openai_responses import OpenAIResponsesProvider
 
             return OpenAIResponsesProvider
+        if p == "deepseek":
+            from .providers.deepseek_responses import DeepSeekResponsesProvider
+
+            return DeepSeekResponsesProvider
         if p in (
             "together",
             "groq",
@@ -145,7 +144,6 @@ class LLMClient:
             "llama",
             "xai",
             "dashscope",
-            "deepseek",
             "ollama_cloud",
             "openrouter",
         ):
@@ -226,23 +224,6 @@ class LLMClient:
                     provider_name=chatgpt_constants.PROVIDER_KEY,
                 )
 
-            # TEMPORARY single exception: deepseek-v4-flash speaks the Responses API
-            # (bare host, no /v1) while the rest of the deepseek catalog stays on Chat
-            # Completions. Special-cased here — like the ChatGPT provider above —
-            # because it needs a distinct base URL. Delete this branch once DeepSeek
-            # moves its catalog to Responses (then route "deepseek" wholesale).
-            if provider.lower() == "deepseek" and self._model == "deepseek-v4-flash":
-                from .providers.deepseek_responses import DeepSeekResponsesProvider
-
-                return DeepSeekResponsesProvider(
-                    api_key=self._api_key,
-                    max_retries=max_retries,
-                    requests_per_minute=requests_per_minute,
-                    tokens_per_minute=tokens_per_minute,
-                    base_url="https://api.deepseek.com",
-                    provider_name="deepseek",
-                )
-
             base_urls: Dict[str, str] = {
                 "openai": "https://api.openai.com/v1/",
                 "together": "https://api.together.xyz/v1",
@@ -253,7 +234,6 @@ class LLMClient:
                 "xai": "https://api.x.ai/v1",
                 "dashscope": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
                 "moonshot": "https://api.moonshot.ai/anthropic",
-                "deepseek": "https://api.deepseek.com/v1",
                 "zai": "https://api.z.ai/api/anthropic",
                 "kimi_coding": "https://api.kimi.com/coding",
                 "ollama_cloud": "https://ollama.com/v1",

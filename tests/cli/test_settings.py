@@ -268,6 +268,7 @@ def test_ui_provider_registry_is_derived_from_model_specs() -> None:
     ]
     assert ui_thinking_effort_options("deepseek", DEEPSEEK_DEFAULT_MODEL) == [
         ("None", "none"),
+        ("Low", "low"),
         ("High", "high"),
         ("Max", "max"),
     ]

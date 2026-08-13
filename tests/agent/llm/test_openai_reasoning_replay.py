@@ -1,11 +1,12 @@
 """Reasoning replay for the OpenAI-compatible Chat Completions path.
 
-Prior reasoning captured from reasoning models (DeepSeek, Fireworks, Ollama
-Cloud) must be replayed via each provider's native reasoning field
+Prior reasoning captured from reasoning models (Fireworks, Ollama Cloud, Together,
+xAI) must be replayed via each provider's native reasoning field
 (``reasoning_content`` / ``reasoning``) on the assistant message, not re-injected
 as visible ``*Thinking:*`` prompt text. Providers/models without native support
 keep the visible-text fallback. Foreign-provider reasoning never serializes as
-native replay metadata.
+native replay metadata. First-party DeepSeek is on the Responses API and carries
+reasoning as items, so it has no flat replay field.
 """
 
 import pytest
@@ -23,6 +24,7 @@ from kolega_code.llm.specs.thinking import reasoning_replay_field
 from kolega_code.llm.specs.types import ThinkingEffortSpec
 
 DEEPSEEK_MODEL = "deepseek-v4-pro"
+FIREWORKS_DEEPSEEK_MODEL = "accounts/fireworks/models/deepseek-v4-pro"
 FIREWORKS_MODEL = "accounts/fireworks/models/glm-5p2"
 FIREWORKS_KIMI_K3_MODEL = "accounts/fireworks/models/kimi-k3"
 OLLAMA_MODEL = "test-reasoning-model"
@@ -56,10 +58,10 @@ def _assistant(*blocks, provider):
 
 
 def test_reasoning_replay_field_deepseek_fireworks_xai_use_reasoning_content():
-    assert reasoning_replay_field("deepseek", DEEPSEEK_MODEL) == "reasoning_content"
+    assert reasoning_replay_field("deepseek", DEEPSEEK_MODEL) is None
+    assert reasoning_replay_field("fireworks", FIREWORKS_DEEPSEEK_MODEL) == "reasoning_content"
     assert reasoning_replay_field("fireworks", FIREWORKS_MODEL) == "reasoning_content"
     assert reasoning_replay_field("fireworks", FIREWORKS_KIMI_K3_MODEL) == "reasoning_content"
-    # xAI's Chat Completions endpoint returns/accepts reasoning_content (verified live).
     assert reasoning_replay_field("xai", "grok-4.3") == "reasoning_content"
     assert reasoning_replay_field("xai", "grok-4.5") == "reasoning_content"
 
@@ -69,9 +71,7 @@ def test_reasoning_replay_field_ollama_uses_reasoning(ollama_reasoning_model: st
 
 
 def test_reasoning_replay_field_none_for_unmapped_provider_unknown_and_non_reasoning():
-    # Provider not in the map at all.
     assert reasoning_replay_field("groq", "anything") is None
-    # Unknown provider/model pair (get_model_specs raises -> None).
     assert reasoning_replay_field("deepseek", "no-such-model") is None
     assert reasoning_replay_field("together", "no-such-model") is None
 
@@ -106,21 +106,19 @@ def test_reasoning_replay_field_declared_non_replayable_mode_still_none(
 # --- native serialization -------------------------------------------------
 
 
-def test_deepseek_thinking_block_serializes_as_reasoning_content():
+def test_fireworks_deepseek_thinking_block_serializes_as_reasoning_content():
     asst = _assistant(
         ThinkingBlock(thinking="let me think"),
         TextBlock("the answer"),
         ToolCall(id="t1", name="get_weather", input={"city": "Paris"}),
-        provider="deepseek",
+        provider="fireworks",
     )
 
-    out = MessageHistory([asst]).to_openai(provider="deepseek", model=DEEPSEEK_MODEL)[0]
+    out = MessageHistory([asst]).to_openai(provider="fireworks", model=FIREWORKS_DEEPSEEK_MODEL)[0]
 
     assert out["reasoning_content"] == "let me think"
-    # Answer text stays in content; thinking is pulled out.
     assert out["content"] == [{"type": "text", "text": "the answer"}]
     assert "*Thinking:*" not in str(out["content"])
-    # Tool calls preserved.
     assert out["tool_calls"][0]["id"] == "t1"
     assert out["tool_calls"][0]["function"]["name"] == "get_weather"
 
@@ -159,23 +157,22 @@ def test_multiple_thinking_blocks_join_with_blank_line():
         ThinkingBlock(thinking="first"),
         ThinkingBlock(thinking="second"),
         TextBlock("a"),
-        provider="deepseek",
+        provider="fireworks",
     )
 
-    out = MessageHistory([asst]).to_openai(provider="deepseek", model=DEEPSEEK_MODEL)[0]
+    out = MessageHistory([asst]).to_openai(provider="fireworks", model=FIREWORKS_DEEPSEEK_MODEL)[0]
 
     assert out["reasoning_content"] == "first\n\nsecond"
 
 
 def test_empty_content_normalized_to_empty_string_with_tool_calls():
-    # [ThinkingBlock, ToolCall]: after pulling reasoning out, content is empty.
     asst = _assistant(
         ThinkingBlock(thinking="r"),
         ToolCall(id="t1", name="read_file", input={"path": "a.py"}),
-        provider="deepseek",
+        provider="fireworks",
     )
 
-    out = MessageHistory([asst]).to_openai(provider="deepseek", model=DEEPSEEK_MODEL)[0]
+    out = MessageHistory([asst]).to_openai(provider="fireworks", model=FIREWORKS_DEEPSEEK_MODEL)[0]
 
     assert out["content"] == ""
     assert out["reasoning_content"] == "r"
@@ -183,24 +180,20 @@ def test_empty_content_normalized_to_empty_string_with_tool_calls():
 
 
 def test_native_serialization_through_tool_result_partition_path():
-    # An assistant message that also carries a ToolResult goes through the
-    # temp_message branch of MessageHistory.to_openai; it must still serialize
-    # reasoning natively.
     asst = _assistant(
         ThinkingBlock(thinking="r"),
         TextBlock("a"),
         ToolCall(id="t1", name="f", input={}),
         ToolResult(tool_use_id="t1", name="f", content="ok", is_error=False),
-        provider="deepseek",
+        provider="fireworks",
     )
 
-    out = MessageHistory([asst]).to_openai(provider="deepseek", model=DEEPSEEK_MODEL)
+    out = MessageHistory([asst]).to_openai(provider="fireworks", model=FIREWORKS_DEEPSEEK_MODEL)
 
     assistant_msg = out[0]
     assert assistant_msg["role"] == "assistant"
     assert assistant_msg["reasoning_content"] == "r"
     assert assistant_msg["content"] == [{"type": "text", "text": "a"}]
-    # The tool result becomes its own role=tool message.
     assert any(m.get("role") == "tool" and m.get("tool_call_id") == "t1" for m in out)
 
 
@@ -217,7 +210,7 @@ def test_non_reasoning_target_keeps_visible_text_fallback():
 
 
 def test_default_call_without_provider_is_unchanged():
-    asst = _assistant(ThinkingBlock(thinking="r"), TextBlock("a"), provider="deepseek")
+    asst = _assistant(ThinkingBlock(thinking="r"), TextBlock("a"), provider="fireworks")
 
     out = MessageHistory([asst]).to_openai()[0]
 
@@ -226,40 +219,34 @@ def test_default_call_without_provider_is_unchanged():
 
 
 def test_foreign_provider_reasoning_not_replayed_natively():
-    # Reasoning produced by anthropic, target deepseek: must NOT become
-    # reasoning_content (same-provider gate); falls back to visible text.
     asst = _assistant(ThinkingBlock(thinking="secret"), TextBlock("a"), provider="anthropic")
 
-    out = MessageHistory([asst]).to_openai(provider="deepseek", model=DEEPSEEK_MODEL)[0]
+    out = MessageHistory([asst]).to_openai(provider="fireworks", model=FIREWORKS_DEEPSEEK_MODEL)[0]
 
     assert "reasoning_content" not in out
     assert {"type": "text", "text": "*Thinking:*\nsecret"} in out["content"]
 
 
 def test_cross_provider_chat_reasoning_not_replayed_natively():
-    # deepseek-origin reasoning, target fireworks: different provider -> fallback.
-    asst = _assistant(ThinkingBlock(thinking="r"), TextBlock("a"), provider="deepseek")
+    asst = _assistant(ThinkingBlock(thinking="r"), TextBlock("a"), provider="together")
 
-    out = MessageHistory([asst]).to_openai(provider="fireworks", model=FIREWORKS_MODEL)[0]
+    out = MessageHistory([asst]).to_openai(provider="fireworks", model=FIREWORKS_DEEPSEEK_MODEL)[0]
 
     assert "reasoning_content" not in out
     assert {"type": "text", "text": "*Thinking:*\nr"} in out["content"]
 
 
 def test_reasoning_only_message_not_dropped():
-    # No answer text, no tool calls: pulling reasoning out would empty the
-    # message; keep the visible-text fallback so it isn't dropped.
-    asst = _assistant(ThinkingBlock(thinking="only"), provider="deepseek")
+    asst = _assistant(ThinkingBlock(thinking="only"), provider="fireworks")
 
-    out = MessageHistory([asst]).to_openai(provider="deepseek", model=DEEPSEEK_MODEL)
+    out = MessageHistory([asst]).to_openai(provider="fireworks", model=FIREWORKS_DEEPSEEK_MODEL)
 
     assert len(out) == 1
     assert out[0]["content"] == [{"type": "text", "text": "*Thinking:*\nonly"}]
     assert "reasoning_content" not in out[0]
 
 
-def test_streamed_deepseek_reasoning_round_trips_to_reasoning_content():
-    # Capture: streamed reasoning_content becomes a ThinkingBlock.
+def test_streamed_fireworks_reasoning_round_trips_to_reasoning_content():
     msg = Message.from_openai_stream(
         role="assistant",
         reasoning_content="streamed cot",
@@ -267,10 +254,9 @@ def test_streamed_deepseek_reasoning_round_trips_to_reasoning_content():
         stop_reason="stop",
     )
     assert isinstance(msg.content[0], ThinkingBlock)
-    # Stamp provider as the live provider does, then replay.
-    msg.usage_metadata["provider"] = "deepseek"
+    msg.usage_metadata["provider"] = "fireworks"
 
-    out = MessageHistory([msg]).to_openai(provider="deepseek", model=DEEPSEEK_MODEL)[0]
+    out = MessageHistory([msg]).to_openai(provider="fireworks", model=FIREWORKS_DEEPSEEK_MODEL)[0]
 
     assert out["reasoning_content"] == "streamed cot"
     assert out["content"] == [{"type": "text", "text": "final"}]
@@ -280,23 +266,16 @@ def test_streamed_deepseek_reasoning_round_trips_to_reasoning_content():
 
 
 def test_reasoning_replay_field_openrouter_uses_reasoning():
-    # OpenRouter emits reasoning as delta.reasoning and requires it echoed back
-    # on assistant tool-call turns whenever reasoning is enabled.
     assert reasoning_replay_field("openrouter", "z-ai/glm-5.2") == "reasoning"
     assert reasoning_replay_field("openrouter", "deepseek/deepseek-v4-pro") == "reasoning"
 
 
 def test_reasoning_replay_field_openrouter_anthropic_models_opt_out():
-    # Anthropic reasoning is carried by signed thinking blocks; a plain
-    # `reasoning` string cannot reconstruct one, so nothing is replayed.
     assert reasoning_replay_field("openrouter", "anthropic/claude-opus-5") is None
     assert reasoning_replay_field("openrouter", "anthropic/claude-sonnet-5") is None
 
 
 def test_reasoning_replay_field_openrouter_non_reasoning_model():
-    # minimax/minimax-m3 exposes no effort control but may still reason by
-    # default (spec-None relaxation): its reasoning, if any, arrives in
-    # OpenRouter's flat `reasoning` field.
     assert reasoning_replay_field("openrouter", "minimax/minimax-m3") == "reasoning"
     assert reasoning_replay_field("openrouter", "nope/not-a-model") is None
 

@@ -76,15 +76,6 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
         # and configure the renderer at request time.
         return {"tinker_effort": normalized}
 
-    if spec.mode == "deepseek_effort":
-        # DeepSeek's OpenAI-compatible /v1 endpoint: reasoning is on by default and graded
-        # via the standard reasoning_effort param (high/max; it also accepts low/medium/xhigh,
-        # collapsing low/medium->high and xhigh->max). There is no reasoning_effort=none, so
-        # "none" disables thinking via the documented extra_body toggle instead.
-        if normalized == "none":
-            return {"extra_body": {"thinking": {"type": "disabled"}}}
-        return {"reasoning_effort": normalized}
-
     if spec.mode == "zai_effort":
         # Z.AI GLM toggles thinking via {"thinking": {"type": "enabled"|"disabled"}}.
         # GLM-5.2 adds two named effort levels (High/Max) carried in output_config.effort.
@@ -163,7 +154,6 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
 # not per mode: Fireworks and Ollama Cloud share mode "openai_reasoning_effort"
 # but use different field names.
 _REASONING_REPLAY_FIELDS: Dict[str, str] = {
-    "deepseek": "reasoning_content",
     "fireworks": "reasoning_content",
     "ollama_cloud": "reasoning",
     # OpenRouter emits reasoning as delta.reasoning and requires it echoed back on
@@ -180,7 +170,7 @@ _REASONING_REPLAY_FIELDS: Dict[str, str] = {
 # Chat-Completions reasoning modes whose reasoning text is replayable via a flat
 # top-level field. Responses/Anthropic/Google modes carry reasoning differently
 # and are excluded.
-_REASONING_REPLAY_MODES = frozenset({"openai_reasoning_effort", "deepseek_effort", "openrouter_reasoning"})
+_REASONING_REPLAY_MODES = frozenset({"openai_reasoning_effort", "openrouter_reasoning"})
 
 
 def reasoning_replay_field(provider: str, model_name: str) -> Optional[str]:
