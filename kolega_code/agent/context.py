@@ -113,6 +113,7 @@ class AgentContext:
         itself is still passed per call.
         """
         model_config = self.config.model_config_for_agent(agent_name)
+        endpoint = self.config.custom_endpoint_for(model_config)
 
         if self.telemetry.langfuse_client:
             return InstrumentedLLMClient(
@@ -135,6 +136,8 @@ class AgentContext:
                 trace_sink=self.telemetry.llm_trace_sink,
                 context_window_tokens=self.config.context_window_tokens,
                 max_output_tokens=self.config.max_output_tokens,
+                base_url=endpoint.base_url if endpoint else None,
+                api_style=endpoint.api_style if endpoint else None,
             )
 
         return LLMClient(
@@ -149,4 +152,6 @@ class AgentContext:
             trace_sink=self.telemetry.llm_trace_sink,
             context_window_tokens=self.config.context_window_tokens,
             max_output_tokens=self.config.max_output_tokens,
+            base_url=endpoint.base_url if endpoint else None,
+            api_style=endpoint.api_style if endpoint else None,
         )

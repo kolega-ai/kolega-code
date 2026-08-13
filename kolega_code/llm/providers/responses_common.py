@@ -125,6 +125,9 @@ def _role_message_item(role: str, parts: List[tuple]) -> Optional[Dict[str, Any]
 # #6913); the persisted transcript keeps the byte-for-byte original.
 _HARMONY_CONTROL_TOKEN_RE = re.compile(r"<\|(start|end|message|channel|constrain|return|call)\|>")
 _HARMONY_CONTROL_TOKEN_BACKENDS = frozenset({"openai", "openai_chatgpt"})
+# Backends whose Responses API returns reasoning as an opaque encrypted item for
+# continuity passback; compatible servers don't implement it.
+_ENCRYPTED_REASONING_BACKENDS = frozenset({"openai", "openai_chatgpt", "deepseek"})
 
 
 def escape_harmony_control_tokens(text: str) -> str:
@@ -997,11 +1000,12 @@ class ResponsesProviderBase(OpenAIProvider):
             reasoning = thinking_params.get("reasoning")
             if reasoning:
                 request["reasoning"] = reasoning
-                # Ask the backend to return the model's reasoning as an opaque
-                # encrypted item so we can resend it next turn for continuity
-                # (mirrors Codex). Without it the model re-reasons from scratch on
-                # every tool-call round and "thinks" far longer at high effort.
-                request["include"] = ["reasoning.encrypted_content"]
+                if self.provider_name in _ENCRYPTED_REASONING_BACKENDS:
+                    # Ask the backend to return the model's reasoning as an opaque
+                    # encrypted item so we can resend it next turn for continuity
+                    # (mirrors Codex). Without it the model re-reasons from scratch on
+                    # every tool-call round and "thinks" far longer at high effort.
+                    request["include"] = ["reasoning.encrypted_content"]
         return request
 
     async def stream(

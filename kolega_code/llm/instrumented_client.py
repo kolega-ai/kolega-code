@@ -59,6 +59,8 @@ class InstrumentedLLMClient(LLMClient):
         trace_sink: Optional[Any] = None,
         context_window_tokens: Optional[int] = None,
         max_output_tokens: Optional[int] = None,
+        base_url: Optional[str] = None,
+        api_style: Optional[str] = None,
     ):
         super().__init__(
             provider,
@@ -72,6 +74,8 @@ class InstrumentedLLMClient(LLMClient):
             trace_sink=trace_sink,
             context_window_tokens=context_window_tokens,
             max_output_tokens=max_output_tokens,
+            base_url=base_url,
+            api_style=api_style,
         )
         self.langfuse = langfuse_client
         self.workspace_id = workspace_id

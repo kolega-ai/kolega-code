@@ -82,6 +82,8 @@ class LLMClient:
         trace_sink: Optional[Any] = None,
         context_window_tokens: Optional[int] = None,
         max_output_tokens: Optional[int] = None,
+        base_url: Optional[str] = None,
+        api_style: Optional[str] = None,
     ):
         if (context_window_tokens is None) != (max_output_tokens is None):
             raise ValueError("context_window_tokens and max_output_tokens must be supplied together")
@@ -112,6 +114,8 @@ class LLMClient:
             max_retries=max_retries,
             requests_per_minute=requests_per_minute,
             tokens_per_minute=tokens_per_minute,
+            base_url=base_url,
+            api_style=api_style,
         )
 
     @staticmethod
@@ -164,6 +168,8 @@ class LLMClient:
         max_retries: int = 3,
         requests_per_minute: Optional[int] = None,
         tokens_per_minute: Optional[int] = None,
+        base_url: Optional[str] = None,
+        api_style: Optional[str] = None,
     ) -> "Union[AnthropicProvider, OpenAIProvider, GoogleProvider, TinkerProvider]":
         """Initialize the appropriate LLM provider based on the provider name.
 
@@ -180,6 +186,30 @@ class LLMClient:
             LLMError: If an unsupported provider name is specified or initialization fails
         """
         try:
+            # Custom endpoints: the provider value is "custom:<id>" and the wire
+            # dialect comes from api_style, resolved by the config layer.
+            if provider.lower().startswith("custom:"):
+                if not base_url or not api_style:
+                    raise ValueError(f"Custom endpoint provider {provider} requires base_url and api_style.")
+                if api_style == "openai_chat":
+                    from .providers.openai import OpenAIProvider as CustomProviderClass
+                elif api_style == "openai_responses":
+                    from .providers.openai_responses import OpenAIResponsesProvider as CustomProviderClass
+                elif api_style == "anthropic":
+                    from .providers.anthropic import AnthropicProvider as CustomProviderClass
+                else:
+                    raise ValueError(f"Unsupported api_style {api_style!r} for custom endpoint {provider}.")
+                return CustomProviderClass(
+                    # Keyless local servers still require a non-empty credential at
+                    # SDK construction; a dummy satisfies them (servers ignore it).
+                    api_key=self._api_key or "local",
+                    max_retries=max_retries,
+                    requests_per_minute=requests_per_minute,
+                    tokens_per_minute=tokens_per_minute,
+                    base_url=base_url,
+                    provider_name=provider.lower(),
+                )
+
             # ChatGPT-subscription OAuth provider: distinct base URL + Responses API,
             # authenticated by a refreshing token manager rather than an api key.
             if provider.lower() == chatgpt_constants.PROVIDER_KEY:

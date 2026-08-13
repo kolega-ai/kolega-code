@@ -47,6 +47,8 @@ async def test_model_connection(
     client_factory: Callable[..., Any] = LLMClient,
     timeout: float = CONNECTION_TEST_TIMEOUT_SECONDS,
     usage_ledger: Any = None,
+    base_url: Optional[str] = None,
+    api_style: Optional[str] = None,
 ) -> ModelConnectionResult:
     """Send a tiny no-tool prompt through one provider/model pair.
 
@@ -72,6 +74,10 @@ async def test_model_connection(
         # ledger. Omitted when None so injected fake factories keep their shape.
         if usage_ledger is not None:
             factory_kwargs["usage_ledger"] = usage_ledger
+        if base_url:
+            factory_kwargs["base_url"] = base_url
+        if api_style:
+            factory_kwargs["api_style"] = api_style
         client = client_factory(**factory_kwargs)
         messages = MessageHistory([Message(role="user", content=[TextBlock(text="Reply with OK.")])])
         await asyncio.wait_for(

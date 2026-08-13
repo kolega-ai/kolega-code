@@ -146,6 +146,7 @@ class WebFetchTool(StreamingTool):
     def _build_client(self) -> LLMClient:
         provider = self.config.fast_config.provider
         rate_limits = self.config.fast_config.rate_limits
+        endpoint = self.config.custom_endpoint_for(self.config.fast_config)
         client_kwargs = {
             "provider": provider.value,
             "api_key": self.config.get_api_key(provider),
@@ -156,6 +157,8 @@ class WebFetchTool(StreamingTool):
             "token_manager": self.config.get_chatgpt_token_manager(),
             "usage_ledger": getattr(self.caller, "usage_ledger", None),
             "trace_sink": getattr(self.caller, "llm_trace_sink", None),
+            "base_url": endpoint.base_url if endpoint else None,
+            "api_style": endpoint.api_style if endpoint else None,
         }
         caller_llm = getattr(self.caller, "llm", None)
         if isinstance(caller_llm, InstrumentedLLMClient):

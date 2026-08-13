@@ -1741,6 +1741,7 @@ class BaseAgent(LogMixin):
 
         from kolega_code.llm.client import LLMClient
 
+        endpoint = self.config.custom_endpoint_for(model_config)
         client = LLMClient(
             provider=model_config.provider.value,
             api_key=self.config.get_api_key(model_config.provider) or "",
@@ -1751,6 +1752,8 @@ class BaseAgent(LogMixin):
             token_manager=self.config.get_chatgpt_token_manager(),
             usage_ledger=self.usage_ledger,
             trace_sink=self.llm_trace_sink,
+            base_url=endpoint.base_url if endpoint else None,
+            api_style=endpoint.api_style if endpoint else None,
         )
         with llm_call_origin(helper_origin("hook_prompt")):
             response = await client.generate(

@@ -1446,6 +1446,10 @@ class Message:
             and _provider_value(source_provider) == _provider_value(provider)
         ):
             reasoning_field = reasoning_replay_field(provider, model)
+        if reasoning_field == "auto":
+            # Custom endpoints default to "auto": echo reasoning back in the field
+            # the source server emitted it in, falling back to "reasoning".
+            reasoning_field = (self.usage_metadata or {}).get("reasoning_field") or "reasoning"
 
         reasoning_text: Optional[str] = None
         if isinstance(self.content, str):
