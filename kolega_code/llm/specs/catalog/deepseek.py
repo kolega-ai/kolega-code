@@ -15,7 +15,7 @@ from kolega_code.llm.specs.types import ThinkingEffortSpec
 # assumed to apply here): those probes only measured visible output, while a
 # reasoning-heavy call was later measured running to 112990 tokens in a single
 # Responses call.
-# pro never sends this value raw: the chat path clamps to
+# pro never sends this value raw: the Responses path clamps to
 # DEEPSEEK_WIRE_OUTPUT_CAP=64000 (specs/accessors.py) so the client cap fires
 # before the server ceiling and truncation is reported honestly. flash passes
 # through.
@@ -28,9 +28,9 @@ DEEPSEEK_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
-            options=("none", "high", "max"),
+            options=("none", "low", "high", "max"),
             default="high",
-            mode="deepseek_effort",
+            mode="openai_responses_reasoning",
         ),
     },
     # deepseek-v4-flash speaks the Responses API (see DeepSeekResponsesProvider), so its
@@ -59,7 +59,7 @@ DEEPSEEK_SPECS = {
         "supports_hosted_web_search": True,
         "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
-            options=("none", "high", "max"),
+            options=("none", "low", "high", "max"),
             default="high",
             mode="openai_responses_reasoning",
         ),

@@ -1,5 +1,6 @@
 from kolega_code.llm.client import LLMClient
 from kolega_code.llm.providers.anthropic import AnthropicProvider
+from kolega_code.llm.providers.deepseek_responses import DeepSeekResponsesProvider
 from kolega_code.llm.providers.openai import OpenAIProvider
 
 
@@ -21,12 +22,10 @@ def test_llm_client_maps_moonshot_to_anthropic_provider():
     assert thinking == "auto"
 
 
-def test_llm_client_maps_deepseek_to_openai_v1_provider():
-    # DeepSeek's Anthropic-compatible endpoint stalls during reasoning; route through the
-    # OpenAI-compatible /v1 endpoint (matches opencode/openclaw, which work).
+def test_llm_client_maps_deepseek_to_responses_provider():
     client = LLMClient(provider="deepseek", api_key="sk-test")
-    assert isinstance(client.provider, OpenAIProvider)
-    assert client.provider.base_url == "https://api.deepseek.com/v1"
+    assert isinstance(client.provider, DeepSeekResponsesProvider)
+    assert client.provider.base_url == "https://api.deepseek.com"
     assert client.provider.provider_name == "deepseek"
 
     thinking = client._prepare_thinking_param("max", model="deepseek-v4-pro")

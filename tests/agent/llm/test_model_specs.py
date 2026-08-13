@@ -146,9 +146,9 @@ def test_kimi_coding_highspeed_model_specs():
 @pytest.mark.parametrize(
     "model,max_completion_tokens",
     [
-        # pro (chat): the MEASURED ceiling — the server cuts at exactly 65536.
+        # pro: the MEASURED chat ceiling — the server cuts at exactly 65536.
         ("deepseek-v4-pro", 65536),
-        # flash (Responses): no such cut; measured running to 112990 in one call.
+        # flash: no such cut; measured running to 112990 in one call.
         ("deepseek-v4-flash", 384000),
     ],
 )
@@ -158,7 +158,7 @@ def test_deepseek_model_specs(model: str, max_completion_tokens: int):
     assert specs["context_length"] == 1000000
     assert specs["max_completion_tokens"] == max_completion_tokens
     assert specs["default_temperature"] == 1.0
-    assert specs["thinking_effort"].options == ("none", "high", "max")
+    assert specs["thinking_effort"].options == ("none", "low", "high", "max")
     assert specs["thinking_effort"].default == "high"
 
 

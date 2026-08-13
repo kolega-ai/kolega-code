@@ -1,11 +1,10 @@
 """DeepSeek provider that speaks the **Responses API** (``/responses``).
 
-TEMPORARY: ``deepseek-v4-flash`` is the one DeepSeek model on the Responses API
-today; the rest of the deepseek catalog stays on Chat Completions
-(:class:`~kolega_code.llm.providers.openai.OpenAIProvider`). DeepSeek plans to move
-its catalog over (``deepseek-v4-pro`` in early Aug 2026), at which point this class
-and its routing branch in ``client.py`` can be deleted and the whole ``deepseek``
-provider routed to Responses wholesale.
+The whole DeepSeek catalog (``deepseek-v4-pro`` and ``deepseek-v4-flash``) speaks
+the Responses API, so the ``deepseek`` provider routes here wholesale from
+``LLMClient._provider_class`` (no model-name branching). DeepSeek models hosted on
+other providers (Fireworks/OpenRouter/Ollama-Cloud) still use Chat Completions via
+:class:`~kolega_code.llm.providers.openai.OpenAIProvider`.
 
 Request building, streaming, and token counting are shared with the OpenAI
 Responses providers via

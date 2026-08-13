@@ -21,7 +21,7 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert default_thinking_effort("moonshot", "kimi-k2.7-code") == "auto"
     assert thinking_effort_options("moonshot", "kimi-k2.6") == ("auto", "none")
     assert default_thinking_effort("moonshot", "kimi-k2.6") == "auto"
-    assert thinking_effort_options("deepseek", "deepseek-v4-pro") == ("none", "high", "max")
+    assert thinking_effort_options("deepseek", "deepseek-v4-pro") == ("none", "low", "high", "max")
     assert default_thinking_effort("deepseek", "deepseek-v4-pro") == "high"
     assert thinking_effort_options("google", "gemini-3.6-flash") == ("minimal", "low", "medium", "high")
     assert default_thinking_effort("google", "gemini-3.6-flash") == "medium"
@@ -83,33 +83,6 @@ def test_anthropic_default_request_uses_opus_5_adaptive_thinking_without_tempera
     assert generation_params["thinking"] == {"type": "adaptive"}
     assert generation_params["output_config"] == {"effort": "medium"}
     assert "temperature" not in generation_params
-
-
-def test_deepseek_routes_to_openai_v1_endpoint() -> None:
-    # DeepSeek's Anthropic-compatible endpoint stalls during reasoning (idle-connection
-    # drop). Route through the OpenAI-compatible /v1 endpoint, which streams reasoning
-    # continuously (matches opencode/openclaw).
-    client = LLMClient(provider="deepseek", api_key="test-key")
-    assert isinstance(client.provider, OpenAIProvider)
-    assert "api.deepseek.com/v1" in str(client.provider.async_client.base_url)
-
-
-def test_deepseek_thinking_effort_serialization() -> None:
-    # DeepSeek routes through the OpenAI-compatible /v1 endpoint, so reasoning is graded via
-    # the standard reasoning_effort param, and "none" disables it via extra_body.
-    provider = OpenAIProvider(api_key="test-key", provider_name="deepseek")
-
-    disabled_params = {"model": "deepseek-v4-pro"}
-    provider._apply_thinking_params(disabled_params, GenerationParams(thinking="none"))
-    assert disabled_params == {"model": "deepseek-v4-pro", "extra_body": {"thinking": {"type": "disabled"}}}
-
-    high_params = {"model": "deepseek-v4-pro"}
-    provider._apply_thinking_params(high_params, GenerationParams(thinking="high"))
-    assert high_params["reasoning_effort"] == "high"
-
-    max_params = {"model": "deepseek-v4-pro"}
-    provider._apply_thinking_params(max_params, GenerationParams(thinking="max"))
-    assert max_params["reasoning_effort"] == "max"
 
 
 def test_zai_glm52_thinking_effort_serialization() -> None:

@@ -114,19 +114,17 @@ def test_deepseek_output_token_cap_branches(monkeypatch: pytest.MonkeyPatch) -> 
     assert deepseek_output_token_cap("deepseek", "deepseek-experimental", 4096) == 4096
 
 
-# --- chat path (first-party, fireworks, ollama_cloud) -----------------------------
+# --- chat path (fireworks, ollama_cloud) -----------------------------------------
 
 
 @pytest.mark.parametrize(
     "provider_name,model,expected",
     [
-        ("deepseek", "deepseek-v4-pro", 64000),
         ("fireworks", "accounts/fireworks/models/deepseek-v4-pro", 64000),
         ("fireworks", "accounts/fireworks/models/deepseek-v4-flash", 64000),
     ],
 )
 def test_chat_stream_sends_clamped_cap_on_wire(monkeypatch, provider_name: str, model: str, expected: int) -> None:
-    # No caller-supplied cap: DeepSeek models still always get one (always-emit).
     request = _stream_request(monkeypatch, provider_name=provider_name, model=model)
     assert request["max_tokens"] == expected
 
@@ -145,20 +143,6 @@ def test_chat_stream_uses_smaller_catalog_cap_for_ollama_deepseek_model(
     assert request["max_tokens"] == 32768
 
 
-def test_chat_oversized_request_is_clamped(monkeypatch) -> None:
-    request = _stream_request(
-        monkeypatch, provider_name="deepseek", model="deepseek-v4-pro", max_completion_tokens=384000
-    )
-    assert request["max_tokens"] == 64000
-
-
-def test_chat_below_cap_request_passes_through(monkeypatch) -> None:
-    request = _stream_request(
-        monkeypatch, provider_name="deepseek", model="deepseek-v4-pro", max_completion_tokens=4096
-    )
-    assert request["max_tokens"] == 4096
-
-
 def test_chat_non_deepseek_model_on_same_provider_unaffected(monkeypatch) -> None:
     request = _stream_request(
         monkeypatch,
@@ -172,20 +156,26 @@ def test_chat_non_deepseek_model_on_same_provider_unaffected(monkeypatch) -> Non
     assert "max_tokens" not in request
 
 
-# --- Responses path (first-party flash) -------------------------------------------
+# --- Responses path (first-party deepseek) ----------------------------------------
 
 
-def _responses_request(params) -> dict:
+def _responses_request(params, model: str = FLASH) -> dict:
     provider = DeepSeekResponsesProvider(api_key="sk-test")
-    return provider._build_request(MessageHistory([]), None, params, {"model": FLASH})
+    return provider._build_request(MessageHistory([]), None, params, {"model": model})
 
 
 def test_responses_build_request_emits_max_output_tokens() -> None:
-    # The shared Responses builder omits the cap; the DeepSeek override must add
-    # it — without one the server truncates at its own 65536 default.
     request = _responses_request(GenerationParams(max_completion_tokens=4096))
     assert request["parallel_tool_calls"] is True
     assert request["max_output_tokens"] == 4096
     # flash is unclamped: its catalog max_completion_tokens passes through.
     assert _responses_request(GenerationParams(max_completion_tokens=384000))["max_output_tokens"] == 384000
     assert _responses_request(None)["max_output_tokens"] == 384000
+
+
+def test_responses_build_request_clamps_pro_cap() -> None:
+    pro = "deepseek-v4-pro"
+    assert _responses_request(None, model=pro)["max_output_tokens"] == 64000
+    oversized = _responses_request(GenerationParams(max_completion_tokens=384000), model=pro)
+    assert oversized["max_output_tokens"] == 64000
+    assert _responses_request(GenerationParams(max_completion_tokens=4096), model=pro)["max_output_tokens"] == 4096

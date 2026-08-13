@@ -6,6 +6,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- DeepSeek V4-Pro now routes to the Responses API by default (joining V4-Flash),
+  removing the model-name carve-out. Both DeepSeek models support `none`, `low`,
+  `high`, and `max` reasoning effort (`low` is new; `none` disables reasoning).
+
 ## 0.29.0 - 2026-08-13
 
 ### Added
