@@ -129,11 +129,17 @@ servers).
 
 <Steps>
 1. Add the endpoint under `custom_endpoints` in `settings.json`, or use the TUI:
-   **Settings → Custom Endpoints → New endpoint**.
+   **Settings → Custom Endpoints**. Pick an existing endpoint or **New endpoint**,
+   fill in the id (a lowercase slug), API style, base URL, and the optional key,
+   default model, context/output limits, vision flag, thinking mode (with budgets
+   for the Anthropic budget mode), and reasoning-replay field, then **Save
+   Endpoint**.
 2. Select the provider (`custom:<id>`) in **Settings → Models**, and type the
    model id in the **Other…** field.
 3. **Apply Changes**. The endpoint appears in every provider picker and accepts
-   free-text model ids.
+   free-text model ids. Endpoint edits are staged until Apply; closing without
+   applying discards them. The Providers page's **Test Connection** probes
+   custom endpoints too, using their default model.
 </Steps>
 
 ## One-off use without a saved config
