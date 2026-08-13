@@ -220,6 +220,20 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         if self._mode_switch_blocked():
             return
         await self._set_interaction_mode(tui_constants.PLAN_INTERACTION_MODE)
+        prompt = args.strip()
+        if not prompt:
+            return
+        if self.agent is None:
+            self._set_settings_status(messages.SETTINGS_REQUIRED, tone="warning")
+            return
+        attachments = self._build_mention_attachments(prompt)
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="user", content=prompt))
+        self.agent_worker = self.run_worker(
+            self._process_message(prompt, attachments),
+            name="kolega-turn",
+            group="turns",
+            exclusive=True,
+        )
 
     async def _command_build(self, args: str) -> None:
         if self._mode_switch_blocked():

@@ -52,7 +52,7 @@ TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     ),
     SlashCommandEntry("detach", "Remove pending image attachments", CommandScope.TUI),
     SlashCommandEntry("init", "Create or update AGENTS.md for this repository", CommandScope.TUI),
-    SlashCommandEntry("plan", "Switch to plan mode", CommandScope.TUI),
+    SlashCommandEntry("plan", "Switch to plan mode, optionally with a planning prompt", CommandScope.TUI),
     SlashCommandEntry("build", "Switch to build mode", CommandScope.TUI),
     SlashCommandEntry("sidebar", "Show or hide the side panel", CommandScope.TUI),
     SlashCommandEntry("settings", "Open Settings", CommandScope.TUI),

@@ -37,7 +37,7 @@ These control the app and your session.
 | `/init` | Create or update `AGENTS.md` for this repository |
 | `/attach` | Attach an image: clipboard if no path, or `/attach <path>` for a file |
 | `/detach` | Remove pending image attachments |
-| `/plan` | Switch to [Plan mode](../modes/) |
+| `/plan` | Switch to [Plan mode](../modes/), optionally with a planning prompt (`/plan <task>`) |
 | `/build` | Switch to [Build mode](../modes/) |
 | `/sidebar` | Show or hide the side panel |
 | `/settings` | Open the full-screen Settings editor |

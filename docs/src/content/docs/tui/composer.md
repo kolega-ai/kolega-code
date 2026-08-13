@@ -87,7 +87,7 @@ commands with descriptions:
 ```text
 /model        Show or switch the active model
 /effort       Show or set the active thinking effort
-/plan         Switch to plan mode
+/plan         Switch to plan mode, optionally with a planning prompt
 /context      Show current context token count
 ```
 
