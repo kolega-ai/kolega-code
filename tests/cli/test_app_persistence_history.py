@@ -2,6 +2,7 @@
 from pathlib import Path
 import asyncio
 import json
+import threading
 import time
 
 import pytest
@@ -206,8 +207,12 @@ async def test_textual_app_history_save_runs_off_event_loop(tmp_path: Path, monk
     _persist_history(store, session, saved_history)
     original_save = store.save
 
+    release_save = threading.Event()
+
     def slow_save(record):
-        time.sleep(0.2)
+        # Block the worker thread (not the event loop) until the test has
+        # observed the loop staying responsive while the save is in flight.
+        release_save.wait(timeout=5)
         original_save(record)
 
     monkeypatch.setattr(store, "save", slow_save)
@@ -217,10 +222,11 @@ async def test_textual_app_history_save_runs_off_event_loop(tmp_path: Path, monk
 
     save_task = asyncio.create_task(app._save_session_history_async())
     marker_task = asyncio.create_task(asyncio.sleep(0.05))
-    done, _ = await asyncio.wait({save_task, marker_task}, timeout=0.1, return_when=asyncio.FIRST_COMPLETED)
+    done, _ = await asyncio.wait({save_task, marker_task}, timeout=5, return_when=asyncio.FIRST_COMPLETED)
 
     assert marker_task in done
     assert not save_task.done()
+    release_save.set()
     await save_task
     assert store.load(session.session_id).history == saved_history
 
