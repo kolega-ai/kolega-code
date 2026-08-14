@@ -70,6 +70,27 @@ def test_build_agent_config_unknown_saved_provider_is_unconfigured(tmp_path: Pat
         build_agent_config(tmp_path, env={}, settings=settings)
 
 
+def test_build_agent_config_drops_saved_effort_model_no_longer_supports(tmp_path: Path) -> None:
+    # A saved effort can outlive a catalog change that removes the spec.
+    settings = CliSettings(
+        active_provider="ollama_cloud",
+        active_model="mistral-large-3:675b",  # known model, no thinking spec
+        active_thinking_effort="high",
+    )
+
+    config = build_agent_config(tmp_path, env={"OLLAMA_API_KEY": "test"}, settings=settings)
+
+    assert config.long_context_config.thinking_effort is None
+    # An explicitly requested effort for the same model still errors.
+    with pytest.raises(CliConfigError, match="does not support thinking effort"):
+        build_agent_config(
+            tmp_path,
+            overrides=CliConfigOverrides(thinking_effort="high"),
+            env={"OLLAMA_API_KEY": "test"},
+            settings=settings,
+        )
+
+
 def test_build_agent_config_accepts_tinker_checkpoint_paths(tmp_path: Path) -> None:
     checkpoint = "tinker://0034d8c9-0a88-52a9-b2b7-bce7cb1e6fef:train:0/sampler_weights/000080"
     config = build_agent_config(

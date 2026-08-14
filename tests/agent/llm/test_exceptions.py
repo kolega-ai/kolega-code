@@ -335,3 +335,24 @@ def test_llm_error_message_other_branches_unchanged() -> None:
         LLMContextWindowExceededError("OpenAI APIError: context", provider=ModelProvider.OPENAI.value)
     )
     assert "context became too large" in context
+
+
+def test_map_to_llm_error_threads_provider_through_openai_mapping() -> None:
+    """Compatible providers riding the OpenAI SDK keep their own provider label."""
+    original_error = MockOpenAIError("no access", status_code=403)
+    mapped_error = map_to_llm_error(original_error, "perplexity_agent")
+    assert isinstance(mapped_error, LLMPermissionDeniedError)
+    assert mapped_error.provider == "perplexity_agent"
+    assert llm_error_message(mapped_error, model="perplexity/sonar").startswith("Perplexity/perplexity/sonar")
+
+
+def test_map_to_llm_error_threads_provider_through_google_mapping() -> None:
+    original_error = MockGoogleAPIError("quota", status=429)
+    mapped_error = map_to_llm_error(original_error, "google")
+    assert isinstance(mapped_error, LLMRateLimitError)
+    assert mapped_error.provider == "google"
+
+
+def test_map_openai_errors_defaults_to_openai_without_provider() -> None:
+    original_error = MockOpenAIError("nope", status_code=401)
+    assert map_openai_errors(original_error).provider == ModelProvider.OPENAI.value

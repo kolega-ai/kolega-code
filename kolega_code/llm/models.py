@@ -559,16 +559,24 @@ class ResponsesReasoningBlock(ContentBlock):
 
 @register_content_block
 class WebSearchCallBlock(ContentBlock):
-    """Hosted web-search call item from a Responses-API backend.
+    """Hosted/server-side tool item from a Responses-API backend.
 
-    Emitted when the provider executes its server-side ``web_search`` tool
-    (``search`` / ``open_page`` actions). The searched or fetched content never
-    reaches the client — the server injects it into the model's context and
-    bills it as input tokens. The item itself carries only the action metadata
-    (queries or URL), and replaying it via :meth:`to_responses_item` is what
-    keys the server-side restore of that content on later turns (live-verified
-    for DeepSeek flash and api.openai.com; see
+    Emitted when the provider executes a server-side tool itself. For the
+    OpenAI/DeepSeek ``web_search`` tool (``search`` / ``open_page`` actions)
+    the searched content never reaches the client — the server injects it into
+    the model's context and bills it as input tokens; the item carries only
+    action metadata, and replaying it via :meth:`to_responses_item` keys the
+    server-side restore of that content on later turns (live-verified for
+    DeepSeek flash and api.openai.com; see
     findings/no-web-tools-claim-verification.md, Phase-0 probes).
+
+    The Perplexity Agent API's server-side tools instead return ``search_results``
+    / ``fetch_url_results`` items whose results DO reach the client; those are
+    captured with ``item_type`` set to the original wire type and ``payload``
+    holding the verbatim item for the transcript. They are OUTPUT-ONLY on that
+    backend — replaying one fails with ``unknown item type "search_results"``
+    (live-probed 2026-08-14) — so ``to_responses_input`` drops them from the
+    transport copy and the model re-searches when it needs the content again.
 
     The ``action`` payload is stored verbatim so unknown future action types
     replay untouched. Like ``ResponsesReasoningBlock``, the block is specific
@@ -580,6 +588,11 @@ class WebSearchCallBlock(ContentBlock):
     # Display name for transcript rows; the live stream (BaseAgent) and
     # restored sessions (TUI) must render hosted calls under the same tool name.
     TOOL_LABEL = "web_search (hosted)"
+    # search_results is shared by web/finance/people search, so the label stays generic.
+    _ITEM_TYPE_TOOL_LABELS = {
+        "search_results": "search (hosted)",
+        "fetch_url_results": "fetch_url (hosted)",
+    }
 
     def __init__(
         self,
@@ -587,11 +600,15 @@ class WebSearchCallBlock(ContentBlock):
         status: Optional[str] = None,
         action: Optional[Dict[str, Any]] = None,
         cache_checkpoint: bool = False,
+        item_type: str = "web_search_call",
+        payload: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(type=self.TYPE_NAME, cache_checkpoint=cache_checkpoint)
         self.item_id = item_id
         self.status = status
         self.action = dict(action or {})
+        self.item_type = item_type
+        self.payload = dict(payload) if payload is not None else None
 
     @property
     def action_type(self) -> Optional[str]:
@@ -607,6 +624,17 @@ class WebSearchCallBlock(ContentBlock):
         url = self.action.get("url")
         return str(url) if url else None
 
+    @property
+    def urls(self) -> List[str]:
+        """URLs carried by a multi-result item (Perplexity fetch_url_results)."""
+        urls = self.action.get("urls")
+        return [str(u) for u in urls] if isinstance(urls, list) else []
+
+    @property
+    def tool_label(self) -> str:
+        """Transcript label for this item's originating server-side tool."""
+        return self._ITEM_TYPE_TOOL_LABELS.get(self.item_type, self.TOOL_LABEL)
+
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
             "type": self.type,
@@ -615,6 +643,10 @@ class WebSearchCallBlock(ContentBlock):
         }
         if self.item_id:
             result["item_id"] = self.item_id
+        if self.item_type != "web_search_call":
+            result["item_type"] = self.item_type
+            if self.payload is not None:
+                result["payload"] = dict(self.payload)
         return result
 
     @classmethod
@@ -623,15 +655,29 @@ class WebSearchCallBlock(ContentBlock):
             item_id=data.get("item_id"),
             status=data.get("status"),
             action=data.get("action") or {},
+            item_type=str(data.get("item_type") or "web_search_call"),
+            payload=data.get("payload"),
         )
 
     def to_responses_item(self) -> Dict[str, Any]:
-        """Serialize back to a Responses API ``web_search_call`` input item.
+        """Serialize back to a Responses API input item.
 
-        The id/status/action triple is the exact shape both backends accepted
-        in the Phase-0 replay probes; the id keys the server-side restore of
-        the searched content.
+        OpenAI/DeepSeek ``web_search_call`` items replay the id/status/action
+        triple — the exact shape both backends accepted in the Phase-0 replay
+        probes; the id keys the server-side restore of the searched content.
+        Foreign item types (Perplexity ``search_results`` /
+        ``fetch_url_results``) are output-only and never replayed via
+        ``to_responses_input``; this method still reconstructs the verbatim
+        item for callers that need the original wire shape.
         """
+        if self.item_type != "web_search_call":
+            if self.payload is not None:
+                item = dict(self.payload)
+            else:
+                item = {"type": self.item_type, **dict(self.action)}
+            if self.item_id and "id" not in item:
+                item["id"] = self.item_id
+            return item
         item: Dict[str, Any] = {
             "type": "web_search_call",
             "status": self.status,
@@ -646,14 +692,23 @@ class WebSearchCallBlock(ContentBlock):
             return "search: " + ", ".join(repr(q) for q in self.queries)
         if self.url:
             return f"open_page: {self.url}"
-        return self.action_type or "web_search"
+        if self.urls:
+            return "fetch_url: " + ", ".join(self.urls)
+        return self.action_type or self.item_type
 
     def result_summary(self) -> str:
         """One-line outcome for transcript tool rows.
 
-        The searched content never reaches the client, so the row can only
-        describe the action and where its output went.
+        OpenAI/DeepSeek searched content never reaches the client, so the row
+        can only describe the action; Perplexity result items carry their
+        results client-side (counted here from the verbatim payload).
         """
+        if self.item_type != "web_search_call":
+            count = self._result_count()
+            outcome = (
+                f"{count} result{'s' if count != 1 else ''} returned" if count is not None else "executed server-side"
+            )
+            return f"{self.label()} — {self.status or 'completed'} ({outcome})"
         if self.queries:
             outcome = "results injected server-side"
         elif self.url:
@@ -661,6 +716,15 @@ class WebSearchCallBlock(ContentBlock):
         else:
             outcome = "executed server-side"
         return f"{self.label()} — {self.status or 'completed'} ({outcome})"
+
+    def _result_count(self) -> Optional[int]:
+        if self.payload is None:
+            return None
+        for key in ("results", "contents"):
+            value = self.payload.get(key)
+            if isinstance(value, list):
+                return len(value)
+        return None
 
     def to_anthropic(self) -> Dict[str, Any]:
         return {"type": "text", "text": "[Web search]"}

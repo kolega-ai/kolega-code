@@ -53,6 +53,7 @@ OPENAI_USAGE_PROVIDERS = frozenset(
         "deepseek",
         "ollama_cloud",
         "openrouter",
+        "perplexity_agent",
     }
 )
 GOOGLE_USAGE_PROVIDERS = frozenset({"google"})

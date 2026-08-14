@@ -521,6 +521,8 @@ class BaseAgent(LogMixin):
         # gate reads client_web_tools_enabled, the stream call reads
         # hosted_web_search_active.
         self.supports_hosted_web_search = bool(model_specs.get("supports_hosted_web_search", False))
+        # Spec-declared server-side tools; _apply_web_search_state derives the live list.
+        self._model_server_tools: List[str] = [str(tool) for tool in model_specs.get("server_tools") or []]
         self.web_search_mode = getattr(self.config, "web_search_mode", "auto") or "auto"
         self._apply_web_search_state()
 
@@ -731,22 +733,27 @@ class BaseAgent(LogMixin):
             initialize()
 
     def _apply_web_search_state(self) -> None:
-        """Resolve web_search_mode + model capability into the two live gates.
+        """Resolve web_search_mode + model capability into the live gates.
 
         ``hosted_web_search_active`` — request the provider's server-side
         web_search tool on main-loop stream calls. ``client_web_tools_enabled``
         — register the client-side web_search/web_fetch tools (read by the
-        ToolCollection gate). Hosted active always excludes the client tools:
-        two search paths confuse the model and waste schema tokens.
+        ToolCollection gate). ``server_tools`` — the spec-declared server-side
+        tools (e.g. the Perplexity Agent API's). One setting gates all of it:
+        auto/hosted request the server-side tooling, client defers to the
+        client-side web tools, off disables web tooling entirely. Active
+        server-side web tooling always excludes the client tools: two search
+        paths confuse the model and waste schema tokens.
         """
         mode = (self.web_search_mode or "auto").lower()
         supported = self.supports_hosted_web_search
+        server_web_tooling = supported or "web_search" in self._model_server_tools
         if mode == "off":
             hosted, client = False, False
         elif mode == "client":
             hosted, client = False, True
         elif mode == "hosted":
-            if not supported:
+            if not server_web_tooling:
                 provider = self.primary_model_config.provider
                 logger.warning(
                     "web_search_mode=hosted, but %s/%s has no hosted web search; falling back to the client tools",
@@ -758,6 +765,9 @@ class BaseAgent(LogMixin):
             hosted, client = supported, not supported
         self.hosted_web_search_active = hosted
         self.client_web_tools_enabled = client
+        self.server_tools = list(self._model_server_tools) if mode in ("auto", "hosted") else []
+        if "web_search" in self.server_tools:
+            self.client_web_tools_enabled = False
 
     def apply_web_search_mode(self, mode: str) -> None:
         """Change the web tool mode mid-session (TUI ``/web-search``).
@@ -770,31 +780,36 @@ class BaseAgent(LogMixin):
         self._apply_web_search_state()
 
     async def _emit_hosted_tool_call(self, delta: Dict[str, Any]) -> None:
-        """Render a completed hosted web_search call as a tool_call/tool_result pair.
+        """Render a completed hosted/server-side tool call as a tool_call/tool_result pair.
 
         The call executed on the provider's servers; there is no local tool
-        invocation and the searched content never reaches the client (it is
-        injected into the model's context server-side). The shared item id
-        correlates the pair in every transcript consumer.
+        invocation. For OpenAI/DeepSeek web_search the searched content never
+        reaches the client (it is injected into the model's context
+        server-side); Perplexity Agent API result items (search_results /
+        fetch_url_results) carry their results client-side via the delta's
+        item_type/payload. The shared item id correlates the pair in every
+        transcript consumer.
         """
         block = WebSearchCallBlock(
             item_id=delta.get("id") or None,
             status=delta.get("status"),
             action=delta.get("action") or {},
+            item_type=str(delta.get("item_type") or "web_search_call"),
+            payload=delta.get("payload"),
         )
         tool_call_id = block.item_id or str(uuid.uuid4())
         await self.send_chat_message(
             message_type="tool_call",
-            content=f"Calling {WebSearchCallBlock.TOOL_LABEL}: {block.label()}",
+            content=f"Calling {block.tool_label}: {block.label()}",
             is_streaming=False,
-            tool_description=WebSearchCallBlock.TOOL_LABEL,
+            tool_description=block.tool_label,
             tool_call_id=tool_call_id,
         )
         await self.send_chat_message(
             message_type="tool_result",
             content=block.result_summary(),
             is_streaming=False,
-            tool_description=WebSearchCallBlock.TOOL_LABEL,
+            tool_description=block.tool_label,
             tool_call_id=tool_call_id,
         )
 
@@ -2488,6 +2503,7 @@ class BaseAgent(LogMixin):
                             tools=self.tool_collection.get_tool_list(),
                             thinking=self.primary_model_config.thinking_effort,
                             hosted_web_search=self.hosted_web_search_active,
+                            server_tools=self.server_tools or None,
                             # The strict per-run budget rechecks this request inside
                             # the client; hand it the count already taken for the
                             # gauge (same history) so it is not counted twice.

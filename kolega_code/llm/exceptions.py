@@ -153,6 +153,7 @@ def _provider_display_name(provider: str | None) -> str:
         ModelProvider.LLAMA.value: "Llama",
         ModelProvider.OLLAMA_CLOUD.value: "Ollama Cloud",
         ModelProvider.OPENROUTER.value: "OpenRouter",
+        ModelProvider.PERPLEXITY_AGENT.value: "Perplexity",
     }
     if not provider:
         return "The selected provider"
@@ -276,62 +277,57 @@ def _anthropic_body_error_message(error: Exception) -> str:
     return str(error_info.get("message") or "").strip()
 
 
-def map_openai_errors(error: "OpenAIError") -> LLMError:
+def map_openai_errors(error: "OpenAIError", provider: str | None = None) -> LLMError:
     from openai import (
         APIConnectionError as OpenAIAPIConnectionError,
         APITimeoutError as OpenAIAPITimeoutError,
     )
 
+    # Compatible providers ride the OpenAI SDK; keep their real provider label.
+    provider = provider or ModelProvider.OPENAI.value
     status_code = getattr(error, "status_code", None)
     if status_code is not None:
         if status_code == 400:
             if getattr(error, "code", None) == "context_length_exceeded":
-                return LLMContextWindowExceededError(
-                    message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value
-                )
-            return LLMInvalidRequestError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
+                return LLMContextWindowExceededError(message=f"OpenAI APIError: {str(error)}", provider=provider)
+            return LLMInvalidRequestError(message=f"OpenAI APIError: {str(error)}", provider=provider)
         elif status_code == 401:
-            return LLMAuthenticationError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
+            return LLMAuthenticationError(message=f"OpenAI APIError: {str(error)}", provider=provider)
         elif status_code == 403:
-            return LLMPermissionDeniedError(
-                message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value
-            )
+            return LLMPermissionDeniedError(message=f"OpenAI APIError: {str(error)}", provider=provider)
         elif status_code == 404:
-            return LLMNotFoundError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
+            return LLMNotFoundError(message=f"OpenAI APIError: {str(error)}", provider=provider)
         elif status_code == 422:
-            return LLMUnprocessableEntityError(
-                message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value
-            )
+            return LLMUnprocessableEntityError(message=f"OpenAI APIError: {str(error)}", provider=provider)
         elif status_code == 429:
-            return LLMRateLimitError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
+            return LLMRateLimitError(message=f"OpenAI APIError: {str(error)}", provider=provider)
         elif status_code == 500:
-            return LLMInternalServerError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
+            return LLMInternalServerError(message=f"OpenAI APIError: {str(error)}", provider=provider)
 
     # Transport failures (a stalled streaming read hitting the per-request timeout, a
     # dropped/reset connection) are retryable. APITimeoutError subclasses APIConnectionError,
     # so check the timeout case first for the more specific error/message.
     if isinstance(error, OpenAIAPITimeoutError):
-        return LLMTimeout(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
+        return LLMTimeout(message=f"OpenAI APIError: {str(error)}", provider=provider)
     if isinstance(error, OpenAIAPIConnectionError):
-        return LLMConnectionError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
+        return LLMConnectionError(message=f"OpenAI APIError: {str(error)}", provider=provider)
 
-    return LLMError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
+    return LLMError(message=f"OpenAI APIError: {str(error)}", provider=provider)
 
 
-def map_google_errors(error: "GoogleAPIError") -> LLMError:
+def map_google_errors(error: "GoogleAPIError", provider: str | None = None) -> LLMError:
+    provider = provider or ModelProvider.GOOGLE.value
     if hasattr(error, "status"):
         if error.status == 400:
-            return LLMInvalidRequestError(message=f"GoogleAPIError: {str(error)}", provider=ModelProvider.GOOGLE.value)
+            return LLMInvalidRequestError(message=f"GoogleAPIError: {str(error)}", provider=provider)
         elif error.status == 403:
-            return LLMPermissionDeniedError(
-                message=f"GoogleAPIError: {str(error)}", provider=ModelProvider.GOOGLE.value
-            )
+            return LLMPermissionDeniedError(message=f"GoogleAPIError: {str(error)}", provider=provider)
         elif error.status == 429:
-            return LLMRateLimitError(message=f"GoogleAPIError: {str(error)}", provider=ModelProvider.GOOGLE.value)
+            return LLMRateLimitError(message=f"GoogleAPIError: {str(error)}", provider=provider)
         elif error.status == 500:
-            return LLMInternalServerError(message=f"GoogleAPIError: {str(error)}", provider=ModelProvider.GOOGLE.value)
+            return LLMInternalServerError(message=f"GoogleAPIError: {str(error)}", provider=provider)
 
-    return LLMError(message=f"Google APIError: {str(error)}", provider=ModelProvider.GOOGLE.value)
+    return LLMError(message=f"Google APIError: {str(error)}", provider=provider)
 
 
 def map_anthropic_errors(error: "AnthropicError", provider: str | None = None) -> LLMError:
@@ -471,14 +467,14 @@ def map_to_llm_error(error: Exception, provider: str | None = None) -> LLMError:
         from openai import OpenAIError
 
         if isinstance(error, OpenAIError):
-            return map_openai_errors(error)
+            return map_openai_errors(error, provider=provider)
     if "google.genai" in sys.modules:
         try:
             from google.genai.errors import APIError as GoogleAPIError
         except ImportError:
             GoogleAPIError = None
         if GoogleAPIError is not None and isinstance(error, GoogleAPIError):
-            return map_google_errors(error)
+            return map_google_errors(error, provider=provider)
     if "anthropic" in sys.modules:
         from anthropic import AnthropicError
 

@@ -74,6 +74,7 @@ API_KEY_ENV = {
     ModelProvider.THINKING_MACHINES: "TINKER_API_KEY",
     # Native Tinker sampling authenticates with the same key.
     ModelProvider.TINKER: "TINKER_API_KEY",
+    ModelProvider.PERPLEXITY_AGENT: "PERPLEXITY_API_KEY",
 }
 
 DEFAULT_WEB_SEARCH_BACKEND = "duckduckgo"
@@ -780,13 +781,20 @@ def _resolve_active_thinking_effort(
     settings: Optional[CliSettings],
 ) -> Optional[str]:
     explicit_effort = overrides.thinking_effort or env.get("KOLEGA_CODE_THINKING_EFFORT")
+    saved_effort: Optional[str] = None
     if explicit_effort is None and settings:
         settings_model_matches = settings.active_provider == provider.value and settings.active_model == model
         if settings_model_matches:
-            explicit_effort = settings.active_thinking_effort
+            saved_effort = settings.active_thinking_effort
     try:
-        return normalize_thinking_effort(provider, model, explicit_effort)
+        return normalize_thinking_effort(
+            provider, model, explicit_effort if explicit_effort is not None else saved_effort
+        )
     except ValueError as exc:
+        if saved_effort is not None and explicit_effort is None:
+            # A saved effort can outlive a catalog change; fall back to the default
+            # instead of locking startup. Explicit requests still error.
+            return normalize_thinking_effort(provider, model, None)
         raise CliConfigError(str(exc)) from exc
 
 
@@ -971,6 +979,7 @@ def build_agent_config(
             ollama_cloud_api_key=_api_key_for_provider(ModelProvider.OLLAMA_CLOUD, loaded_env, settings),
             openrouter_api_key=_api_key_for_provider(ModelProvider.OPENROUTER, loaded_env, settings),
             thinking_machines_api_key=_api_key_for_provider(ModelProvider.THINKING_MACHINES, loaded_env, settings),
+            perplexity_api_key=_api_key_for_provider(ModelProvider.PERPLEXITY_AGENT, loaded_env, settings),
             environment=overrides.environment or loaded_env.get("KOLEGA_CODE_ENVIRONMENT", "development"),
             edit_protocol=edit_protocol,
             long_context_config=_model_config(

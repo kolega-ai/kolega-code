@@ -45,6 +45,7 @@ PROVIDER_LABELS: dict[ModelProvider, str] = {
     ModelProvider.OPENROUTER: "OpenRouter",
     ModelProvider.THINKING_MACHINES: "Thinking Machines",
     ModelProvider.TINKER: "Tinker",
+    ModelProvider.PERPLEXITY_AGENT: "Perplexity Agent API",
 }
 
 # Friendly display names for models. Anything not listed falls back to its raw
@@ -168,6 +169,7 @@ PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     # Cheap and renderable without the optional tinker-inkling extra, so the
     # provider works out of the box for anyone who installs the base extras.
     ModelProvider.TINKER: "Qwen/Qwen3-8B",
+    ModelProvider.PERPLEXITY_AGENT: "openai/gpt-5.6-sol",
 }
 
 UI_DEFAULT_PROVIDER = ModelProvider.MOONSHOT.value
@@ -211,6 +213,8 @@ def _api_key_env(provider: ModelProvider) -> str:
         return "TINKER_API_KEY"
     if provider == ModelProvider.TINKER:
         return "TINKER_API_KEY"
+    if provider == ModelProvider.PERPLEXITY_AGENT:
+        return "PERPLEXITY_API_KEY"
     return f"{provider.value.upper()}_API_KEY"
 
 
