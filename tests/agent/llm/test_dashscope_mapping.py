@@ -22,6 +22,17 @@ def test_llm_client_maps_moonshot_to_anthropic_provider():
     assert thinking == "auto"
 
 
+def test_llm_client_maps_zai_to_anthropic_provider():
+    client = LLMClient(provider="zai", api_key="sk-test")
+    assert isinstance(client.provider, AnthropicProvider)
+    assert client.provider.base_url == "https://api.z.ai/api/anthropic"
+    assert client.provider.provider_name == "zai"
+    assert client.provider.use_local_token_counting is True
+
+    thinking = client._prepare_thinking_param("max", model="glm-5.3")
+    assert thinking == "max"
+
+
 def test_llm_client_maps_deepseek_to_responses_provider():
     client = LLMClient(provider="deepseek", api_key="sk-test")
     assert isinstance(client.provider, DeepSeekResponsesProvider)

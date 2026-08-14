@@ -105,6 +105,36 @@ class TestResidualUpdates:
         agent._update_context_residual(Message(role="assistant", content=[TextBlock(text="ok")], usage_metadata={}))
         assert agent._context_residual_tokens == 5_000
 
+    def test_anthropic_input_tokens_usage_metadata(self, agent):
+        agent._last_raw_context_count = 1_000
+        msg = Message(role="assistant", content=[TextBlock(text="ok")], usage_metadata={"input_tokens": 1_800})
+        agent._update_context_residual(msg)
+        assert agent._context_residual_tokens == 800
+
+    def test_normalized_usage_takes_precedence(self, agent):
+        from kolega_code.llm.usage import NormalizedUsage
+
+        agent._last_raw_context_count = 1_000
+        msg = Message(
+            role="assistant",
+            content=[TextBlock(text="ok")],
+            usage_metadata={"input_tokens": 1_500},
+            usage=NormalizedUsage(
+                provider="zai",
+                model="glm-5.3",
+                reported=True,
+                input_tokens=2_200,
+                output_tokens=50,
+                total_tokens=2_250,
+                cache_read_input_tokens=None,
+                cache_write_input_tokens=None,
+                reasoning_output_tokens=None,
+                unavailable_reason=None,
+            ),
+        )
+        agent._update_context_residual(msg)
+        assert agent._context_residual_tokens == 1_200
+
 
 class TestGaugeApplication:
     @pytest.mark.asyncio
