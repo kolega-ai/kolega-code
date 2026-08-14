@@ -11,6 +11,7 @@ from kolega_code.llm.specs import (
 @pytest.mark.parametrize(
     "model,thinking_options,default_thinking",
     [
+        ("gemini-3.7-flash", ("low", "medium", "high"), "medium"),
         ("gemini-3.6-flash", ("minimal", "low", "medium", "high"), "medium"),
         ("gemini-3.5-flash-lite", ("minimal", "low", "medium", "high"), "minimal"),
     ],
@@ -24,6 +25,7 @@ def test_new_google_model_specs(
 
     assert specs["context_length"] == 1048576
     assert specs["max_completion_tokens"] == 65536
+    assert specs["input_budget"] == "separate_output_limit"
     assert specs["default_temperature"] == 1.0
     assert specs["supports_temperature"] is False
     assert specs["supports_vision"] is True
