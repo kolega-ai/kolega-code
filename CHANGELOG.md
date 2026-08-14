@@ -14,6 +14,9 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 - Added support for xAI Grok 4.6 (`grok-4.6`): 500K-token context, vision input,
   and `low`/`medium`/`high`/`xhigh` reasoning effort. Selectable in the Settings
   UI, `/model` picker, CLI flags, and env vars.
+- Added support for Z.AI GLM-5.3 (`glm-5.3`) on the GLM Coding Plan provider:
+  1M-token context, 128K max output, and `high`/`max` thinking effort. GLM-5.3
+  is now the Z.AI default model.
 
 ## 0.29.0 - 2026-08-13
 

@@ -174,6 +174,16 @@ def test_deepseek_model_specs(model: str, max_completion_tokens: int):
     assert specs["thinking_effort"].default == "high"
 
 
+def test_zai_model_specs() -> None:
+    for model in ("glm-5.3", "glm-5.2"):
+        specs = get_model_specs("zai", model)
+        assert specs["context_length"] == 1000000
+        assert specs["max_completion_tokens"] == 131072
+        assert specs["default_temperature"] == 0.6
+        assert specs["thinking_effort"].options == ("high", "max")
+        assert specs["thinking_effort"].default == "max"
+
+
 def test_fireworks_serverless_model_specs():
     expected = {
         "accounts/fireworks/models/glm-5p2": (1048576, 131072),

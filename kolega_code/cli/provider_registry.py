@@ -64,6 +64,7 @@ MODEL_LABELS: dict[str, str] = {
     "deepseek-v4-pro": "DeepSeek V4 Pro",
     "deepseek-v4-flash": "DeepSeek V4 Flash",
     # Z.AI (GLM Coding Plan)
+    "glm-5.3": "GLM-5.3",
     "glm-5.2": "GLM-5.2",
     "glm-5.1": "GLM-5.1",
     # Anthropic
@@ -149,7 +150,7 @@ MODEL_LABELS: dict[str, str] = {
 PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     ModelProvider.MOONSHOT: "kimi-k3",
     ModelProvider.DEEPSEEK: "deepseek-v4-pro",
-    ModelProvider.ZAI: "glm-5.2",
+    ModelProvider.ZAI: "glm-5.3",
     ModelProvider.KIMI_CODING: "kimi-for-coding",
     ModelProvider.ANTHROPIC: "claude-opus-5",
     ModelProvider.OPENAI: "gpt-5.6-sol",

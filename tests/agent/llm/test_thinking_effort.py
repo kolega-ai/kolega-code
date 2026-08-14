@@ -29,6 +29,8 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert default_thinking_effort("google", "gemini-3.5-flash-lite") == "minimal"
     assert thinking_effort_options("google", "gemini-3.1-pro-preview") == ("low", "medium", "high")
     assert default_thinking_effort("google", "gemini-3.1-pro-preview") == "high"
+    assert thinking_effort_options("zai", "glm-5.3") == ("high", "max")
+    assert default_thinking_effort("zai", "glm-5.3") == "max"
     assert thinking_effort_options("zai", "glm-5.2") == ("high", "max")
     assert default_thinking_effort("zai", "glm-5.2") == "max"
     assert thinking_effort_options("zai", "glm-5.1") == ("auto", "none")
@@ -83,6 +85,19 @@ def test_anthropic_default_request_uses_opus_5_adaptive_thinking_without_tempera
     assert generation_params["thinking"] == {"type": "adaptive"}
     assert generation_params["output_config"] == {"effort": "medium"}
     assert "temperature" not in generation_params
+
+
+def test_zai_glm53_thinking_effort_serialization() -> None:
+    provider = AnthropicProvider(api_key="test-key", provider_name="zai")
+
+    max_params = {"model": "glm-5.3"}
+    provider._apply_thinking_params(max_params, GenerationParams(thinking="max"))
+    assert max_params["thinking"] == {"type": "enabled"}
+    assert max_params["output_config"] == {"effort": "max"}
+
+    high_params = {"model": "glm-5.3"}
+    provider._apply_thinking_params(high_params, GenerationParams(thinking="high"))
+    assert high_params["output_config"] == {"effort": "high"}
 
 
 def test_zai_glm52_thinking_effort_serialization() -> None:
