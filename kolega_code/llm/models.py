@@ -859,11 +859,13 @@ class ToolDefinition(ContentBlock):
         ):
             if json_name in schema:
                 kwargs[google_name] = schema[json_name]
-        if "additionalProperties" in schema:
-            additional = schema["additionalProperties"]
-            kwargs["additional_properties"] = (
-                cls._dict_to_google_schema(additional) if isinstance(additional, dict) else additional
-            )
+        # ``additionalProperties`` is deliberately NOT forwarded. Gemini's
+        # function-declaration parameters use an OpenAPI 3.0 schema subset whose
+        # proto has no such field, so the live API rejects it in either spelling
+        # with 400 INVALID_ARGUMENT "Unknown name ... Cannot find field"
+        # (verified against gemini-3.5/3.6/3.7-flash, 2026-08-14). Dropping the
+        # key matches the pre-Jul-10 behavior and only loses the "no extra
+        # properties" hint, which most function-calling backends ignore anyway.
         return genai_types.Schema(**kwargs)
 
     def to_anthropic(self) -> Dict[str, Any]:

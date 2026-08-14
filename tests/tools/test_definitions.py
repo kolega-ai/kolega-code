@@ -88,6 +88,32 @@ def _dispatch_definition() -> ToolDefinition:
     )
 
 
+def test_builtin_tool_specs_serialize_for_google_without_additional_properties():
+    """No builtin schema may put additionalProperties on the Google wire.
+
+    Gemini's function-declaration parameters are an OpenAPI 3.0 subset with no
+    such field; the API rejects it in either spelling with 400 INVALID_ARGUMENT
+    (seen live on gemini-3.5/3.6/3.7-flash). Several builtin schemas legitimately
+    declare ``additionalProperties: false`` for other providers, so every spec is
+    swept to catch reintroductions at any nesting depth.
+    """
+    import json
+
+    from kolega_code.agent.tool_definitions import BUILTIN_TOOL_SPECS, builtin_tool_definition
+
+    assert BUILTIN_TOOL_SPECS, "builtin tool specs must not be empty"
+    checked = 0
+    for spec_key in BUILTIN_TOOL_SPECS:
+        tool = builtin_tool_definition(spec_key).to_google()
+        assert tool.function_declarations is not None
+        for declaration in tool.function_declarations:
+            payload = json.dumps(declaration.model_dump(by_alias=True, exclude_none=True))
+            assert "additionalProperties" not in payload, spec_key
+            assert "additional_properties" not in payload, spec_key
+            checked += 1
+    assert checked >= len(BUILTIN_TOOL_SPECS)
+
+
 def test_explicit_schema_passed_through_for_anthropic():
     definition = _nested_definition()
     payload = definition.to_anthropic()
@@ -135,12 +161,14 @@ def test_strict_nested_google_schema_keeps_in_memory_schema_models() -> None:
     assert tool.function_declarations is not None
     params = tool.function_declarations[0].parameters
     assert isinstance(params, genai_types.Schema)
-    assert params.additional_properties is False
+    # Gemini's function-declaration schema has no additionalProperties field;
+    # forwarding it 400s at the API ("Unknown name ... Cannot find field").
+    assert params.additional_properties is None
     assert params.properties is not None
 
     model_override = params.properties["model_override"]
     assert isinstance(model_override, genai_types.Schema)
-    assert model_override.additional_properties is False
+    assert model_override.additional_properties is None
     assert model_override.properties is not None
     assert set(model_override.properties) == {"provider", "model", "thinking_effort"}
     assert model_override.properties["provider"].min_length == 1
@@ -190,8 +218,8 @@ async def test_google_mldev_serializes_nested_schema_aliases_without_renaming_pr
     model_override = parameters["properties"]["model_override"]
     thinking_effort = model_override["properties"]["thinking_effort"]
 
-    assert parameters["additionalProperties"] is False
-    assert model_override["additionalProperties"] is False
+    assert "additionalProperties" not in parameters
+    assert "additionalProperties" not in model_override
     assert model_override["properties"]["provider"]["minLength"] == 1
     assert model_override["properties"]["model"]["minLength"] == 1
     assert thinking_effort["anyOf"][0]["enum"] == ["low", "medium", "high"]
