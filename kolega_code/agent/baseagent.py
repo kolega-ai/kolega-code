@@ -1145,7 +1145,15 @@ class BaseAgent(LogMixin):
         if new_calls:
             self._context_residual_tokens += self.HOSTED_SEARCH_PROVISIONAL_TOKENS * new_calls
             return
-        billed = (assistant_message.usage_metadata or {}).get("prompt_tokens")
+        billed = (
+            assistant_message.usage.input_tokens
+            if assistant_message.usage and assistant_message.usage.reported
+            else (
+                (assistant_message.usage_metadata or {}).get("prompt_tokens")
+                or (assistant_message.usage_metadata or {}).get("input_tokens")
+                or (assistant_message.usage_metadata or {}).get("prompt_token_count")
+            )
+        )
         counted = self._last_raw_context_count
         if not isinstance(billed, int) or counted is None:
             return
