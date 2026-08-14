@@ -57,6 +57,39 @@ async def fake_lsp_manager(tmp_path: Path) -> AsyncGenerator["LspManager", None]
 
 
 @pytest_asyncio.fixture
+async def fake_lsp_manager_ignore_shutdown(tmp_path: Path) -> AsyncGenerator["LspManager", None]:
+    """Return a fake LSP manager whose server ignores shutdown requests."""
+    from kolega_code.services.lsp import LspConfig
+    from kolega_code.services.lsp.manager import LspManager
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("[project]\nname = 'test'\n", encoding="utf-8")
+    (project / "src.py").write_text("def hello():\n    pass\n", encoding="utf-8")
+
+    config = LspConfig(
+        enabled=True,
+        prompt_on_missing=False,
+        custom_servers={
+            "fake-lsp": {
+                "bin": sys.executable,
+                "args": [str(_FAKE_SERVER)],
+                "languages": ["python"],
+                "env": {"FAKE_LSP_IGNORE_SHUTDOWN": "1"},
+            },
+        },
+        preferences={"python": "fake-lsp"},
+    )
+
+    manager = LspManager(project, config=config)
+    await manager.initialize()
+
+    yield manager
+
+    await manager.shutdown()
+
+
+@pytest_asyncio.fixture
 async def fake_lsp_manager_no_pull(tmp_path: Path) -> AsyncGenerator["LspManager", None]:
     """Like ``fake_lsp_manager`` but the fake server doesn't support pull diagnostics."""
     from kolega_code.services.lsp import LspConfig

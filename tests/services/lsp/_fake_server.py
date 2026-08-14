@@ -13,6 +13,7 @@ Configurable via environment variables:
 - ``FAKE_LSP_PULL_DIAGS``: if ``"0"``, disable pull diagnostics (force push-only).
 - ``FAKE_LSP_STRICT_OPEN``: if ``"1"``, ignore didChange for unopened docs.
 - ``FAKE_LSP_SOURCE``: diagnostic/source label (default ``"fake-lsp"``).
+- ``FAKE_LSP_IGNORE_SHUTDOWN``: if ``"1"``, consume shutdown without replying.
 """
 
 from __future__ import annotations
@@ -82,6 +83,7 @@ _DELAY = float(os.environ.get("FAKE_LSP_DELAY", "0"))
 _PULL_DIAGS = os.environ.get("FAKE_LSP_PULL_DIAGS", "1") != "0"
 _STRICT_OPEN = os.environ.get("FAKE_LSP_STRICT_OPEN", "0") == "1"
 _SOURCE = os.environ.get("FAKE_LSP_SOURCE", "fake-lsp")
+_IGNORE_SHUTDOWN = os.environ.get("FAKE_LSP_IGNORE_SHUTDOWN", "0") == "1"
 # When set, always publish diagnostics with this fixed document version
 # (simulates a server that does not track per-edit versions — used to test
 # the stale-diagnostics suppression branch).
@@ -570,6 +572,9 @@ def handle_incoming_message(msg: dict) -> bool:
         return True
 
     # Requests (have id → must respond)
+    if method == "shutdown" and _IGNORE_SHUTDOWN:
+        return True
+
     handlers = {
         "initialize": handle_initialize,
         "textDocument/diagnostic": handle_diagnostic,

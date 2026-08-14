@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 _MAX_CONCURRENT_STARTS = 4
 # Maximum concurrent diagnostics queries for a multi-file edit.
 _MAX_CONCURRENT_DIAGNOSTICS = 4
+# Grace period for a language server to acknowledge shutdown before termination.
+_LSP_SHUTDOWN_REQUEST_TIMEOUT_SECONDS = 1.0
 
 # Client capabilities advertised in the initialize handshake.
 _CLIENT_CAPABILITIES: dict = {
@@ -960,10 +962,10 @@ class LspManager:
         for lang_id, client in list(self._sessions.items()):
             try:
                 if client.running:
-                    await client.request("shutdown")
+                    await client.request("shutdown", timeout=_LSP_SHUTDOWN_REQUEST_TIMEOUT_SECONDS)
                     await client.notify("exit")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Graceful shutdown failed for LSP session %s; forcing termination: %s", lang_id, exc)
             try:
                 await client.stop()
             except Exception:

@@ -8,9 +8,11 @@ its ``lsp_manager``.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -84,6 +86,38 @@ class _LspEnabledFakeAgent(FakeCoderAgent):
             "diagnostic_counts": {},
         }
         self.tool_collection.lsp_manager = manager
+
+
+@pytest.mark.asyncio
+async def test_action_quit_uses_bounded_lsp_shutdown_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ctrl-Q delegates to bounded LSP cleanup and still force-stops on failure."""
+    from kolega_code.services.lsp.client import LspClientError
+    from kolega_code.services.lsp.config import LspConfig
+    from kolega_code.services.lsp.manager import LspManager, _LSP_SHUTDOWN_REQUEST_TIMEOUT_SECONDS
+
+    app = _make_app(tmp_path, monkeypatch)
+    manager = LspManager(tmp_path, config=LspConfig(enabled=True, prompt_on_missing=False))
+    client = MagicMock()
+    client.running = True
+    client.request = AsyncMock(side_effect=LspClientError("shutdown timed out"))
+    client.notify = AsyncMock()
+    client.stop = AsyncMock()
+    manager._sessions["python"] = client
+
+    async with app.run_test():
+        agent = app.agent
+        assert isinstance(agent, FakeCoderAgent)
+
+        async def cleanup_agent() -> None:
+            agent.cleanup_calls += 1
+            await manager.shutdown()
+
+        agent.cleanup = cleanup_agent
+        await asyncio.wait_for(app.action_quit(), timeout=1.0)
+
+    client.request.assert_awaited_once_with("shutdown", timeout=_LSP_SHUTDOWN_REQUEST_TIMEOUT_SECONDS)
+    client.stop.assert_awaited_once_with()
+    assert app.agent is None
 
 
 @pytest.mark.asyncio

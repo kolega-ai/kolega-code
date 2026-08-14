@@ -12,11 +12,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from kolega_code.services.lsp.client import LspDiagnostic
+from kolega_code.services.lsp.client import LspClientError, LspDiagnostic
 from kolega_code.services.lsp.config import LspConfig
 from kolega_code.services.lsp.diagnostics import dedupe_and_sort
 from kolega_code.services.lsp.detector import DetectionReport, DetectionResult, ResolvedLanguage
-from kolega_code.services.lsp.manager import LspManager, _LspSession, _path_to_uri
+from kolega_code.services.lsp.manager import (
+    LspManager,
+    _LspSession,
+    _LSP_SHUTDOWN_REQUEST_TIMEOUT_SECONDS,
+    _path_to_uri,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +53,55 @@ def manager(tmp_path: Path) -> LspManager:
     )
     m._resolved = {r.language_id: r for r in m.report.resolved}
     return m
+
+
+# ---------------------------------------------------------------------------
+# shutdown()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_shutdown_uses_short_graceful_timeout_and_stops_client(manager: LspManager):
+    """Shutdown uses its own short deadline, then sends exit and stops the client."""
+    client = MagicMock()
+    client.running = True
+    client.request = AsyncMock()
+    client.notify = AsyncMock()
+    client.stop = AsyncMock()
+    manager._sessions["python"] = client
+    manager._session_records["python"] = MagicMock()
+    manager._diagnostics["file:///test.py"] = []
+    manager._open_files["file:///test.py"] = "test.py"
+
+    await manager.shutdown()
+
+    client.request.assert_awaited_once_with("shutdown", timeout=_LSP_SHUTDOWN_REQUEST_TIMEOUT_SECONDS)
+    client.notify.assert_awaited_once_with("exit")
+    client.stop.assert_awaited_once_with()
+    assert manager._sessions == {}
+    assert manager._session_records == {}
+    assert manager._diagnostics == {}
+    assert manager._open_files == {}
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stops_client_when_graceful_request_fails(manager: LspManager):
+    """A failed graceful request skips exit but does not skip forced termination."""
+    client = MagicMock()
+    client.running = True
+    client.request = AsyncMock(side_effect=LspClientError("shutdown timed out"))
+    client.notify = AsyncMock()
+    client.stop = AsyncMock()
+    manager._sessions["python"] = client
+    manager._session_records["python"] = MagicMock()
+
+    await manager.shutdown()
+
+    client.request.assert_awaited_once_with("shutdown", timeout=_LSP_SHUTDOWN_REQUEST_TIMEOUT_SECONDS)
+    client.notify.assert_not_awaited()
+    client.stop.assert_awaited_once_with()
+    assert manager._sessions == {}
+    assert manager._session_records == {}
 
 
 # ---------------------------------------------------------------------------
