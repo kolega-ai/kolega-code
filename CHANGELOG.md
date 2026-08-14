@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.30.0 - 2026-08-14
+
 ### Added
 
 - Added Google Gemini 3.7 Flash (`gemini-3.7-flash`): 1M-token context, 64K
@@ -15,12 +17,32 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 - DeepSeek V4-Pro now routes to the Responses API by default (joining V4-Flash),
   removing the model-name carve-out. Both DeepSeek models support `none`, `low`,
   `high`, and `max` reasoning effort (`low` is new; `none` disables reasoning).
+  Hosted web search is now available on V4-Pro as well as V4-Flash.
 - Added support for xAI Grok 4.6 (`grok-4.6`): 500K-token context, vision input,
   and `low`/`medium`/`high`/`xhigh` reasoning effort. Selectable in the Settings
   UI, `/model` picker, CLI flags, and env vars.
 - Added support for Z.AI GLM-5.3 (`glm-5.3`) on the GLM Coding Plan provider:
   1M-token context, 128K max output, and `high`/`max` thinking effort. GLM-5.3
   is now the Z.AI default model.
+- Added the Perplexity Agent API provider (`perplexity_agent`): one
+  `PERPLEXITY_API_KEY` reaches OpenAI, Anthropic, Google, xAI, and Perplexity
+  models through Perplexity's Responses-compatible Agent API, with optional
+  hosted search tools.
+- `/plan` accepts an optional prompt: `/plan <task>` switches to plan mode and
+  starts that planning turn. Bare `/plan` still only switches mode.
+
+### Fixed
+
+- Google Gemini models no longer reject builtin tool calls with a 400 about
+  `additionalProperties` in function-declaration schemas.
+- Quitting the TUI no longer waits up to 30s for an unresponsive language
+  server to acknowledge shutdown.
+- The Z.AI context-window gauge now counts tokens locally (Z.AI's count
+  endpoint reports 0 for GLM-5.3) and residual usage calibrates from
+  multi-provider response billing.
+- MCP tools whose names contain invalid characters or exceed provider length
+  limits are sanitized at collection time, and provider 400 details are shown
+  in the turn error instead of a generic failure.
 
 ## 0.29.0 - 2026-08-13
 
