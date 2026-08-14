@@ -8,6 +8,7 @@ code intelligence queries, and server→client request handling.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
@@ -41,6 +42,23 @@ async def test_server_request_handled_no_hang(fake_lsp_manager):
     await manager.get_diagnostics("src.py")
     client = next(iter(manager._sessions.values()))
     assert client.status == "initialized"
+
+
+@pytest.mark.asyncio
+async def test_shutdown_terminates_server_that_ignores_graceful_request(fake_lsp_manager_ignore_shutdown):
+    """An unresponsive shutdown reply must not hold cleanup for the normal 30 seconds."""
+    manager = fake_lsp_manager_ignore_shutdown
+    await manager.get_diagnostics("src.py")
+    client = next(iter(manager._sessions.values()))
+
+    started = time.monotonic()
+    await manager.shutdown()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 5.0
+    assert client.running is False
+    assert client.status == "stopped"
+    assert manager._sessions == {}
 
 
 @pytest.mark.asyncio
