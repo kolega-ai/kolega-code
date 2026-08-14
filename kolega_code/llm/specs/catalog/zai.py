@@ -2,6 +2,18 @@ from kolega_code.llm.specs.types import ThinkingEffortSpec
 
 # Z.AI (GLM Coding Plan) models — Anthropic-compatible endpoint (recommended default first)
 ZAI_SPECS = {
+    ("zai", "glm-5.3"): {
+        "context_length": 1000000,
+        "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
+        "default_temperature": 0.6,
+        "supports_vision": False,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("high", "max"),
+            default="max",
+            mode="zai_effort",
+        ),
+    },
     ("zai", "glm-5.2"): {
         "context_length": 1000000,
         "max_completion_tokens": 131072,

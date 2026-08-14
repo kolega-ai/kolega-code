@@ -55,6 +55,7 @@ def test_supports_vision_flag_present_on_every_entry():
         ("fireworks", "accounts/fireworks/models/qwen3p7-plus", False),
         ("dashscope", "qwen3-coder-plus", False),
         ("dashscope", "qwen3-coder-flash", False),
+        ("zai", "glm-5.3", False),
         ("zai", "glm-5.2", False),
         ("zai", "glm-5.1", False),
         ("xai", "grok-build-0.1", False),
