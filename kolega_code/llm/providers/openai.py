@@ -572,7 +572,7 @@ class OpenAIProvider(BaseLLMProvider):
                     # triple. Only that metadata is counted here — the searched
                     # content itself lives server-side and is accounted for by
                     # the agent's hosted-search residual, not the history count.
-                    elif isinstance(item, WebSearchCallBlock):
+                    elif isinstance(item, WebSearchCallBlock) and item.item_type == "web_search_call":
                         num_tokens += len(encoding.encode(str(item.item_id or "")))
                         num_tokens += len(encoding.encode(str(item.status or "")))
                         num_tokens += len(encoding.encode(json.dumps(item.action, sort_keys=True)))
@@ -650,6 +650,8 @@ class OpenAIProvider(BaseLLMProvider):
                 tuple(len(str(p)) for p in item.content),
             )
         if isinstance(item, WebSearchCallBlock):
+            if item.item_type != "web_search_call":
+                return ("wsc-foreign",)
             return (
                 "wsc",
                 len(str(item.item_id or "")),

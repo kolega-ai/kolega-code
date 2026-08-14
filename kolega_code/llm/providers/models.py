@@ -22,3 +22,6 @@ class GenerationParams:
     # Ask the provider to expose its server-side web_search tool (Responses
     # APIs only; other providers ignore the field).
     hosted_web_search: bool = False
+    # Provider-executed server-side tools (never routed through the local
+    # tool executor). None/empty = none enabled.
+    server_tools: Optional[List[str]] = None

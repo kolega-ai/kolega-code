@@ -15,6 +15,7 @@ from .dashscope import DASHSCOPE_SPECS
 from .zai import ZAI_SPECS
 from .thinking_machines import THINKING_MACHINES_SPECS
 from .tinker import TINKER_SPECS, TINKER_WILDCARD_SPECS
+from .perplexity_agent import PERPLEXITY_AGENT_SPECS
 from .openrouter import OPENROUTER_SPECS
 
 # Dictionary mapping (provider, model_name) to model specifications.
@@ -43,6 +44,8 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
     **ZAI_SPECS,
     **THINKING_MACHINES_SPECS,
     **TINKER_SPECS,
+    # Generated Perplexity Agent API catalog; see specs/perplexity_catalog.py.
+    **PERPLEXITY_AGENT_SPECS,
     # The OpenRouter gateway catalog is generated and merged last so it can
     # never shadow a hand-maintained direct-provider entry. Its insertion order
     # is OpenRouter's own usage ranking, and its leading entries carry

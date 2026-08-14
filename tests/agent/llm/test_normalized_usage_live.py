@@ -18,7 +18,7 @@ from kolega_code.cli.config import API_KEY_ENV, OAUTH_PROVIDERS
 from kolega_code.cli.provider_registry import default_model_for_provider
 from kolega_code.config import ModelProvider
 from kolega_code.llm.client import LLMClient
-from kolega_code.llm.exceptions import LLMBillingError, LLMRateLimitError
+from kolega_code.llm.exceptions import LLMBillingError, LLMPermissionDeniedError, LLMRateLimitError
 from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.llm.specs import MODEL_SPECS, default_thinking_effort, get_model_specs
 from kolega_code.llm.usage import NormalizedUsage
@@ -29,7 +29,16 @@ SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
 
 # generate() maps SDK errors to the repo's LLM exceptions, but the streaming
 # path surfaces raw SDK errors — skip on both shapes of quota/capacity failure.
-_QUOTA_ERRORS = (LLMRateLimitError, LLMBillingError, anthropic.RateLimitError, openai.RateLimitError)
+# Permission errors mean the key lacks access to the API surface (e.g.
+# Perplexity's preview-gated Router), which is likewise not the integration.
+_QUOTA_ERRORS = (
+    LLMRateLimitError,
+    LLMBillingError,
+    LLMPermissionDeniedError,
+    anthropic.RateLimitError,
+    openai.RateLimitError,
+    openai.PermissionDeniedError,
+)
 
 SYSTEM = Message(
     role="system",

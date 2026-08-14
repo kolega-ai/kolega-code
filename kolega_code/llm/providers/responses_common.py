@@ -206,7 +206,10 @@ def to_responses_input(messages: MessageHistory, *, escape_control_tokens: bool 
                 # id keys the server-side restore of the searched content, which
                 # is what keeps that content in the model's context (and billed
                 # as input) on later turns.
-                items.append(block.to_responses_item())
+                # search_results/fetch_url_results items are output-only:
+                # replaying one 400s (live-probed 2026-08-14).
+                if block.item_type == "web_search_call":
+                    items.append(block.to_responses_item())
             elif isinstance(block, ToolCall):
                 # Collected, not emitted inline: the function_call items must be the
                 # LAST items of the assistant turn so the next message's
@@ -309,9 +312,11 @@ def responses_tools(params: Optional[GenerationParams]) -> Optional[List[Dict[st
     When ``params.hosted_web_search`` is set, the provider's server-side
     ``web_search`` tool is appended as well — a hosted tool with no client-side
     schema (the bare ``{"type": "web_search"}`` shape both DeepSeek and OpenAI
-    accept).
+    accept). ``params.server_tools`` (Perplexity Agent API) appends further
+    provider-executed tools the same way; they run on the provider's
+    infrastructure and are never routed through the local tool executor.
     """
-    if not params or not (params.tools or params.hosted_web_search):
+    if not params or not (params.tools or params.hosted_web_search or params.server_tools):
         return None
     tools: List[Dict[str, Any]] = []
     for definition in params.tools or []:
@@ -335,9 +340,34 @@ def responses_tools(params: Optional[GenerationParams]) -> Optional[List[Dict[st
                 "parameters": fn.get("parameters"),
             }
         )
+    server_tools: List[str] = []
     if params.hosted_web_search:
-        tools.append({"type": "web_search"})
+        server_tools.append("web_search")
+    for name in params.server_tools or []:
+        if name not in server_tools:
+            server_tools.append(name)
+    tools.extend({"type": name} for name in server_tools)
     return tools
+
+
+def _verbatim_item_dict(item: Any) -> Dict[str, Any]:
+    """Convert a streamed/parsed Responses output item to a plain dict.
+
+    SDK objects keep unknown fields (e.g. Perplexity's ``search_results``
+    payload) in ``model_extra``, which ``model_dump`` includes; dicts and
+    SimpleNamespace-style fakes fall back to attribute/dict access.
+    """
+    model_dump = getattr(item, "model_dump", None)
+    if callable(model_dump):
+        try:
+            dumped = model_dump(exclude_none=True)
+            if isinstance(dumped, dict):
+                return dict(dumped)
+        except Exception:  # pragma: no cover - defensive, fall through
+            pass
+    if isinstance(item, dict):
+        return dict(item)
+    return {key: value for key, value in vars(item).items() if not str(key).startswith("_")}
 
 
 def _usage_from_response(response: Any) -> Dict[str, Any]:
@@ -366,6 +396,12 @@ def _usage_from_response(response: Any) -> Dict[str, Any]:
     reasoning = read_detail_int(getattr(usage, "output_tokens_details", None), "reasoning_tokens")
     if reasoning is not None:
         metadata["reasoning_output_tokens"] = reasoning
+    # Perplexity's usage extras (dollar cost, per-tool invocation counts).
+    extras = getattr(usage, "model_extra", None) or {}
+    for key in ("cost", "tool_calls_details"):
+        value = extras.get(key)
+        if value is not None:
+            metadata[key] = value
     return metadata
 
 
@@ -736,6 +772,22 @@ class ResponsesStreamWrapper:
                         "action": captured.get("action") or {},
                     },
                 )
+            elif item_kind in self._SERVER_TOOL_RESULT_ITEM_TYPES:
+                # Server-side tool result; the results arrive client-side.
+                captured = self._server_tool_result_dict(item)
+                if captured is not None:
+                    self._prefix_records.append(("web_search_call", captured))
+                    return MessageChunk(
+                        type="hosted_tool_call",
+                        tool_call_delta={
+                            "id": captured.get("item_id") or "",
+                            "name": captured.get("item_type"),
+                            "status": captured.get("status"),
+                            "action": captured.get("action") or {},
+                            "item_type": captured.get("item_type"),
+                            "payload": captured.get("payload"),
+                        },
+                    )
             elif item_kind in ("function_call", "custom_tool_call"):
                 # The completed function_call item carries the final name +
                 # arguments; capture it so tool calls survive even if argument
@@ -833,6 +885,10 @@ class ResponsesStreamWrapper:
                         records.append(("reasoning", captured))
                 elif out_type == "web_search_call":
                     records.append(("web_search_call", self._web_search_call_dict(out)))
+                elif out_type in self._SERVER_TOOL_RESULT_ITEM_TYPES:
+                    captured = self._server_tool_result_dict(out)
+                    if captured is not None:
+                        records.append(("web_search_call", captured))
         blocks: list = []
         for kind, item in records:
             if kind == "reasoning":
@@ -850,6 +906,8 @@ class ResponsesStreamWrapper:
                         item_id=item.get("item_id"),
                         status=item.get("status"),
                         action=item.get("action") or {},
+                        item_type=str(item.get("item_type") or "web_search_call"),
+                        payload=item.get("payload"),
                     )
                 )
         return blocks
@@ -876,6 +934,42 @@ class ResponsesStreamWrapper:
             "item_id": getattr(item, "id", None),
             "status": getattr(item, "status", None),
             "action": action_dict,
+        }
+
+    _SERVER_TOOL_RESULT_ITEM_TYPES = frozenset({"search_results", "fetch_url_results"})
+
+    @classmethod
+    def _server_tool_result_dict(cls, item: Any) -> Optional[Dict[str, Any]]:
+        """Extract the replayable fields from a Perplexity server-side tool result item.
+
+        Unlike OpenAI/DeepSeek web_search_call items (action metadata only —
+        the content stays server-side), these items carry their results to the
+        client. The verbatim payload is captured so replay restores the
+        grounding content on later turns (the backend is stateless for us:
+        ``store: False``).
+        """
+        item_type = getattr(item, "type", None)
+        if item_type not in cls._SERVER_TOOL_RESULT_ITEM_TYPES:
+            return None
+        payload = _verbatim_item_dict(item)
+        payload.setdefault("type", item_type)
+        action: Dict[str, Any] = {}
+        queries = payload.get("queries")
+        if isinstance(queries, list):
+            action["type"] = "search"
+            action["queries"] = [str(query) for query in queries]
+        contents = payload.get("contents")
+        if isinstance(contents, list):
+            action["type"] = "fetch_url"
+            action["urls"] = [
+                str(entry.get("url")) for entry in contents if isinstance(entry, dict) and entry.get("url")
+            ]
+        return {
+            "item_id": getattr(item, "id", None),
+            "status": getattr(item, "status", None) or "completed",
+            "action": action,
+            "item_type": item_type,
+            "payload": payload,
         }
 
     @staticmethod

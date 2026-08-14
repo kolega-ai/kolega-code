@@ -137,6 +137,10 @@ class LLMClient:
             from .providers.deepseek_responses import DeepSeekResponsesProvider
 
             return DeepSeekResponsesProvider
+        if p == "perplexity_agent":
+            from .providers.perplexity_responses import PerplexityResponsesProvider
+
+            return PerplexityResponsesProvider
         if p in (
             "together",
             "groq",
@@ -238,6 +242,8 @@ class LLMClient:
                 "kimi_coding": "https://api.kimi.com/coding",
                 "ollama_cloud": "https://ollama.com/v1",
                 "openrouter": "https://openrouter.ai/api/v1",
+                # Responses-compatible; /v1/responses is an accepted alias of /v1/agent.
+                "perplexity_agent": "https://api.perplexity.ai/v1",
                 # Tinker's Anthropic-compatible endpoint: the Anthropic SDK appends
                 # /v1/messages (and /v1/messages/count_tokens) to this base.
                 "thinking_machines": "https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api",
@@ -377,6 +383,7 @@ class LLMClient:
         thinking: Optional[Union[int, str]] = None,
         params: Optional[GenerationParams] = None,
         hosted_web_search: bool = False,
+        server_tools: Optional[List[str]] = None,
         *,
         _precomputed_input_tokens: Optional[int] = None,
         **kwargs: Any,
@@ -393,6 +400,8 @@ class LLMClient:
             params (Optional[GenerationParams]): Override all parameters with a GenerationParams object
             hosted_web_search (bool): Expose the provider's server-side web_search
                 tool (Responses APIs only; ignored elsewhere).
+            server_tools (Optional[List[str]]): Provider-executed server-side tools
+                to enable (Perplexity Agent API; ignored elsewhere).
             _precomputed_input_tokens: Internal. The caller's own input count for
                 this exact request; used by the strict per-run context budget to
                 avoid counting the same request twice. Never forwarded to
@@ -415,6 +424,7 @@ class LLMClient:
                         thinking, str(kwargs.get("model")) if kwargs.get("model") else None
                     ),
                     hosted_web_search=hosted_web_search,
+                    server_tools=server_tools,
                 )
             if self._has_run_context_budget:
                 params = await self._enforce_run_context_budget(
@@ -446,6 +456,7 @@ class LLMClient:
         thinking: Optional[Union[int, str]] = None,
         params: Optional[GenerationParams] = None,
         hosted_web_search: bool = False,
+        server_tools: Optional[List[str]] = None,
         *,
         _precomputed_input_tokens: Optional[int] = None,
         **kwargs: Any,
@@ -462,6 +473,8 @@ class LLMClient:
             params (Optional[GenerationParams]): Override all parameters with a GenerationParams object
             hosted_web_search (bool): Expose the provider's server-side web_search
                 tool (Responses APIs only; ignored elsewhere).
+            server_tools (Optional[List[str]]): Provider-executed server-side tools
+                to enable (Perplexity Agent API; ignored elsewhere).
             _precomputed_input_tokens: Internal. The caller's own input count for
                 this exact request; used by the strict per-run context budget to
                 avoid counting the same request twice. Never forwarded to
@@ -484,6 +497,7 @@ class LLMClient:
                         thinking, str(kwargs.get("model")) if kwargs.get("model") else None
                     ),
                     hosted_web_search=hosted_web_search,
+                    server_tools=server_tools,
                 )
 
             if self._has_run_context_budget:

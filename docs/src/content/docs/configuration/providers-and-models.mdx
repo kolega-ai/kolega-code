@@ -37,6 +37,7 @@ Anthropic-compatible):
 | Tinker | `tinker` | `TINKER_API_KEY` |
 | Ollama Cloud | `ollama_cloud` | `OLLAMA_API_KEY` |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
+| Perplexity Agent API | `perplexity_agent` | `PERPLEXITY_API_KEY` |
 | Llama (local) | `llama` | _none — local model_ |
 
 <Aside type="tip">
@@ -176,6 +177,34 @@ Known limitations of the native path: no server-side streaming (output is
 replayed token-wise after the sample completes), no `tool_choice` (tool calls
 depend on the renderer's parser, which may omit ids), and token counting is
 client-side via the model's own tokenizer.
+</Aside>
+
+<Aside type="tip">
+**Perplexity.** The `perplexity_agent` provider targets the Agent API
+(`https://api.perplexity.ai/v1`, Responses-compatible) with `PERPLEXITY_API_KEY`
+and reaches models from several vendors through one key —
+`openai/gpt-5.6-sol`, `anthropic/claude-opus-5`, `google/gemini-3.6-flash`,
+`xai/grok-4.6`, and `perplexity/sonar` among them. Kolega Code owns the
+agent/tool loop; the API is the model transport:
+
+```bash
+kolega-code --provider perplexity_agent --model anthropic/claude-opus-5
+```
+
+The catalog is a generated snapshot; pick up newer ids without waiting for a
+release with `kolega-code models refresh --provider perplexity_agent`.
+
+(Perplexity also offers a raw-inference Gateway at
+`https://api.perplexity.ai/router/v1`; it is in limited preview with
+request-based access and is not shipped as a provider.)
+
+The Agent API also runs **server-side tools** that Perplexity executes inside
+the request (`web_search`, `fetch_url`, `finance_search`, `people_search`).
+These are a property of the service — always enabled for `perplexity_agent`
+models, like the hosted web search on the DeepSeek/OpenAI Responses models —
+and are separate from Kolega Code's local tools (read/edit/shell/…). They
+follow the [web tool mode](#web-search): `client` and `off` disable them in
+favor of the client-side (or no) web tools.
 </Aside>
 
 <Aside type="tip">

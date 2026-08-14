@@ -302,7 +302,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         )
 
     def _web_search_state_note(self) -> str:
-        if getattr(self.agent, "hosted_web_search_active", False):
+        if getattr(self.agent, "hosted_web_search_active", False) or getattr(self.agent, "server_tools", None):
             return "hosted server-side search active; client web tools off"
         if getattr(self.agent, "client_web_tools_enabled", True):
             return "client web_search/web_fetch tools active"

@@ -53,6 +53,7 @@ provider or model.
 | `OLLAMA_API_KEY` | Ollama Cloud |
 | `OPENROUTER_API_KEY` | OpenRouter |
 | `TINKER_API_KEY` | Thinking Machines — both the `thinking_machines` (Anthropic-compatible) and `tinker` (native SDK) providers |
+| `PERPLEXITY_API_KEY` | Perplexity Agent API |
 
 The local `llama` provider needs no key. The `zai` key authenticates against Z.AI's
 Anthropic-compatible endpoint (it is the key Z.AI also documents as `ANTHROPIC_AUTH_TOKEN`).
@@ -61,6 +62,7 @@ Anthropic-compatible endpoint (`https://api.kimi.com/coding/`), which is distinc
 standard Moonshot API used by the `moonshot` provider.
 The `OLLAMA_API_KEY` key authenticates against Ollama Cloud's direct API (`https://ollama.com/v1` for OpenAI-compatible requests).
 The `OPENROUTER_API_KEY` key authenticates against the OpenRouter gateway (`https://openrouter.ai/api/v1`).
+The `PERPLEXITY_API_KEY` key authenticates against the Perplexity Agent API (`https://api.perplexity.ai/v1`).
 
 ### Ollama Cloud catalog
 

@@ -23,19 +23,22 @@ from kolega_code.config import ModelProvider
 from kolega_code.llm.specs import MODEL_SPECS, is_featured_model
 from kolega_code.llm.specs import ollama_cloud_catalog as ollama_cloud
 from kolega_code.llm.specs import openrouter_catalog as openrouter
+from kolega_code.llm.specs import perplexity_catalog as perplexity
 from kolega_code.llm.specs import tinker_catalog as tinker
 from kolega_code.llm.specs.validation import validate_model_spec
 
 from .provider_registry import PROVIDER_LABELS, get_ui_model, rebuild_ui_model_options
 from .session_store import default_state_dir
 
-# Overlay sources keyed by provider value. Each module exposes PROVIDER,
+# Overlay sources keyed by provider value. Each entry exposes PROVIDER,
 # MODELS_URL, CACHE_FILENAME, fetch_models(), catalog_entries(), load_cache()
-# and save_cache().
+# and save_cache(). The Perplexity entry is a duck-typed catalog object rather
+# than a module — same contract.
 OVERLAY_SOURCES = {
     ollama_cloud.PROVIDER: ollama_cloud,
     openrouter.PROVIDER: openrouter,
     tinker.PROVIDER: tinker,
+    perplexity.AGENT_PROVIDER: perplexity.AGENT_CATALOG,
 }
 
 # Capture the release snapshot before startup applies any runtime caches.

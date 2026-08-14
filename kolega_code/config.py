@@ -38,6 +38,7 @@ class ModelProvider(str, Enum):
     OPENROUTER = "openrouter"  # Gateway in front of many vendors' models
     THINKING_MACHINES = "thinking_machines"  # Thinking Machines Lab (Tinker API)
     TINKER = "tinker"  # Native Tinker SamplingClient (agentic-RL trajectory source)
+    PERPLEXITY_AGENT = "perplexity_agent"
 
     @classmethod
     def _missing_(cls, value: object) -> Optional["ModelProvider"]:
@@ -216,6 +217,9 @@ class AgentConfig(BaseModel):
     ollama_cloud_api_key: Optional[str] = Field(default=None, description="API key for Ollama Cloud")
     openrouter_api_key: Optional[str] = Field(default=None, description="API key for OpenRouter")
     thinking_machines_api_key: Optional[str] = Field(default=None, description="API key for Thinking Machines (Tinker)")
+    perplexity_api_key: Optional[str] = Field(
+        default=None, description="API key for Perplexity (Gateway and Agent API)"
+    )
 
     # ChatGPT-subscription OAuth credentials (used instead of an api key for the
     # OPENAI_CHATGPT provider). The live, refreshing token manager is attached
@@ -426,6 +430,7 @@ class AgentConfig(BaseModel):
             ModelProvider.THINKING_MACHINES: self.thinking_machines_api_key,
             # The native Tinker provider shares the same TINKER_API_KEY credential.
             ModelProvider.TINKER: self.thinking_machines_api_key,
+            ModelProvider.PERPLEXITY_AGENT: self.perplexity_api_key,
             ModelProvider.LLAMA: None,  # Local model, no API key needed
         }
         return api_key_map[provider]

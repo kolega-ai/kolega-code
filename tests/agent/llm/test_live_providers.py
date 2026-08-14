@@ -19,7 +19,7 @@ from kolega_code.cli.config import API_KEY_ENV, OAUTH_PROVIDERS
 from kolega_code.cli.provider_registry import default_model_for_provider
 from kolega_code.config import ModelProvider
 from kolega_code.llm.client import LLMClient
-from kolega_code.llm.exceptions import LLMBillingError, LLMRateLimitError
+from kolega_code.llm.exceptions import LLMBillingError, LLMPermissionDeniedError, LLMRateLimitError
 from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.llm.specs import (
     MODEL_SPECS,
@@ -94,16 +94,18 @@ def _require_key(provider_value: str) -> str:
 
 
 async def _live_generate(client: "LLMClient", **generate_kwargs):
-    """Run a live ``generate`` call, skipping on provider-side quota exhaustion.
+    """Run a live ``generate`` call, skipping on provider-side quota/access limits.
 
-    Rate-limit and billing errors reflect the API key's quota/billing state rather
-    than the integration under test, so they skip instead of failing the suite.
-    Real integration regressions (auth, request formatting, parsing) still surface.
+    Rate-limit and billing errors reflect the API key's quota/billing state, and
+    permission errors reflect missing access to an API surface (e.g. Perplexity's
+    preview-gated Router) — none are the integration under test, so they skip
+    instead of failing the suite. Real integration regressions (auth, request
+    formatting, parsing) still surface.
     """
     try:
         return await client.generate(**generate_kwargs)
-    except (LLMRateLimitError, LLMBillingError) as exc:
-        pytest.skip(f"provider quota exhausted for this key: {exc}")
+    except (LLMRateLimitError, LLMBillingError, LLMPermissionDeniedError) as exc:
+        pytest.skip(f"provider quota or access exhausted for this key: {exc}")
 
 
 @pytest.mark.asyncio
