@@ -8,6 +8,10 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Added
 
+- Added Google Gemini 3.7 Flash (`gemini-3.7-flash`): 1M-token context, 64K
+  output, vision and function calling, and `low`/`medium`/`high` thinking
+  levels. It omits Google's deprecated temperature parameter and is now the
+  default Google model.
 - DeepSeek V4-Pro now routes to the Responses API by default (joining V4-Flash),
   removing the model-name carve-out. Both DeepSeek models support `none`, `low`,
   `high`, and `max` reasoning effort (`low` is new; `none` disables reasoning).

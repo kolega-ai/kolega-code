@@ -77,14 +77,20 @@ def test_gpt56_models_are_first_and_sol_is_default_for_openai_providers():
     ]
 
 
-def test_new_google_models_are_selectable_without_changing_default() -> None:
+def test_google_models_include_37_and_use_it_as_default() -> None:
     options = ui_model_options(ModelProvider.GOOGLE.value)
 
-    assert options[:2] == [
+    assert options[:3] == [
+        ("Gemini 3.7 Flash", "gemini-3.7-flash"),
         ("Gemini 3.6 Flash", "gemini-3.6-flash"),
         ("Gemini 3.5 Flash-Lite", "gemini-3.5-flash-lite"),
     ]
-    assert default_model_for_provider(ModelProvider.GOOGLE) == "gemini-3.1-pro-preview"
+    assert default_model_for_provider(ModelProvider.GOOGLE) == "gemini-3.7-flash"
+    assert ui_thinking_effort_options("google", "gemini-3.7-flash") == [
+        ("Low", "low"),
+        ("Medium", "medium"),
+        ("High", "high"),
+    ]
     assert ui_thinking_effort_options("google", "gemini-3.6-flash") == [
         ("Minimal", "minimal"),
         ("Low", "low"),
@@ -99,6 +105,7 @@ def test_new_google_models_are_selectable_without_changing_default() -> None:
     ]
 
     vision_options = dict(ui_model_options(ModelProvider.GOOGLE.value, vision_only=True))
+    assert vision_options["Gemini 3.7 Flash"] == "gemini-3.7-flash"
     assert vision_options["Gemini 3.6 Flash"] == "gemini-3.6-flash"
     assert vision_options["Gemini 3.5 Flash-Lite"] == "gemini-3.5-flash-lite"
 
