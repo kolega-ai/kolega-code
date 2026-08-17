@@ -264,21 +264,6 @@ class HistoryCompressor:
             # The helper origin spans the whole request: providers may sample and
             # emit their trace record at context entry or final-message time, not
             # at stream().
-            async def drain_summary() -> Message:
-                with llm_call_origin(helper_origin("compression")):
-                    stream_cm = await llm.stream(
-                        messages=messages,
-                        system=system_message,
-                        temperature=temperature,
-                        model=model,
-                        max_completion_tokens=self.SUMMARY_MAX_TOKENS,
-                        thinking=thinking,
-                    )
-                    async with stream_cm as stream:
-                        async for _event in stream:
-                            pass
-                    return await stream.get_final_message()
-
             response = None
             last_error: Optional[LLMContextWindowExceededError] = None
             dispatched_gap: Optional[tuple[int, int]] = None
@@ -291,7 +276,19 @@ class HistoryCompressor:
                         # re-sending it would only be rejected again.
                         continue
                 try:
-                    response = await drain_summary()
+                    with llm_call_origin(helper_origin("compression")):
+                        stream_cm = await llm.stream(
+                            messages=messages,
+                            system=system_message,
+                            temperature=temperature,
+                            model=model,
+                            max_completion_tokens=self.SUMMARY_MAX_TOKENS,
+                            thinking=thinking,
+                        )
+                        async with stream_cm as stream:
+                            async for _event in stream:
+                                pass
+                        response = await stream.get_final_message()
                     break
                 except LLMContextWindowExceededError as exc:
                     if max_input_tokens is None:
@@ -328,7 +325,19 @@ class HistoryCompressor:
                 else:
                     logger.info(retry_msg)
                 # Same fitted request: empty completions are not a budget-fit failure.
-                response = await drain_summary()
+                with llm_call_origin(helper_origin("compression")):
+                    stream_cm = await llm.stream(
+                        messages=messages,
+                        system=system_message,
+                        temperature=temperature,
+                        model=model,
+                        max_completion_tokens=self.SUMMARY_MAX_TOKENS,
+                        thinking=thinking,
+                    )
+                    async with stream_cm as stream:
+                        async for _event in stream:
+                            pass
+                    response = await stream.get_final_message()
 
             if on_error:
                 await on_error(last_empty_message)
