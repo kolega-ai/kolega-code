@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.30.1 - 2026-08-17
+
 ### Fixed
 
 - Compaction now uses the primary model's thinking setting instead of

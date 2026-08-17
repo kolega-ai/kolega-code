@@ -174,4 +174,4 @@ __all__ = [
     "parse_git_status_output",
 ]
 
-__version__ = "0.30.0"
+__version__ = "0.30.1"
