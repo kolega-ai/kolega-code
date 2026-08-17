@@ -1224,9 +1224,10 @@ class BaseAgent(LogMixin):
                 llm=self.llm,
                 model=self.primary_model_config.model,
                 temperature=self.model_default_temperature,
-                # No extended thinking: a bounded summary doesn't need it, and the
-                # thinking budget could otherwise exceed the small summary max_tokens.
-                thinking=None,
+                # Same thinking setting as the primary request. Omitting it is not a
+                # disable: some endpoints default to reasoning-on, and some reject a
+                # missing effort. A None effort (no thinking spec) still omits the field.
+                thinking=self.primary_model_config.thinking_effort,
                 on_info=on_info,
                 on_error=on_error,
                 system_prompt_text=compaction_system_prompt,
@@ -2448,9 +2449,11 @@ class BaseAgent(LogMixin):
                     # at the model (llm_error — the provider client already applied
                     # its retry policy, so another summarization request buys
                     # nothing) or hit the minimum-history guard (too_few — a zero
-                    # tail must not weaken it). A nothing_to_summarize result MAY
-                    # proceed: with no retained tail, the safe boundary can advance
-                    # past the previous one even when the six-message tail could not.
+                    # tail must not weaken it). An empty_summary or
+                    # nothing_to_summarize result MAY proceed: empty completions
+                    # already exhausted in-pass retries, and with no retained tail
+                    # the safe boundary can advance past the previous one even
+                    # when the six-message tail could not.
                     if token_count.input_tokens > self.model_max_input_tokens and result.reason not in (
                         "llm_error",
                         "too_few",

@@ -8,8 +8,8 @@ import pytest
 from kolega_code.agent.compression import COMPRESSION_SUMMARY_SYSTEM_PROMPT, CompactionResult, HistoryCompressor
 from kolega_code.agent.conversation import Conversation
 
-from .compaction_helpers import FakeLLM, build_agent, long_history, tool_pair, text_msg
-from kolega_code.llm.models import MessageHistory
+from .compaction_helpers import FakeLLM, build_agent, long_history, text_msg, thinking_only_msg, tool_pair
+from kolega_code.llm.models import Message, MessageHistory, TextBlock
 
 
 class SummarizeKwargs(TypedDict):
@@ -170,10 +170,61 @@ async def test_summarize_llm_error_is_nondestructive():
 @pytest.mark.asyncio
 async def test_summarize_empty_output_is_error():
     conv = Conversation(list(long_history(6)))
-    result = await HistoryCompressor().summarize(conv, llm=FakeLLM(summary_text="   "), **SUMMARIZE_KW)
+    llm = FakeLLM(summary_text="   ")
+    result = await HistoryCompressor().summarize(conv, llm=llm, **SUMMARIZE_KW)
     assert result.ok is False
-    assert result.reason == "llm_error"
+    assert result.reason == "empty_summary"
     assert conv.summary is None
+    assert llm.stream.await_count == HistoryCompressor.SUMMARY_EMPTY_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_summarize_retries_reasoning_only_completion_then_succeeds():
+    conv = Conversation(list(long_history(6)))
+    llm = FakeLLM(
+        message_script=[
+            thinking_only_msg(),
+            thinking_only_msg(),
+            Message(role="assistant", content=[TextBlock(text="SUMMARY: recovered")], stop_reason="end_turn"),
+        ]
+    )
+    result = await HistoryCompressor().summarize(conv, llm=llm, **SUMMARIZE_KW)
+
+    assert result.ok is True
+    assert result.reason == "ok"
+    assert conv.summary is not None
+    assert conv.summary.get_text_content() == "SUMMARY: recovered"
+    assert llm.stream.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_summarize_reasoning_only_completion_is_empty_summary():
+    history = long_history(6)
+    conv = Conversation(list(history))
+    llm = FakeLLM(message_script=[thinking_only_msg()] * HistoryCompressor.SUMMARY_EMPTY_ATTEMPTS)
+    result = await HistoryCompressor().summarize(conv, llm=llm, **SUMMARIZE_KW)
+
+    assert result.ok is False
+    assert result.reason == "empty_summary"
+    assert "max_tokens" in result.message
+    assert conv.summary is None
+    assert list(conv.history) == list(history)
+    assert llm.stream.await_count == HistoryCompressor.SUMMARY_EMPTY_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_agent_compaction_forwards_primary_thinking_effort(tmp_path):
+    fake = FakeLLM(summary_text="SUMMARY: earlier turns")
+    agent, _ = build_agent(tmp_path, llm=fake)
+    agent.history = MessageHistory(list(long_history(6)))
+    agent.primary_model_config = agent.primary_model_config.model_copy(update={"thinking_effort": "high"})
+
+    result = await agent.compress_history()
+
+    assert result.ok is True
+    assert fake.stream.await_args is not None
+    assert fake.stream.await_args.kwargs["thinking"] == "high"
+    assert all(call.kwargs.get("thinking") == "high" for call in fake.count_tokens.await_args_list)
 
 
 @pytest.mark.asyncio

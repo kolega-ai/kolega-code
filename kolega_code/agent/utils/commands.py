@@ -58,9 +58,9 @@ class CommandProcessor:
                 f"Compressed history: {result.summarized_messages} older message(s) summarized. "
                 f"Context {pct(before)}% → {pct(after)}% of the input budget."
             )
-        if result.reason == "llm_error":
-            return f"Compression failed: {result.message}"
-        return f"Nothing to compress. {result.message} (context {pct(before)}% of the input budget)."
+        if result.reason in ("too_few", "nothing_to_summarize"):
+            return f"Nothing to compress. {result.message} (context {pct(before)}% of the input budget)."
+        return f"Compression failed: {result.message}"
 
     async def _handle_clear(self) -> str:
         """Handle the /clear command."""

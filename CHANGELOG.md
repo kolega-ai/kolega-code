@@ -6,6 +6,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Compaction now uses the primary model's thinking setting instead of
+  omitting it. Empty or reasoning-only helper completions are retried,
+  then can still take the zero-tail recovery path instead of being
+  treated as a final `llm_error`.
+
 ## 0.30.0 - 2026-08-14
 
 ### Added
