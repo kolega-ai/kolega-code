@@ -9,7 +9,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from kolega_code.events import AgentConnectionManager
-from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
+from kolega_code.llm.models import Message, MessageHistory, TextBlock, ThinkingBlock, ToolCall, ToolResult
 from kolega_code.llm.providers.models import TokenCount
 
 
@@ -103,6 +103,14 @@ class FakeLLM:
 
 def text_msg(role: str, text: str) -> Message:
     return Message(role=role, content=[TextBlock(text=text)])
+
+
+def thinking_only_msg(
+    thinking: str = "reasoned at length without writing a summary.",
+    stop_reason: str = "max_tokens",
+) -> Message:
+    """A completed helper response that spent its budget on reasoning only."""
+    return Message(role="assistant", content=[ThinkingBlock(thinking=thinking)], stop_reason=stop_reason)
 
 
 def skill_msg(name: str = "kolega-skill", body: str = "protected body") -> Message:

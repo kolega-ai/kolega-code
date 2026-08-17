@@ -14,10 +14,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from kolega_code.agent.compression import HistoryCompressor
 from kolega_code.hooks.events import HookEvent
 from kolega_code.llm.exceptions import LLMContextWindowExceededError
+from kolega_code.llm.models import Message, TextBlock
 
-from .compaction_helpers import FakeLLM, FakeStream, build_agent, context_update_events, long_history
+from .compaction_helpers import FakeLLM, FakeStream, build_agent, context_update_events, long_history, thinking_only_msg
 
 
 def _hook_spy(agent):
@@ -253,6 +255,52 @@ async def test_full_loop_strict_cap_raises_after_too_few(tmp_path):
             pass
 
     fake.stream.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_full_loop_strict_cap_retries_empty_summary_then_zero_tail(tmp_path):
+    # Reasoning-only max_tokens completions are not llm_error: the ordinary
+    # pass retries, then zero-tail recovery still runs before fail-closed.
+    attempts = HistoryCompressor.SUMMARY_EMPTY_ATTEMPTS
+    fake = FakeLLM(
+        token_script=[700, 900, 900, 900],
+        message_script=[thinking_only_msg()] * (attempts * 2),
+    )
+    agent, _cm = build_agent(tmp_path, llm=fake, strict_budget=(1000, 200))
+    agent.history = long_history(6)
+    fired = _hook_payload_spy(agent)
+
+    with pytest.raises(LLMContextWindowExceededError):
+        async for _chunk in agent.process_message_stream("hello"):
+            pass
+
+    assert _compaction_triggers(fired) == ["auto", "auto_tail_fallback"]
+    assert fake.stream.await_count == attempts * 2  # both passes; the primary model was never called
+    assert agent.conversation.summary is None
+
+
+@pytest.mark.asyncio
+async def test_full_loop_zero_tail_recovers_after_empty_ordinary_pass(tmp_path):
+    attempts = HistoryCompressor.SUMMARY_EMPTY_ATTEMPTS
+    fallback_text = "ZERO-TAIL SUMMARY"
+    fake = FakeLLM(
+        token_script=[900, 800, 1100, 1100, 800, 400],
+        message_script=[thinking_only_msg()] * attempts
+        + [Message(role="assistant", content=[TextBlock(text=fallback_text)], stop_reason="end_turn")],
+    )
+    agent, _cm = build_agent(tmp_path, llm=fake)
+    agent.history = long_history(6)
+    fired = _hook_payload_spy(agent)
+
+    async for _chunk in agent.process_message_stream("hello"):
+        pass
+
+    assert _compaction_triggers(fired) == ["auto", "auto_tail_fallback"]
+    assert fake.stream.await_count == attempts + 2  # empty retries + fallback summary + primary
+    primary_messages = fake.stream.await_args_list[-1].kwargs["messages"]
+    assert [m.get_text_content() for m in primary_messages] == [fallback_text]
+    assert agent.conversation.summary is not None
+    assert agent.conversation.summary.get_text_content() == fallback_text
 
 
 @pytest.mark.asyncio

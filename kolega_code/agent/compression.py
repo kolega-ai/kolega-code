@@ -23,7 +23,7 @@ LogCallback = Callable[[str], Awaitable[None]]
 class CompactionResult:
     """Outcome of a compaction attempt, surfaced to callers and the UI.
 
-    ``reason`` is a machine tag: "ok" | "too_few" | "nothing_to_summarize" | "llm_error".
+    ``reason`` is a machine tag: "ok" | "too_few" | "nothing_to_summarize" | "empty_summary" | "llm_error".
     ``message`` is a human-readable line for the command output / logs.
     """
 
@@ -117,6 +117,37 @@ def _bundles_tool_results(message: Message) -> bool:
     return isinstance(message.content, list) and any(isinstance(block, ToolResult) for block in message.content)
 
 
+async def _stream_summary(
+    llm,
+    messages: MessageHistory,
+    system: Message,
+    temperature: float,
+    model: str,
+    thinking,
+) -> Message:
+    """Issue the compaction helper request and return the completed message.
+
+    Stream and consume events rather than calling ``generate()``: the Anthropic
+    SDK rejects non-streaming requests whose max_tokens is large enough to risk
+    a >10-minute response. The helper origin spans the whole request because
+    providers may sample and emit their trace record at context entry or
+    final-message time, not at ``stream()``.
+    """
+    with llm_call_origin(helper_origin("compression")):
+        stream_cm = await llm.stream(
+            messages=messages,
+            system=system,
+            temperature=temperature,
+            model=model,
+            max_completion_tokens=HistoryCompressor.SUMMARY_MAX_TOKENS,
+            thinking=thinking,
+        )
+        async with stream_cm as stream:
+            async for _event in stream:
+                pass
+        return await stream.get_final_message()
+
+
 class HistoryCompressor:
     """Summarizes a conversation non-destructively when it crosses the budget threshold."""
 
@@ -131,6 +162,9 @@ class HistoryCompressor:
     # summary. A generous ceiling gives reasoning headroom while still staying
     # well under the model's full completion budget.
     SUMMARY_MAX_TOKENS = 8192
+    # Completed-but-empty summaries (reasoning-only, whitespace, no text) are
+    # retried on the same fitted request before the pass is reported unusable.
+    SUMMARY_EMPTY_ATTEMPTS = 3
     # Attempts at widening the omission gap per budget rung.
     MAX_FIT_ATTEMPTS = 6
 
@@ -254,13 +288,6 @@ class HistoryCompressor:
                     head_end, tail_start = new_head, new_tail
                     messages = build_request(head_end, tail_start)
 
-            # Stream and drain rather than calling generate(): the Anthropic SDK
-            # rejects non-streaming requests whose max_tokens is large enough to risk
-            # a >10-minute response, which the model's full completion budget triggers.
-            #
-            # The helper origin spans the whole request: providers may sample and
-            # emit their trace record at context entry or final-message time, not
-            # at stream().
             response = None
             last_error: Optional[LLMContextWindowExceededError] = None
             dispatched_gap: Optional[tuple[int, int]] = None
@@ -273,19 +300,14 @@ class HistoryCompressor:
                         # re-sending it would only be rejected again.
                         continue
                 try:
-                    with llm_call_origin(helper_origin("compression")):
-                        stream_cm = await llm.stream(
-                            messages=messages,
-                            system=system_message,
-                            temperature=temperature,
-                            model=model,
-                            max_completion_tokens=self.SUMMARY_MAX_TOKENS,
-                            thinking=thinking,
-                        )
-                        async with stream_cm as stream:
-                            async for _event in stream:
-                                pass
-                        response = await stream.get_final_message()
+                    response = await _stream_summary(
+                        llm,
+                        messages=messages,
+                        system=system_message,
+                        temperature=temperature,
+                        model=model,
+                        thinking=thinking,
+                    )
                     break
                 except LLMContextWindowExceededError as exc:
                     if max_input_tokens is None:
@@ -297,22 +319,45 @@ class HistoryCompressor:
                 assert last_error is not None
                 raise last_error
 
-            summary_text = response.get_text_content()
-            if not summary_text or not summary_text.strip():
-                msg = "Compression produced an empty summary; history left unchanged."
-                if on_error:
-                    await on_error(msg)
+            last_empty_message = "Compression produced an empty summary; history left unchanged."
+            for attempt in range(1, self.SUMMARY_EMPTY_ATTEMPTS + 1):
+                summary_text = response.get_text_content()
+                if summary_text and summary_text.strip():
+                    folded = split - prior_through
+                    conversation.apply_compaction(summary_text, split)
+                    done = f"Compressed {folded} older message(s) into a summary; kept the latest turns verbatim."
+                    if on_info:
+                        await on_info(done)
+                    return CompactionResult(ok=True, reason="ok", summarized_messages=folded, message=done)
+
+                stop = getattr(response, "stop_reason", None)
+                stop_note = f" (stop_reason={stop})" if stop else ""
+                last_empty_message = f"Compression produced an empty summary{stop_note}; history left unchanged."
+                if attempt >= self.SUMMARY_EMPTY_ATTEMPTS:
+                    break
+                retry_msg = (
+                    f"Compression produced an empty summary{stop_note}; "
+                    f"retrying ({attempt + 1}/{self.SUMMARY_EMPTY_ATTEMPTS})."
+                )
+                if on_info:
+                    await on_info(retry_msg)
                 else:
-                    logger.error(msg)
-                return CompactionResult(ok=False, reason="llm_error", message=msg)
+                    logger.info(retry_msg)
+                # Same fitted request: empty completions are not a budget-fit failure.
+                response = await _stream_summary(
+                    llm,
+                    messages=messages,
+                    system=system_message,
+                    temperature=temperature,
+                    model=model,
+                    thinking=thinking,
+                )
 
-            folded = split - prior_through
-            conversation.apply_compaction(summary_text, split)
-
-            done = f"Compressed {folded} older message(s) into a summary; kept the latest turns verbatim."
-            if on_info:
-                await on_info(done)
-            return CompactionResult(ok=True, reason="ok", summarized_messages=folded, message=done)
+            if on_error:
+                await on_error(last_empty_message)
+            else:
+                logger.error(last_empty_message)
+            return CompactionResult(ok=False, reason="empty_summary", message=last_empty_message)
 
         except Exception as e:
             # Never swallow into a fake success: log the full traceback and surface

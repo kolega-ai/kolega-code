@@ -91,6 +91,24 @@ async def test_handle_compress_nothing_to_compress(command_processor, mock_agent
 
 
 @pytest.mark.asyncio
+async def test_handle_compress_empty_summary_is_failure(command_processor, mock_agent):
+    """An unusable helper completion is a failure, not a no-op."""
+    mock_agent.compress_history = AsyncMock(
+        return_value=CompactionResult(
+            ok=False,
+            reason="empty_summary",
+            message="Compression produced an empty summary; history left unchanged.",
+        )
+    )
+
+    result = await command_processor._handle_compress()
+
+    assert result.startswith("Compression failed:")
+    assert "empty summary" in result
+    assert "Nothing to compress" not in result
+
+
+@pytest.mark.asyncio
 async def test_handle_clear(command_processor, mock_agent, mock_message):
     """Test the /clear command handler"""
     # Add some messages to history first
