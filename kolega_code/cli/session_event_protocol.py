@@ -60,7 +60,6 @@ _MESSAGE_BEARING_TYPES = {
     "assistant.message",
     "tool.results",
     "context.message",
-    "context.session",
     "context.system",
     "llm.message",
 }

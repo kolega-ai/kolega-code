@@ -531,13 +531,12 @@ class BaseAgent(LogMixin):
         # Tool collection must be initialized by subclass with appropriate configuration
         # (e.g., read_only, browser_only, custom tool_config, etc.)
         self.tool_collection = None
-        # Runtime-authored, generation-scoped context prepended only to the
-        # provider-facing conversation. It deliberately lives outside
-        # Conversation.history so clearing, compaction, replay, and transcript
-        # rendering never treat it as a user-authored historical event.
+        # Runtime-authored context inserted as the first hidden user-role
+        # reminder in Conversation.history. It follows the same provider,
+        # compaction, persistence, and replay paths as other context messages;
+        # presentation layers hide standalone <system-reminder> messages.
         self.session_context_message: Optional[Message] = None
         self._session_context_initialized = False
-        self._session_context_snapshot: Optional[Dict[str, Any]] = None
 
         self.command_processor = CommandProcessor(self)
 
@@ -678,13 +677,14 @@ class BaseAgent(LogMixin):
         The effective-history snapshot is taken on the loop so the worker
         thread never observes a concurrent history mutation.
         """
+        await self._ensure_session_context_in_history()
         effective = self.get_effective_history_for_llm()
         return await asyncio.to_thread(self._finalize_history_for_llm, effective)
 
     def build_session_context_message(self) -> Optional[Message]:
-        """Build the runtime-authored context for this agent generation.
+        """Build the runtime-authored first conversation reminder.
 
-        Stage 1 introduces the request layer without migrating prompt content,
+        Stage 1 introduces the history surface without migrating prompt content,
         so the default is no message. Subclasses and hosts may override this
         builder or assign ``session_context_message`` before the first request.
         The result is initialized lazily because concrete subclasses finish
@@ -692,55 +692,63 @@ class BaseAgent(LogMixin):
         """
         return None
 
-    def _ensure_session_context_message(self) -> Optional[Message]:
-        """Initialize and validate the generation-scoped session message once."""
-        if self._session_context_initialized:
-            message = self.session_context_message
-            self._validate_session_context_message(message)
-            snapshot = message.to_dict() if message is not None else None
-            if snapshot != self._session_context_snapshot:
-                raise RuntimeError("session context cannot change within an agent generation")
-            return message
-
-        message = self.session_context_message
-        if message is None:
-            message = self.build_session_context_message()
-        self._validate_session_context_message(message)
-        self.session_context_message = message
-        self._session_context_snapshot = message.to_dict() if message is not None else None
-        self._session_context_initialized = True
-        return message
-
     @staticmethod
     def _validate_session_context_message(message: Optional[Message]) -> None:
-        """Require a non-empty, text-only runtime-authored user message."""
+        """Require one standalone hidden ``source="session"`` reminder."""
         if message is None:
             return
         if message.role != "user":
             raise ValueError("session context must use the user role")
         if message.tool_calls or message.stop_reason is not None or message.usage is not None or message.usage_metadata:
             raise ValueError("session context cannot contain assistant or provider metadata")
-        if not isinstance(message.content, list) or not message.content:
-            raise ValueError("session context must contain TextBlock content")
-        if not all(isinstance(block, TextBlock) for block in message.content):
+        if not isinstance(message.content, list) or len(message.content) != 1:
+            raise ValueError("session context must contain exactly one TextBlock")
+        block = message.content[0]
+        if not isinstance(block, TextBlock):
             raise ValueError("session context must be text-only")
-        if any(block.cache_checkpoint for block in message.content):
+        if block.cache_checkpoint:
             raise ValueError("session context cannot contain cache checkpoints")
-        if not message.get_text_content().strip():
-            raise ValueError("session context cannot be empty")
+        text = block.text.strip()
+        if not (text.startswith('<system-reminder source="session">') and text.endswith("</system-reminder>")):
+            raise ValueError('session context must be a standalone <system-reminder source="session"> message')
 
-    async def _messages_for_llm_async(self) -> MessageHistory:
-        """Build the exact provider-facing conversation for this request.
+    @staticmethod
+    def _is_session_context_message(message: Message) -> bool:
+        if message.role != "user" or not isinstance(message.content, list) or len(message.content) != 1:
+            return False
+        block = message.content[0]
+        if not isinstance(block, TextBlock):
+            return False
+        text = block.text.strip()
+        return text.startswith('<system-reminder source="session">') and text.endswith("</system-reminder>")
 
-        Normal history is repaired and adapted first, then the session message
-        is prepended. This ordering keeps the runtime context out of orphaned
-        tool-call repair and prevents it from splitting a tool call/result pair.
-        """
-        fixed_history = await self._history_for_llm_async()
-        session_context = self._ensure_session_context_message()
+    async def _ensure_session_context_in_history(self) -> Optional[Message]:
+        """Insert session context once as the first normal hidden history message."""
+        if not self._session_context_initialized:
+            session_context = self.session_context_message
+            if session_context is None:
+                session_context = self.build_session_context_message()
+            self._validate_session_context_message(session_context)
+            self.session_context_message = session_context
+            self._session_context_initialized = True
+        else:
+            session_context = self.session_context_message
         if session_context is None:
-            return fixed_history
-        return MessageHistory([session_context, *fixed_history])
+            return None
+
+        for existing in self.history:
+            if self._is_session_context_message(existing):
+                self.session_context_message = existing
+                return existing
+
+        # A fresh conversation gets the reminder at index zero. Backfilling an
+        # older restored/replaced history also prepends it; wholesale history
+        # replacement intentionally invalidates any stale compaction boundary,
+        # whose summary could not have included this newly introduced message.
+        self.history = MessageHistory([session_context, *self.history])
+        if self.session_recorder is not None:
+            await asyncio.to_thread(self.session_recorder.record_context_message, session_context)
+        return session_context
 
     def _finalize_history_for_llm(self, effective: MessageHistory) -> MessageHistory:
         fixed = self.fix_incomplete_tool_calls(list(effective))
@@ -1154,15 +1162,15 @@ class BaseAgent(LogMixin):
     async def count_current_context(self, fixed_history: Optional[MessageHistory] = None) -> TokenCount:
         """Count the current context's tokens and emit a context-budget update.
 
-        Building the provider-facing messages (normal-history repair and
-        adaptation followed by session-context prepending) is an O(history)
-        pass. The agent loop already builds that exact sequence for the request,
-        so it passes it here as ``fixed_history`` to avoid rebuilding it a
-        second time per iteration. Count-only callers omit it.
+        Building the provider-facing messages (tool-call repair, provider
+        adaptation, and image stripping) is an O(history) pass. The agent loop
+        already builds that exact sequence for the request, so it passes it here
+        as ``fixed_history`` to avoid rebuilding it a second time per iteration.
+        Count-only callers omit it.
         """
         if fixed_history is None:
             self._sanitize_oversized_tool_results()
-            fixed_history = await self._messages_for_llm_async()
+            fixed_history = await self._history_for_llm_async()
         assert self.tool_collection is not None, "tool_collection must be initialized before counting context"
         token_count = await self.llm.count_tokens(
             system=self.system_prompt,
@@ -1271,6 +1279,9 @@ class BaseAgent(LogMixin):
 
         await self.emitter.compaction_status("started", "Compacting conversation…")
         try:
+            # Session context is an ordinary hidden history reminder, so the
+            # compressor sees and summarizes it through the normal transcript.
+            await self._ensure_session_context_in_history()
             compaction_system_prompt = None
             compaction_override = self.prompt_overrides.load_compaction_system_prompt()
             if compaction_override is not None:
@@ -1354,7 +1365,7 @@ class BaseAgent(LogMixin):
         # checkpoint before re-counting so the reused history reflects it.
         self.mark_cache_checkpoint()
         self._sanitize_oversized_tool_results()
-        fixed_history = await self._messages_for_llm_async()
+        fixed_history = await self._history_for_llm_async()
         token_count = await self.count_current_context(fixed_history)
 
         await self.fire_hook(
@@ -2233,13 +2244,13 @@ class BaseAgent(LogMixin):
     async def _continue_from_history_impl(self) -> AsyncGenerator[Dict[str, Any], None]:
         # No memory refresh: its only model-visible effect is volatile-context
         # injection, which a continuation deliberately never performs.
+        await self._ensure_session_context_in_history()
         if self.session_recorder is not None:
             await asyncio.to_thread(self.session_recorder.start_continuation_turn)
             await asyncio.to_thread(
                 self.session_recorder.record_system_context,
                 self.system_prompt.get_text_content(),
             )
-            await self._record_session_context()
             if self.tool_collection is not None:
                 await asyncio.to_thread(
                     self.session_recorder.record_tool_definitions,
@@ -2386,15 +2397,6 @@ class BaseAgent(LogMixin):
         """Volatile context the model has not been shown yet, or ``None`` if nothing changed."""
         return self._volatile_context.pending_block(self._volatile_context_sections())
 
-    async def _record_session_context(self) -> None:
-        """Journal session context as a distinct, non-replayed runtime surface."""
-        if self.session_recorder is None:
-            return
-        session_context = self._ensure_session_context_message()
-        record = getattr(self.session_recorder, "record_session_context", None)
-        if session_context is not None and callable(record):
-            await asyncio.to_thread(record, session_context)
-
     async def _process_message_stream_impl(
         self, message: str, attachments: Optional[List[Dict[str, Any]]] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -2436,6 +2438,10 @@ class BaseAgent(LogMixin):
             if submit.additional_context:
                 content_blocks.append(TextBlock(text=submit.additional_context))
 
+        # Materialize the hidden session reminder before the first user turn so
+        # raw history, journal replay, compression, and provider ordering agree.
+        await self._ensure_session_context_in_history()
+
         if self.session_recorder is not None:
             await asyncio.to_thread(
                 self.session_recorder.start_turn,
@@ -2448,7 +2454,6 @@ class BaseAgent(LogMixin):
                 self.session_recorder.record_system_context,
                 self.system_prompt.get_text_content(),
             )
-            await self._record_session_context()
             if self.tool_collection is not None:
                 await asyncio.to_thread(
                     self.session_recorder.record_tool_definitions,
@@ -2509,7 +2514,7 @@ class BaseAgent(LogMixin):
                 # count and the request below — the repair+adapt+image-strip pass is
                 # O(history) and ran twice per iteration before.
                 self._sanitize_oversized_tool_results()
-                fixed_history = await self._messages_for_llm_async()
+                fixed_history = await self._history_for_llm_async()
                 token_count = await self.count_current_context(fixed_history)
                 logger.debug("Input token count: %s", token_count)
 

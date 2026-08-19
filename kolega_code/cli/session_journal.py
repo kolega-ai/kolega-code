@@ -753,7 +753,6 @@ class SessionRecorder:
         self.current_turn_id: Optional[str] = None
         self._agent_stamp = agent_stamp
         self._last_system_fingerprint: Optional[str] = None
-        self._last_session_context_fingerprint: Optional[str] = None
         self._last_tools_fingerprint: Optional[str] = None
         self._turn_started_at: Optional[str] = None
         self._assistant_count = 0
@@ -916,27 +915,6 @@ class SessionRecorder:
                 artifacts=artifacts,
             )
             self._last_system_fingerprint = fingerprint
-            return True
-
-    def record_session_context(self, message: Message) -> bool:
-        """Record runtime-authored session context without replaying it as history."""
-        if message.role != "user":
-            raise ValueError("session context must use the user role")
-        serialized = message.to_dict()
-        canonical = json.dumps(serialized, sort_keys=True, separators=(",", ":"), default=str)
-        fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        with self._lock:
-            if fingerprint == self._last_session_context_fingerprint:
-                return False
-            stored, artifacts = self.journal.prepare_message(serialized)
-            self._append(
-                "context.session",
-                actor="system",
-                payload={"message": stored, "sha256": fingerprint},
-                turn_id=self.current_turn_id,
-                artifacts=artifacts,
-            )
-            self._last_session_context_fingerprint = fingerprint
             return True
 
     def record_tool_definitions(self, tools: list[dict[str, Any]]) -> bool:
@@ -1116,7 +1094,6 @@ class SessionRecorder:
             if self.current_turn_id is not None:
                 raise SessionJournalError("Cannot reset context while a session turn is open")
             self._last_system_fingerprint = None
-            self._last_session_context_fingerprint = None
             self._last_tools_fingerprint = None
             return self.journal.start_epoch(reason)
 

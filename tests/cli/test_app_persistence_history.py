@@ -87,6 +87,10 @@ def test_standalone_system_reminder_history_item_fast_path() -> None:
         '<system-reminder source="date">\nToday\n</system-reminder>'
     )
     assert _is_standalone_system_reminder_history_item(Message(role="user", content=[TextBlock(reminder)]).to_dict())
+    session_reminder = '<system-reminder source="session">\nRuntime context\n</system-reminder>'
+    assert _is_standalone_system_reminder_history_item(
+        Message(role="user", content=[TextBlock(session_reminder)]).to_dict()
+    )
 
     large_ordinary_text = "x" * 1_000_000 + reminder
     large_tool_result = Message(
