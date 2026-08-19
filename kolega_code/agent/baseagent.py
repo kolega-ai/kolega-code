@@ -24,7 +24,7 @@ from kolega_code.config import AgentConfig, EditProtocol, ModelProvider
 from kolega_code.events import AgentConnectionManager
 from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
 from .conversation import Conversation, adapt_history_for_provider
-from .volatile_context import VolatileContextTracker, VolatileSection
+from .volatile_context import VolatileContextTracker, VolatileSection, scrub_reminder_markup
 from kolega_code.events import AgentEventEmitter
 from kolega_code.hooks import (
     NO_OP_DISPATCHER,
@@ -446,8 +446,6 @@ class BaseAgent(LogMixin):
         # currently absent. See add_volatile_section.
         self._extra_volatile_sections: List[Callable[[], Optional[VolatileSection]]] = []
 
-        self.conversation = Conversation(max_tool_result_chars=self.max_tool_result_chars_in_history)
-        self.conversation.skill_content_pattern = self.skill_content_pattern
         # Counts consecutive transient LLM failures (rate-limit / overload) so the turn loop
         # backs off and eventually gives up instead of retrying forever; reset on any good turn.
         self._consecutive_llm_retries = 0
@@ -514,6 +512,18 @@ class BaseAgent(LogMixin):
         # tool) and used by _unsupported_attachment_message to reject image
         # attachments for non-vision models with a clear message.
         self.supports_vision = bool(model_specs.get("supports_vision", False))
+        session_context_body = scrub_reminder_markup(self.build_session_context_body())
+        self.session_context_message = Message(
+            role="user",
+            content=[TextBlock(text=f'<system-reminder source="session">\n{session_context_body}\n</system-reminder>')],
+        )
+        self.conversation = Conversation(
+            [self.session_context_message],
+            max_tool_result_chars=self.max_tool_result_chars_in_history,
+        )
+        self.conversation.skill_content_pattern = self.skill_content_pattern
+        if self.session_recorder is not None:
+            self.session_recorder.record_context_message(self.session_context_message)
         # Web tool mode: whether the provider's hosted (server-side) web_search
         # tool is requested and whether the client-side web_search/web_fetch
         # tools are registered. Resolved from config.web_search_mode plus the
@@ -531,12 +541,6 @@ class BaseAgent(LogMixin):
         # Tool collection must be initialized by subclass with appropriate configuration
         # (e.g., read_only, browser_only, custom tool_config, etc.)
         self.tool_collection = None
-        # Runtime-authored context inserted as the first hidden user-role
-        # reminder in Conversation.history. It follows the same provider,
-        # compaction, persistence, and replay paths as other context messages;
-        # presentation layers hide standalone <system-reminder> messages.
-        self.session_context_message: Optional[Message] = None
-        self._session_context_initialized = False
 
         self.command_processor = CommandProcessor(self)
 
@@ -677,78 +681,21 @@ class BaseAgent(LogMixin):
         The effective-history snapshot is taken on the loop so the worker
         thread never observes a concurrent history mutation.
         """
-        await self._ensure_session_context_in_history()
         effective = self.get_effective_history_for_llm()
         return await asyncio.to_thread(self._finalize_history_for_llm, effective)
 
-    def build_session_context_message(self) -> Optional[Message]:
-        """Build the runtime-authored first conversation reminder.
-
-        Stage 1 introduces the history surface without migrating prompt content,
-        so the default is no message. Subclasses and hosts may override this
-        builder or assign ``session_context_message`` before the first request.
-        The result is initialized lazily because concrete subclasses finish
-        configuring themselves after ``BaseAgent.__init__`` returns.
-        """
-        return None
-
-    @staticmethod
-    def _validate_session_context_message(message: Optional[Message]) -> None:
-        """Require one standalone hidden ``source="session"`` reminder."""
-        if message is None:
-            return
-        if message.role != "user":
-            raise ValueError("session context must use the user role")
-        if message.tool_calls or message.stop_reason is not None or message.usage is not None or message.usage_metadata:
-            raise ValueError("session context cannot contain assistant or provider metadata")
-        if not isinstance(message.content, list) or len(message.content) != 1:
-            raise ValueError("session context must contain exactly one TextBlock")
-        block = message.content[0]
-        if not isinstance(block, TextBlock):
-            raise ValueError("session context must be text-only")
-        if block.cache_checkpoint:
-            raise ValueError("session context cannot contain cache checkpoints")
-        text = block.text.strip()
-        if not (text.startswith('<system-reminder source="session">') and text.endswith("</system-reminder>")):
-            raise ValueError('session context must be a standalone <system-reminder source="session"> message')
-
-    @staticmethod
-    def _is_session_context_message(message: Message) -> bool:
-        if message.role != "user" or not isinstance(message.content, list) or len(message.content) != 1:
-            return False
-        block = message.content[0]
-        if not isinstance(block, TextBlock):
-            return False
-        text = block.text.strip()
-        return text.startswith('<system-reminder source="session">') and text.endswith("</system-reminder>")
-
-    async def _ensure_session_context_in_history(self) -> Optional[Message]:
-        """Insert session context once as the first normal hidden history message."""
-        if not self._session_context_initialized:
-            session_context = self.session_context_message
-            if session_context is None:
-                session_context = self.build_session_context_message()
-            self._validate_session_context_message(session_context)
-            self.session_context_message = session_context
-            self._session_context_initialized = True
-        else:
-            session_context = self.session_context_message
-        if session_context is None:
-            return None
-
-        for existing in self.history:
-            if self._is_session_context_message(existing):
-                self.session_context_message = existing
-                return existing
-
-        # A fresh conversation gets the reminder at index zero. Backfilling an
-        # older restored/replaced history also prepends it; wholesale history
-        # replacement intentionally invalidates any stale compaction boundary,
-        # whose summary could not have included this newly introduced message.
-        self.history = MessageHistory([session_context, *self.history])
-        if self.session_recorder is not None:
-            await asyncio.to_thread(self.session_recorder.record_context_message, session_context)
-        return session_context
+    def build_session_context_body(self) -> str:
+        """Build the text body for a new conversation's session reminder."""
+        context = self.build_prompt_context()
+        return "\n".join(
+            [
+                f"Working directory: {context.project_path}",
+                f"Is directory a git repo: {str(context.is_git_repo).lower()}",
+                f"Platform: {context.platform}",
+                f"Model: {context.model_name}",
+                f"Model supports vision: {str(context.model_supports_vision).lower()}",
+            ]
+        )
 
     def _finalize_history_for_llm(self, effective: MessageHistory) -> MessageHistory:
         fixed = self.fix_incomplete_tool_calls(list(effective))
@@ -1279,9 +1226,6 @@ class BaseAgent(LogMixin):
 
         await self.emitter.compaction_status("started", "Compacting conversation…")
         try:
-            # Session context is an ordinary hidden history reminder, so the
-            # compressor sees and summarizes it through the normal transcript.
-            await self._ensure_session_context_in_history()
             compaction_system_prompt = None
             compaction_override = self.prompt_overrides.load_compaction_system_prompt()
             if compaction_override is not None:
@@ -1383,10 +1327,11 @@ class BaseAgent(LogMixin):
         return result, fixed_history, token_count
 
     def clear_history(self) -> None:
-        """Drop all history and reset compaction state."""
+        """Reset history to the runtime-authored session context."""
         if self.session_recorder is not None:
             self.session_recorder.start_epoch("agent_clear_command")
-        self.conversation.clear()
+            self.session_recorder.record_context_message(self.session_context_message)
+        self.conversation.history = MessageHistory([self.session_context_message])
         # The model no longer holds any injected context; re-send the current sections
         # (memory, guidance, plan handle, task list) on the next turn.
         self.reset_volatile_context()
@@ -2231,7 +2176,10 @@ class BaseAgent(LogMixin):
         ``process_message_stream``. Adds no user text, attachment,
         volatile-context turn, or prompt-submit hook.
         """
-        if not self.get_effective_history_for_llm():
+        effective_history = self.get_effective_history_for_llm()
+        if not effective_history or (
+            len(effective_history) == 1 and effective_history[0] is self.session_context_message
+        ):
             raise ValueError(
                 "continue_from_history_stream requires a non-empty conversation; "
                 "restore message history (and any compaction state) first"
@@ -2244,7 +2192,6 @@ class BaseAgent(LogMixin):
     async def _continue_from_history_impl(self) -> AsyncGenerator[Dict[str, Any], None]:
         # No memory refresh: its only model-visible effect is volatile-context
         # injection, which a continuation deliberately never performs.
-        await self._ensure_session_context_in_history()
         if self.session_recorder is not None:
             await asyncio.to_thread(self.session_recorder.start_continuation_turn)
             await asyncio.to_thread(
@@ -2437,10 +2384,6 @@ class BaseAgent(LogMixin):
                 return
             if submit.additional_context:
                 content_blocks.append(TextBlock(text=submit.additional_context))
-
-        # Materialize the hidden session reminder before the first user turn so
-        # raw history, journal replay, compression, and provider ordering agree.
-        await self._ensure_session_context_in_history()
 
         if self.session_recorder is not None:
             await asyncio.to_thread(

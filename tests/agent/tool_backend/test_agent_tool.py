@@ -10,6 +10,7 @@ from kolega_code.agent.tool_backend.agent_tool import AgentTool
 from kolega_code.agent.orchestration.accounting import WorkflowRunAccounting
 from kolega_code.agent.orchestration.budget import Budget
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.llm.models import Message, TextBlock
 
 
 @pytest.fixture
@@ -85,7 +86,11 @@ class MockAgent:
         self.init_kwargs = kwargs
         self.recap_agent_outcome = AsyncMock(return_value="Mock agent completed")
         self._stream_messages = list(self.default_stream_messages)
-        self._message_history = []
+        self.session_context_message = Message(
+            role="user",
+            content=[TextBlock('<system-reminder source="session">\nMock session context\n</system-reminder>')],
+        )
+        self._message_history = [self.session_context_message.to_dict()]
         self.total_tokens_used = 0  # Add token count attribute
         MockAgent.last_instance = self
 

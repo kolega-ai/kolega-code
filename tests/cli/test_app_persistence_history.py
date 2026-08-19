@@ -62,6 +62,37 @@ class _RestoredHistoryFakeAgent(FakeCoderAgent):
         return self.restored_history or []
 
 
+@pytest.mark.asyncio
+async def test_resumed_empty_history_replaces_constructor_state_without_constructor_recorder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", _RestoredHistoryFakeAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(
+        project_path=project,
+        config=config,
+        mode="code",
+        store=store,
+        session=session,
+        resuming_session=True,
+    )
+
+    async with app.run_test():
+        assert isinstance(app.agent, _RestoredHistoryFakeAgent)
+        assert app.agent.kwargs["session_recorder"] is None
+        assert app.agent.restored_history == []
+        assert app.agent.session_recorder is app._session_recorder
+
+
 def _persist_history(
     store: SessionStore,
     session,

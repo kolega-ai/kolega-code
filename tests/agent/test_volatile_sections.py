@@ -27,9 +27,10 @@ async def test_registered_section_is_injected_as_its_own_user_turn(tmp_path):
 
     _ = [chunk async for chunk in agent.process_message_stream("do the thing")]
 
-    # history = [user message, injected volatile block, assistant response]
-    assert [message.role for message in agent.history] == ["user", "user", "assistant"]
-    injected = agent.history[1]
+    # history = [session context, user message, injected volatile block, assistant response]
+    assert agent.history[0] is agent.session_context_message
+    assert [message.role for message in agent.history] == ["user", "user", "user", "assistant"]
+    injected = agent.history[2]
     text = injected.get_text_content()
     assert 'source="plan"' in text
     assert PLAN_TEXT in text
@@ -44,7 +45,7 @@ async def test_empty_section_is_absent(tmp_path):
 
     _ = [chunk async for chunk in agent.process_message_stream("do the thing")]
 
-    text = agent.history[1].get_text_content()
+    text = agent.history[2].get_text_content()
     assert 'source="plan"' not in text
     assert 'source="date"' in text
 
@@ -56,7 +57,7 @@ async def test_changed_section_is_reinjected_alone(tmp_path):
     agent.add_volatile_section(lambda: VolatileSection("plan", state["plan"]))
 
     _ = [chunk async for chunk in agent.process_message_stream("turn one")]
-    assert "plan v1" in agent.history[1].get_text_content()
+    assert "plan v1" in agent.history[2].get_text_content()
 
     state["plan"] = "plan v2"
     _ = [chunk async for chunk in agent.process_message_stream("turn two")]
@@ -138,8 +139,8 @@ async def test_provider_error_is_skipped(tmp_path, caplog):
     _ = [chunk async for chunk in agent.process_message_stream("do the thing")]
 
     # The turn still ran and the healthy section was injected.
-    assert len(agent.history) == 3
-    assert 'source="plan"' in agent.history[1].get_text_content()
+    assert len(agent.history) == 4
+    assert 'source="plan"' in agent.history[2].get_text_content()
     assert "Volatile-section provider failed" in caplog.text
 
 

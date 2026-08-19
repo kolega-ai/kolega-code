@@ -1183,6 +1183,7 @@ def _run_tui(args: argparse.Namespace) -> int:
         show_logs=args.show_logs,
         startup_config_error=startup_config_error,
         extension_selection=extension_selection,
+        resuming_session=args.resume is not None or bool(args.session),
     )
 
     async def _run_app() -> None:
@@ -1532,11 +1533,14 @@ async def _run_ask(args: argparse.Namespace) -> int:
         session = resumed_session or _get_or_create_session(
             store, project_path, CLI_AGENT_MODE, summary, args.session, force_new=False
         )
+        restoring_session = resumed_session is not None
         session = _normalize_cli_session_mode(store, session, persist=True)
     elif args.save:
         session = store.create(project_path, CLI_AGENT_MODE, summary)
+        restoring_session = False
     else:
         session = SessionRecord.create(project_path, CLI_AGENT_MODE, summary)
+        restoring_session = False
 
     # Every run records the semantic journal; unsaved runs use an in-memory
     # sink with the same id/seq/schema rules and never touch the state dir.
@@ -1687,6 +1691,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
         usage_ledger.observer = sink
         await sink.start()
         try:
+            constructor_recorder = None if restoring_session else session_recorder
             agent = CoderAgent(
                 project_path=project_path,
                 workspace_id=session.workspace_id,
@@ -1701,7 +1706,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 permission_callback=_permission_callback_for_ask(launch_project_path)
                 if permission_mode == PermissionMode.ASK
                 else None,
-                session_recorder=session_recorder,
+                session_recorder=constructor_recorder,
                 hook_dispatcher=hook_dispatcher,
                 custom_agent_catalog=custom_agent_catalog,
                 memory_project_path=launch_project_path,
@@ -1738,9 +1743,10 @@ async def _run_ask(args: argparse.Namespace) -> int:
         if not args.json:
             for msg in lsp_messages:
                 print(msg, file=sys.stderr)
-        if session.history:
+        if restoring_session:
             agent.restore_message_history(session.history)
             agent.restore_compaction_state(session.compaction)
+            agent.session_recorder = session_recorder
 
         if extension_bundle is not None:
             await bind_extension_agent(extension_bundle, agent)

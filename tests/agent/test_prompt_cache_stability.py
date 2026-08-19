@@ -163,7 +163,7 @@ class TestPrefixStability:
         await run_turn(agent, "third")
 
         # Turn 1 seeds whatever exists at session start; turn 2 carries the change; turn 3, having
-        # nothing new to say, must add no reminder at all.
+        # nothing new to say, must add no new volatile reminder at all.
         assert "memory" in reminder_sources(llm.payloads[1])
         assert reminder_sources(llm.payloads[2]) == reminder_sources(llm.payloads[1])
 
@@ -197,16 +197,34 @@ class TestPrefixStability:
                 if isinstance(block, dict)
             )
         ]
-        assert len(reminder_messages) == 1
-        reminder = reminder_messages[0]
-        assert reminder["role"] == "user"
-        # Exactly one block, and the user's own text is not in it.
-        assert len(reminder["content"]) == 1
-        assert "do the thing" not in reminder["content"][0]["text"]
-        # The reminder trails the user's message rather than preceding it, so that the in-memory
-        # history matches the journal — the journal records the turn's user message first.
-        assert "do the thing" in str(messages[0]["content"])
-        assert reminder is messages[1]
+        session_messages = [
+            message
+            for message in reminder_messages
+            if any(
+                isinstance(block, dict) and 'source="session"' in str(block.get("text", ""))
+                for block in message.get("content", [])
+                if isinstance(block, dict)
+            )
+        ]
+        volatile_messages = [message for message in reminder_messages if message not in session_messages]
+
+        assert len(session_messages) == 1
+        assert len(volatile_messages) == 1
+        session_reminder = session_messages[0]
+        volatile_reminder = volatile_messages[0]
+
+        assert session_reminder["role"] == "user"
+        assert volatile_reminder["role"] == "user"
+        # Exactly one block in each reminder message, and the user's own text is not in either.
+        assert len(session_reminder["content"]) == 1
+        assert len(volatile_reminder["content"]) == 1
+        assert "do the thing" not in session_reminder["content"][0]["text"]
+        assert "do the thing" not in volatile_reminder["content"][0]["text"]
+        # The volatile reminder trails the user's message rather than preceding it, so that the
+        # in-memory history matches the journal — the journal records the turn's user message first.
+        assert "do the thing" in str(messages[1]["content"])
+        assert session_reminder is messages[0]
+        assert volatile_reminder is messages[2]
 
 
 class TestInjectionDoesNotBreakToolPairing:

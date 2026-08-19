@@ -259,7 +259,7 @@ async def test_planning_agent_rejects_deepseek_image_without_llm_call(tmp_path, 
     assert "does not support image input" in chunks[0]["content"]
     assert "deepseek-v4-pro" in chunks[0]["content"]
     assert chunks[0]["complete"] is True
-    assert agent.history == []
+    assert list(agent.history) == [agent.session_context_message]
     agent.llm.stream.assert_not_called()
 
 

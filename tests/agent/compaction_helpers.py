@@ -5,7 +5,7 @@ No network and no API keys: every test installs a ``FakeLLM`` on the agent so
 """
 
 import uuid
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 from kolega_code.events import AgentConnectionManager
@@ -175,6 +175,7 @@ def build_agent(
     agent_cls=None,
     sub_agent=False,
     llm=None,
+    session_recorder=None,
     model_context_length=1000,
     strict_budget: tuple[int, int] | None = None,
 ):
@@ -191,7 +192,8 @@ def build_agent(
 
     cm = connection_manager or AsyncMock(spec=AgentConnectionManager)
     cls = agent_cls or BaseAgent
-    agent = cls(
+    constructor = cast(Any, cls)
+    agent_kwargs = dict(
         project_path=tmp_path,
         workspace_id="test_ws",
         thread_id=str(uuid.uuid4()),
@@ -199,6 +201,9 @@ def build_agent(
         config=make_agent_config(strict_budget=strict_budget),
         sub_agent=sub_agent,
     )
+    if session_recorder is not None:
+        agent_kwargs["session_recorder"] = session_recorder
+    agent = constructor(**agent_kwargs)
     agent.send_chat_message = AsyncMock()
     agent.log_info = AsyncMock()
     agent.log_error = AsyncMock()
