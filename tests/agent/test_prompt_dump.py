@@ -23,14 +23,15 @@ def test_dump_prompt_overrides_creates_all_uppercase_files(tmp_path):
 
     coder_text = (tmp_path / PROMPT_OVERRIDE_DIR / "CODER.md").read_text(encoding="utf-8")
     assert "powerful AI coding assistant" in coder_text
-    assert "- Working directory: {{ context.project_path }}" in coder_text
-    assert "- Is directory a git repo: {{ context.is_git_repo }}" in coder_text
-    assert "- Platform: {{ context.platform }}" in coder_text
-    # The date is injected into the conversation, not rendered here: it would otherwise change
-    # the system prompt every midnight and invalidate the cached prefix.
-    assert "date_today" not in coder_text
-    assert "- Model: {{ context.model_name }}" in coder_text
-    assert "- Model supports vision: {{ context.model_supports_vision | lower }}" in coder_text
+    for dynamic_field in (
+        "context.project_path",
+        "context.is_git_repo",
+        "context.platform",
+        "date_today",
+        "context.model_name",
+        "context.model_supports_vision",
+    ):
+        assert dynamic_field not in coder_text
     assert str(tmp_path) not in coder_text
     assert "continuity briefing" in (tmp_path / PROMPT_OVERRIDE_DIR / "COMPACTION.md").read_text(encoding="utf-8")
 
@@ -52,17 +53,25 @@ def test_dump_prompt_overrides_skips_existing_by_default_and_force_overwrites(tm
     assert "powerful AI coding assistant" in coder.read_text(encoding="utf-8")
 
 
-def test_prompt_dump_contents_use_placeholders_for_agent_environment(tmp_path):
+def test_prompt_dump_contents_omit_session_environment_fields(tmp_path):
     contents = prompt_dump_contents(tmp_path)
 
     for filename in ["CODER.md", "PLANNING.md", "GENERAL.md", "INVESTIGATION.md", "BROWSER.md"]:
         text = contents[filename]
-        assert "{{ context.project_path }}" in text
-        assert "{{ context.is_git_repo }}" in text
-        assert "{{ context.platform }}" in text
-        assert "date_today" not in text
-        assert "{{ context.model_name }}" in text
-        assert "- Model supports vision: {{ context.model_supports_vision | lower }}" in text
+        for dynamic_field in (
+            "context.project_path",
+            "project_path",
+            "context.is_git_repo",
+            "is_git_repo",
+            "context.platform",
+            "platform",
+            "date_today",
+            "context.model_name",
+            "model_name",
+            "context.model_supports_vision",
+            "model_supports_vision",
+        ):
+            assert f"{{{{ {dynamic_field}" not in text
         assert str(tmp_path) not in text
 
 

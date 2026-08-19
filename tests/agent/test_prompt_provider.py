@@ -2,6 +2,7 @@
 Unit tests for the PromptProvider class.
 """
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -50,7 +51,7 @@ class TestPromptProvider:
         assert prompt is not None
         assert "local developer CLI" in prompt
         assert "Kolega Code" in prompt
-        assert "/test/project" in prompt
+        assert "/test/project" not in prompt
         # Repository guidance is injected into the conversation on change, not rendered into the
         # prompt, so editing AGENTS.md no longer invalidates the cached prefix for the whole
         # conversation. The prompt describes the channel that delivers it instead.
@@ -98,7 +99,8 @@ class TestPromptProvider:
             agent_type=AgentType.CODER, mode=AgentMode.CLI, context=prompt_context
         )
 
-        assert "/test/project/.kolega/worktrees/<slug>" in prompt
+        assert "project-local `.kolega/worktrees/<slug>` directory" in prompt
+        assert "/test/project" not in prompt
         assert "never in the OS temp directory or session scratchpad" in prompt
         assert "inspect both the filesystem and `git worktree list`" in prompt
         assert "use `worktree` if nothing remains" in prompt
@@ -128,31 +130,31 @@ class TestPromptProvider:
             (AgentType.BROWSER, None),
         ],
     )
-    @pytest.mark.parametrize(
-        ("supports_vision", "expected"),
-        [
-            (True, "- Model supports vision: true"),
-            (False, "- Model supports vision: false"),
-        ],
-    )
-    def test_agent_prompts_render_lowercase_vision_support(
-        self,
-        prompt_provider,
-        prompt_context,
-        agent_type,
-        mode,
-        supports_vision,
-        expected,
+    def test_bundled_agent_prompts_are_stable_across_session_environments(
+        self, prompt_provider, prompt_context, agent_type, mode
     ):
-        prompt_context.model_supports_vision = supports_vision
-
-        prompt = prompt_provider.get_system_prompt(
-            agent_type=agent_type,
-            mode=mode,
-            context=prompt_context,
+        other_context = replace(
+            prompt_context,
+            project_path="/different/project",
+            is_git_repo=False,
+            platform="Linux",
+            model_name="different-model",
+            model_supports_vision=False,
         )
 
-        assert expected in prompt
+        first = prompt_provider.get_system_prompt(agent_type=agent_type, mode=mode, context=prompt_context)
+        second = prompt_provider.get_system_prompt(agent_type=agent_type, mode=mode, context=other_context)
+
+        assert first == second
+        for value in (
+            prompt_context.project_path,
+            prompt_context.platform,
+            prompt_context.model_name,
+            other_context.project_path,
+            other_context.platform,
+            other_context.model_name,
+        ):
+            assert value not in first
 
     @pytest.mark.parametrize("mode", [AgentMode.CODE, AgentMode.VIBE, AgentMode.FIX])
     def test_hosted_coder_modes_require_host_template(self, prompt_provider, prompt_context, mode):
@@ -184,7 +186,7 @@ class TestPromptProvider:
         assert len(prompt) > 0
         assert "code investigation agent" in prompt
         assert "explaining a codebase" in prompt
-        assert "/test/project" in prompt
+        assert "/test/project" not in prompt
 
     def test_browser_agent_prompt_generation(self, prompt_provider, prompt_context):
         """Test that browser agent prompts can be generated."""

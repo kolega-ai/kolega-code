@@ -88,7 +88,10 @@ kolega-code prompts validate --project .
 
 Validation uses the same strict Jinja rendering check that runs during startup. Missing optional files are not errors. The terminal command exits `0` when all existing supported overrides are valid (or no overrides exist), and exits `1` when any override cannot render.
 
-Dumped files are editable Markdown templates. Environment values are written as Jinja tags, not frozen current values. For example:
+Dumped files are editable Markdown templates. The bundled templates omit session-specific environment
+facts so equivalent agents can share the same cached system-prompt prefix. The same variables remain
+available to project overrides. If an override intentionally needs them, it can add Jinja expressions
+such as:
 
 ```md
 - Working directory: {{ context.project_path }}
@@ -98,12 +101,11 @@ Dumped files are editable Markdown templates. Environment values are written as 
 - Model supports vision: {{ context.model_supports_vision | lower }}
 ```
 
-The bundled prompts deliberately omit values that change while a session runs — the
-date, repository guidance, and project memory. Anything in the system prompt is
-processed ahead of every message, so a change there invalidates the cached prefix for
-the whole conversation; those values are delivered to the agent as `<system-reminder>`
-context updates instead, each time they change. The variables remain available to your
-overrides if you want them, at that cost.
+The bundled prompts deliver working directory, Git status, platform, model, and vision capability in
+the initial runtime-authored `<system-reminder source="session">` history message. Values that can
+change while a session runs — the date, repository guidance, and project memory — arrive as later
+`<system-reminder>` context updates. Anything added to a project override remains part of the system
+prompt and therefore changes its cache key.
 
 ## Template variables
 
