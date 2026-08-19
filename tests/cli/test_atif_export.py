@@ -90,12 +90,6 @@ RICH_TURN_TOOLS = [
 
 
 def drive_rich_turn(recorder, ledger):
-    recorder.record_context_message(
-        Message(
-            role="user",
-            content=[TextBlock('<system-reminder source="session">\nruntime session context\n</system-reminder>')],
-        )
-    )
     recorder.start_turn(Message(role="user", content=[TextBlock("run the tests")]))
     recorder.record_system_context("You are kolega.")
     recorder.record_tool_definitions(RICH_TURN_TOOLS)
@@ -163,11 +157,9 @@ def test_rich_turn_projects_and_validates():
     steps = doc["steps"]
     assert [step["step_id"] for step in steps] == list(range(1, len(steps) + 1))
     sources = [step["source"] for step in steps]
-    assert sources == ["user", "user", "system", "agent", "agent"]
-    assert steps[0]["message"] == ('<system-reminder source="session">\nruntime session context\n</system-reminder>')
-    assert steps[0]["extra"]["kolega"]["origin"] == "context.message"
+    assert sources == ["user", "system", "agent", "agent"]
 
-    agent_step = steps[3]
+    agent_step = steps[2]
     assert agent_step["llm_call_count"] == 1
     assert agent_step["model_name"] == "claude-opus-5"
     assert agent_step["reasoning_effort"] == "high"

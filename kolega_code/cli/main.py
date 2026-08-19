@@ -1529,6 +1529,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
         for diagnostic in hook_config.diagnostics:
             print(f"hooks: {diagnostic}", file=sys.stderr)
 
+    restoring_session = False
     if args.session:
         session = resumed_session or _get_or_create_session(
             store, project_path, CLI_AGENT_MODE, summary, args.session, force_new=False
@@ -1537,10 +1538,8 @@ async def _run_ask(args: argparse.Namespace) -> int:
         session = _normalize_cli_session_mode(store, session, persist=True)
     elif args.save:
         session = store.create(project_path, CLI_AGENT_MODE, summary)
-        restoring_session = False
     else:
         session = SessionRecord.create(project_path, CLI_AGENT_MODE, summary)
-        restoring_session = False
 
     # Every run records the semantic journal; unsaved runs use an in-memory
     # sink with the same id/seq/schema rules and never touch the state dir.

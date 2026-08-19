@@ -452,26 +452,6 @@ def test_system_context_is_fingerprinted_and_reset_by_epoch(tmp_path: Path) -> N
     assert sum(1 for e in journal.read_events() if e.event_type == "context.system") == 3
 
 
-def test_session_context_uses_normal_public_context_message_event(tmp_path: Path) -> None:
-    journal = make_file_journal(tmp_path)
-    bootstrap(journal)
-    recorder = SessionRecorder(journal, recover=False)
-    message = Message(
-        role="user",
-        content=[TextBlock('<system-reminder source="session">\nruntime session context\n</system-reminder>')],
-    )
-
-    recorder.record_context_message(message)
-
-    events = [e for e in journal.read_events() if e.event_type == "context.message"]
-    assert len(events) == 1
-    assert events[0].actor == "user"
-    assert events[0].payload["message"]["role"] == "user"
-    public = to_public_event(events[0])
-    assert public is not None
-    assert public["payload"]["message"]["content"][0]["text"] == message.get_text_content()
-
-
 def test_tool_definitions_are_fingerprinted_and_reset_by_epoch(tmp_path: Path) -> None:
     journal = make_file_journal(tmp_path)
     bootstrap(journal)

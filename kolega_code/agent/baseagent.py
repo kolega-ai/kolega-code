@@ -512,7 +512,18 @@ class BaseAgent(LogMixin):
         # tool) and used by _unsupported_attachment_message to reject image
         # attachments for non-vision models with a clear message.
         self.supports_vision = bool(model_specs.get("supports_vision", False))
-        session_context_body = scrub_reminder_markup(self.build_session_context_body())
+        prompt_context = self.build_prompt_context()
+        session_context_body = scrub_reminder_markup(
+            "\n".join(
+                [
+                    f"Working directory: {prompt_context.project_path}",
+                    f"Is directory a git repo: {str(prompt_context.is_git_repo).lower()}",
+                    f"Platform: {prompt_context.platform}",
+                    f"Model: {prompt_context.model_name}",
+                    f"Model supports vision: {str(prompt_context.model_supports_vision).lower()}",
+                ]
+            )
+        )
         self.session_context_message = Message(
             role="user",
             content=[TextBlock(text=f'<system-reminder source="session">\n{session_context_body}\n</system-reminder>')],
@@ -683,19 +694,6 @@ class BaseAgent(LogMixin):
         """
         effective = self.get_effective_history_for_llm()
         return await asyncio.to_thread(self._finalize_history_for_llm, effective)
-
-    def build_session_context_body(self) -> str:
-        """Build the text body for a new conversation's session reminder."""
-        context = self.build_prompt_context()
-        return "\n".join(
-            [
-                f"Working directory: {context.project_path}",
-                f"Is directory a git repo: {str(context.is_git_repo).lower()}",
-                f"Platform: {context.platform}",
-                f"Model: {context.model_name}",
-                f"Model supports vision: {str(context.model_supports_vision).lower()}",
-            ]
-        )
 
     def _finalize_history_for_llm(self, effective: MessageHistory) -> MessageHistory:
         fixed = self.fix_incomplete_tool_calls(list(effective))
@@ -1109,14 +1107,17 @@ class BaseAgent(LogMixin):
     async def count_current_context(self, fixed_history: Optional[MessageHistory] = None) -> TokenCount:
         """Count the current context's tokens and emit a context-budget update.
 
-        Building the provider-facing messages (tool-call repair, provider
-        adaptation, and image stripping) is an O(history) pass. The agent loop
-        already builds that exact sequence for the request, so it passes it here
-        as ``fixed_history`` to avoid rebuilding it a second time per iteration.
-        Count-only callers omit it.
+        Building the request history (``_history_for_llm``: tool-call repair +
+        provider adaptation, and image stripping for non-vision models) is an
+        O(history) pass that runs on the event loop. The agent loop already builds
+        that history for the request, so it passes it in here as ``fixed_history`` to
+        avoid rebuilding it a second time per iteration. Callers that only need a
+        count (``/context``, ``/compact``) omit it and the history is built here.
         """
         if fixed_history is None:
             self._sanitize_oversized_tool_results()
+            # History sent to the LLM (and to token counting): tool-call-repaired and,
+            # for non-vision models, stripped of image blocks from earlier turns.
             fixed_history = await self._history_for_llm_async()
         assert self.tool_collection is not None, "tool_collection must be initialized before counting context"
         token_count = await self.llm.count_tokens(
@@ -1331,7 +1332,7 @@ class BaseAgent(LogMixin):
         if self.session_recorder is not None:
             self.session_recorder.start_epoch("agent_clear_command")
             self.session_recorder.record_context_message(self.session_context_message)
-        self.conversation.history = MessageHistory([self.session_context_message])
+        self.history = [self.session_context_message]
         # The model no longer holds any injected context; re-send the current sections
         # (memory, guidance, plan handle, task list) on the next turn.
         self.reset_volatile_context()
