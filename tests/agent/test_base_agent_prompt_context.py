@@ -79,6 +79,18 @@ class TestBaseAgent:
         assert context.project_guidance_file == ""
         assert context.project_guidance == ""
 
+    @pytest.mark.parametrize("marker_kind", ["directory", "file"])
+    def test_build_prompt_context_recognizes_git_roots_and_linked_worktrees(self, base_agent, tmp_path, marker_kind):
+        marker = tmp_path / ".git"
+        if marker_kind == "directory":
+            marker.mkdir()
+        else:
+            marker.write_text("gitdir: /tmp/example.git/worktrees/project\n", encoding="utf-8")
+
+        context = base_agent.build_prompt_context()
+
+        assert context.is_git_repo is True
+
     def test_build_prompt_context_reports_vision_support_for_resolved_model(self, base_agent):
         context = base_agent.build_prompt_context()
 

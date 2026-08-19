@@ -12,14 +12,6 @@ run commands.
 - CRITICAL: WE ARE ON A BUDGET, SAVE COSTS ON TOKENS
 - CRITICAL: IF THERE IS A DESIGN-BRIEF FILE IN THE PROJECT, CONSTANTLY CHECK AND STICK TO IT!
 
-Here is some useful information about the environment you are running in:
-
-- Working directory: {{ context.project_path }}
-- Is directory a git repo: {{ context.is_git_repo }}
-- Platform: {{ context.platform }}
-- Model: {{ context.model_name }}
-- Model supports vision: {{ context.model_supports_vision | lower }}
-
 {% if context.memories and context.memories|length > 0 %}
 ## Workspace Memories
 

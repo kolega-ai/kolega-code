@@ -306,7 +306,7 @@ def test_skill_catalog_prompt_renders_catalog() -> None:
     assert "{catalog}" in prompts.SKILL_CATALOG_PROMPT_TEMPLATE
 
 
-def test_planning_agent_prompt_renders_environment() -> None:
+def test_planning_agent_prompt_omits_session_environment() -> None:
     rendered = prompts.build_planning_agent_system_prompt(
         system_name="Kolega Code",
         project_path="/repo",
@@ -318,10 +318,9 @@ def test_planning_agent_prompt_renders_environment() -> None:
     )
 
     assert "Kolega Code's planning agent" in rendered
-    assert "Working directory: /repo" in rendered
-    assert "Is directory a git repo: True" in rendered
-    assert "Model: test-model" in rendered
-    assert "Model supports vision: true" in rendered
+    assert "/repo" not in rendered
+    assert "test-model" not in rendered
+    assert "Model supports vision" not in rendered
     assert "submit it through `write_plan`; do not only print the plan" in rendered
     assert "complete replacement plan that incorporates those decisions" in rendered
 

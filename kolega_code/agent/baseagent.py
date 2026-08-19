@@ -914,8 +914,8 @@ class BaseAgent(LogMixin):
         """Build PromptContext from agent state."""
         import platform
 
-        # Check if it's a git repository
-        is_git_repo = self.filesystem.exists(".git") and self.filesystem.is_dir(".git")
+        # Repository roots use a .git directory; linked worktrees use a .git file.
+        is_git_repo = self.filesystem.exists(".git")
 
         project_guidance_file, project_guidance = self._load_project_guidance()
         # ``private_memory`` (policy + the memory itself) is still populated for callers that

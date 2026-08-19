@@ -15,6 +15,7 @@ import pytest
 
 from kolega_code.agent.prompt_provider import AgentMode, AgentType
 from kolega_code.memory import ProjectMemoryManager
+from kolega_code.scratchpad import SCRATCHPAD_PROMPT_EXTENSION_ID
 
 from .compaction_helpers import FakeLLM, build_agent
 
@@ -109,6 +110,46 @@ class TestHarnessIsMeaningful:
         assert len(system_text) > 2000
         assert "## Private project memory" in system_text
         assert "## Context Updates" in system_text
+
+
+class TestCrossProjectStaticPromptStability:
+    def test_equivalent_agents_keep_bundled_prompt_bytes_stable_across_projects(self, tmp_path):
+        first_project = tmp_path / "first-project"
+        second_project = tmp_path / "second-project"
+        first_project.mkdir()
+        second_project.mkdir()
+        (first_project / ".git").mkdir()
+
+        first_agent, _first_cm = build_agent(first_project)
+        second_agent, _second_cm = build_agent(second_project)
+
+        # The concrete scratchpad path is a known generation-specific extension
+        # tracked for Stage 2. This test isolates the bundled static prompt whose
+        # five core environment facts moved into ordinary session history.
+        for agent in (first_agent, second_agent):
+            agent.prompt_extensions = [
+                extension for extension in agent.prompt_extensions if extension.id != SCRATCHPAD_PROMPT_EXTENSION_ID
+            ]
+
+        first_prompt = first_agent.build_agent_system_prompt(AgentType.CODER, AgentMode.CLI)
+        second_prompt = second_agent.build_agent_system_prompt(AgentType.CODER, AgentMode.CLI)
+
+        assert first_prompt == second_prompt
+        assert str(first_project) not in first_prompt
+        assert str(second_project) not in second_prompt
+
+        first_baseline = first_agent.session_context_message.get_text_content()
+        second_baseline = second_agent.session_context_message.get_text_content()
+
+        assert first_baseline != second_baseline
+        assert f"Working directory: {first_project}" in first_baseline
+        assert "Is directory a git repo: true" in first_baseline
+        assert f"Working directory: {second_project}" in second_baseline
+        assert "Is directory a git repo: false" in second_baseline
+        for baseline in (first_baseline, second_baseline):
+            assert "Platform:" in baseline
+            assert "Model: claude-haiku-4-5-20251001" in baseline
+            assert "Model supports vision: true" in baseline
 
 
 async def run_turn(agent, message: str) -> None:
