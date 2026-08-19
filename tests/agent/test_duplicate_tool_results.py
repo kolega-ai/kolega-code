@@ -78,7 +78,7 @@ class TestDuplicateToolResultPrevention:
         base_agent.append_user_message([real_result])
 
         # Check that we have exactly one user message with the real result
-        user_messages = [msg for msg in base_agent.history if msg.role == "user"]
+        user_messages = [msg for msg in base_agent.history[1:] if msg.role == "user"]
         assert len(user_messages) == 2  # Original user message + tool result message
 
         # Check the tool result message
@@ -117,7 +117,7 @@ class TestDuplicateToolResultPrevention:
         assert not base_agent._is_history_valid_for_anthropic()
 
         # Check that we have only the provided results
-        user_messages = [msg for msg in base_agent.history if msg.role == "user"]
+        user_messages = [msg for msg in base_agent.history[1:] if msg.role == "user"]
         tool_result_msg = user_messages[-1]
 
         # Should have only 2 results (what was provided)
@@ -127,7 +127,7 @@ class TestDuplicateToolResultPrevention:
         fixed_history = base_agent.fix_incomplete_tool_calls(list(base_agent.history))
 
         # Find the tool result message in fixed history
-        fixed_user_messages = [msg for msg in fixed_history if msg.role == "user"]
+        fixed_user_messages = [msg for msg in fixed_history[1:] if msg.role == "user"]
         fixed_tool_result_msg = fixed_user_messages[-1]
 
         # Should have 3 results total: 2 real + 1 dummy for tool_2

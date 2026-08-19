@@ -666,18 +666,18 @@ class TestBaseAgent:
         base_agent.append_user_message("New user message")
 
         # Verify history was NOT fixed - append should preserve authentic history
-        assert len(base_agent.history) == 2  # assistant, user (new message)
+        assert len(base_agent.history) == 3  # session context, assistant, user (new message)
         assert not base_agent._is_history_valid_for_anthropic()  # Still invalid
 
         # Check the new message was added
-        new_msg = base_agent.history[1]
+        new_msg = base_agent.history[2]
         assert new_msg.role == "user"
         assert new_msg.content[0].text == "New user message"
 
         # But verify that fix_incomplete_tool_calls can fix it
         fixed_history = base_agent.fix_incomplete_tool_calls(list(base_agent.history))
-        assert len(fixed_history) == 2  # assistant, user (tool result + original message)
-        repaired_user = fixed_history[1]
+        assert len(fixed_history) == 3  # session context, assistant, user (tool result + original message)
+        repaired_user = fixed_history[2]
         assert isinstance(repaired_user.content[0], ToolResult)
         assert repaired_user.content[0].tool_use_id == "tool1"
         assert isinstance(repaired_user.content[1], TextBlock)
@@ -693,8 +693,8 @@ class TestBaseAgent:
         base_agent.append_user_message("Another message")
 
         # Should just append normally
-        assert len(base_agent.history) == 2
-        assert base_agent.history[1].content[0].text == "Another message"
+        assert len(base_agent.history) == 3
+        assert base_agent.history[2].content[0].text == "Another message"
 
     def test_append_user_message_with_list_content(self, base_agent):
         """Test append_user_message with list of ContentBlocks."""
@@ -702,10 +702,10 @@ class TestBaseAgent:
 
         base_agent.append_user_message(content_blocks)
 
-        assert len(base_agent.history) == 1
-        assert len(base_agent.history[0].content) == 2
-        assert base_agent.history[0].content[0].text == "Message part 1"
-        assert base_agent.history[0].content[1].text == "Message part 2"
+        assert len(base_agent.history) == 2
+        assert len(base_agent.history[1].content) == 2
+        assert base_agent.history[1].content[0].text == "Message part 1"
+        assert base_agent.history[1].content[1].text == "Message part 2"
 
     def test_append_user_message_with_single_block(self, base_agent):
         """Test append_user_message with single ContentBlock."""
@@ -713,9 +713,9 @@ class TestBaseAgent:
 
         base_agent.append_user_message(content_block)
 
-        assert len(base_agent.history) == 1
-        assert len(base_agent.history[0].content) == 1
-        assert base_agent.history[0].content[0].text == "Single block message"
+        assert len(base_agent.history) == 2
+        assert len(base_agent.history[1].content) == 1
+        assert base_agent.history[1].content[0].text == "Single block message"
 
     def test_append_assistant_message(self, base_agent):
         """Test that append_assistant_message works correctly."""
@@ -726,9 +726,9 @@ class TestBaseAgent:
         assistant_msg = Message(role="assistant", content=[TextBlock(text="Assistant response")])
         base_agent.append_assistant_message(assistant_msg)
 
-        assert len(base_agent.history) == 2
-        assert base_agent.history[1].role == "assistant"
-        assert base_agent.history[1].content[0].text == "Assistant response"
+        assert len(base_agent.history) == 3
+        assert base_agent.history[2].role == "assistant"
+        assert base_agent.history[2].content[0].text == "Assistant response"
 
     def test_extend_history_no_fix_needed(self, base_agent):
         """Test extend_history works normally when no fix needed."""
@@ -744,9 +744,9 @@ class TestBaseAgent:
 
         base_agent.extend_history(new_messages)
 
-        assert len(base_agent.history) == 4
-        assert base_agent.history[2].content[0].text == "How are you?"
-        assert base_agent.history[3].content[0].text == "I'm doing well"
+        assert len(base_agent.history) == 5
+        assert base_agent.history[3].content[0].text == "How are you?"
+        assert base_agent.history[4].content[0].text == "I'm doing well"
 
     def test_needs_tool_call_fix(self, base_agent):
         """Test the _needs_tool_call_fix method."""

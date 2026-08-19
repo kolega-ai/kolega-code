@@ -397,6 +397,7 @@ class AgentTool(BaseTool):
             )
             if scoped_recorder is not None:
                 agent.session_recorder = scoped_recorder
+                scoped_recorder.record_context_message(agent.session_context_message)
 
             # Track messages and their sequence
             last_saved_index = -1

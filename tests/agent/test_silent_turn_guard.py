@@ -296,7 +296,8 @@ async def test_nudge_journal_ordering_and_replay(base_agent, tmp_path) -> None:
     ]
 
     replayed = [Message.from_dict(item) for item in store.load(session.session_id).history]
-    assert [message.role for message in replayed] == [message.role for message in base_agent.history]
+    assert base_agent.history[0] == base_agent.session_context_message
+    assert [message.role for message in replayed] == [message.role for message in base_agent.history[1:]]
     assert any(STAGE_MARKERS[0] in message.get_text_content() for message in replayed if message.role == "user")
 
 

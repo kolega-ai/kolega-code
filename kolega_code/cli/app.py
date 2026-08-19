@@ -164,6 +164,7 @@ class KolegaCodeApp(
         show_logs: bool = False,
         startup_config_error: Optional[str] = None,
         extension_selection: Optional[ExtensionSelection] = None,
+        resuming_session: bool = False,
     ) -> None:
         super().__init__()
         self._terminal_control_filter = tui_terminal_display.TerminalControlFilter()
@@ -210,6 +211,7 @@ class KolegaCodeApp(
         self.check_for_updates = check_for_updates
         self.show_logs = show_logs
         self.startup_config_error = startup_config_error
+        self._resuming_session = resuming_session
         # Two managers, one stream. The TUI reads live events off the CLI queue;
         # the agent broadcasts into the recording wrapper, which assigns each
         # event a sequence number and persists it before forwarding. That is what

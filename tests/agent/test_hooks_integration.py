@@ -189,7 +189,7 @@ async def test_user_prompt_submit_block_ends_turn_without_llm_call(tmp_path, age
     assert len(chunks) == 1
     assert chunks[0]["content"] == "prompt rejected"
     assert chunks[0]["complete"] is True
-    assert agent.history == []
+    assert list(agent.history) == [agent.session_context_message]
     agent.llm.stream.assert_not_called()
 
 

@@ -106,7 +106,7 @@ async def test_coder_agent_rejects_deepseek_image_without_llm_call(tmp_path):
     assert "deepseek-v4-pro" in chunks[0]["content"]
     assert "not sent to the model" in chunks[0]["content"]
     assert chunks[0]["complete"] is True
-    assert agent.history == []
+    assert list(agent.history) == [agent.session_context_message]
     agent.llm.stream.assert_not_called()
 
 
@@ -329,9 +329,10 @@ async def test_coder_agent_file_attachment_added_to_history(tmp_path):
     chunks = [chunk async for chunk in agent.process_message_stream("see the notes", attachments)]
 
     assert chunks[-1]["complete"] is True
-    # history[1] is the volatile-context update, which trails the user's message; see
-    # agent/volatile_context.py.
-    user_message = agent.history[0]
+    # history[0] is the session-context baseline; history[1] is the user's message, and
+    # history[2] is the volatile-context update that trails it; see agent/volatile_context.py.
+    assert agent.history[0] == agent.session_context_message
+    user_message = agent.history[1]
     texts = [block.text for block in user_message.content if isinstance(block, TextBlock)]
     assert texts[0] == "see the notes"
     assert texts[1] == '<attached-file path="notes.md">\nremember the milk\n</attached-file>'

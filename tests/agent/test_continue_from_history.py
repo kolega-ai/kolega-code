@@ -70,7 +70,8 @@ async def test_continuation_journal_and_replay_roundtrip(tmp_path):
         pass
 
     events = store.journal(session.session_id).read_events()
-    # No context.message: a continuation never injects a volatile-context turn.
+    # Restored legacy history is authoritative: continuation records no session
+    # reminder or ordinary volatile-context turn.
     assert [event.event_type for event in events][-4:] == [
         "turn.started",
         "context.system",
@@ -81,9 +82,8 @@ async def test_continuation_journal_and_replay_roundtrip(tmp_path):
     assert started.actor == "system"
     assert started.payload == {"continuation": True}
     assert "message" not in started.payload
-    # The session stays loadable and replay contributes no message for the
-    # continuation boundary: the replayed history is exactly the recorded
-    # assistant message (restored history predates this journal).
+    # The restored history predates this journal, and continuation does not
+    # backfill it into the new journal.
     replayed = store.load(session.session_id).history
     assert [Message.from_dict(item).get_text_content() for item in replayed] == ["child answer"]
 
@@ -131,7 +131,7 @@ async def test_continuation_executes_tools_like_normal_turn(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_continuation_empty_history_raises_before_any_event(tmp_path):
+async def test_continuation_pristine_session_baseline_raises_before_any_event(tmp_path):
     agent, cm = build_agent(tmp_path, llm=FakeLLM(token_script=[100]))
     recorder = MagicMock()
     recorder.current_turn_id = None

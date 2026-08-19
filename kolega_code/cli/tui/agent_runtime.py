@@ -1117,6 +1117,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         await self._prime_recording_offset()
         history = self.session.history
         compaction = self.session.compaction
+        restoring_history = rebuild or getattr(self, "_resuming_session", False) or bool(history)
         if rebuild and not preserve_queued:
             self._clear_queued_messages()
         if self.agent is not None:
@@ -1239,6 +1240,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 tool_extensions.extend(extension_bundle.tool_extensions)
 
             try:
+                constructor_recorder = None if restoring_history else self._session_recorder
                 self.agent = agent_class(
                     project_path=self.active_project_path,
                     workspace_id=self.session.workspace_id,
@@ -1255,7 +1257,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                     # checks and saved-rule matching are decisions about the session, so
                     # every frontend gets them and only real questions reach a person.
                     permission_callback=self.session_runtime.permission_callback,
-                    session_recorder=self._session_recorder,
+                    session_recorder=constructor_recorder,
                     hook_dispatcher=self._session_hook_dispatcher(),
                     custom_agent_catalog=self.custom_agent_catalog,
                     usage_ledger=self._usage_ledger,
@@ -1298,9 +1300,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             if self._web_search_mode:
                 agent.apply_web_search_mode(self._web_search_mode)
             self._initialize_ledger_diff_tracker()
-            if history:
+            if restoring_history:
                 self.agent.restore_message_history(history)
                 self.agent.restore_compaction_state(compaction)
+                self.agent.session_recorder = self._session_recorder
                 if restore_transcript:
                     self._restore_conversation_history(history)
             if extension_bundle is not None:

@@ -218,7 +218,8 @@ class TestBaseAgent:
         assert replayed[0] == "finish"
         assert "<system-reminder source=" in replayed[1]
         assert replayed[2] == "done"
-        assert [message.get_text_content() for message in base_agent.history] == replayed
+        assert base_agent.history[0] == base_agent.session_context_message
+        assert [message.get_text_content() for message in base_agent.history[1:]] == replayed
 
     @pytest.mark.asyncio
     async def test_persistence_failure_before_turn_stops_before_model_request(self, base_agent):

@@ -51,9 +51,11 @@ async def test_queued_input_injected_after_tool_batch(base_agent) -> None:
 
     _ = [chunk async for chunk in base_agent.process_message_stream("do X")]
 
-    # history[0] is the volatile-context update injected at the start of the first turn (memory
-    # and date, as its own user turn); the turn's own messages follow. See volatile_context.py.
+    # history[0] is the session-context message; history[2] is the volatile-context update injected
+    # at the start of the first turn (memory and date, as its own user turn). See volatile_context.py.
+    assert base_agent.history[0] is base_agent.session_context_message
     assert [message.role for message in base_agent.history] == [
+        "user",
         "user",
         "user",
         "assistant",
@@ -61,12 +63,12 @@ async def test_queued_input_injected_after_tool_batch(base_agent) -> None:
         "user",
         "assistant",
     ]
-    assert isinstance(base_agent.history[2].content[0], ToolCall)
-    assert all(isinstance(block, ToolResult) for block in base_agent.history[3].content)
-    assert len(base_agent.history[4].content) == 1
-    assert isinstance(base_agent.history[4].content[0], TextBlock)
-    assert base_agent.history[4].content[0].text == "also do Y"
-    assert base_agent.history[5].stop_reason == "end_turn"
+    assert isinstance(base_agent.history[3].content[0], ToolCall)
+    assert all(isinstance(block, ToolResult) for block in base_agent.history[4].content)
+    assert len(base_agent.history[5].content) == 1
+    assert isinstance(base_agent.history[5].content[0], TextBlock)
+    assert base_agent.history[5].content[0].text == "also do Y"
+    assert base_agent.history[6].stop_reason == "end_turn"
     assert base_agent.conversation.is_valid_for_anthropic() is True
     provider.assert_awaited_once_with()
 
@@ -179,7 +181,7 @@ async def test_injection_with_attachments(base_agent) -> None:
 
     _ = [chunk async for chunk in base_agent.process_message_stream("do X")]
 
-    injected = base_agent.history[4]  # [0] is the volatile-context update; see volatile_context.py
+    injected = base_agent.history[5]  # [0] is session context; [2] is the volatile-context update.
     assert len(injected.content) == 2
     assert isinstance(injected.content[0], TextBlock)
     assert injected.content[0].text == "look at this too"

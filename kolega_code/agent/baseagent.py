@@ -24,7 +24,7 @@ from kolega_code.config import AgentConfig, EditProtocol, ModelProvider
 from kolega_code.events import AgentConnectionManager
 from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
 from .conversation import Conversation, adapt_history_for_provider
-from .volatile_context import VolatileContextTracker, VolatileSection
+from .volatile_context import VolatileContextTracker, VolatileSection, scrub_reminder_markup
 from kolega_code.events import AgentEventEmitter
 from kolega_code.hooks import (
     NO_OP_DISPATCHER,
@@ -446,8 +446,6 @@ class BaseAgent(LogMixin):
         # currently absent. See add_volatile_section.
         self._extra_volatile_sections: List[Callable[[], Optional[VolatileSection]]] = []
 
-        self.conversation = Conversation(max_tool_result_chars=self.max_tool_result_chars_in_history)
-        self.conversation.skill_content_pattern = self.skill_content_pattern
         # Counts consecutive transient LLM failures (rate-limit / overload) so the turn loop
         # backs off and eventually gives up instead of retrying forever; reset on any good turn.
         self._consecutive_llm_retries = 0
@@ -514,6 +512,29 @@ class BaseAgent(LogMixin):
         # tool) and used by _unsupported_attachment_message to reject image
         # attachments for non-vision models with a clear message.
         self.supports_vision = bool(model_specs.get("supports_vision", False))
+        prompt_context = self.build_prompt_context()
+        session_context_body = scrub_reminder_markup(
+            "\n".join(
+                [
+                    f"Working directory: {prompt_context.project_path}",
+                    f"Is directory a git repo: {str(prompt_context.is_git_repo).lower()}",
+                    f"Platform: {prompt_context.platform}",
+                    f"Model: {prompt_context.model_name}",
+                    f"Model supports vision: {str(prompt_context.model_supports_vision).lower()}",
+                ]
+            )
+        )
+        self.session_context_message = Message(
+            role="user",
+            content=[TextBlock(text=f'<system-reminder source="session">\n{session_context_body}\n</system-reminder>')],
+        )
+        self.conversation = Conversation(
+            [self.session_context_message],
+            max_tool_result_chars=self.max_tool_result_chars_in_history,
+        )
+        self.conversation.skill_content_pattern = self.skill_content_pattern
+        if self.session_recorder is not None:
+            self.session_recorder.record_context_message(self.session_context_message)
         # Web tool mode: whether the provider's hosted (server-side) web_search
         # tool is requested and whether the client-side web_search/web_fetch
         # tools are registered. Resolved from config.web_search_mode plus the
@@ -1307,10 +1328,11 @@ class BaseAgent(LogMixin):
         return result, fixed_history, token_count
 
     def clear_history(self) -> None:
-        """Drop all history and reset compaction state."""
+        """Reset history to the runtime-authored session context."""
         if self.session_recorder is not None:
             self.session_recorder.start_epoch("agent_clear_command")
-        self.conversation.clear()
+            self.session_recorder.record_context_message(self.session_context_message)
+        self.history = [self.session_context_message]
         # The model no longer holds any injected context; re-send the current sections
         # (memory, guidance, plan handle, task list) on the next turn.
         self.reset_volatile_context()
@@ -2155,7 +2177,10 @@ class BaseAgent(LogMixin):
         ``process_message_stream``. Adds no user text, attachment,
         volatile-context turn, or prompt-submit hook.
         """
-        if not self.get_effective_history_for_llm():
+        effective_history = self.get_effective_history_for_llm()
+        if not effective_history or (
+            len(effective_history) == 1 and effective_history[0] is self.session_context_message
+        ):
             raise ValueError(
                 "continue_from_history_stream requires a non-empty conversation; "
                 "restore message history (and any compaction state) first"
