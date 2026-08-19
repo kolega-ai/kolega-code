@@ -64,6 +64,7 @@ async def test_continuation_journal_and_replay_roundtrip(tmp_path):
     session = store.create(project, "code", {})
     agent, _ = build_agent(tmp_path, llm=FakeLLM(token_script=[100], final_message=_child_response()))
     agent.session_recorder = store.recorder(session.session_id)
+    agent.session_context_message = Message(role="user", content=[TextBlock("runtime session context")])
     _restored_pending_tool_history(agent)
 
     async for _chunk in agent.continue_from_history_stream():
@@ -71,9 +72,10 @@ async def test_continuation_journal_and_replay_roundtrip(tmp_path):
 
     events = store.journal(session.session_id).read_events()
     # No context.message: a continuation never injects a volatile-context turn.
-    assert [event.event_type for event in events][-4:] == [
+    assert [event.event_type for event in events][-5:] == [
         "turn.started",
         "context.system",
+        "context.session",
         "assistant.message",
         "turn.completed",
     ]

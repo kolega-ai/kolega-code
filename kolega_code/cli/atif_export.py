@@ -432,6 +432,7 @@ class _Grouper:
         handler = {
             "turn.started": self._on_turn_started,
             "context.system": self._on_context_system,
+            "context.session": self._on_context_session,
             "context.tools": self._on_context_tools,
             "context.message": self._on_context_message,
             "assistant.message": self._on_assistant_message,
@@ -483,6 +484,14 @@ class _Grouper:
             payload.get("message") or {}, event=event, assets=self.assets, warnings=self.warnings
         )
         self._append_step(draft, self._system_step(event, message if isinstance(message, str) else ""))
+
+    def _on_context_session(self, draft: _TrajectoryDraft, event: dict[str, Any], payload: dict[str, Any]) -> None:
+        message, _, _, content_blocks = _step_message_and_reasoning(
+            payload.get("message") or {}, event=event, assets=self.assets, warnings=self.warnings
+        )
+        step = self._system_step(event, message if isinstance(message, str) else "")
+        step.extra["kolega"] = {"origin": "context.session", "content_blocks": content_blocks}
+        self._append_step(draft, step)
 
     def _on_context_tools(self, draft: _TrajectoryDraft, event: dict[str, Any], payload: dict[str, Any]) -> None:
         # Not a step: the toolset describes the agent, not a context change the

@@ -452,6 +452,26 @@ def test_system_context_is_fingerprinted_and_reset_by_epoch(tmp_path: Path) -> N
     assert sum(1 for e in journal.read_events() if e.event_type == "context.system") == 3
 
 
+def test_session_context_is_fingerprinted_public_and_reset_by_epoch(tmp_path: Path) -> None:
+    journal = make_file_journal(tmp_path)
+    bootstrap(journal)
+    recorder = SessionRecorder(journal, recover=False)
+    message = Message(role="user", content=[TextBlock("runtime session context")])
+
+    assert recorder.record_session_context(message) is True
+    assert recorder.record_session_context(message) is False
+    recorder.start_epoch("agent_clear_command")
+    assert recorder.record_session_context(message) is True
+
+    events = [e for e in journal.read_events() if e.event_type == "context.session"]
+    assert len(events) == 2
+    assert events[0].actor == "system"
+    assert events[0].payload["message"]["role"] == "user"
+    public = to_public_event(events[0])
+    assert public is not None
+    assert public["payload"]["message"]["content"][0]["text"] == "runtime session context"
+
+
 def test_tool_definitions_are_fingerprinted_and_reset_by_epoch(tmp_path: Path) -> None:
     journal = make_file_journal(tmp_path)
     bootstrap(journal)
