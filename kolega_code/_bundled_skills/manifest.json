@@ -154,7 +154,7 @@
     },
     {
       "path": "skills/review/SKILL.md",
-      "sha256": "c1075593eea35e27d744c7180636210fab6092059d6e08b3faa1bf1e45e97a67"
+      "sha256": "8f533bfb1a4471eeba3ed3b95ad02c43270e89d24d151ea81eb3ccc3afe3a3ae"
     },
     {
       "path": "skills/review/references/github-publishing.md",
@@ -217,8 +217,8 @@
     "xlsx"
   ],
   "source": {
-    "commit": "2de7491964d92e3dc78f13290d875c800ac6e22d",
+    "commit": "0d8188f00af97c4f98c58dc2ebe090099481e216",
     "repository": "https://github.com/kolega-ai/kolega-skills",
-    "tag": "v0.3.2"
+    "tag": "v0.3.3"
   }
 }

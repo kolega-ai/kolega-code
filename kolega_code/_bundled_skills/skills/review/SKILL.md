@@ -91,9 +91,10 @@ output and collect:
 - base/head names and full object IDs;
 - changed paths and the complete patch.
 
-Stop without reviewing when the PR is not open, is a draft, has no effective changes, or
-cannot be read. Give the reason. Do not exclude a change merely because automation authored
-it.
+Review PRs in any state: open, draft, closed, or merged. Stop without reviewing only when
+the PR cannot be read or has no effective changes; give the reason. Note the state and draft
+status in the report when the PR is not open. Do not exclude a change merely because
+automation authored it.
 
 Reject a PR URL whose host is not GitHub before retrieval. Explain that local and branch
 review remain available for changes hosted elsewhere.
