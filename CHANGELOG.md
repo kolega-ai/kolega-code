@@ -6,6 +6,24 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.31.0 - 2026-08-20
+
+### Added
+
+- Prompt history: submitted prompts are saved per project (capped at 100)
+  and persist across sessions. Press the up arrow in the composer to recall
+  previous prompts, even after restarting the app.
+
+### Changed
+
+- Kolega Code is now licensed under the Business Source License 1.1.
+- Bundled skills updated to v0.3.3.
+- Model catalogs refreshed: OpenRouter now lists 273 models, Tinker 26,
+  Ollama Cloud 19, and the Perplexity Agent catalog (45 models) is now
+  generated from live endpoints.
+- Bundled prompts are now stable across projects and no longer carry
+  open-source secrecy language.
+
 ### Fixed
 
 - Cancelling a turn (Ctrl-C) while a terminal tool call (`exec_command` /
@@ -13,6 +31,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   command is still killed and its partial output is kept in the transcript,
   but the agent no longer swallows the cancellation and continues with
   another model request.
+- Tinker models reserve their full max output against the shared
+  input/output window, so a near-full prompt can no longer leave generation
+  with almost no room.
+- Skill invocations now appear in the transcript as a one-line "Activated
+  skill `/name`." label followed by the complete submitted command, instead
+  of dumping the skill's activation contents into the chat.
 
 ## 0.30.1 - 2026-08-17
 
