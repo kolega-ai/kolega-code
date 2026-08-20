@@ -39,6 +39,7 @@ from ..loop import (
     read_loop_md,
 )
 from ..slash_commands import TUI_COMMAND_NAMES, agent_command_names
+from ..skills import skill_activation_label
 from . import app_base as tui_app_base
 from . import state as tui_state
 
@@ -300,8 +301,10 @@ class LoopRuntimeMixin(tui_app_base.KolegaAppBase):
         skill_name = command.removeprefix("/")
         if self.skill_catalog.get(skill_name) is None:
             return prompt
-        activated = self._activate_skill_in_agent(skill_name)
-        self._add_conversation_entry(tui_state.ConversationEntry(kind="skill", content=activated))
+        self._activate_skill_in_agent(skill_name)
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(kind="skill", content=skill_activation_label(skill_name))
+        )
         return remainder.strip() or f"Apply the {skill_name} skill now."
 
     def _drain_loop_tokens(self, state: LoopState, mark) -> None:

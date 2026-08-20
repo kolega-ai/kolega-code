@@ -474,6 +474,12 @@ def skill_names_in_text(text: str) -> list[str]:
     return SKILL_CONTENT_RE.findall(text)
 
 
+def skill_activation_label(*names: str) -> str:
+    """One-line transcript label for a skill activation (live and restored)."""
+    listed = ", ".join(f"`/{name}`" for name in names)
+    return f"Activated skill {listed}."
+
+
 def _iter_skill_files(root: Path) -> Iterable[Path]:
     if not root.is_dir():
         return []
