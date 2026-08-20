@@ -127,9 +127,11 @@ def catalog_entries(payload: Any) -> list[tuple[str, dict[str, Any]]]:
         spec: dict[str, Any] = {
             "context_length": _context_tokens(item.get("context")),
             "max_completion_tokens": MAX_COMPLETION_TOKENS,
-            # Output shares the window; the sampler clamps to remaining context
-            # at generation time (providers/tinker.py), so nothing is reserved.
-            "input_budget": "output_shares_window",
+            # One shared pool: Tinker serves input and output from the same
+            # window, so reserve max_completion_tokens as output headroom
+            # rather than letting a near-full prompt squeeze generation to
+            # almost nothing (verified on live Qwen3.6 fine-tunes).
+            "input_budget": "window_minus_output",
             "default_temperature": DEFAULT_TEMPERATURE,
             "supports_vision": "Vision" in model_type,
             "preferred_edit_protocol": PREFERRED_EDIT_PROTOCOL,
@@ -236,7 +238,7 @@ TINKER_WILDCARD_SPECS = {
     (PROVIDER, "tinker://*"): {
         "context_length": 65536,
         "max_completion_tokens": MAX_COMPLETION_TOKENS,
-        "input_budget": "output_shares_window",
+        "input_budget": "window_minus_output",
         "default_temperature": DEFAULT_TEMPERATURE,
         "supports_vision": False,
         "preferred_edit_protocol": PREFERRED_EDIT_PROTOCOL,
