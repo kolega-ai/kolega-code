@@ -1,5 +1,9 @@
 [build-system]
-requires = ["hatchling"]
+# hatchling 1.32.0 (released 2026-08-11) emits Metadata-Version 2.5 wheels;
+# twine 6.2.0 (dev extra) hard-caps metadata validation at 2.4, so the release
+# workflow's `twine check` fails on 2.5. Pin the last 2.4-emitting hatchling to
+# keep the build deterministic as the uv `exclude-newer` cutoff advances.
+requires = ["hatchling==1.31.0"]
 build-backend = "hatchling.build"
 
 [project]
