@@ -977,3 +977,337 @@ async def test_tasks_command_rejects_arguments(tmp_path: Path, monkeypatch: pyte
         assert content == "Usage: /tasks"
         assert app.agent_worker is None
         assert getattr(app.agent, "messages") == []
+
+
+async def _submit_via_enter(pilot, app, composer, text: str) -> None:
+    """Submit through a real Enter press (so ChatComposer records history) and settle the turn.
+
+    Awaiting the turn worker plus a short pause avoids the queued-message-drain
+    teardown race (a 10ms timer fires after turn completion).
+    """
+    composer.focus()
+    composer.load_text(text)
+    await pilot.press("enter")
+    worker = app.agent_worker
+    if worker is not None:
+        await worker.wait()
+    await pilot.pause(0.05)
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_up_arrow_recalls_last_submitted_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        await _submit_via_enter(pilot, app, composer, "first prompt")
+        assert composer.text == ""
+
+        await pilot.press("up")
+
+        assert composer.text == "first prompt"
+        assert composer.cursor_location == composer.document.end
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_up_down_arrows_walk_prompt_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        for text in ("one", "two", "three"):
+            await _submit_via_enter(pilot, app, composer, text)
+
+        await pilot.press("up")
+        assert composer.text == "three"
+        await pilot.press("up")
+        assert composer.text == "two"
+        await pilot.press("up")
+        assert composer.text == "one"
+        # Clamped at the oldest entry.
+        await pilot.press("up")
+        assert composer.text == "one"
+
+        await pilot.press("down")
+        assert composer.text == "two"
+        await pilot.press("down")
+        assert composer.text == "three"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_down_past_newest_restores_draft(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        for text in ("one", "two"):
+            await _submit_via_enter(pilot, app, composer, text)
+
+        composer.load_text("my draft")
+        composer.move_cursor(composer.document.end, record_width=False)
+
+        await pilot.press("up")
+        assert composer.text == "two"
+        await pilot.press("up")
+        assert composer.text == "one"
+
+        await pilot.press("down")
+        assert composer.text == "two"
+        # Forward past the newest submitted prompt restores the draft.
+        await pilot.press("down")
+        assert composer.text == "my draft"
+        # Navigation is over: Down falls back to normal cursor movement.
+        await pilot.press("down")
+        assert composer.text == "my draft"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_up_arrow_multiline_movement_not_hijacked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        await _submit_via_enter(pilot, app, composer, "one")
+
+        composer.load_text("l1\nl2\nl3")
+        composer.move_cursor(composer.document.end, record_width=False)
+
+        # While the cursor can still move up within the draft, Up moves the cursor.
+        await pilot.press("up")
+        assert composer.text == "l1\nl2\nl3"
+        assert composer.cursor_location[0] == 1
+        await pilot.press("up")
+        assert composer.text == "l1\nl2\nl3"
+        assert composer.cursor_location[0] == 0
+
+        # From the top line, Up recalls history instead.
+        await pilot.press("up")
+        assert composer.text == "one"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_up_arrow_soft_wrapped_line_moves_within_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(40, 30)) as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        await _submit_via_enter(pilot, app, composer, "one")
+
+        long_line = "word " * 30
+        composer.load_text(long_line)
+        composer.move_cursor(composer.document.end, record_width=False)
+        await pilot.pause()
+
+        # The cursor is on a lower visual row of the soft-wrapped first line,
+        # so Up moves within the line rather than recalling history.
+        await pilot.press("up")
+
+        assert composer.text == long_line
+        assert composer.cursor_location[0] == 0
+        assert 0 < composer.cursor_location[1] < len(long_line)
+        assert composer._history_index is None
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_history_skips_empty_and_consecutive_duplicates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        await _submit_via_enter(pilot, app, composer, "same")
+        await _submit_via_enter(pilot, app, composer, "same")
+        composer.load_text("")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert composer._prompt_history == ["same"]
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_submit_resets_history_navigation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        await _submit_via_enter(pilot, app, composer, "one")
+
+        # Recall and edit the prompt, then submit the edited version.
+        await pilot.press("up")
+        assert composer.text == "one"
+        await pilot.press("x")
+        assert composer.text == "onex"
+        await pilot.press("enter")
+        worker = app.agent_worker
+        if worker is not None:
+            await worker.wait()
+        await pilot.pause(0.05)
+
+        assert composer._prompt_history == ["one", "onex"]
+        # Fresh navigation recalls the newest entry, not a stale index.
+        await pilot.press("up")
+        assert composer.text == "onex"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_up_arrow_prefers_question_options_over_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.state import PendingQuestion
+    from kolega_code.cli.tui.widgets import ActionList, ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        await _submit_via_enter(pilot, app, composer, "earlier prompt")
+
+        # An ask_user_choice question is pending: its option list wins over history recall.
+        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B"], request_id="req-test")
+        app._show_question_options("Choose?", ["A", "B"])
+        app._set_chat_enabled(True)
+        composer.focus()
+        composer.load_text("custom answer draft")
+        composer.move_cursor((0, 0), record_width=False)
+        await pilot.pause()
+
+        await pilot.press("up")
+
+        question_actions = app.query_one("#question_actions", ActionList)
+        assert app.focused is question_actions
+        assert composer.text == "custom answer draft"
+
+        app._pending_question = None
+        app._set_question_actions_visible(False)
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_prompt_history_persists_across_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.prompt_history import load_prompt_history, prompt_history_path
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    install_fake_agents(monkeypatch)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+
+    async def run_submitting_app(app_session) -> None:
+        app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=app_session)
+        async with app.run_test() as pilot:
+            composer = app.query_one("#composer", ChatComposer)
+            await _submit_via_enter(pilot, app, composer, "persisted prompt")
+            # A consecutive duplicate is not persisted twice.
+            await _submit_via_enter(pilot, app, composer, "persisted prompt")
+
+    await run_submitting_app(session)
+
+    assert prompt_history_path(store.root).exists()
+    assert load_prompt_history(store.root) == ["persisted prompt"]
+
+    # A later run in the same project recalls the persisted prompt.
+    second_session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=second_session)
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        await pilot.press("up")
+
+        assert composer.text == "persisted prompt"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_prompt_history_restored_on_mount_orders_newest_last(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.prompt_history import save_prompt_history
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    install_fake_agents(monkeypatch)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    save_prompt_history(store.root, ["older", "newer"])
+
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+        assert composer.prompt_history == ["older", "newer"]
+
+        await pilot.press("up")
+        assert composer.text == "newer"
+        await pilot.press("up")
+        assert composer.text == "older"

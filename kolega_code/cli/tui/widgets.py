@@ -23,6 +23,7 @@ from textual.widgets.option_list import Option
 
 from .. import theme as cli_theme
 from ..file_index import IndexEntry
+from ..prompt_history import PROMPT_HISTORY_MAX
 from ..slash_commands import SlashCommandEntry
 from .app_base import KolegaAppBase
 from .state import ConversationEntry
@@ -898,6 +899,86 @@ class ChatComposer(TextArea):
         def control(self) -> ChatComposer:
             return self.composer
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # Prompt-history recall (GitHub #622): prompts submitted this run, the
+        # current navigation index (None when not navigating), and the draft
+        # saved when navigation began so Down-past-newest can restore it.
+        self._prompt_history: list[str] = []
+        self._history_index: Optional[int] = None
+        self._history_draft: str = ""
+
+    def _reset_history_navigation(self) -> None:
+        """Leave history-navigation mode, discarding the saved draft."""
+        self._history_index = None
+        self._history_draft = ""
+
+    def _record_submitted_prompt(self, text: str) -> None:
+        """Append a submitted prompt to the recall history (shell-like).
+
+        Empty submissions and consecutive duplicates are skipped; the list is
+        capped so a long session cannot grow it without bound.
+        """
+        entry = text.strip()
+        if entry and (not self._prompt_history or self._prompt_history[-1] != entry):
+            self._prompt_history.append(entry)
+            del self._prompt_history[:-PROMPT_HISTORY_MAX]
+        self._reset_history_navigation()
+
+    @property
+    def prompt_history(self) -> list[str]:
+        """A copy of the recall history, oldest first (newest last)."""
+        return list(self._prompt_history)
+
+    def restore_prompt_history(self, entries: list[str]) -> None:
+        """Seed the recall history from persisted state (oldest first)."""
+        self._prompt_history = list(entries[-PROMPT_HISTORY_MAX:])
+        self._reset_history_navigation()
+
+    def load_text(self, text: str) -> None:
+        # Programmatic rewrites (submit-clear, queued-restore, slash commands)
+        # start navigation fresh — never continue from a stale history index.
+        self._reset_history_navigation()
+        super().load_text(text)
+
+    def _load_history_text(self, text: str) -> None:
+        """Replace the composer text for history recall, cursor at the end."""
+        super().load_text(text)
+        self.move_cursor(self.document.end, record_width=False)
+
+    def _recall_history(self, backward: bool) -> bool:
+        """Walk the prompt history; returns False when there is nothing to recall.
+
+        Up enters navigation (saving the current draft) and walks backward; Down
+        only walks forward while already navigating, and past the newest entry
+        restores the draft saved when navigation began.
+        """
+        if not self._prompt_history:
+            return False
+        if backward:
+            index = self._history_index
+            if index is None:
+                self._history_draft = self.text
+                index = len(self._prompt_history) - 1
+            elif index > 0:
+                index -= 1
+            self._history_index = index
+            self._load_history_text(self._prompt_history[index])
+            return True
+        index = self._history_index
+        if index is None:
+            return False
+        index += 1
+        if index >= len(self._prompt_history):
+            # Capture the draft before resetting — the reset clears it.
+            draft = self._history_draft
+            self._reset_history_navigation()
+            self._load_history_text(draft)
+        else:
+            self._history_index = index
+            self._load_history_text(self._prompt_history[index])
+        return True
+
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         if action in self.MENTION_ACTIONS:
             dropdown = self.mention_dropdown()
@@ -973,6 +1054,7 @@ class ChatComposer(TextArea):
     def action_submit(self) -> None:
         if self._accept_mention_completion():
             return
+        self._record_submitted_prompt(self.text)
         self.post_message(self.Submitted(self, self.text))
 
     def action_insert_newline(self) -> None:
@@ -1003,7 +1085,7 @@ class ChatComposer(TextArea):
             self._delete_via_keyboard((row - 1, 0), (row, 0))
 
     def action_cursor_up(self, select: bool = False) -> None:
-        """Move up in the draft, or from the top line back to active options."""
+        """Move up in the draft, from the top line to active options, or recall prompt history."""
         if select:
             super().action_cursor_up(select)
             return
@@ -1018,8 +1100,32 @@ class ChatComposer(TextArea):
             focus_prompt = getattr(self.app, "_focus_active_prompt_from_composer", None)
             if callable(focus_prompt) and focus_prompt():
                 return
+            # Prompt-history recall (GitHub #622) — only when the cursor cannot
+            # move up within the input, so multiline editing keeps its arrows.
+            if self.navigator.is_first_wrapped_line(self.cursor_location) and self._recall_history(backward=True):
+                return
 
         super().action_cursor_up(select)
+
+    def action_cursor_down(self, select: bool = False) -> None:
+        """Move down in the draft, or walk prompt history forward from the last line."""
+        if select:
+            super().action_cursor_down(select)
+            return
+
+        dropdown = self.mention_dropdown()
+        if dropdown is not None and dropdown.is_open:
+            dropdown.action_cursor_down()
+            return
+
+        if (
+            self._history_index is not None
+            and self.navigator.is_last_wrapped_line(self.cursor_location)
+            and self._recall_history(backward=False)
+        ):
+            return
+
+        super().action_cursor_down(select)
 
     def action_mention_prev(self) -> None:
         dropdown = self.mention_dropdown()

@@ -68,6 +68,7 @@ from .loop import LOOP_TICK_SECONDS, LoopState
 from .diagnostics import DiagnosticsLog, ResponsivenessWatchdog
 from .file_index import WorkspaceFileIndex
 from .mentions import build_file_attachments
+from .prompt_history import load_prompt_history, save_prompt_history
 from .provider_registry import default_ui_thinking_effort
 from .session_journal import RewindOutcome, TurnSummary
 from .session_store import SessionRecord, SessionStore, resolve_active_project
@@ -483,6 +484,7 @@ class KolegaCodeApp(
 
     async def on_mount(self) -> None:
         self.settings = self.settings_store.load()
+        self._restore_prompt_history()
         # Attach usage persistence before any turn can run: the sink journals
         # every ledger-settled non-history response, and its start marker must
         # precede the first covered turn so coverage boundaries are exact.
@@ -894,9 +896,34 @@ class KolegaCodeApp(
             allow_discuss=self._plan_decision_active,
         )
 
+    def _restore_prompt_history(self) -> None:
+        """Seed the composer's recall history from per-project local state.
+
+        History is project-scoped (shell-like), so it crosses sessions and app
+        runs; a missing or corrupt file simply starts recall empty.
+        """
+        try:
+            composer = self.query_one("#composer", tui_widgets.ChatComposer)
+        except Exception:
+            return
+        composer.restore_prompt_history(load_prompt_history(self.store.root))
+
+    def _persist_prompt_history(self, composer: tui_widgets.ChatComposer) -> None:
+        """Write the composer's recall history through to local state.
+
+        Runs after ChatComposer.action_submit has already recorded the entry,
+        so dumping the widget's list is the single source of truth. Persistence
+        must never break a submit.
+        """
+        try:
+            save_prompt_history(self.store.root, composer.prompt_history)
+        except Exception:
+            pass
+
     async def on_chat_composer_submitted(self, event: tui_widgets.ChatComposer.Submitted) -> None:
         text = event.value
         stripped_text = text.strip()
+        self._persist_prompt_history(event.composer)
         if stripped_text.lower() in THREAD_RESET_COMMANDS:
             if self._turn_active or self.agent_worker is not None:
                 self._show_composer_hint(messages.BLOCK_STOP_BEFORE_RESET)
