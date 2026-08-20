@@ -6,6 +6,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Cancelling a turn (Ctrl-C) while a terminal tool call (`exec_command` /
+  `write_stdin`) was in flight now stops the agent on the first press. The
+  command is still killed and its partial output is kept in the transcript,
+  but the agent no longer swallows the cancellation and continues with
+  another model request.
+
 ## 0.30.1 - 2026-08-17
 
 ### Fixed

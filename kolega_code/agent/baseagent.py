@@ -2431,6 +2431,21 @@ class BaseAgent(LogMixin):
             async for chunk in loop_stream:
                 yield chunk
 
+    def _pending_turn_cancellation(self) -> bool:
+        """Whether this task's cancellation was requested but not yet honored.
+
+        Terminal tools (exec_command/write_stdin) convert a turn cancellation
+        into a structured ``status="cancelled"`` result — killing the process,
+        preserving the partial output, and keeping the ToolCall/ToolResult pair
+        valid in history — which consumes the ``CancelledError`` instead of
+        propagating it. ``Task.cancelling()`` stays positive after such a
+        swallowed ``cancel()`` (nothing on this path calls ``uncancel()``), so
+        the loop can detect it, finish bookkeeping for the tool result, and
+        then end the turn as cancelled rather than issuing another request.
+        """
+        task = asyncio.current_task()
+        return task is not None and task.cancelling() > 0
+
     async def _agent_loop_stream(self) -> AsyncGenerator[Dict[str, Any], None]:
         """The shared agent loop: compaction, model streaming, tool execution.
 
@@ -2444,6 +2459,11 @@ class BaseAgent(LogMixin):
         truncated_turn_nudges = 0
         iterations = 0
         while stop_reason not in ["end_turn", "max_tokens", "stop_sequence"]:
+            # A tool may have swallowed this task's cancellation on the previous
+            # iteration (see _pending_turn_cancellation). Its result is already
+            # journaled; honor the cancel now instead of sending another request.
+            if self._pending_turn_cancellation():
+                raise asyncio.CancelledError()
             iterations += 1
             if self.max_iterations is not None and iterations > self.max_iterations:
                 raise MaxAgentIterationsExceeded(
@@ -2822,6 +2842,12 @@ class BaseAgent(LogMixin):
                 if getattr(ex, "session_persistence_error", False):
                     raise
                 await self.handle_llm_error(ex)
+
+        # A swallowed cancellation must not let the turn record itself as
+        # completed: if the loop exited naturally (e.g. should_stop_after_tools)
+        # while a cancel was pending, end as cancelled instead.
+        if self._pending_turn_cancellation():
+            raise asyncio.CancelledError()
 
         await self.log_info(self.completion_log_message, sender=self.agent_name)
 
