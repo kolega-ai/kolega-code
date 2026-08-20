@@ -42,7 +42,7 @@ from ..provider_registry import (
     ui_model_options,
     ui_thinking_effort_options,
 )
-from ..skills import activated_skill_names
+from ..skills import activated_skill_names, skill_activation_label
 from ..slash_commands import SKILLS_LIST_COMMAND, TUI_COMMAND_NAMES, agent_command_names
 from ..diagnostics import assemble_bug_bundle
 from ..session_store import SessionStoreError
@@ -1500,15 +1500,18 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             self._set_settings_status(messages.SETTINGS_REQUIRED_SKILL, tone="warning")
             return True
 
-        activated = self._activate_skill_in_agent(command_name)
-        self._add_conversation_entry(tui_state.ConversationEntry(kind="skill", content=activated))
+        self._activate_skill_in_agent(command_name)
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(kind="skill", content=skill_activation_label(command_name))
+        )
         self._notify_user(messages.SKILL_ACTIVATED.format(name=command_name))
 
         if prompt:
+            command_line = f"/{command_name} {prompt}"
             attachments = self._build_mention_attachments(prompt)
-            self._add_conversation_entry(tui_state.ConversationEntry(kind="user", content=prompt))
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="user", content=command_line))
             self.agent_worker = self.run_worker(
-                self._process_message(prompt, attachments), name="kolega-turn", group="turns", exclusive=True
+                self._process_message(command_line, attachments), name="kolega-turn", group="turns", exclusive=True
             )
         else:
             await self._save_session_history_async()

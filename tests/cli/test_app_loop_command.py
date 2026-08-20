@@ -702,7 +702,7 @@ async def test_skill_prefixed_prompt_activates_the_skill(tmp_path, monkeypatch, 
 
         skill_entries = [entry for entry in app.conversation_entries if entry.kind == "skill"]
         assert len(skill_entries) == 1
-        assert "demo-skill" in skill_entries[0].content
+        assert skill_entries[0].content == "Activated skill `/demo-skill`."
         # Activation is injected into the agent's history, not the turn prompt.
         history_text = "\n".join(
             getattr(block, "text", "") or "" for message in agent.history for block in (message.content or [])

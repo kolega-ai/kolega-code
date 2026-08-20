@@ -27,7 +27,7 @@ from kolega_code.llm.models import (
 from kolega_code.services.lsp import extract_lsp_label
 
 from .. import messages, theme
-from ..skills import skill_names_in_text
+from ..skills import skill_activation_label, skill_names_in_text
 from ..theme import Color, Glyph
 from .constants import QUESTION_TOOL_NAME, STARTUP_WORDMARK
 from .state import (
@@ -303,8 +303,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
     def _conversation_entry_for_text(self, role: str, text: str) -> ConversationEntry:
         names = skill_names_in_text(text)
         if names:
-            skill_list = ", ".join(f"`/{name}`" for name in names)
-            return ConversationEntry(kind="skill", content=f"Activated skill {skill_list}.")
+            return ConversationEntry(kind="skill", content=skill_activation_label(*names))
         return ConversationEntry(kind=self._entry_kind_for_role(role), content=text)
 
     def _entry_kind_for_role(self, role: str) -> str:
