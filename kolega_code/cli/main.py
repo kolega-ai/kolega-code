@@ -157,6 +157,7 @@ SUBCOMMANDS = {
     "models",
     "tui",
     "share",
+    "acp",
 }
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
@@ -198,6 +199,10 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             return _run_browser(args)
         if args.command == "mcp":
             return asyncio.run(_run_mcp(args))
+        if args.command == "acp":
+            from .acp import run_acp
+
+            return run_acp(args)
         if args.command == "update":
             return _run_update()
         if args.command == "tui":
@@ -785,6 +790,13 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     disable.add_argument("--project-config", action="store_true", help="Update <project>/.kolega/mcp_servers.json.")
 
     subparsers.add_parser("update", help="Update Kolega Code to the latest version.")
+
+    acp = subparsers.add_parser(
+        "acp",
+        help="Serve kolega-code as an ACP (Agent Client Protocol) agent on stdio, for editors like Zed.",
+    )
+    acp.set_defaults(command="acp")
+    acp.add_argument("--debug", action="store_true", help="Enable debug logging (to stderr).")
 
     return parser
 
