@@ -15,9 +15,12 @@ runtime ``kolega-code models refresh`` overlay cannot drift from it.
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
+import subprocess
 import sys
 from pathlib import Path
+from typing import Optional, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -50,6 +53,7 @@ TINKER_WILDCARD_SPECS = {{
     ("tinker", "tinker://*"): {{
         "context_length": 65536,
         "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -77,7 +81,11 @@ def _format_spec(identifier: str, spec: dict) -> str:
     return "\n".join(lines)
 
 
-def main() -> int:
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--skip-format", action="store_true", help="Do not run ruff format on the output.")
+    args = parser.parse_args(argv)
+
     date = dt.date.today().isoformat()
     print(f"Fetching {tinker.MODELS_URL} ...")
     payload = tinker.fetch_models()
@@ -95,6 +103,10 @@ def main() -> int:
         encoding="utf-8",
     )
     print(f"Wrote {len(entries)} models to {OUTPUT_PATH}.")
+    if not args.skip_format:
+        result = subprocess.run(["uv", "run", "ruff", "format", str(OUTPUT_PATH)], cwd=REPO_ROOT)
+        if result.returncode != 0:
+            print("WARNING: ruff format failed; format the generated file manually.", file=sys.stderr)
     return 0
 
 
