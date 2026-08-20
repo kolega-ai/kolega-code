@@ -1236,3 +1236,78 @@ async def test_textual_app_composer_up_arrow_prefers_question_options_over_histo
 
         app._pending_question = None
         app._set_question_actions_visible(False)
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_prompt_history_persists_across_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.prompt_history import load_prompt_history, prompt_history_path
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    install_fake_agents(monkeypatch)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+
+    async def run_submitting_app(app_session) -> None:
+        app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=app_session)
+        async with app.run_test() as pilot:
+            composer = app.query_one("#composer", ChatComposer)
+            await _submit_via_enter(pilot, app, composer, "persisted prompt")
+            # A consecutive duplicate is not persisted twice.
+            await _submit_via_enter(pilot, app, composer, "persisted prompt")
+
+    await run_submitting_app(session)
+
+    assert prompt_history_path(store.root).exists()
+    assert load_prompt_history(store.root) == ["persisted prompt"]
+
+    # A later run in the same project recalls the persisted prompt.
+    second_session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=second_session)
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        await pilot.press("up")
+
+        assert composer.text == "persisted prompt"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_prompt_history_restored_on_mount_orders_newest_last(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.prompt_history import save_prompt_history
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    install_fake_agents(monkeypatch)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    save_prompt_history(store.root, ["older", "newer"])
+
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+        assert composer.prompt_history == ["older", "newer"]
+
+        await pilot.press("up")
+        assert composer.text == "newer"
+        await pilot.press("up")
+        assert composer.text == "older"

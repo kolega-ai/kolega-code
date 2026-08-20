@@ -23,6 +23,7 @@ from textual.widgets.option_list import Option
 
 from .. import theme as cli_theme
 from ..file_index import IndexEntry
+from ..prompt_history import PROMPT_HISTORY_MAX
 from ..slash_commands import SlashCommandEntry
 from .app_base import KolegaAppBase
 from .state import ConversationEntry
@@ -888,7 +889,6 @@ class ChatComposer(TextArea):
     MENTION_QUERY_RE = re.compile(r"(?:^|(?<=\s))@(\S*)$")
     SLASH_QUERY_RE = re.compile(r"^\s*/([\w-]*)$")
     MENTION_ACTIONS = {"mention_prev", "mention_next", "mention_accept", "mention_dismiss"}
-    PROMPT_HISTORY_MAX = 100
 
     @dataclass
     class Submitted(TextualMessage):
@@ -922,7 +922,17 @@ class ChatComposer(TextArea):
         entry = text.strip()
         if entry and (not self._prompt_history or self._prompt_history[-1] != entry):
             self._prompt_history.append(entry)
-            del self._prompt_history[: -self.PROMPT_HISTORY_MAX]
+            del self._prompt_history[:-PROMPT_HISTORY_MAX]
+        self._reset_history_navigation()
+
+    @property
+    def prompt_history(self) -> list[str]:
+        """A copy of the recall history, oldest first (newest last)."""
+        return list(self._prompt_history)
+
+    def restore_prompt_history(self, entries: list[str]) -> None:
+        """Seed the recall history from persisted state (oldest first)."""
+        self._prompt_history = list(entries[-PROMPT_HISTORY_MAX:])
         self._reset_history_navigation()
 
     def load_text(self, text: str) -> None:
