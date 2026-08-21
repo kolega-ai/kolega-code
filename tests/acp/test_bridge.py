@@ -285,3 +285,84 @@ async def test_compaction_status_started_and_subagent_filtered() -> None:
     thoughts = [u for u in conn.updates if isinstance(u, AgentThoughtChunk)]
     assert len(thoughts) == 1
     assert "working" in thoughts[0].content.text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_tool_call_carries_subagent_session_meta() -> None:
+    from acp.schema import ToolCallStart
+
+    from kolega_code.acp.bridge import sub_session_id
+
+    conn = _FakeConn()
+    bridge = AcpBridge(cast(Client, conn))
+    await bridge.handle_event("s1", _chat_event("tool_call", "Calling dispatch_agent", "tc1", "dispatch_agent"))
+
+    starts = [u for u in conn.updates if isinstance(u, ToolCallStart)]
+    assert len(starts) == 1
+    meta = starts[0].field_meta or {}
+    assert meta["tool_name"] == "dispatch_agent"
+    info = meta["subagent_session_info"]
+    assert info["session_id"] == sub_session_id("s1", "tc1")
+    assert info["message_start_index"] == 0
+
+
+@pytest.mark.asyncio
+async def test_subagent_status_attaches_to_dispatch_tool() -> None:
+    from acp.schema import ToolCallProgress
+
+    from kolega_code.events import AgentEvent
+
+    conn = _FakeConn()
+    bridge = AcpBridge(cast(Client, conn))
+    await bridge.handle_event(
+        "s1",
+        AgentEvent(
+            event_type="chat_message",
+            sender="agent",
+            content={"status": "GENERATING", "message": "Starting review task"},
+            sub_agent_info={"agent_id": "a1", "parent_tool_call_id": "tc9"},
+        ),
+    )
+
+    progress = [u for u in conn.updates if isinstance(u, ToolCallProgress)]
+    assert len(progress) == 1
+    assert progress[0].tool_call_id == "tc9"
+    assert progress[0].status == "in_progress"
+    assert progress[0].content is not None and "Starting review task" in progress[0].content[0].content.text
+
+
+@pytest.mark.asyncio
+async def test_replay_marks_dispatch_tool_cards() -> None:
+    from acp.schema import ToolCallStart
+
+    from kolega_code.acp.bridge import sub_session_id
+    from kolega_code.session.projection import ConversationItem
+
+    conn = _FakeConn()
+    bridge = AcpBridge(cast(Client, conn))
+    await bridge.replay_conversation(
+        "s1",
+        [
+            ConversationItem(
+                kind="tool",
+                text="result",
+                tool_name="dispatch_agent",
+                tool_call_id="tc1",
+                status="done",
+                seq=7,
+            ),
+            ConversationItem(
+                kind="tool",
+                text="result",
+                tool_name="read",
+                tool_call_id="tc2",
+                status="done",
+                seq=8,
+            ),
+        ],
+    )
+
+    starts = [u for u in conn.updates if isinstance(u, ToolCallStart)]
+    assert [s.tool_call_id for s in starts] == ["tc1", "tc2"]
+    assert (starts[0].field_meta or {})["subagent_session_info"]["session_id"] == sub_session_id("s1", "tc1")
+    assert starts[1].field_meta is None

@@ -365,3 +365,75 @@ async def test_new_session_advertises_slash_commands(tmp_path: Path) -> None:
     assert len(updates) == 1
     names = [command.name for command in updates[0].available_commands]
     assert names == ["help", "compress", "clear", "reset", "context"]
+
+
+@pytest.mark.asyncio
+async def test_load_sub_session_replays_delegated_turn(tmp_path: Path) -> None:
+    from acp.schema import AgentMessageChunk, AgentThoughtChunk, LoadSessionResponse, UserMessageChunk
+
+    from kolega_code.acp.bridge import sub_session_id
+    from kolega_code.cli.session_event_store import FileSessionEventStore
+    from kolega_code.cli.session_journal import SessionJournal
+    from kolega_code.events import AgentEvent
+
+    session, _cm = _make_session(tmp_path, StreamingLLM())
+    journal = SessionJournal(session.session_id, tmp_path / "journal")
+    journal.start_epoch("test")
+    store = FileSessionEventStore(journal)
+    await store.append(
+        AgentEvent(
+            event_type="chat_message",
+            sender="agent",
+            content={
+                "message_type": "tool_call",
+                "text": "Calling dispatch_agent",
+                "tool_description": "dispatch_agent",
+                "tool_call_id": "tc1",
+            },
+        )
+    )
+    await store.append(
+        AgentEvent(
+            event_type="assistant_delta",
+            sender="agent",
+            uuid="sa1",
+            content={"text": "Found three issues", "complete": True},
+            sub_agent_info={
+                "agent_id": "a1",
+                "agent_name": "review",
+                "task": "Review the diff",
+                "parent_tool_call_id": "tc1",
+            },
+        )
+    )
+    await store.append(
+        AgentEvent(
+            event_type="thinking_delta",
+            sender="agent",
+            uuid="st1",
+            content={"text": "hmm", "complete": True},
+            sub_agent_info={"agent_id": "a1", "parent_tool_call_id": "tc1"},
+        )
+    )
+    await store.append(
+        AgentEvent(
+            event_type="chat_message",
+            sender="agent",
+            content={"message_type": "tool_result", "text": "done", "tool_call_id": "tc1"},
+        )
+    )
+
+    factory = _FakeFactory(session)
+    factory.event_store = lambda session_id: store  # type: ignore[method-assign]
+    conn = _FakeConn()
+    agent = AcpAgent(factory=cast(Any, factory))
+    agent.on_connect(cast(Client, conn))
+
+    response = await agent.load_session(cwd=str(tmp_path), session_id=sub_session_id(session.session_id, "tc1"))
+
+    assert isinstance(response, LoadSessionResponse)
+    users = [u for u in conn.updates if isinstance(u, UserMessageChunk)]
+    agents = [u for u in conn.updates if isinstance(u, AgentMessageChunk)]
+    assert users and users[0].content.text == "Review the diff"
+    assert agents and agents[0].content.text == "Found three issues"
+    assert any(isinstance(u, AgentThoughtChunk) for u in conn.updates)

@@ -39,6 +39,31 @@ from kolega_code.session.projection import ConversationItem
 
 logger = logging.getLogger(__name__)
 
+#: Prefix for synthetic sub-agent session ids Zed loads via session/load to
+#: render a delegated turn as a nested transcript card under the dispatch.
+SUB_SESSION_PREFIX = "sub-"
+
+#: Tools whose calls dispatch delegated agents; their tool cards carry the
+#: Zed subagent_session_info meta so the delegate's transcript nests under them.
+SUB_AGENT_DISPATCH_TOOLS = {"dispatch_agent", "run_workflow"}
+
+
+def sub_session_id(parent_session_id: str, tool_call_id: str) -> str:
+    """Deterministic child session id for one dispatch (parseable on load)."""
+    return f"{SUB_SESSION_PREFIX}{parent_session_id}-{tool_call_id}"
+
+
+def _subagent_meta(parent_session_id: str, tool_call_id: str, tool_name: str) -> dict[str, Any]:
+    """Zed's ``_meta.subagent_session_info`` convention for a dispatch card."""
+    return {
+        "subagent_session_info": {
+            "session_id": sub_session_id(parent_session_id, tool_call_id),
+            "message_start_index": 0,
+        },
+        "tool_name": tool_name,
+    }
+
+
 # ACP v1 tool kinds: coarse buckets that drive client-side icons/UX.
 TOOL_KINDS: dict[str, ToolKind] = {
     "read": "read",
@@ -165,10 +190,10 @@ class AcpBridge:
             elif item.kind == "tool":
                 tool_call_id = item.tool_call_id or f"replay-tool-{item.seq}"
                 name = item.tool_name or "tool"
-                await self.send(
-                    session_id,
-                    start_tool_call(tool_call_id, name, kind=TOOL_KINDS.get(name, "other"), status="pending"),
-                )
+                start = start_tool_call(tool_call_id, name, kind=TOOL_KINDS.get(name, "other"), status="pending")
+                if name in SUB_AGENT_DISPATCH_TOOLS:
+                    start.field_meta = _subagent_meta(session_id, tool_call_id, name)
+                await self.send(session_id, start)
                 if item.status == "failed":
                     status: ToolCallStatus = "failed"
                 elif item.status == "running":
@@ -203,15 +228,29 @@ class AcpBridge:
         message_type = str(content.get("message_type") or "")
         tool_call_id = str(content.get("tool_call_id") or "")
 
+        # Sub-agent lifecycle: status lines attach to the dispatching tool call.
+        if event.sub_agent_info and content.get("status") and content.get("message") and message_type == "":
+            parent_tool_call_id = str(event.sub_agent_info.get("parent_tool_call_id") or "")
+            if parent_tool_call_id:
+                await self.send(
+                    session_id,
+                    update_tool_call(
+                        parent_tool_call_id,
+                        status="in_progress",
+                        content=[tool_content(text_block(str(content.get("message"))))],
+                    ),
+                )
+            return
+
         if message_type == "tool_call":
             name = str(content.get("tool_description") or "tool")
             title = str(content.get("text") or f"Calling {name}")
             if name in EXECUTE_TOOLS:
                 self._active_execute_tool = tool_call_id
-            await self.send(
-                session_id,
-                start_tool_call(tool_call_id, title, kind=TOOL_KINDS.get(name, "other"), status="pending"),
-            )
+            start = start_tool_call(tool_call_id, title, kind=TOOL_KINDS.get(name, "other"), status="pending")
+            if name in SUB_AGENT_DISPATCH_TOOLS:
+                start.field_meta = _subagent_meta(session_id, tool_call_id, name)
+            await self.send(session_id, start)
         elif message_type == "task_list_update":
             entries = task_entries_from_markdown(str(content.get("text") or ""))
             await self.send(session_id, update_plan(entries))

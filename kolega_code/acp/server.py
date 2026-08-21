@@ -29,6 +29,7 @@ from acp.helpers import (
     update_current_mode,
     update_plan,
     update_tool_call,
+    update_user_message,
 )
 from acp.interfaces import Client
 from acp.schema import (
@@ -70,7 +71,7 @@ from kolega_code.acp.agent_factory import (
     MODE_PLAN,
     AgentFactory,
 )
-from kolega_code.acp.bridge import AcpBridge
+from kolega_code.acp.bridge import AcpBridge, SUB_SESSION_PREFIX
 from kolega_code.acp.diffs import AcpDiffProvider
 from kolega_code.acp.permissions import AcpPermissionBroker
 from kolega_code.acp.plans import task_entries_from_markdown
@@ -83,7 +84,7 @@ from kolega_code.cli.slash_commands import agent_command_entries
 from kolega_code.llm.models import MessageHistory
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
 from kolega_code.session.control import DEFAULT_REQUEST_TIMEOUT_SECONDS
-from kolega_code.session.projection import replay
+from kolega_code.session.projection import replay, sub_agent_key
 from kolega_code.tools.core import ToolError
 
 logger = logging.getLogger(__name__)
@@ -173,6 +174,10 @@ class AcpAgent(Agent):
         additional_directories: list[str] | None = None,
         **kwargs: Any,
     ) -> LoadSessionResponse | None:
+        if session_id.startswith(SUB_SESSION_PREFIX):
+            # A synthetic sub-agent session Zed loads to render a delegated
+            # turn as a nested transcript card under the dispatch tool call.
+            return await self._load_sub_session(session_id)
         if session_id in self._sessions:
             existing = self._sessions[session_id]
             return LoadSessionResponse(config_options=self._factory.config_options_for(existing))
@@ -192,6 +197,46 @@ class AcpAgent(Agent):
         await self._send_available_commands(session)
         await self._replay_transcript(session)
         return LoadSessionResponse(config_options=self._factory.config_options_for(session))
+
+    async def _load_sub_session(self, session_id: str) -> LoadSessionResponse:
+        """Replay one delegated turn as its synthetic sub-session.
+
+        Zed renders ``_meta.subagent_session_info`` dispatch cards by loading
+        the referenced child session id through ``session/load`` and nesting
+        the replayed transcript under the dispatch. The child id encodes the
+        parent session and the dispatching tool call
+        (``sub-<parent>-<tool_call_id>``), which locates the delegate's events
+        in the parent's journal.
+        """
+        rest = session_id[len(SUB_SESSION_PREFIX) :]
+        parent_id, _, tool_call_id = rest.partition("-")
+        if not parent_id or not tool_call_id:
+            logger.info("acp sub-session load: malformed id %s", session_id)
+            return LoadSessionResponse()
+        try:
+            events = await self._factory.event_store(parent_id).read(parent_id)
+        except Exception:  # noqa: BLE001 — an unreadable journal yields an empty card
+            logger.exception("acp sub-session load: journal read failed (parent=%s)", parent_id)
+            return LoadSessionResponse()
+        key: str | None = None
+        for event in events:
+            info = event.sub_agent_info or {}
+            if str(info.get("parent_tool_call_id") or "") == tool_call_id:
+                key = sub_agent_key(info)
+                if key:
+                    break
+        if key is None:
+            logger.info("acp sub-session load: no delegate for %s", session_id)
+            return LoadSessionResponse()
+        activity = replay(events).sub_agents.get(key)
+        bridge = AcpBridge(self._conn)
+        task = activity.task if activity is not None else ""
+        if task:
+            update = update_user_message(text_block(task))
+            update.message_id = f"replay-sub-task-{tool_call_id}"
+            await bridge.send(session_id, update)
+        await bridge.replay_conversation(session_id, activity.steps if activity is not None else [])
+        return LoadSessionResponse()
 
     async def list_sessions(
         self, cwd: str | None = None, cursor: str | None = None, **kwargs: Any
