@@ -35,6 +35,7 @@ from kolega_code.agent import CoderAgent, ToolExtension
 from kolega_code.agent.planningagent import PlanningAgent
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.tool_definitions import tool_description_asset
+from kolega_code.agent.volatile_context import VolatileSection
 from kolega_code.cli.config import CliConfigOverrides, build_agent_config, config_summary
 from kolega_code.cli.connection import CliConnectionManager
 from kolega_code.cli.provider_registry import PROVIDER_LABELS, ui_model_options
@@ -153,7 +154,9 @@ class AgentFactory:
 
     @staticmethod
     def _task_list_extension(record: SessionRecord, agent_holder: dict[str, Any], mode: str) -> ToolExtension:
-        """Shared task-list tools backed by the session record.
+        """Shared task-list tools backed by the session record — the same list
+        the TUI's ``update_task_list`` writes, so a session moves between the
+        TUI and the editor with one task list.
 
         Build mode can read and update the list; plan mode gets a read-only
         view (same split as the TUI). Updates broadcast a ``task_list_update``
@@ -180,7 +183,12 @@ class AgentFactory:
         return ToolExtension(
             name="acp-shared-task-list",
             tools=tools,
-            tool_descriptions={name: tool_description_asset(name) for name in tools},
+            tool_descriptions={
+                "get_task_list": tool_description_asset(
+                    "get_task_list" if mode == MODE_BUILD else "get_task_list_readonly"
+                ),
+                **({"update_task_list": tool_description_asset("update_task_list")} if mode == MODE_BUILD else {}),
+            },
             tool_schemas={
                 "get_task_list": {"type": "object", "properties": {}, "required": []},
                 "update_task_list": {
@@ -197,6 +205,17 @@ class AgentFactory:
             tool_groups={"planning_tools": list(tools)},
             propagate_to_sub_agents=False,
         )
+
+    @staticmethod
+    def _task_list_volatile_section(record: SessionRecord) -> Callable[[], VolatileSection]:
+        """The current shared task list as a volatile section (TUI parity: the
+        agent sees the latest list in context every turn without re-fetching).
+        An empty list is an absent section, exactly like the TUI."""
+
+        def provider() -> VolatileSection:
+            return VolatileSection("task_list", (record.task_list_markdown or "").strip())
+
+        return provider
 
     def _load_settings(self) -> None:
         settings_store = SettingsStore()
@@ -352,6 +371,7 @@ class AgentFactory:
             session_recorder=None if restore else recorder,
         )
         agent_holder["agent"] = agent
+        agent.add_volatile_section(self._task_list_volatile_section(record))
         lsp_messages = await agent.tool_collection.initialize()
         for message in lsp_messages:
             logger.debug("acp lsp: %s", message)

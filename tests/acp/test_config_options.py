@@ -158,7 +158,7 @@ async def test_real_factory_builds_both_options(isolated_cli_env: None, tmp_path
 
 
 @pytest.mark.asyncio
-async def test_set_config_option_mode_switches_and_clears_plan_on_build(tmp_path: Path) -> None:
+async def test_set_config_option_mode_switches_without_touching_task_list(tmp_path: Path) -> None:
     from acp.schema import AgentPlanUpdate, CurrentModeUpdate
 
     session, _cm = _make_session(tmp_path, StreamingLLM())
@@ -174,9 +174,9 @@ async def test_set_config_option_mode_switches_and_clears_plan_on_build(tmp_path
     assert [mode for _, mode in factory.interaction_mode_calls] == ["plan", "build"]
     modes = [u for u in conn.updates if isinstance(u, CurrentModeUpdate)]
     assert [u.current_mode_id for u in modes] == ["plan", "build"]
-    plans = [u for u in conn.updates if isinstance(u, AgentPlanUpdate)]
-    assert len(plans) == 1
-    assert plans[0].entries == []
+    # The plan view mirrors the shared task list, which persists across mode
+    # switches in the TUI; a mode change must not clear it.
+    assert not any(isinstance(u, AgentPlanUpdate) for u in conn.updates)
 
 
 @pytest.mark.asyncio

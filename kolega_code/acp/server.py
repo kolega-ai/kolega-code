@@ -20,7 +20,7 @@ from uuid import uuid4
 
 from acp import Agent, InitializeResponse, NewSessionResponse, PromptResponse
 from acp.exceptions import RequestError
-from acp.helpers import text_block, tool_content, update_current_mode, update_plan, update_tool_call
+from acp.helpers import text_block, tool_content, update_current_mode, update_tool_call
 from acp.interfaces import Client
 from acp.schema import (
     AgentCapabilities,
@@ -237,8 +237,6 @@ class AcpAgent(Agent):
         await self._factory.set_interaction_mode(session, mode_id)
         logger.info("acp session mode -> %s (session=%s)", mode_id, session_id)
         await self._emit_current_mode(session)
-        if mode_id == MODE_BUILD:
-            await self._send_session_update(session, update_plan([]))
         return SetSessionModeResponse()
 
     async def set_config_option(
@@ -268,8 +266,6 @@ class AcpAgent(Agent):
             await self._factory.set_interaction_mode(session, str(value))
             logger.info("acp session config: mode -> %s (session=%s)", value, session_id)
             await self._emit_current_mode(session)
-            if value == MODE_BUILD:
-                await self._send_session_update(session, update_plan([]))
         else:
             raise RequestError.invalid_params({"message": f"unknown config option {config_id!r}"})
         # The spec requires the full option set with current values so the
@@ -354,7 +350,6 @@ class AcpAgent(Agent):
             if plan:
                 session.record.latest_plan_markdown = plan
                 session.record.plan_pending = True
-                await bridge.emit_plan(session.session_id, plan)
                 await self._request_plan_approval(session, plan)
 
     def _consume_plan(self, session: AcpSession, bridge: AcpBridge) -> str | None:

@@ -15,7 +15,7 @@ from kolega_code.acp.agent_factory import ACP_AGENT_MODE, ACP_PERMISSION_MODE, M
 from kolega_code.acp.bridge import TOOL_KINDS, AcpBridge
 from kolega_code.acp.diffs import AcpDiffProvider
 from kolega_code.acp.permissions import AcpPermissionBroker
-from kolega_code.acp.plans import plan_entries_from_markdown
+from kolega_code.acp.plans import task_entries_from_markdown
 from kolega_code.acp.server import AcpAgent
 from kolega_code.acp.session import AcpSession
 from kolega_code.acp.usage import build_usage_update, context_window_for
@@ -34,5 +34,5 @@ __all__ = [
     "TOOL_KINDS",
     "build_usage_update",
     "context_window_for",
-    "plan_entries_from_markdown",
+    "task_entries_from_markdown",
 ]

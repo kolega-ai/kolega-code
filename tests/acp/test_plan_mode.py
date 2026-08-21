@@ -13,7 +13,6 @@ from acp.schema import AgentPlanUpdate, CurrentModeUpdate, SetSessionModeRespons
 
 from kolega_code.acp.agent_factory import MODE_BUILD, MODE_PLAN, agent_class_for
 from kolega_code.events import AgentEvent
-from kolega_code.acp.plans import plan_entries_from_markdown
 from kolega_code.acp.server import AcpAgent
 
 from tests.acp.test_server import StreamingLLM, _FakeConn, _FakeFactory, _make_agent, _make_session, _text_event
@@ -25,22 +24,6 @@ def test_agent_class_choice() -> None:
     assert agent_class_for(MODE_PLAN) is PlanningAgent
     assert agent_class_for(MODE_BUILD).__name__ == "CoderAgent"
     assert agent_class_for("anything-else").__name__ == "CoderAgent"
-
-
-def test_plan_entries_from_markdown_parses_headings() -> None:
-    text = "# Big plan\n\n## Step one\nbody\n## Step two\nmore\n### Nested"
-    entries = plan_entries_from_markdown(text)
-    assert [entry.content for entry in entries] == ["Big plan", "Step one", "Step two", "Nested"]
-    assert all(entry.status == "pending" for entry in entries)
-
-
-def test_plan_entries_from_markdown_falls_back_to_single_entry() -> None:
-    entries = plan_entries_from_markdown("A plan without headings, just prose.")
-    assert [entry.content for entry in entries] == ["A plan without headings, just prose."]
-
-
-def test_plan_entries_from_markdown_empty() -> None:
-    assert plan_entries_from_markdown("") == []
 
 
 @pytest.mark.asyncio
@@ -75,7 +58,7 @@ async def test_set_session_mode_switches_and_updates_client(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_set_session_mode_build_clears_plan(tmp_path: Path) -> None:
+async def test_set_session_mode_build_keeps_task_list_view(tmp_path: Path) -> None:
     session, _cm = _make_session(tmp_path, StreamingLLM())
     factory = _FakeFactory(session)
     conn = _FakeConn()
@@ -85,9 +68,9 @@ async def test_set_session_mode_build_clears_plan(tmp_path: Path) -> None:
 
     await agent.set_session_mode(new_session.session_id, MODE_BUILD)
 
-    plans = [update for update in conn.updates if isinstance(update, AgentPlanUpdate)]
-    assert len(plans) == 1
-    assert plans[0].entries == []
+    # The plan view mirrors the shared task list, which survives mode switches
+    # in the TUI; switching modes must not clear it.
+    assert not any(isinstance(update, AgentPlanUpdate) for update in conn.updates)
 
 
 @pytest.mark.asyncio
@@ -119,18 +102,23 @@ async def test_set_session_mode_rejects_active_turn(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_plan_turn_emits_plan_update(tmp_path: Path) -> None:
+async def test_plan_turn_does_not_populate_task_list_view(tmp_path: Path) -> None:
     plan_text = "## Investigate the repo\nDetails.\n## Propose a design\nMore details."
     session, _cm = _make_session(tmp_path, StreamingLLM(events=[_text_event(plan_text)]))
     session.record.interaction_mode = MODE_PLAN
+    holder = {"plan": plan_text}
+    setattr(session.agent, "consume_completed_plan", lambda: holder.pop("plan", None))
     agent, conn = _make_agent(session)
     new_session = await agent.new_session(cwd=str(tmp_path))
 
     await agent.prompt(session_id=new_session.session_id, prompt=[{"type": "text", "text": "make a plan"}])  # pyright: ignore[reportArgumentType]
 
-    plans = [update for update in conn.updates if isinstance(update, AgentPlanUpdate)]
-    assert plans
-    assert [entry.content for entry in plans[-1].entries] == ["Investigate the repo", "Propose a design"]
+    # The plan and the task list are distinct in the TUI; the plan must not
+    # feed the editor's plan view (which mirrors the task list only). The plan
+    # still reaches the user through the approval prompt.
+    assert not any(isinstance(update, AgentPlanUpdate) for update in conn.updates)
+    assert conn.permission_calls
+    assert conn.permission_calls[0][1].title == "Approve implementation plan?"
 
 
 def test_task_entries_from_markdown_maps_checkboxes() -> None:
@@ -188,8 +176,7 @@ async def test_plan_approval_implement_switches_to_build(tmp_path: Path) -> None
     assert factory.interaction_mode_calls == [(new_session.session_id, MODE_BUILD)]
     modes = [u.current_mode_id for u in conn.updates if isinstance(u, CurrentModeUpdate)]
     assert modes[-1] == MODE_BUILD
-    plans = [u for u in conn.updates if isinstance(u, AgentPlanUpdate)]
-    assert [entry.content for entry in plans[0].entries] == ["Step one", "Step two"]
+    assert not any(isinstance(u, AgentPlanUpdate) for u in conn.updates)
 
 
 @pytest.mark.asyncio
@@ -270,3 +257,33 @@ async def test_plan_approval_prompt_contains_full_plan(tmp_path: Path) -> None:
     content = conn.permission_calls[0][1].content[0].content
     assert content.type == "text"
     assert content.text == plan_text
+
+
+def test_task_list_volatile_section_mirrors_record(tmp_path: Path) -> None:
+    from kolega_code.acp.agent_factory import AgentFactory
+
+    session, _cm = _make_session(tmp_path, StreamingLLM())
+    provider = AgentFactory._task_list_volatile_section(session.record)
+
+    assert provider().text == ""
+
+    session.record.task_list_markdown = "- [ ] do the thing\n- [x] done thing"
+    section = provider()
+    assert section.key == "task_list"
+    assert section.text == "- [ ] do the thing\n- [x] done thing"
+
+
+def test_task_list_extension_matches_tui_split(tmp_path: Path) -> None:
+    from kolega_code.agent.tool_definitions import tool_description_asset
+
+    from kolega_code.acp.agent_factory import AgentFactory
+
+    session, _cm = _make_session(tmp_path, StreamingLLM())
+    holder: dict[str, Any] = {}
+    build = AgentFactory._task_list_extension(session.record, holder, MODE_BUILD)
+    plan = AgentFactory._task_list_extension(session.record, holder, MODE_PLAN)
+
+    assert set(build.tools) == {"get_task_list", "update_task_list"}
+    assert set(plan.tools) == {"get_task_list"}
+    assert build.tool_descriptions["get_task_list"] == tool_description_asset("get_task_list")
+    assert plan.tool_descriptions["get_task_list"] == tool_description_asset("get_task_list_readonly")

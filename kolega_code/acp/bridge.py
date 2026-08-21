@@ -30,7 +30,7 @@ from acp.interfaces import Client
 from acp.schema import ToolCallStatus, ToolKind
 
 from kolega_code.acp.diffs import AcpDiffProvider
-from kolega_code.acp.plans import plan_entries_from_markdown, task_entries_from_markdown
+from kolega_code.acp.plans import task_entries_from_markdown
 from kolega_code.acp.usage import build_usage_update
 from kolega_code.events import AgentEvent
 
@@ -133,14 +133,6 @@ class AcpBridge:
         if stream_uuid:
             update.message_id = stream_uuid
         await self.send(session_id, update)
-
-    async def emit_plan(self, session_id: str, plan_markdown: str) -> None:
-        entries = plan_entries_from_markdown(plan_markdown)
-        if entries:
-            await self.send(session_id, update_plan(entries))
-
-    async def clear_plan(self, session_id: str) -> None:
-        await self.send(session_id, update_plan([]))
 
     def response_text(self) -> str:
         return "".join(self._turn_response_parts)
