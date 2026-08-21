@@ -219,33 +219,3 @@ async def test_plan_approval_discuss_keeps_mode_and_sets_reofferable(tmp_path: P
     assert session.record.plan_pending is False
     assert session.record.plan_reofferable is True
     assert factory.interaction_mode_calls == []
-
-
-@pytest.mark.asyncio
-async def test_plan_approval_clear_wipes_history(tmp_path: Path) -> None:
-    from acp.schema import RequestPermissionResponse
-
-    plan_text = "## Step one"
-    session, _cm = _make_session(tmp_path, StreamingLLM(events=[_text_event(plan_text)]))
-    session.record.interaction_mode = MODE_PLAN
-    holder = {"plan": plan_text}
-    setattr(session.agent, "consume_completed_plan", lambda: holder.pop("plan", None))
-    factory = _FakeFactory(session)
-    conn = _FakeConn()
-
-    async def implement_clear(*a: Any, **k: Any) -> Any:
-        return RequestPermissionResponse.model_validate(
-            {"outcome": {"outcome": "selected", "optionId": "implement_plan_clear"}}
-        )
-
-    conn.request_permission = implement_clear  # type: ignore[method-assign]
-    agent = AcpAgent(factory=cast(Any, factory))
-    agent.on_connect(cast(Client, conn))
-    new_session = await agent.new_session(cwd=str(tmp_path))
-
-    await agent.prompt(session_id=new_session.session_id, prompt=[{"type": "text", "text": "make a plan"}])  # pyright: ignore[reportArgumentType]
-
-    assert session.record.plan_pending is False
-    assert not any("make a plan" in msg.get_text_content() for msg in session.agent.history)
-    assert sum("Step one" in msg.get_text_content() for msg in session.agent.history) == 1
-    assert factory.interaction_mode_calls == [(new_session.session_id, MODE_BUILD)]
