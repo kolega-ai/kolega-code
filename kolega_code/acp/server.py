@@ -41,14 +41,14 @@ from acp.schema import (
     TextContentBlock,
 )
 
-from kolega_code.acp.agent_factory import AgentFactory
+from kolega_code.acp.agent_factory import CONFIG_MODEL, CONFIG_PERMISSION_AUTO, AgentFactory
 from kolega_code.acp.bridge import AcpBridge
 from kolega_code.acp.diffs import AcpDiffProvider
 from kolega_code.acp.permissions import AcpPermissionBroker
 from kolega_code.acp.session import AcpSession
 from kolega_code.cli.config import CliConfigError
 from kolega_code.cli.session_store import SessionStoreError
-from kolega_code.permissions import PermissionDecision, PermissionRequest
+from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,10 @@ class AcpAgent(Agent):
         except _HANDLED_CONFIG_ERRORS as exc:
             raise AgentFactory.protocol_error(exc) from exc
         self._sessions[session.session_id] = session
-        return NewSessionResponse(session_id=session.session_id)
+        return NewSessionResponse(
+            session_id=session.session_id,
+            config_options=self._factory.config_options_for(session),
+        )
 
     async def load_session(
         self,
@@ -130,7 +133,7 @@ class AcpAgent(Agent):
         **kwargs: Any,
     ) -> LoadSessionResponse | None:
         if session_id in self._sessions:
-            return LoadSessionResponse()
+            return LoadSessionResponse(config_options=self._factory.config_options_for(self._sessions[session_id]))
         try:
             session = await self._factory.load_session(
                 cwd,
@@ -142,7 +145,7 @@ class AcpAgent(Agent):
         if session is None:
             return None
         self._sessions[session.session_id] = session
-        return LoadSessionResponse()
+        return LoadSessionResponse(config_options=self._factory.config_options_for(session))
 
     async def list_sessions(
         self, cwd: str | None = None, cursor: str | None = None, **kwargs: Any
@@ -209,8 +212,27 @@ class AcpAgent(Agent):
         return None
 
     async def set_config_option(self, config_id: str, session_id: str, value: str | bool, **kwargs: Any) -> None:
-        logger.info("acp session/set_config_option not supported yet (config=%s)", config_id)
-        return None
+        session = self._sessions.get(session_id)
+        if session is None:
+            raise RequestError.resource_not_found(session_id)
+        if not session.idle():
+            raise RequestError.invalid_request({"message": "config options apply between turns only"})
+        if config_id == CONFIG_MODEL:
+            if not isinstance(value, str) or "/" not in value:
+                raise RequestError.invalid_params({"message": "model option expects 'provider/model'"})
+            provider, model = value.split("/", 1)
+            try:
+                await self._factory.apply_model(session, provider, model)
+            except _HANDLED_CONFIG_ERRORS as exc:
+                raise AgentFactory.protocol_error(exc) from exc
+            logger.info("acp session config: model -> %s/%s (session=%s)", provider, model, session_id)
+            return None
+        if config_id == CONFIG_PERMISSION_AUTO:
+            mode = PermissionMode.AUTO if bool(value) else PermissionMode.ASK
+            await self._factory.set_permission_mode(session, mode)
+            logger.info("acp session config: permission mode -> %s (session=%s)", mode.value, session_id)
+            return None
+        raise RequestError.invalid_params({"message": f"unknown config option {config_id!r}"})
 
     async def authenticate(self, method_id: str, **kwargs: Any) -> None:
         logger.info("acp authenticate not supported yet (method=%s)", method_id)

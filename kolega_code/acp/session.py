@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from typing import Any
 
 from kolega_code.agent import CoderAgent
 from kolega_code.cli.connection import CliConnectionManager
@@ -23,6 +24,8 @@ class AcpSession:
     record: SessionRecord
     agent: CoderAgent
     manager: CliConnectionManager
+    #: Bound at build time so a model-switch rebuild reattaches the same callback.
+    permission_callback: Any = None
     #: In-flight turn task; None when the session is idle. Set and cleared by the server.
     turn_task: asyncio.Task | None = field(default=None, repr=False)
 

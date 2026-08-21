@@ -105,6 +105,9 @@ class _FakeFactory:
 
     def __init__(self, session: AcpSession) -> None:
         self._session = session
+        self.config_options: list[Any] = []
+        self.permission_mode_calls: list[tuple[str, Any]] = []
+        self.model_calls: list[tuple[str, str, str]] = []
 
     async def open_session(
         self,
@@ -120,6 +123,15 @@ class _FakeFactory:
             agent=self._session.agent,
             manager=self._session.manager,
         )
+
+    def config_options_for(self, session: AcpSession) -> list[Any]:
+        return self.config_options
+
+    async def set_permission_mode(self, session: AcpSession, mode: Any) -> None:
+        self.permission_mode_calls.append((session.session_id, mode))
+
+    async def apply_model(self, session: AcpSession, provider: str, model: str) -> None:
+        self.model_calls.append((session.session_id, provider, model))
 
     def persist(self, session: AcpSession) -> None:
         pass
