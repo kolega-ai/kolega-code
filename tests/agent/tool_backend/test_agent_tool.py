@@ -819,3 +819,43 @@ def test_construct_workflow_sub_agent_threads_callers_llm_trace_sink(agent_tool,
     agent = agent_tool._construct_workflow_sub_agent(MockAgent, config=None, extra_tool_extensions=None)
 
     assert agent.init_kwargs["llm_trace_sink"] is sink
+
+
+@pytest.mark.asyncio
+class TestDispatchPermissions:
+    """Dispatched sub-agents run AUTO regardless of the parent's mode."""
+
+    async def test_dispatch_agent_forces_auto_permission_mode(self, agent_tool, mock_connection_manager, mock_caller):
+        import builtins
+
+        from unittest.mock import patch
+
+        from kolega_code.permissions import PermissionMode, auto_allow_permission_callback
+
+        async def parent_callback(request):  # noqa: ANN001
+            raise AssertionError("the parent callback must not reach sub-agents")
+
+        mock_caller.permission_mode = PermissionMode.ASK
+        mock_caller.permission_callback = parent_callback
+
+        original_import = builtins.__import__
+        with patch.object(builtins, "__import__") as mock_import:
+            mock_module = MagicMock()
+            mock_module.MockAgent = MockAgent
+
+            def mock_import_func(name, *args, **kwargs):
+                if name == "test.module":
+                    return mock_module
+                return original_import(name, *args, **kwargs)
+
+            mock_import.side_effect = mock_import_func
+            MockAgent.configure_streaming([{"content": "Done.", "complete": True, "uuid": str(uuid.uuid4())}])
+            MockAgent.last_instance = None
+            try:
+                await agent_tool._dispatch_agent(agent_class_import="test.module.MockAgent", task="Test task")
+            finally:
+                MockAgent.configure_streaming([])
+
+        assert MockAgent.last_instance is not None
+        assert MockAgent.last_instance.init_kwargs["permission_mode"] == PermissionMode.AUTO
+        assert MockAgent.last_instance.init_kwargs["permission_callback"] is auto_allow_permission_callback

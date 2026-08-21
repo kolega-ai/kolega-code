@@ -147,6 +147,7 @@ class BaseAgent(LogMixin):
     # sub-agent runs its own multi-turn LLM loop, so an unbounded fan-out would
     # multiply token spend and shared-resource pressure).
     PARALLEL_TOOL_LIMIT = 8
+    STREAM_FLUSH_CHARS = 16
     # Cap on how many times a Stop hook may force the agent to keep working in one
     # turn, so a misbehaving "don't stop until X" hook cannot loop forever.
     MAX_STOP_HOOK_OVERRIDES = 5
@@ -2521,6 +2522,7 @@ class BaseAgent(LogMixin):
                 current_response = ""
                 current_thinking = ""
                 thinking_started = False
+                response_started = False
                 # Use the same UUID for each segment of the response
                 response_uuid = str(uuid.uuid4())
                 thinking_uuid = str(uuid.uuid4())
@@ -2569,10 +2571,21 @@ class BaseAgent(LogMixin):
                     async with stream_cm as stream:
                         async for event in stream:
                             if event.type == "text":
+                                if thinking_started or current_thinking:
+                                    yield {
+                                        "type": "thinking",
+                                        "content": current_thinking,
+                                        "complete": True,
+                                        "uuid": thinking_uuid,
+                                    }
+                                    current_thinking = ""
+                                    thinking_started = False
+                                    thinking_uuid = str(uuid.uuid4())
+
                                 current_response += event.text
 
                                 # Send periodic updates as the response grows
-                                if len(current_response) >= 50:
+                                if len(current_response) >= self.STREAM_FLUSH_CHARS:
                                     yield {
                                         "type": "response",
                                         "content": current_response,
@@ -2580,11 +2593,23 @@ class BaseAgent(LogMixin):
                                         "uuid": response_uuid,
                                     }
                                     current_response = ""
+                                    response_started = True
 
                             elif event.type == "thinking" and event.thinking:
+                                if response_started or current_response:
+                                    yield {
+                                        "type": "response",
+                                        "content": current_response,
+                                        "complete": True,
+                                        "uuid": response_uuid,
+                                    }
+                                    current_response = ""
+                                    response_started = False
+                                    response_uuid = str(uuid.uuid4())
+
                                 current_thinking += event.thinking
 
-                                if len(current_thinking) >= 50:
+                                if len(current_thinking) >= self.STREAM_FLUSH_CHARS:
                                     thinking_started = True
                                     yield {
                                         "type": "thinking",
@@ -2603,6 +2628,7 @@ class BaseAgent(LogMixin):
                                     "uuid": response_uuid,
                                 }
                                 current_response = ""
+                                response_started = False
 
                                 await self.on_tool_use_start(event.tool_call_delta)
 
@@ -2640,6 +2666,7 @@ class BaseAgent(LogMixin):
                                     "uuid": response_uuid,
                                 }
                                 current_response = ""
+                                response_started = False
                                 response_uuid = str(uuid.uuid4())
                                 await self._emit_hosted_tool_call(event.tool_call_delta)
 

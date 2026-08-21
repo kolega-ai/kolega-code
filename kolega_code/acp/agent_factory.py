@@ -1,0 +1,418 @@
+"""Headless agent composition for ACP sessions.
+
+Builds the same agent stack the CLI uses — settings, model config, durable
+session recording — one ``CoderAgent`` per ACP session.
+
+Sessions use ``AgentMode.CLI`` (the standard interactive coder template; the
+editor thread has a human present) with an *explicit* permission mode:
+``PermissionMode.ASK`` with a client-bound ``permission_callback`` (the
+``session/request_permission`` bridge). The ``ASK`` agent mode is
+deliberately not used: it is the autonomous ``ask``-CLI template whose
+permission handling is hardcoded to auto-approve.
+
+Expected failures (missing model config, corrupt settings, unknown session)
+are converted to ACP JSON-RPC errors so the client gets a clean message and
+the process keeps serving.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any, Awaitable, Callable, cast
+
+from acp.exceptions import RequestError
+from acp.schema import (
+    SessionConfigOptionBoolean,
+    SessionConfigOptionSelect,
+    SessionConfigSelectGroup,
+    SessionConfigSelectOption,
+    SessionInfo,
+)
+
+from kolega_code.acp.questions import build_question_extension
+from kolega_code.acp.session import AcpSession
+from kolega_code.agent import CoderAgent, PromptExtension, ToolExtension
+from kolega_code.agent.planningagent import PlanningAgent
+from kolega_code.agent.prompt_provider import AgentMode
+from kolega_code.agent.prompts import BUILD_QUESTION_PROMPT, PLANNING_QUESTION_PROMPT
+from kolega_code.agent.tool_definitions import tool_description_asset
+from kolega_code.agent.volatile_context import VolatileSection
+from kolega_code.cli.config import CliConfigOverrides, build_agent_config, config_summary
+from kolega_code.cli.connection import CliConnectionManager
+from kolega_code.cli.provider_registry import PROVIDER_LABELS, ui_model_options
+from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
+from kolega_code.cli.session_store import SessionRecord, SessionStore, SessionStoreError
+from kolega_code.cli.settings import CliSettings, SettingsStore
+from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest, normalize_permission_mode
+from kolega_code.session.recording import RecordingConnectionManager
+
+logger = logging.getLogger(__name__)
+
+ACP_AGENT_MODE = AgentMode.CLI
+ACP_PERMISSION_MODE = PermissionMode.ASK
+CONFIG_MODEL = "model"
+CONFIG_PERMISSION_AUTO = "permission-auto"
+CONFIG_MODE = "mode"
+MODE_BUILD = "build"
+MODE_PLAN = "plan"
+INTERACTION_MODES = {MODE_BUILD, MODE_PLAN}
+
+PermissionCallback = Callable[[PermissionRequest], Awaitable[PermissionDecision]]
+ConfigOption = SessionConfigOptionSelect | SessionConfigOptionBoolean
+
+
+def agent_class_for(mode: str) -> type[CoderAgent]:
+    return PlanningAgent if mode == MODE_PLAN else CoderAgent
+
+
+class AgentFactory:
+    """Opens, loads, and persists ACP sessions backed by the session store."""
+
+    def __init__(self, permission_mode: PermissionMode = ACP_PERMISSION_MODE) -> None:
+        self._permission_mode = permission_mode
+        self._store = SessionStore()
+        self._settings: CliSettings | None = None
+        self._settings_store: SettingsStore | None = None
+        self._acp_sessions: dict[str, AcpSession] = {}
+
+    async def open_session(
+        self,
+        cwd: str,
+        *,
+        session_id: str | None = None,
+        permission_callback: PermissionCallback | None = None,
+    ) -> AcpSession:
+        project_path = Path(cwd).resolve()
+        self._load_settings()
+        config = self._config_for(project_path)
+        record = self._store.create(project_path, ACP_AGENT_MODE.value, config_summary(config), session_id=session_id)
+        return await self._build_session(record, config, restore=False, permission_callback=permission_callback)
+
+    async def load_session(
+        self,
+        cwd: str,
+        session_id: str,
+        *,
+        permission_callback: PermissionCallback | None = None,
+    ) -> AcpSession | None:
+        try:
+            record = self._store.load(session_id)
+        except SessionStoreError as exc:
+            logger.info("acp session/load: unknown session %s (%s)", session_id, exc)
+            return None
+        self._load_settings()
+        config = self._config_for(Path(record.project_path))
+        return await self._build_session(record, config, restore=True, permission_callback=permission_callback)
+
+    # -- session config options -------------------------------------------
+
+    def config_options_for(self, session: AcpSession) -> list[ConfigOption]:
+        return [self._model_option(session), self._permission_option(session), self._mode_option(session)]
+
+    async def set_permission_mode(self, session: AcpSession, mode: PermissionMode) -> None:
+        session.agent.set_permission_mode(mode)
+        session.record.permission_mode = mode.value
+
+    async def set_interaction_mode(self, session: AcpSession, mode: str) -> None:
+        """Switch plan/build mode by rebuilding the session agent with the mode's class."""
+        session.record.interaction_mode = mode
+        await self._rebuild_agent(session, session.config)
+
+    async def apply_model(self, session: AcpSession, provider: str, model: str) -> None:
+        config = self._config_for(Path(session.record.project_path), provider=provider, model=model)
+        session.config = config
+        await self._rebuild_agent(session, config)
+
+    # -- persistence --------------------------------------------------------
+
+    def persist(self, session: AcpSession) -> None:
+        """Flush the agent's conversation state into the session record."""
+        session.record.history = session.agent.dump_message_history()
+        session.record.compaction = session.agent.dump_compaction_state()
+        session.record.permission_mode = session.agent.permission_mode.value
+        self._store.save(session.record)
+
+    async def close_session(self, session_id: str) -> None:
+        session = self._acp_sessions.pop(session_id, None)
+        if session is None:
+            return
+        self.persist(session)
+        try:
+            await session.agent.cleanup()
+        except Exception:  # noqa: BLE001 — closing must not mask the primary outcome
+            logger.exception("acp session close: agent cleanup failed (session=%s)", session_id)
+
+    def list_sessions(self, cwd: str | None) -> list[SessionInfo]:
+        records = self._store.list(project_path=Path(cwd).resolve() if cwd else None)
+        return [
+            SessionInfo(
+                session_id=record.session_id, cwd=record.project_path, title=record.title, updated_at=record.updated_at
+            )
+            for record in records
+        ]
+
+    def event_store(self, session_id: str) -> FileSessionEventStore:
+        """The session's durable event journal as a readable event store."""
+        return FileSessionEventStore(self._store.journal(session_id))
+
+    # -- internal -----------------------------------------------------------
+
+    @staticmethod
+    def _task_list_extension(record: SessionRecord, agent_holder: dict[str, Any], mode: str) -> ToolExtension:
+        """Shared task-list tools backed by the session record — the same list
+        the TUI's ``update_task_list`` writes, so a session moves between the
+        TUI and the editor with one task list.
+
+        Build mode can read and update the list; plan mode gets a read-only
+        view (same split as the TUI). Updates broadcast a ``task_list_update``
+        chat event so the bridge can refresh the editor's plan view live.
+        """
+
+        async def get_task_list() -> str:
+            return record.task_list_markdown or "No task list has been set."
+
+        async def update_task_list(task_list_markdown: str) -> str:
+            record.task_list_markdown = task_list_markdown.strip()
+            agent = agent_holder.get("agent")
+            if agent is not None:
+                await agent.send_chat_message(
+                    message_type="task_list_update",
+                    content=task_list_markdown.strip(),
+                    tool_call_id=str(getattr(agent, "current_tool_call_id", "") or ""),
+                )
+            return "Task list updated."
+
+        tools: dict[str, Any] = {"get_task_list": get_task_list}
+        if mode == MODE_BUILD:
+            tools["update_task_list"] = update_task_list
+        return ToolExtension(
+            name="acp-shared-task-list",
+            tools=tools,
+            tool_descriptions={
+                "get_task_list": tool_description_asset(
+                    "get_task_list" if mode == MODE_BUILD else "get_task_list_readonly"
+                ),
+                **({"update_task_list": tool_description_asset("update_task_list")} if mode == MODE_BUILD else {}),
+            },
+            tool_schemas={
+                "get_task_list": {"type": "object", "properties": {}, "required": []},
+                "update_task_list": {
+                    "type": "object",
+                    "properties": {
+                        "task_list_markdown": {
+                            "type": "string",
+                            "description": "The full current shared task list as Markdown.",
+                        }
+                    },
+                    "required": ["task_list_markdown"],
+                },
+            },
+            tool_groups={"planning_tools": list(tools)},
+            propagate_to_sub_agents=False,
+        )
+
+    @staticmethod
+    def _task_list_volatile_section(record: SessionRecord) -> Callable[[], VolatileSection]:
+        """The current shared task list as a volatile section (TUI parity: the
+        agent sees the latest list in context every turn without re-fetching).
+        An empty list is an absent section, exactly like the TUI."""
+
+        def provider() -> VolatileSection:
+            return VolatileSection("task_list", (record.task_list_markdown or "").strip())
+
+        return provider
+
+    def _load_settings(self) -> None:
+        settings_store = SettingsStore()
+        self._settings_store = settings_store
+        self._settings = settings_store.load()
+
+    def _config_for(self, project_path: Path, *, provider: str | None = None, model: str | None = None) -> Any:
+        assert self._settings is not None and self._settings_store is not None
+        overrides = CliConfigOverrides(provider=provider, model=model) if provider and model else None
+        return build_agent_config(
+            project_path,
+            overrides=overrides,
+            settings=self._settings,
+            settings_store=self._settings_store,
+        )
+
+    def _model_option(self, session: AcpSession) -> SessionConfigOptionSelect:
+        assert self._settings is not None
+        groups: list[SessionConfigSelectGroup] = []
+        for provider, key in sorted(self._settings.api_keys.items()):
+            if not key:
+                continue
+            options = [
+                SessionConfigSelectOption(value=f"{provider}/{model}", name=label)
+                for label, model in ui_model_options(provider)
+            ]
+            if options:
+                groups.append(
+                    SessionConfigSelectGroup(
+                        group=provider,
+                        name=str(PROVIDER_LABELS.get(cast(Any, provider), provider)),
+                        options=options,
+                    ),
+                )
+        primary = session.agent.primary_model_config
+        current = f"{primary.provider.value}/{primary.model}"
+        return SessionConfigOptionSelect(
+            type="select",
+            id=CONFIG_MODEL,
+            name="Model",
+            current_value=current,
+            options=groups,
+        )
+
+    @staticmethod
+    def _permission_option(session: AcpSession) -> SessionConfigOptionBoolean:
+        return SessionConfigOptionBoolean(
+            type="boolean",
+            id=CONFIG_PERMISSION_AUTO,
+            name="Auto-approve tools",
+            current_value=session.agent.permission_mode == PermissionMode.AUTO,
+        )
+
+    @staticmethod
+    def _mode_option(session: AcpSession) -> SessionConfigOptionSelect:
+        return SessionConfigOptionSelect(
+            type="select",
+            id=CONFIG_MODE,
+            name="Mode",
+            current_value=session.record.interaction_mode or MODE_BUILD,
+            options=[
+                SessionConfigSelectOption(value=MODE_BUILD, name="Build"),
+                SessionConfigSelectOption(value=MODE_PLAN, name="Plan"),
+            ],
+        )
+
+    async def _rebuild_agent(self, session: AcpSession, config: Any) -> None:
+        """Replace the session's agent with a rebuild carrying the same history.
+
+        Config options apply between turns, so the persisted record is the
+        freshest history state; ``restore=True`` loads it into the rebuild.
+        """
+        old = session.agent
+        # The approval flow rebuilds mid-turn, before prompt() persists the
+        # just-finished plan turn. Dump the live agent into the record first
+        # (as the TUI does before rebuilds) so the rebuild restores the full
+        # conversation, not the stale pre-turn snapshot.
+        self.persist(session)
+        agent, manager = await self._construct_agent(
+            session.record,
+            config,
+            restore=True,
+            permission_callback=session.permission_callback,
+            permission_mode=old.permission_mode,
+            question_state=session.question_state,
+        )
+        session.agent = agent
+        session.manager = manager
+        try:
+            await old.cleanup()
+        except Exception:  # noqa: BLE001
+            logger.exception("acp model switch: old agent cleanup failed (session=%s)", session.session_id)
+
+    async def _build_session(
+        self,
+        record: SessionRecord,
+        config: Any,
+        *,
+        restore: bool,
+        permission_callback: PermissionCallback | None,
+    ) -> AcpSession:
+        """Compose the durable agent stack for one session (the ``ask`` recipe + recording)."""
+        permission_mode = (
+            normalize_permission_mode(record.permission_mode, default=self._permission_mode)
+            if restore
+            else self._permission_mode
+        )
+        question_state: dict[str, Any] = {}
+        agent, manager = await self._construct_agent(
+            record,
+            config,
+            restore=restore,
+            permission_callback=permission_callback,
+            permission_mode=permission_mode,
+            question_state=question_state,
+        )
+        session = AcpSession(
+            session_id=record.session_id,
+            record=record,
+            agent=agent,
+            manager=manager,
+            permission_callback=permission_callback,
+            config=config,
+            question_state=question_state,
+        )
+        self._acp_sessions[record.session_id] = session
+        return session
+
+    async def _construct_agent(
+        self,
+        record: SessionRecord,
+        config: Any,
+        *,
+        restore: bool,
+        permission_callback: PermissionCallback | None,
+        permission_mode: PermissionMode | None = None,
+        question_state: dict[str, Any] | None = None,
+    ) -> tuple[CoderAgent, CliConnectionManager]:
+        journal = self._store.journal(record.session_id)
+        recorder = self._store.recorder(record.session_id)
+        manager = CliConnectionManager()
+        recording = RecordingConnectionManager(
+            manager,
+            FileSessionEventStore(journal),
+            session_id=record.session_id,
+            artifact_store=FileArtifactStore(journal),
+        )
+        interaction_mode = record.interaction_mode or MODE_BUILD
+        agent_class = agent_class_for(interaction_mode)
+        agent_holder: dict[str, Any] = {}
+        question_markdown = PLANNING_QUESTION_PROMPT if interaction_mode == MODE_PLAN else BUILD_QUESTION_PROMPT
+        prompt_extensions = [
+            PromptExtension(
+                id="acp-questions",
+                title="Asking the User",
+                markdown=question_markdown,
+                modes=[ACP_AGENT_MODE],
+                propagate_to_sub_agents=False,
+            ),
+        ]
+        agent = agent_class(
+            project_path=Path(record.project_path),
+            workspace_id=record.workspace_id,
+            thread_id=record.thread_id,
+            connection_manager=recording,
+            config=config,
+            agent_mode=ACP_AGENT_MODE,
+            permission_mode=permission_mode or self._permission_mode,
+            permission_callback=permission_callback,
+            prompt_extensions=prompt_extensions,
+            tool_extensions=[
+                self._task_list_extension(record, agent_holder, interaction_mode),
+                build_question_extension(question_state or {}),
+            ],
+            # Mirror the ask path: a resumed session hands the recorder over after
+            # restoring history, so construction never double-records a resumed turn.
+            session_recorder=None if restore else recorder,
+        )
+        agent_holder["agent"] = agent
+        agent.add_volatile_section(self._task_list_volatile_section(record))
+        lsp_messages = await agent.tool_collection.initialize()
+        for message in lsp_messages:
+            logger.debug("acp lsp: %s", message)
+        if restore:
+            agent.restore_message_history(record.history)
+            agent.restore_compaction_state(record.compaction)
+            agent.session_recorder = recorder
+        return agent, manager
+
+    # -- error conversion -------------------------------------------------
+
+    @staticmethod
+    def protocol_error(exc: BaseException) -> RequestError:
+        return RequestError.internal_error({"message": str(exc) or exc.__class__.__name__})
