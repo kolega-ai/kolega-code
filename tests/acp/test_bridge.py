@@ -106,3 +106,77 @@ async def test_empty_chunks_are_dropped() -> None:
     bridge = AcpBridge(cast(Client, conn))
     await bridge.emit_chunk("s1", {"type": "response", "content": "", "complete": True, "uuid": "u1"})
     assert conn.updates == []
+
+
+def _terminal_event(event_type: str, content: dict[str, Any]) -> AgentEvent:
+    return AgentEvent(sender="agent", event_type=event_type, content=content, is_streaming=False)
+
+
+@pytest.mark.asyncio
+async def test_terminal_command_marks_tool_in_progress_with_command() -> None:
+    conn = _FakeConn()
+    bridge = AcpBridge(cast(Client, conn))
+
+    await bridge.handle_event("s1", _chat_event("tool_call", "Calling exec_command", "c1", "exec_command"))
+    await bridge.handle_event("s1", _terminal_event("terminal_command", {"command": "pytest -q", "terminal_id": "s_1"}))
+
+    command_update = conn.updates[1]
+    assert isinstance(command_update, ToolCallProgress)
+    assert command_update.status == "in_progress"
+    assert command_update.content is not None
+    assert command_update.content[0].content.text == "$ pytest -q\n"
+
+
+@pytest.mark.asyncio
+async def test_terminal_output_appends_to_tool_content() -> None:
+    conn = _FakeConn()
+    bridge = AcpBridge(cast(Client, conn))
+
+    await bridge.handle_event("s1", _chat_event("tool_call", "Calling exec_command", "c1", "exec_command"))
+    await bridge.handle_event("s1", _terminal_event("terminal_command", {"command": "pytest", "terminal_id": "s_1"}))
+    await bridge.handle_event(
+        "s1", _terminal_event("terminal_output", {"display_output": "collecting...\n", "terminal_id": "s_1"})
+    )
+    await bridge.handle_event("s1", _terminal_event("terminal_output", {"output": "passed\n", "terminal_id": "s_1"}))
+
+    assert conn.updates[2].content[0].content.text == "$ pytest\ncollecting...\n"
+    assert conn.updates[3].content[0].content.text == "$ pytest\ncollecting...\npassed\n"
+
+
+@pytest.mark.asyncio
+async def test_terminal_result_uses_terminal_buffer_over_markdown_text() -> None:
+    conn = _FakeConn()
+    bridge = AcpBridge(cast(Client, conn))
+
+    await bridge.handle_event("s1", _chat_event("tool_call", "Calling exec_command", "c1", "exec_command"))
+    await bridge.handle_event("s1", _terminal_event("terminal_command", {"command": "pytest", "terminal_id": "s_1"}))
+    await bridge.handle_event("s1", _terminal_event("terminal_output", {"output": "passed\n", "terminal_id": "s_1"}))
+    await bridge.handle_event("s1", _chat_event("tool_result", "Status: exited\n\nOutput:\npassed", "c1"))
+
+    final = conn.updates[3]
+    assert final.status == "completed"
+    assert final.content[0].content.text == "$ pytest\npassed\n"
+    assert bridge._terminal_text == {}  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_terminal_events_without_active_execute_tool_are_ignored() -> None:
+    conn = _FakeConn()
+    bridge = AcpBridge(cast(Client, conn))
+
+    await bridge.handle_event("s1", _terminal_event("terminal_command", {"command": "pytest", "terminal_id": "s_1"}))
+    await bridge.handle_event("s1", _terminal_event("terminal_output", {"output": "passed\n", "terminal_id": "s_1"}))
+
+    assert conn.updates == []
+
+
+@pytest.mark.asyncio
+async def test_background_terminal_noise_does_not_leak_into_other_tools() -> None:
+    conn = _FakeConn()
+    bridge = AcpBridge(cast(Client, conn))
+
+    await bridge.handle_event("s1", _chat_event("tool_call", "Calling read", "c1", "read"))
+    await bridge.handle_event("s1", _terminal_event("terminal_output", {"output": "noise\n", "terminal_id": "s_old"}))
+
+    assert conn.updates[0].status == "pending"
+    assert len(conn.updates) == 1
