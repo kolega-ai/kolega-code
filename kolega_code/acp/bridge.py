@@ -78,12 +78,19 @@ class AcpBridge:
         self._latest_context_tokens: int | None = None
 
     async def send(self, session_id: str, update: Any) -> None:
-        logger.debug(
-            "acp update kind=%s tc=%s st=%s",
-            getattr(update, "session_update", None) or type(update).__name__,
-            getattr(update, "tool_call_id", ""),
-            getattr(update, "status", ""),
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            blocks = getattr(update, "content", None) or []
+            preview = ""
+            if blocks:
+                text = getattr(getattr(blocks[0], "content", blocks[0]), "text", "")
+                preview = f" ({len(blocks)} block(s), '{str(text)[:60]}')"
+            logger.debug(
+                "acp update kind=%s tc=%s st=%s%s",
+                getattr(update, "session_update", None) or type(update).__name__,
+                getattr(update, "tool_call_id", ""),
+                getattr(update, "status", ""),
+                preview,
+            )
         await self._conn.session_update(session_id=session_id, update=update, source="kolega_code")
 
     async def emit_usage(self, session_id: str) -> None:
