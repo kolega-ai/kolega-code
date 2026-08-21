@@ -23,12 +23,15 @@ from acp.helpers import (
     tool_content,
     update_agent_message,
     update_agent_thought,
+    update_plan,
     update_tool_call,
 )
 from acp.interfaces import Client
 from acp.schema import ToolCallStatus, ToolKind
 
+from kolega_code.acp.agent_factory import MODE_PLAN
 from kolega_code.acp.diffs import AcpDiffProvider
+from kolega_code.acp.plans import plan_entries_from_markdown
 from kolega_code.acp.usage import build_usage_update
 from kolega_code.events import AgentEvent
 
@@ -76,6 +79,7 @@ class AcpBridge:
         self._terminal_text: dict[str, str] = {}
         self._active_execute_tool: str | None = None
         self._latest_context_tokens: int | None = None
+        self._turn_response_parts: list[str] = []
 
     async def send(self, session_id: str, update: Any) -> None:
         if logger.isEnabledFor(logging.DEBUG):
@@ -125,10 +129,21 @@ class AcpBridge:
         if chunk.get("type") == "thinking":
             update = update_agent_thought(text_block(content))
         else:
+            self._turn_response_parts.append(content)
             update = update_agent_message(text_block(content))
         if stream_uuid:
             update.message_id = stream_uuid
         await self.send(session_id, update)
+
+    async def emit_plan(self, session_id: str, mode: str) -> None:
+        if mode != MODE_PLAN:
+            return
+        entries = plan_entries_from_markdown("".join(self._turn_response_parts))
+        if entries:
+            await self.send(session_id, update_plan(entries))
+
+    async def clear_plan(self, session_id: str) -> None:
+        await self.send(session_id, update_plan([]))
 
     async def handle_event(self, session_id: str, event: AgentEvent) -> None:
         """Map one agent event to tool-call lifecycle updates.

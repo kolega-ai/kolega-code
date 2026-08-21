@@ -107,6 +107,7 @@ class _FakeFactory:
         self._session = session
         self.config_options: list[Any] = []
         self.permission_mode_calls: list[tuple[str, Any]] = []
+        self.interaction_mode_calls: list[tuple[str, str]] = []
         self.model_calls: list[tuple[str, str, str]] = []
 
     async def open_session(
@@ -129,6 +130,10 @@ class _FakeFactory:
 
     async def set_permission_mode(self, session: AcpSession, mode: Any) -> None:
         self.permission_mode_calls.append((session.session_id, mode))
+
+    async def set_interaction_mode(self, session: AcpSession, mode: str) -> None:
+        self.interaction_mode_calls.append((session.session_id, mode))
+        session.record.interaction_mode = mode
 
     async def apply_model(self, session: AcpSession, provider: str, model: str) -> None:
         self.model_calls.append((session.session_id, provider, model))

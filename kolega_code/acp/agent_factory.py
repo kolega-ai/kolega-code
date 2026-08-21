@@ -32,6 +32,7 @@ from acp.schema import (
 
 from kolega_code.acp.session import AcpSession
 from kolega_code.agent import CoderAgent
+from kolega_code.agent.planningagent import PlanningAgent
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.cli.config import CliConfigOverrides, build_agent_config, config_summary
 from kolega_code.cli.connection import CliConnectionManager
@@ -48,9 +49,16 @@ ACP_AGENT_MODE = AgentMode.CLI
 ACP_PERMISSION_MODE = PermissionMode.ASK
 CONFIG_MODEL = "model"
 CONFIG_PERMISSION_AUTO = "permission-auto"
+MODE_BUILD = "build"
+MODE_PLAN = "plan"
+INTERACTION_MODES = {MODE_BUILD, MODE_PLAN}
 
 PermissionCallback = Callable[[PermissionRequest], Awaitable[PermissionDecision]]
 ConfigOption = SessionConfigOptionSelect | SessionConfigOptionBoolean
+
+
+def agent_class_for(mode: str) -> type[CoderAgent]:
+    return PlanningAgent if mode == MODE_PLAN else CoderAgent
 
 
 class AgentFactory:
@@ -101,8 +109,14 @@ class AgentFactory:
         session.agent.set_permission_mode(mode)
         session.record.permission_mode = mode.value
 
+    async def set_interaction_mode(self, session: AcpSession, mode: str) -> None:
+        """Switch plan/build mode by rebuilding the session agent with the mode's class."""
+        session.record.interaction_mode = mode
+        await self._rebuild_agent(session, session.config)
+
     async def apply_model(self, session: AcpSession, provider: str, model: str) -> None:
         config = self._config_for(Path(session.record.project_path), provider=provider, model=model)
+        session.config = config
         await self._rebuild_agent(session, config)
 
     # -- persistence --------------------------------------------------------
@@ -235,6 +249,7 @@ class AgentFactory:
             agent=agent,
             manager=manager,
             permission_callback=permission_callback,
+            config=config,
         )
         self._acp_sessions[record.session_id] = session
         return session
@@ -257,7 +272,9 @@ class AgentFactory:
             session_id=record.session_id,
             artifact_store=FileArtifactStore(journal),
         )
-        agent = CoderAgent(
+        interaction_mode = record.interaction_mode or MODE_BUILD
+        agent_class = agent_class_for(interaction_mode)
+        agent = agent_class(
             project_path=Path(record.project_path),
             workspace_id=record.workspace_id,
             thread_id=record.thread_id,

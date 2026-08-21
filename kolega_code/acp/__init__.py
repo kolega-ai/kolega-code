@@ -11,10 +11,11 @@ the full design and phases.
 
 from __future__ import annotations
 
-from kolega_code.acp.agent_factory import ACP_AGENT_MODE, ACP_PERMISSION_MODE, AgentFactory
+from kolega_code.acp.agent_factory import ACP_AGENT_MODE, ACP_PERMISSION_MODE, MODE_BUILD, MODE_PLAN, AgentFactory
 from kolega_code.acp.bridge import TOOL_KINDS, AcpBridge
 from kolega_code.acp.diffs import AcpDiffProvider
 from kolega_code.acp.permissions import AcpPermissionBroker
+from kolega_code.acp.plans import plan_entries_from_markdown
 from kolega_code.acp.server import AcpAgent
 from kolega_code.acp.session import AcpSession
 from kolega_code.acp.usage import build_usage_update, context_window_for
@@ -22,6 +23,8 @@ from kolega_code.acp.usage import build_usage_update, context_window_for
 __all__ = [
     "ACP_AGENT_MODE",
     "ACP_PERMISSION_MODE",
+    "MODE_BUILD",
+    "MODE_PLAN",
     "AcpAgent",
     "AcpBridge",
     "AcpDiffProvider",
@@ -31,4 +34,5 @@ __all__ = [
     "TOOL_KINDS",
     "build_usage_update",
     "context_window_for",
+    "plan_entries_from_markdown",
 ]

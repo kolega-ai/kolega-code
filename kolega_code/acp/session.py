@@ -24,8 +24,10 @@ class AcpSession:
     record: SessionRecord
     agent: CoderAgent
     manager: CliConnectionManager
-    #: Bound at build time so a model-switch rebuild reattaches the same callback.
+    #: Bound at build time so a model/mode-switch rebuild reattaches the same callback.
     permission_callback: Any = None
+    #: The AgentConfig the agent was built with, reused by mode-switch rebuilds.
+    config: Any = None
     #: In-flight turn task; None when the session is idle. Set and cleared by the server.
     turn_task: asyncio.Task | None = field(default=None, repr=False)
 

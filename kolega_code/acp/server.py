@@ -20,6 +20,7 @@ from uuid import uuid4
 
 from acp import Agent, InitializeResponse, NewSessionResponse, PromptResponse
 from acp.exceptions import RequestError
+from acp.helpers import update_current_mode, update_plan
 from acp.interfaces import Client
 from acp.schema import (
     AgentCapabilities,
@@ -36,13 +37,23 @@ from acp.schema import (
     SessionCapabilities,
     SessionCloseCapabilities,
     SessionListCapabilities,
+    SessionMode,
+    SessionModeState,
     SetSessionConfigOptionResponse,
+    SetSessionModeResponse,
     SseMcpServer,
     StopReason,
     TextContentBlock,
 )
 
-from kolega_code.acp.agent_factory import CONFIG_MODEL, CONFIG_PERMISSION_AUTO, AgentFactory
+from kolega_code.acp.agent_factory import (
+    CONFIG_MODEL,
+    CONFIG_PERMISSION_AUTO,
+    INTERACTION_MODES,
+    MODE_BUILD,
+    MODE_PLAN,
+    AgentFactory,
+)
 from kolega_code.acp.bridge import AcpBridge
 from kolega_code.acp.diffs import AcpDiffProvider
 from kolega_code.acp.permissions import AcpPermissionBroker
@@ -125,6 +136,7 @@ class AcpAgent(Agent):
         return NewSessionResponse(
             session_id=session.session_id,
             config_options=self._factory.config_options_for(session),
+            modes=self._mode_state(session),
         )
 
     async def load_session(
@@ -136,7 +148,11 @@ class AcpAgent(Agent):
         **kwargs: Any,
     ) -> LoadSessionResponse | None:
         if session_id in self._sessions:
-            return LoadSessionResponse(config_options=self._factory.config_options_for(self._sessions[session_id]))
+            existing = self._sessions[session_id]
+            return LoadSessionResponse(
+                config_options=self._factory.config_options_for(existing),
+                modes=self._mode_state(existing),
+            )
         try:
             session = await self._factory.load_session(
                 cwd,
@@ -149,7 +165,10 @@ class AcpAgent(Agent):
             return None
         self._sessions[session.session_id] = session
         await self._emit_initial_usage(session)
-        return LoadSessionResponse(config_options=self._factory.config_options_for(session))
+        return LoadSessionResponse(
+            config_options=self._factory.config_options_for(session),
+            modes=self._mode_state(session),
+        )
 
     async def list_sessions(
         self, cwd: str | None = None, cursor: str | None = None, **kwargs: Any
@@ -211,9 +230,20 @@ class AcpAgent(Agent):
         logger.info("acp session/fork not supported yet (session=%s)", session_id)
         return None
 
-    async def set_session_mode(self, session_id: str, mode_id: str, **kwargs: Any) -> None:
-        logger.info("acp session/set_mode not supported yet (mode=%s)", mode_id)
-        return None
+    async def set_session_mode(self, session_id: str, mode_id: str, **kwargs: Any) -> SetSessionModeResponse | None:
+        session = self._sessions.get(session_id)
+        if session is None:
+            raise RequestError.resource_not_found(session_id)
+        if mode_id not in INTERACTION_MODES:
+            raise RequestError.invalid_params({"message": f"unknown mode {mode_id!r}; available: build, plan"})
+        if not session.idle():
+            raise RequestError.invalid_request({"message": "modes apply between turns only"})
+        await self._factory.set_interaction_mode(session, mode_id)
+        logger.info("acp session mode -> %s (session=%s)", mode_id, session_id)
+        await self._emit_current_mode(session)
+        if mode_id == MODE_BUILD:
+            await self._send_session_update(session, update_plan([]))
+        return SetSessionModeResponse()
 
     async def set_config_option(
         self, config_id: str, session_id: str, value: str | bool, **kwargs: Any
@@ -282,6 +312,28 @@ class AcpAgent(Agent):
         if update is not None:
             await conn.session_update(session_id=session.session_id, update=update, source="kolega_code")
 
+    def _mode_state(self, session: AcpSession) -> SessionModeState:
+        mode = session.record.interaction_mode or MODE_BUILD
+        if mode not in INTERACTION_MODES:
+            mode = MODE_BUILD
+        return SessionModeState(
+            current_mode_id=mode,
+            available_modes=[
+                SessionMode(id=MODE_BUILD, name="Build"),
+                SessionMode(id=MODE_PLAN, name="Plan"),
+            ],
+        )
+
+    async def _emit_current_mode(self, session: AcpSession) -> None:
+        mode = session.record.interaction_mode or MODE_BUILD
+        await self._send_session_update(session, update_current_mode(mode))
+
+    async def _send_session_update(self, session: AcpSession, update: Any) -> None:
+        conn = getattr(self, "_conn", None)
+        if conn is None:
+            return
+        await conn.session_update(session_id=session.session_id, update=update, source="kolega_code")
+
     # -- turn machinery ----------------------------------------------------
 
     async def _run_turn(self, session: AcpSession, text: str) -> StopReason:
@@ -306,6 +358,7 @@ class AcpAgent(Agent):
             await self._drain_residual(session, bridge)
             session.turn_task = None
             await bridge.emit_usage(session.session_id)
+            await bridge.emit_plan(session.session_id, session.record.interaction_mode or MODE_BUILD)
 
     async def _drive_turn(self, session: AcpSession, bridge: AcpBridge, text: str) -> str:
         try:
