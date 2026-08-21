@@ -797,6 +797,7 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     )
     acp.set_defaults(command="acp")
     acp.add_argument("--debug", action="store_true", help="Enable debug logging (to stderr).")
+    acp.add_argument("--acp-log", metavar="PATH", help="Append JSON traffic log lines to PATH (client diagnostics).")
     acp.add_argument(
         "--permission-mode",
         choices=[mode.value for mode in PermissionMode],

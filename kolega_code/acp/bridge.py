@@ -162,6 +162,12 @@ class AcpBridge:
     async def _handle_terminal_event(self, session_id: str, event: AgentEvent) -> None:
         assert event.content is not None
         tool_call_id = str(event.content.get("tool_call_id") or self._active_execute_tool or "")
+        logger.debug(
+            "acp terminal event kind=%s terminal_id=%s attached_tc=%s",
+            event.event_type,
+            event.content.get("terminal_id"),
+            tool_call_id,
+        )
         if not tool_call_id:
             return
         if event.event_type == "terminal_command":
