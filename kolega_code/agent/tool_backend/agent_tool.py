@@ -354,8 +354,12 @@ class AgentTool(BaseTool):
                 prompt_provider=getattr(self.caller, "prompt_provider", None) if self.caller else None,
                 prompt_extensions=self._sub_agent_extensions(getattr(self.caller, "prompt_extensions", None)),
                 tool_extensions=self._sub_agent_extensions(getattr(self.caller, "tool_extensions", None)),
-                permission_mode=getattr(self.caller, "permission_mode", None) if self.caller else None,
-                permission_callback=getattr(self.caller, "permission_callback", None) if self.caller else None,
+                # Dispatched sub-agents run their delegated task unattended inside
+                # the parent's turn, so they run in AUTO permission mode regardless
+                # of the session's mode — per-tool prompts cannot be answered from
+                # a delegated transcript, matching the workflow fan-out path.
+                permission_mode=PermissionMode.AUTO,
+                permission_callback=auto_allow_permission_callback,
                 usage_recorder=getattr(self.caller, "usage_recorder", None) if self.caller else None,
                 sub_agent_recorder=getattr(self.caller, "sub_agent_recorder", None) if self.caller else None,
                 usage_ledger=getattr(self.caller, "usage_ledger", None) if self.caller else None,
