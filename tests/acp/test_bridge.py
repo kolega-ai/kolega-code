@@ -236,3 +236,52 @@ async def test_replay_conversation_maps_transcript_items() -> None:
     assert [(p.tool_call_id, p.status) for p in progresses] == [("tc1", "completed"), ("tc2", "failed")]
     assert progresses[0].content is not None and progresses[0].content[0].content.text == "output text"
     assert "live notice" not in [getattr(u, "text", "") for u in updates]
+
+
+@pytest.mark.asyncio
+async def test_compaction_status_renders_as_thought_block() -> None:
+    from acp.schema import AgentThoughtChunk
+
+    from kolega_code.events import AgentEvent
+
+    conn = _FakeConn()
+    bridge = AcpBridge(cast(Client, conn))
+    await bridge.handle_event(
+        "s1",
+        AgentEvent(
+            event_type="compaction_status",
+            sender="agent",
+            content={"phase": "finished", "message": "done", "summary": "compressed 12 turns"},
+        ),
+    )
+
+    thoughts = [u for u in conn.updates if isinstance(u, AgentThoughtChunk)]
+    assert len(thoughts) == 1
+    assert "compressed 12 turns" in thoughts[0].content.text
+
+
+@pytest.mark.asyncio
+async def test_compaction_status_started_and_subagent_filtered() -> None:
+    from acp.schema import AgentThoughtChunk
+
+    from kolega_code.events import AgentEvent
+
+    conn = _FakeConn()
+    bridge = AcpBridge(cast(Client, conn))
+    await bridge.handle_event(
+        "s1",
+        AgentEvent(event_type="compaction_status", sender="agent", content={"phase": "started", "message": "working"}),
+    )
+    await bridge.handle_event(
+        "s1",
+        AgentEvent(
+            event_type="compaction_status",
+            sender="agent",
+            content={"phase": "finished", "message": "", "summary": "delegate summary"},
+            sub_agent_info={"agent_id": "a1"},
+        ),
+    )
+
+    thoughts = [u for u in conn.updates if isinstance(u, AgentThoughtChunk)]
+    assert len(thoughts) == 1
+    assert "working" in thoughts[0].content.text

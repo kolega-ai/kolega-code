@@ -309,6 +309,13 @@ async def test_load_session_replays_transcript(tmp_path: Path) -> None:
     await store.append(
         AgentEvent(event_type="turn_ended", sender="agent", content={"turn_id": "t1", "status": "completed"})
     )
+    await store.append(
+        AgentEvent(
+            event_type="compaction_status",
+            sender="agent",
+            content={"phase": "finished", "message": "done", "summary": "compressed 12 turns"},
+        )
+    )
 
     factory = _FakeFactory(session)
     factory.event_store = lambda session_id: store  # type: ignore[method-assign]
@@ -331,6 +338,11 @@ async def test_load_session_replays_transcript(tmp_path: Path) -> None:
     assert users[0].message_id
     assert agents and agents[0].content.text == "hi there"
     assert agents[0].message_id
+    # The last finished compaction renders as a thought block on restore.
+    from acp.schema import AgentThoughtChunk
+
+    thoughts = [u for u in conn.updates if isinstance(u, AgentThoughtChunk)]
+    assert thoughts and "compressed 12 turns" in thoughts[-1].content.text
     # The replay follows the initial usage update and precedes the response:
     # user prompt first, then the agent's reply.
     assert [

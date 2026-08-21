@@ -24,6 +24,7 @@ from acp.exceptions import RequestError
 from acp.helpers import (
     text_block,
     tool_content,
+    update_agent_thought_text,
     update_available_commands,
     update_current_mode,
     update_plan,
@@ -432,8 +433,18 @@ class AcpAgent(Agent):
         except Exception:  # noqa: BLE001 — a missing or unreadable journal must not block the load
             logger.exception("acp session/load: transcript replay failed (session=%s)", session.session_id)
             return
+        state = replay(events)
         bridge = AcpBridge(self._conn)
-        await bridge.replay_conversation(session.session_id, replay(events).conversation)
+        await bridge.replay_conversation(session.session_id, state.conversation)
+        # Restore the compaction marker: the last finished summary renders as a
+        # collapsible thought block, like the live event does.
+        compaction = state.compaction or {}
+        if str(compaction.get("phase") or "") == "finished":
+            summary = str(compaction.get("summary") or "").strip()
+            if summary:
+                await self._send_session_update(
+                    session, update_agent_thought_text(f"Conversation compacted:\n{summary}")
+                )
         task_list = (session.record.task_list_markdown or "").strip()
         if task_list:
             entries = task_entries_from_markdown(task_list)

@@ -23,6 +23,7 @@ from acp.helpers import (
     tool_content,
     update_agent_message,
     update_agent_thought,
+    update_agent_thought_text,
     update_plan,
     update_tool_call,
     update_user_message,
@@ -188,6 +189,9 @@ class AcpBridge:
         if event.event_type in ("terminal_command", "terminal_output"):
             await self._handle_terminal_event(session_id, event)
             return
+        if event.event_type == "compaction_status":
+            await self._handle_compaction_event(session_id, event)
+            return
         if event.event_type == "llm_context_update" and event.content:
             tokens = event.content.get("input_tokens")
             if isinstance(tokens, int) and tokens >= 0:
@@ -228,6 +232,25 @@ class AcpBridge:
                 session_id,
                 update_tool_call(tool_call_id, status=status, content=blocks or None),
             )
+
+    async def _handle_compaction_event(self, session_id: str, event: AgentEvent) -> None:
+        """Compaction progress as a collapsible thought block (the editor's
+        "special view" for the conversation being compressed). A delegate's
+        compaction belongs to its own transcript and is not shown here."""
+        if event.sub_agent_info:
+            return
+        assert event.content is not None
+        phase = str(event.content.get("phase") or "")
+        text = str(event.content.get("summary") or event.content.get("message") or "").strip()
+        if phase == "started":
+            text = text or "Compacting conversation…"
+        elif phase == "finished":
+            text = f"Conversation compacted:\n{text}" if text else "Conversation compacted."
+        elif phase == "error":
+            text = f"Compaction failed: {text}" if text else "Compaction failed."
+        else:
+            return
+        await self.send(session_id, update_agent_thought_text(text))
 
     async def _handle_terminal_event(self, session_id: str, event: AgentEvent) -> None:
         assert event.content is not None
