@@ -214,3 +214,17 @@ async def test_agent_gate_allows_tool_when_client_approves(tmp_path: Path) -> No
     assert result.is_error is False
     assert result.content == "ok"
     assert registry.calls == [("exec_command", {"command": "echo hi"})]
+
+
+@pytest.mark.asyncio
+async def test_dict_shaped_permission_outcome_is_accepted(tmp_path: Path) -> None:
+    conn = _FakeConn(responder=lambda *a, **k: {"outcome": {"outcome": "selected", "optionId": OPTION_ALLOW_ONCE}})
+    decision = await _broker(conn, tmp_path)(_command_request())
+    assert decision.allowed is True
+
+
+@pytest.mark.asyncio
+async def test_dict_shaped_cancelled_outcome_denies(tmp_path: Path) -> None:
+    conn = _FakeConn(responder=lambda *a, **k: {"outcome": {"outcome": "cancelled"}})
+    decision = await _broker(conn, tmp_path)(_command_request())
+    assert decision.allowed is False

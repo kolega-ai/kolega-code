@@ -87,10 +87,17 @@ class AcpPermissionBroker:
             logger.exception("acp permission request failed")
             return PermissionDecision(allowed=False, reason="The permission prompt could not be shown.")
 
-        outcome = response.outcome
-        if getattr(outcome, "outcome", None) != "selected":
+        outcome = getattr(response, "outcome", None)
+        if outcome is None and isinstance(response, dict):
+            outcome = response.get("outcome")
+        if isinstance(outcome, dict):
+            selected = outcome.get("outcome") == "selected"
+            option_id = str(outcome.get("optionId") or "")
+        else:
+            selected = getattr(outcome, "outcome", None) == "selected"
+            option_id = str(getattr(outcome, "option_id", "") or "")
+        if not selected:
             return PermissionDecision(allowed=False, reason="Denied by the user.")
-        option_id = str(getattr(outcome, "option_id", "") or "")
         if option_id == OPTION_ALLOW_ONCE:
             return PermissionDecision(allowed=True)
         if option_id == OPTION_REJECT_ONCE:
