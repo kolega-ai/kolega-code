@@ -36,6 +36,7 @@ from acp.schema import (
     SessionCapabilities,
     SessionCloseCapabilities,
     SessionListCapabilities,
+    SetSessionConfigOptionResponse,
     SseMcpServer,
     StopReason,
     TextContentBlock,
@@ -214,7 +215,9 @@ class AcpAgent(Agent):
         logger.info("acp session/set_mode not supported yet (mode=%s)", mode_id)
         return None
 
-    async def set_config_option(self, config_id: str, session_id: str, value: str | bool, **kwargs: Any) -> None:
+    async def set_config_option(
+        self, config_id: str, session_id: str, value: str | bool, **kwargs: Any
+    ) -> SetSessionConfigOptionResponse:
         session = self._sessions.get(session_id)
         if session is None:
             raise RequestError.resource_not_found(session_id)
@@ -229,13 +232,15 @@ class AcpAgent(Agent):
             except _HANDLED_CONFIG_ERRORS as exc:
                 raise AgentFactory.protocol_error(exc) from exc
             logger.info("acp session config: model -> %s/%s (session=%s)", provider, model, session_id)
-            return None
-        if config_id == CONFIG_PERMISSION_AUTO:
+        elif config_id == CONFIG_PERMISSION_AUTO:
             mode = PermissionMode.AUTO if bool(value) else PermissionMode.ASK
             await self._factory.set_permission_mode(session, mode)
             logger.info("acp session config: permission mode -> %s (session=%s)", mode.value, session_id)
-            return None
-        raise RequestError.invalid_params({"message": f"unknown config option {config_id!r}"})
+        else:
+            raise RequestError.invalid_params({"message": f"unknown config option {config_id!r}"})
+        # The spec requires the full option set with current values so the
+        # client can refresh its UI state.
+        return SetSessionConfigOptionResponse(config_options=self._factory.config_options_for(session))
 
     async def authenticate(self, method_id: str, **kwargs: Any) -> None:
         logger.info("acp authenticate not supported yet (method=%s)", method_id)

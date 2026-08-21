@@ -51,10 +51,12 @@ async def test_set_config_option_flips_permission_mode(tmp_path: Path) -> None:
     agent = AcpAgent(factory=cast(Any, factory))
     new_session = await agent.new_session(cwd=str(tmp_path))
 
-    await agent.set_config_option(CONFIG_PERMISSION_AUTO, new_session.session_id, True)
-    await agent.set_config_option(CONFIG_PERMISSION_AUTO, new_session.session_id, False)
+    first = await agent.set_config_option(CONFIG_PERMISSION_AUTO, new_session.session_id, True)
+    second = await agent.set_config_option(CONFIG_PERMISSION_AUTO, new_session.session_id, False)
 
     assert [mode for _, mode in factory.permission_mode_calls] == [PermissionMode.AUTO, PermissionMode.ASK]
+    assert first.config_options == factory.config_options
+    assert second.config_options == factory.config_options
 
 
 @pytest.mark.asyncio
@@ -64,9 +66,10 @@ async def test_set_config_option_applies_model(tmp_path: Path) -> None:
     agent = AcpAgent(factory=cast(Any, factory))
     new_session = await agent.new_session(cwd=str(tmp_path))
 
-    await agent.set_config_option(CONFIG_MODEL, new_session.session_id, "deepseek/deepseek-v4-pro")
+    response = await agent.set_config_option(CONFIG_MODEL, new_session.session_id, "deepseek/deepseek-v4-pro")
 
     assert factory.model_calls == [(new_session.session_id, "deepseek", "deepseek-v4-pro")]
+    assert response.config_options == factory.config_options
 
 
 @pytest.mark.asyncio
