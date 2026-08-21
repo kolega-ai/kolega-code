@@ -43,16 +43,16 @@ def test_plan_entries_from_markdown_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_new_session_advertises_modes(tmp_path: Path) -> None:
+async def test_new_session_does_not_advertise_modes_field(tmp_path: Path) -> None:
     session, _cm = _make_session(tmp_path, StreamingLLM())
     agent = AcpAgent(factory=cast(Any, _FakeFactory(session)))
     agent.on_connect(cast(Client, _FakeConn()))
 
     response = await agent.new_session(cwd=str(tmp_path))
 
-    assert response.modes is not None
-    assert response.modes.current_mode_id == MODE_BUILD
-    assert [mode.id for mode in response.modes.available_modes] == [MODE_BUILD, MODE_PLAN]
+    # Mode switching rides the config-options surface (Zed 1.16 renders either
+    # config options or the modes/model selector surface, never both).
+    assert response.modes is None
 
 
 @pytest.mark.asyncio

@@ -49,6 +49,7 @@ ACP_AGENT_MODE = AgentMode.CLI
 ACP_PERMISSION_MODE = PermissionMode.ASK
 CONFIG_MODEL = "model"
 CONFIG_PERMISSION_AUTO = "permission-auto"
+CONFIG_MODE = "mode"
 MODE_BUILD = "build"
 MODE_PLAN = "plan"
 INTERACTION_MODES = {MODE_BUILD, MODE_PLAN}
@@ -103,7 +104,7 @@ class AgentFactory:
     # -- session config options -------------------------------------------
 
     def config_options_for(self, session: AcpSession) -> list[ConfigOption]:
-        return [self._model_option(session), self._permission_option(session)]
+        return [self._model_option(session), self._permission_option(session), self._mode_option(session)]
 
     async def set_permission_mode(self, session: AcpSession, mode: PermissionMode) -> None:
         session.agent.set_permission_mode(mode)
@@ -199,6 +200,19 @@ class AgentFactory:
             id=CONFIG_PERMISSION_AUTO,
             name="Auto-approve tools",
             current_value=session.agent.permission_mode == PermissionMode.AUTO,
+        )
+
+    @staticmethod
+    def _mode_option(session: AcpSession) -> SessionConfigOptionSelect:
+        return SessionConfigOptionSelect(
+            type="select",
+            id=CONFIG_MODE,
+            name="Mode",
+            current_value=session.record.interaction_mode or MODE_BUILD,
+            options=[
+                SessionConfigSelectOption(value=MODE_BUILD, name="Build"),
+                SessionConfigSelectOption(value=MODE_PLAN, name="Plan"),
+            ],
         )
 
     async def _rebuild_agent(self, session: AcpSession, config: Any) -> None:

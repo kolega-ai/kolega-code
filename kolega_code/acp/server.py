@@ -37,8 +37,6 @@ from acp.schema import (
     SessionCapabilities,
     SessionCloseCapabilities,
     SessionListCapabilities,
-    SessionMode,
-    SessionModeState,
     SetSessionConfigOptionResponse,
     SetSessionModeResponse,
     SseMcpServer,
@@ -47,11 +45,11 @@ from acp.schema import (
 )
 
 from kolega_code.acp.agent_factory import (
+    CONFIG_MODE,
     CONFIG_MODEL,
     CONFIG_PERMISSION_AUTO,
     INTERACTION_MODES,
     MODE_BUILD,
-    MODE_PLAN,
     AgentFactory,
 )
 from kolega_code.acp.bridge import AcpBridge
@@ -136,7 +134,6 @@ class AcpAgent(Agent):
         return NewSessionResponse(
             session_id=session.session_id,
             config_options=self._factory.config_options_for(session),
-            modes=self._mode_state(session),
         )
 
     async def load_session(
@@ -149,10 +146,7 @@ class AcpAgent(Agent):
     ) -> LoadSessionResponse | None:
         if session_id in self._sessions:
             existing = self._sessions[session_id]
-            return LoadSessionResponse(
-                config_options=self._factory.config_options_for(existing),
-                modes=self._mode_state(existing),
-            )
+            return LoadSessionResponse(config_options=self._factory.config_options_for(existing))
         try:
             session = await self._factory.load_session(
                 cwd,
@@ -165,10 +159,7 @@ class AcpAgent(Agent):
             return None
         self._sessions[session.session_id] = session
         await self._emit_initial_usage(session)
-        return LoadSessionResponse(
-            config_options=self._factory.config_options_for(session),
-            modes=self._mode_state(session),
-        )
+        return LoadSessionResponse(config_options=self._factory.config_options_for(session))
 
     async def list_sessions(
         self, cwd: str | None = None, cursor: str | None = None, **kwargs: Any
@@ -266,6 +257,14 @@ class AcpAgent(Agent):
             mode = PermissionMode.AUTO if bool(value) else PermissionMode.ASK
             await self._factory.set_permission_mode(session, mode)
             logger.info("acp session config: permission mode -> %s (session=%s)", mode.value, session_id)
+        elif config_id == CONFIG_MODE:
+            if value not in INTERACTION_MODES:
+                raise RequestError.invalid_params({"message": f"unknown mode {value!r}; available: build, plan"})
+            await self._factory.set_interaction_mode(session, str(value))
+            logger.info("acp session config: mode -> %s (session=%s)", value, session_id)
+            await self._emit_current_mode(session)
+            if value == MODE_BUILD:
+                await self._send_session_update(session, update_plan([]))
         else:
             raise RequestError.invalid_params({"message": f"unknown config option {config_id!r}"})
         # The spec requires the full option set with current values so the
@@ -311,18 +310,6 @@ class AcpAgent(Agent):
         update = build_usage_update(session.agent)
         if update is not None:
             await conn.session_update(session_id=session.session_id, update=update, source="kolega_code")
-
-    def _mode_state(self, session: AcpSession) -> SessionModeState:
-        mode = session.record.interaction_mode or MODE_BUILD
-        if mode not in INTERACTION_MODES:
-            mode = MODE_BUILD
-        return SessionModeState(
-            current_mode_id=mode,
-            available_modes=[
-                SessionMode(id=MODE_BUILD, name="Build"),
-                SessionMode(id=MODE_PLAN, name="Plan"),
-            ],
-        )
 
     async def _emit_current_mode(self, session: AcpSession) -> None:
         mode = session.record.interaction_mode or MODE_BUILD

@@ -10,7 +10,7 @@ import pytest
 from acp.exceptions import RequestError
 from acp.schema import SessionConfigOptionBoolean, SessionConfigOptionSelect
 
-from kolega_code.acp.agent_factory import CONFIG_MODEL, CONFIG_PERMISSION_AUTO, AgentFactory
+from kolega_code.acp.agent_factory import CONFIG_MODE, CONFIG_MODEL, CONFIG_PERMISSION_AUTO, AgentFactory
 from kolega_code.acp.server import AcpAgent
 from kolega_code.acp.session import AcpSession
 from kolega_code.cli.session_store import SessionRecord
@@ -146,9 +146,44 @@ async def test_real_factory_builds_both_options(isolated_cli_env: None, tmp_path
 
     options = factory.config_options_for(session)
 
-    assert [option.id for option in options] == [CONFIG_MODEL, CONFIG_PERMISSION_AUTO]
-    model_option, permission_option = options
+    assert [option.id for option in options] == [CONFIG_MODEL, CONFIG_PERMISSION_AUTO, CONFIG_MODE]
+    model_option, permission_option, mode_option = options
     assert isinstance(model_option, SessionConfigOptionSelect)
     assert model_option.current_value == "anthropic/claude-haiku-4-5-20251001"
     assert isinstance(permission_option, SessionConfigOptionBoolean)
     assert permission_option.current_value is False
+    assert isinstance(mode_option, SessionConfigOptionSelect)
+    assert mode_option.current_value == "build"
+    assert [entry.value for entry in mode_option.options] == ["build", "plan"]
+
+
+@pytest.mark.asyncio
+async def test_set_config_option_mode_switches_and_clears_plan_on_build(tmp_path: Path) -> None:
+    from acp.schema import AgentPlanUpdate, CurrentModeUpdate
+
+    session, _cm = _make_session(tmp_path, StreamingLLM())
+    factory = _FakeFactory(session)
+    conn = _FakeConn()
+    agent = AcpAgent(factory=cast(Any, factory))
+    agent.on_connect(cast(Client, conn))
+    new_session = await agent.new_session(cwd=str(tmp_path))
+
+    await agent.set_config_option(CONFIG_MODE, new_session.session_id, "plan")
+    await agent.set_config_option(CONFIG_MODE, new_session.session_id, "build")
+
+    assert [mode for _, mode in factory.interaction_mode_calls] == ["plan", "build"]
+    modes = [u for u in conn.updates if isinstance(u, CurrentModeUpdate)]
+    assert [u.current_mode_id for u in modes] == ["plan", "build"]
+    plans = [u for u in conn.updates if isinstance(u, AgentPlanUpdate)]
+    assert len(plans) == 1
+    assert plans[0].entries == []
+
+
+@pytest.mark.asyncio
+async def test_set_config_option_mode_rejects_unknown_mode(tmp_path: Path) -> None:
+    session, _cm = _make_session(tmp_path, StreamingLLM())
+    agent = AcpAgent(factory=cast(Any, _FakeFactory(session)))
+    new_session = await agent.new_session(cwd=str(tmp_path))
+
+    with pytest.raises(RequestError):
+        await agent.set_config_option(CONFIG_MODE, new_session.session_id, "vibe")
