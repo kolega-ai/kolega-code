@@ -87,12 +87,22 @@ async def test_emit_usage_skipped_without_window(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_new_session_emits_initial_usage(tmp_path: Path) -> None:
+    import asyncio
+    from typing import Any
+
     session, _cm = _make_session(tmp_path, StreamingLLM())
     agent, conn = _make_agent(session)
 
     await agent.new_session(cwd=str(tmp_path))
 
-    usage_updates = [update for update in conn.updates if isinstance(update, UsageUpdate)]
+    # The open-time usage meter goes out just after the NewSessionResponse
+    # (clients like Zed drop pre-response notifications for session/new).
+    usage_updates: list[Any] = []
+    for _ in range(100):
+        usage_updates = [update for update in conn.updates if isinstance(update, UsageUpdate)]
+        if usage_updates:
+            break
+        await asyncio.sleep(0.02)
     assert len(usage_updates) == 1
     assert usage_updates[0].used == 0
     assert usage_updates[0].size == 1000

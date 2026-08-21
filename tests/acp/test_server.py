@@ -361,7 +361,14 @@ async def test_new_session_advertises_slash_commands(tmp_path: Path) -> None:
     agent, conn = _make_agent(session)
     await agent.new_session(cwd=str(tmp_path))
 
-    updates = [u for u in conn.updates if isinstance(u, AvailableCommandsUpdate)]
+    # The command list goes out just after the NewSessionResponse (clients
+    # like Zed drop pre-response notifications for session/new).
+    updates: list[Any] = []
+    for _ in range(100):
+        updates = [u for u in conn.updates if isinstance(u, AvailableCommandsUpdate)]
+        if updates:
+            break
+        await asyncio.sleep(0.02)
     assert len(updates) == 1
     names = [command.name for command in updates[0].available_commands]
     assert names == ["help", "compress", "clear", "reset", "context"]

@@ -99,6 +99,11 @@ _HANDLED_CONFIG_ERRORS = (CliConfigError, SessionStoreError)
 
 PermissionCallback = Callable[[PermissionRequest], Awaitable[PermissionDecision]]
 
+#: Delay before post-response open updates so clients that only register the
+#: session once the NewSessionResponse is processed (Zed drops every
+#: pre-response notification for session/new) receive them after registration.
+OPEN_UPDATES_DELAY_SECONDS = 0.25
+
 
 class AcpAgent(Agent):
     """kolega-code as an ACP v1 agent, one client connection per process.
@@ -159,12 +164,15 @@ class AcpAgent(Agent):
             raise AgentFactory.protocol_error(exc) from exc
         self._sessions[session.session_id] = session
         self._attach_question_elicit(session)
-        await self._emit_initial_usage(session)
-        await self._send_available_commands(session)
-        return NewSessionResponse(
+        response = NewSessionResponse(
             session_id=session.session_id,
             config_options=self._factory.config_options_for(session),
         )
+        # Zed registers the session only once the NewSessionResponse is
+        # processed and drops any pre-response notification, so the open-time
+        # usage meter and command list go out just after the response instead.
+        self._schedule_open_updates(session.session_id)
+        return response
 
     async def load_session(
         self,
@@ -411,6 +419,19 @@ class AcpAgent(Agent):
         extension holds by reference, so it survives agent rebuilds.
         """
         session.question_state["elicit"] = functools.partial(self._elicit_answer, session.session_id)
+
+    def _schedule_open_updates(self, session_id: str) -> None:
+        """Send the open-time updates after the client has processed the
+        ``session/new`` response (Zed drops pre-response notifications)."""
+        asyncio.create_task(self._send_open_updates(session_id))
+
+    async def _send_open_updates(self, session_id: str) -> None:
+        await asyncio.sleep(OPEN_UPDATES_DELAY_SECONDS)
+        session = self._sessions.get(session_id)
+        if session is None:
+            return
+        await self._emit_initial_usage(session)
+        await self._send_available_commands(session)
 
     async def _send_available_commands(self, session: AcpSession) -> None:
         """Advertise the agent's slash commands for the client's command UI.
