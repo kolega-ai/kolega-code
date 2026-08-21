@@ -62,6 +62,7 @@ from kolega_code.acp.usage import build_usage_update
 from kolega_code.agent.prompts import build_implement_plan_prompt
 from kolega_code.cli.config import CliConfigError
 from kolega_code.cli.session_store import SessionStoreError
+from kolega_code.llm.models import MessageHistory
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
 from kolega_code.session.control import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
@@ -386,6 +387,9 @@ class AcpAgent(Agent):
         )
         options = [
             PermissionOption(option_id="implement_plan", name="Implement plan", kind="allow_once"),
+            PermissionOption(
+                option_id="implement_plan_clear", name="Clear context and implement plan", kind="allow_once"
+            ),
             PermissionOption(option_id="discuss_plan", name="Discuss further", kind="reject_once"),
         ]
         try:
@@ -403,9 +407,11 @@ class AcpAgent(Agent):
         else:
             selected = getattr(outcome, "outcome", None) == "selected"
             option_id = str(getattr(outcome, "option_id", "") or "")
-        if selected and option_id == "implement_plan":
+        if selected and option_id in ("implement_plan", "implement_plan_clear"):
             session.record.plan_pending = False
             session.record.plan_reofferable = False
+            if option_id == "implement_plan_clear":
+                self._clear_agent_context(session)
             await self._factory.set_interaction_mode(session, MODE_BUILD)
             await self._emit_current_mode(session)
             await self._run_turn(session, build_implement_plan_prompt(plan))
@@ -418,6 +424,16 @@ class AcpAgent(Agent):
             return
         # Unanswered, cancelled, or unknown: keep the plan pending.
         logger.info("acp plan approval pending (session=%s)", session.session_id)
+
+    def _clear_agent_context(self, session: AcpSession) -> None:
+        recorder = getattr(session.agent, "session_recorder", None)
+        if recorder is not None and hasattr(recorder, "start_epoch"):
+            recorder.start_epoch("acp_implement_plan_clear")
+        session.agent.history = MessageHistory()
+        session.agent.last_compression_index = None
+        session.agent.reset_volatile_context()
+        session.record.history = []
+        session.record.compaction = {}
 
     async def _drive_turn(self, session: AcpSession, bridge: AcpBridge, text: str) -> str:
         try:
