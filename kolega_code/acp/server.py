@@ -377,13 +377,12 @@ class AcpAgent(Agent):
         conn = getattr(self, "_conn", None)
         if conn is None:
             return
-        preview = plan[:400] + ("…" if len(plan) > 400 else "")
         tool_call = update_tool_call(
             f"plan-approval-{session.session_id[:8]}",
             title="Approve implementation plan?",
             kind="other",
             status="pending",
-            content=[tool_content(text_block(preview))],
+            content=[tool_content(text_block(plan))],
         )
         options = [
             PermissionOption(option_id="implement_plan", name="Implement plan", kind="allow_once"),

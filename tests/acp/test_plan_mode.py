@@ -249,3 +249,24 @@ async def test_plan_approval_clear_wipes_history(tmp_path: Path) -> None:
     assert not any("make a plan" in msg.get_text_content() for msg in session.agent.history)
     assert sum("Step one" in msg.get_text_content() for msg in session.agent.history) == 1
     assert factory.interaction_mode_calls == [(new_session.session_id, MODE_BUILD)]
+
+
+@pytest.mark.asyncio
+async def test_plan_approval_prompt_contains_full_plan(tmp_path: Path) -> None:
+    plan_text = "## Step one\n" + ("body text. " * 80) + "## Step two\n" + ("more body. " * 80)
+    assert len(plan_text) > 400
+    session, _cm = _make_session(tmp_path, StreamingLLM(events=[_text_event(plan_text)]))
+    session.record.interaction_mode = MODE_PLAN
+    holder = {"plan": plan_text}
+    setattr(session.agent, "consume_completed_plan", lambda: holder.pop("plan", None))
+    conn = _FakeConn()
+    agent = AcpAgent(factory=cast(Any, _FakeFactory(session)))
+    agent.on_connect(cast(Client, conn))
+    new_session = await agent.new_session(cwd=str(tmp_path))
+
+    await agent.prompt(session_id=new_session.session_id, prompt=[{"type": "text", "text": "make a plan"}])  # pyright: ignore[reportArgumentType]
+
+    assert conn.permission_calls
+    content = conn.permission_calls[0][1].content[0].content
+    assert content.type == "text"
+    assert content.text == plan_text
