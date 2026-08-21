@@ -22,6 +22,7 @@ from acp import Agent, InitializeResponse, NewSessionResponse, PromptResponse
 from acp.exceptions import RequestError
 from acp.interfaces import Client
 from acp.schema import (
+    AgentCapabilities,
     AudioContentBlock,
     ClientCapabilities,
     EmbeddedResourceContentBlock,
@@ -32,6 +33,9 @@ from acp.schema import (
     LoadSessionResponse,
     McpServerStdio,
     ResourceContentBlock,
+    SessionCapabilities,
+    SessionCloseCapabilities,
+    SessionListCapabilities,
     SseMcpServer,
     StopReason,
     TextContentBlock,
@@ -83,7 +87,16 @@ class AcpAgent(Agent):
         **kwargs: Any,
     ) -> InitializeResponse:
         logger.info("acp initialize (protocol %s, client=%s)", protocol_version, client_info)
-        return InitializeResponse(protocol_version=protocol_version)
+        return InitializeResponse(
+            protocol_version=protocol_version,
+            agent_capabilities=AgentCapabilities(
+                load_session=True,
+                session_capabilities=SessionCapabilities(
+                    list=SessionListCapabilities(),
+                    close=SessionCloseCapabilities(),
+                ),
+            ),
+        )
 
     # -- session lifecycle ------------------------------------------------
 

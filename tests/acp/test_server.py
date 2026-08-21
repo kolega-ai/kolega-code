@@ -141,10 +141,16 @@ def _make_agent(session: AcpSession) -> tuple[AcpAgent, _FakeConn]:
 
 
 @pytest.mark.asyncio
-async def test_initialize_echoes_protocol_version() -> None:
+async def test_initialize_echoes_protocol_version_and_advertises_load() -> None:
     agent = AcpAgent(factory=_FakeFactory(cast(AcpSession, None)))  # pyright: ignore[reportArgumentType]
     response = await agent.initialize(protocol_version=1, client_capabilities=None)
     assert response.protocol_version == 1
+    capabilities = response.agent_capabilities
+    assert capabilities is not None
+    assert capabilities.load_session is True
+    assert capabilities.session_capabilities is not None
+    assert capabilities.session_capabilities.list is not None
+    assert capabilities.session_capabilities.close is not None
 
 
 @pytest.mark.asyncio

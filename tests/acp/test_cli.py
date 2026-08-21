@@ -51,7 +51,9 @@ async def test_acp_subprocess_handshake_and_session_list(isolated_cli_env: None)
             "acp",
             env=env,
         ) as (conn, proc):
-            await conn.initialize(protocol_version=PROTOCOL_VERSION)
+            initialized = await conn.initialize(protocol_version=PROTOCOL_VERSION)
+            assert initialized.agent_capabilities is not None
+            assert initialized.agent_capabilities.load_session is True
             # session/list is config-independent: an empty state dir lists no sessions.
             listed = await conn.list_sessions()
             assert listed.sessions == []
