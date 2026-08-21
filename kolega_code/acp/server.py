@@ -43,6 +43,7 @@ from acp.schema import (
 
 from kolega_code.acp.agent_factory import AgentFactory
 from kolega_code.acp.bridge import AcpBridge
+from kolega_code.acp.diffs import AcpDiffProvider
 from kolega_code.acp.permissions import AcpPermissionBroker
 from kolega_code.acp.session import AcpSession
 from kolega_code.cli.config import CliConfigError
@@ -253,7 +254,7 @@ class AcpAgent(Agent):
         results still render.
         """
         session.drain_events()
-        bridge = AcpBridge(self._conn)
+        bridge = AcpBridge(self._conn, diff_provider=AcpDiffProvider.for_session(session))
         session.turn_task = asyncio.create_task(self._drive_turn(session, bridge, text))
         pump = asyncio.create_task(self._pump_events(session, bridge))
         try:

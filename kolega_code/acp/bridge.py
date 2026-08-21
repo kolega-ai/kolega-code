@@ -29,6 +29,7 @@ from acp.helpers import (
 from acp.interfaces import Client
 from acp.schema import ToolCallStatus, ToolKind
 
+from kolega_code.acp.diffs import AcpDiffProvider
 from kolega_code.events import AgentEvent
 
 logger = logging.getLogger(__name__)
@@ -63,8 +64,9 @@ TOOL_KINDS: dict[str, ToolKind] = {
 class AcpBridge:
     """Renders one ACP session's turn output to the client."""
 
-    def __init__(self, conn: Client) -> None:
+    def __init__(self, conn: Client, diff_provider: AcpDiffProvider | None = None) -> None:
         self._conn = conn
+        self._diffs = diff_provider
 
     async def send(self, session_id: str, update: SessionUpdate) -> None:
         await self._conn.session_update(session_id=session_id, update=update, source="kolega_code")
@@ -112,13 +114,14 @@ class AcpBridge:
         elif message_type in ("tool_result", "tool_error"):
             status: ToolCallStatus = "failed" if message_type == "tool_error" else "completed"
             text = str(content.get("text") or "")
+            blocks: list[Any] = []
+            if status == "completed" and self._diffs is not None:
+                blocks.extend(self._diffs.build_for_tool_result(tool_call_id))
+            if text:
+                blocks.append(tool_content(text_block(text)))
             await self.send(
                 session_id,
-                update_tool_call(
-                    tool_call_id,
-                    status=status,
-                    content=[tool_content(text_block(text))] if text else None,
-                ),
+                update_tool_call(tool_call_id, status=status, content=blocks or None),
             )
 
     async def emit_stop_reason_note(self, session_id: str, reason: str) -> None:
