@@ -26,6 +26,7 @@ from acp.schema import (
     AgentCapabilities,
     AudioContentBlock,
     ClientCapabilities,
+    ConfigOptionUpdate,
     EmbeddedResourceContentBlock,
     HttpMcpServer,
     ImageContentBlock,
@@ -315,6 +316,16 @@ class AcpAgent(Agent):
     async def _emit_current_mode(self, session: AcpSession) -> None:
         mode = session.record.interaction_mode or MODE_BUILD
         await self._send_session_update(session, update_current_mode(mode))
+        # Mode is exposed as a config option (Zed 1.16 renders either the
+        # config-option or session-mode surface, never both), so a server-side
+        # switch — plan approval — must push refreshed options or the client's
+        # mode select keeps showing the stale value.
+        await self._send_session_update(
+            session,
+            ConfigOptionUpdate(
+                session_update="config_option_update", config_options=list(self._factory.config_options_for(session))
+            ),
+        )
 
     async def _send_session_update(self, session: AcpSession, update: Any) -> None:
         conn = getattr(self, "_conn", None)

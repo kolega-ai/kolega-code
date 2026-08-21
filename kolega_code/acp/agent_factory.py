@@ -289,6 +289,11 @@ class AgentFactory:
         freshest history state; ``restore=True`` loads it into the rebuild.
         """
         old = session.agent
+        # The approval flow rebuilds mid-turn, before prompt() persists the
+        # just-finished plan turn. Dump the live agent into the record first
+        # (as the TUI does before rebuilds) so the rebuild restores the full
+        # conversation, not the stale pre-turn snapshot.
+        self.persist(session)
         agent, manager = await self._construct_agent(
             session.record,
             config,

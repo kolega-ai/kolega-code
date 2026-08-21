@@ -9,7 +9,13 @@ from typing import Any, cast
 import pytest
 from acp.exceptions import RequestError
 from acp.interfaces import Client
-from acp.schema import AgentPlanUpdate, CurrentModeUpdate, SetSessionModeResponse
+from acp.schema import (
+    AgentPlanUpdate,
+    ConfigOptionUpdate,
+    CurrentModeUpdate,
+    SessionConfigOptionSelect,
+    SetSessionModeResponse,
+)
 
 from kolega_code.acp.agent_factory import MODE_BUILD, MODE_PLAN, agent_class_for
 from kolega_code.events import AgentEvent
@@ -156,7 +162,7 @@ async def test_bridge_maps_task_list_update_to_plan_view() -> None:
 
 @pytest.mark.asyncio
 async def test_plan_approval_implement_switches_to_build(tmp_path: Path) -> None:
-    from acp.schema import CurrentModeUpdate
+    from kolega_code.acp.agent_factory import CONFIG_MODE, AgentFactory
 
     plan_text = "## Step one\n## Step two"
     session, _cm = _make_session(tmp_path, StreamingLLM(events=[_text_event(plan_text)]))
@@ -164,6 +170,9 @@ async def test_plan_approval_implement_switches_to_build(tmp_path: Path) -> None
     holder = {"plan": plan_text}
     setattr(session.agent, "consume_completed_plan", lambda: holder.pop("plan", None))
     factory = _FakeFactory(session)
+    # The fake's config surface reflects the record live, so the pushed
+    # option update after the server-side switch shows the new mode.
+    factory.config_options_for = lambda s: [AgentFactory._mode_option(s)]  # type: ignore[method-assign]
     conn = _FakeConn()
     agent = AcpAgent(factory=cast(Any, factory))
     agent.on_connect(cast(Client, conn))
@@ -177,6 +186,16 @@ async def test_plan_approval_implement_switches_to_build(tmp_path: Path) -> None
     modes = [u.current_mode_id for u in conn.updates if isinstance(u, CurrentModeUpdate)]
     assert modes[-1] == MODE_BUILD
     assert not any(isinstance(u, AgentPlanUpdate) for u in conn.updates)
+    # The mode select is a config option in Zed; the approval must push a
+    # refreshed option set or the client keeps showing the stale mode.
+    option_updates = [u for u in conn.updates if isinstance(u, ConfigOptionUpdate)]
+    assert option_updates
+    mode_selects = [
+        option
+        for option in option_updates[-1].config_options
+        if isinstance(option, SessionConfigOptionSelect) and option.id == CONFIG_MODE
+    ]
+    assert mode_selects and mode_selects[0].current_value == MODE_BUILD
 
 
 @pytest.mark.asyncio
@@ -287,3 +306,44 @@ def test_task_list_extension_matches_tui_split(tmp_path: Path) -> None:
     assert set(plan.tools) == {"get_task_list"}
     assert build.tool_descriptions["get_task_list"] == tool_description_asset("get_task_list")
     assert plan.tool_descriptions["get_task_list"] == tool_description_asset("get_task_list_readonly")
+
+
+@pytest.mark.asyncio
+async def test_rebuild_agent_persists_live_history_first(tmp_path: Path) -> None:
+    from unittest.mock import AsyncMock
+
+    from kolega_code.acp.agent_factory import AgentFactory
+    from kolega_code.cli.session_store import SessionStore
+    from kolega_code.llm.models import Message, MessageHistory, TextBlock
+
+    session, _cm = _make_session(tmp_path, StreamingLLM())
+    # The approval flow rebuilds mid-turn: the live agent has the just-finished
+    # plan turn, while the persisted record still holds the pre-turn history.
+    session.agent.history = MessageHistory()
+    session.agent.history.append(Message(role="user", content=[TextBlock(text="plan turn text")]))
+    assert session.record.history == []
+
+    captured: dict[str, Any] = {}
+
+    class _StubFactory(AgentFactory):
+        async def _construct_agent(
+            self,
+            record: Any,
+            config: Any,
+            *,
+            restore: bool,
+            permission_callback: Any,
+            permission_mode: Any = None,
+        ) -> tuple[Any, Any]:
+            captured["history"] = record.history
+            return session.agent, session.manager
+
+    # The real factory registers records in the store before persisting; do
+    # the same here so persist() can save.
+    SessionStore().create(Path(tmp_path), "cli", {}, session_id=session.record.session_id)
+    session.agent.cleanup = AsyncMock()  # type: ignore[method-assign]
+    factory = _StubFactory()
+    await factory._rebuild_agent(session, session.config)
+
+    assert captured["history"] == session.record.history
+    assert any("plan turn text" in str(msg) for msg in captured["history"])
