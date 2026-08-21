@@ -388,9 +388,9 @@ class AcpAgent(Agent):
         options = [
             PermissionOption(option_id="implement_plan", name="Implement plan", kind="allow_once"),
             PermissionOption(
-                option_id="implement_plan_clear", name="Implement with cleared context", kind="allow_once"
+                option_id="implement_plan_clear", name="Clear context and implement plan", kind="allow_once"
             ),
-            PermissionOption(option_id="discuss_plan", name="Discuss", kind="reject_once"),
+            PermissionOption(option_id="discuss_plan", name="Discuss further", kind="reject_once"),
         ]
         try:
             response = await asyncio.wait_for(
