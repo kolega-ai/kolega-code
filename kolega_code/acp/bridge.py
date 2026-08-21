@@ -70,14 +70,23 @@ class AcpBridge:
         await self._conn.session_update(session_id=session_id, update=update, source="kolega_code")
 
     async def emit_chunk(self, session_id: str, chunk: dict[str, Any]) -> None:
-        """Map one generator chunk to an agent message or thought update."""
+        """Map one generator chunk to an agent message or thought update.
+
+        Each contiguous stream segment (one ``uuid``) becomes one ACP message:
+        the messageId tells the client which chunks belong to the same block
+        and when a new block starts.
+        """
         content = str(chunk.get("content") or "")
         if not content:
             return
+        stream_uuid = str(chunk.get("uuid") or "")
         if chunk.get("type") == "thinking":
-            await self.send(session_id, update_agent_thought(text_block(content)))
+            update = update_agent_thought(text_block(content))
         else:
-            await self.send(session_id, update_agent_message(text_block(content)))
+            update = update_agent_message(text_block(content))
+        if stream_uuid:
+            update.message_id = stream_uuid
+        await self.send(session_id, update)
 
     async def handle_event(self, session_id: str, event: AgentEvent) -> None:
         """Map one agent event to tool-call lifecycle updates.
