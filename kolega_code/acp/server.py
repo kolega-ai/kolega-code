@@ -21,12 +21,20 @@ from uuid import uuid4
 
 from acp import Agent, InitializeResponse, NewSessionResponse, PromptResponse
 from acp.exceptions import RequestError
-from acp.helpers import text_block, tool_content, update_current_mode, update_plan, update_tool_call
+from acp.helpers import (
+    text_block,
+    tool_content,
+    update_available_commands,
+    update_current_mode,
+    update_plan,
+    update_tool_call,
+)
 from acp.interfaces import Client
 from acp.schema import (
     AcceptElicitationResponse,
     AgentCapabilities,
     AudioContentBlock,
+    AvailableCommand,
     ClientCapabilities,
     ConfigOptionUpdate,
     ElicitationFormSessionMode,
@@ -70,6 +78,7 @@ from kolega_code.acp.usage import build_usage_update
 from kolega_code.agent.prompts import build_implement_plan_prompt
 from kolega_code.cli.config import CliConfigError
 from kolega_code.cli.session_store import SessionStoreError
+from kolega_code.cli.slash_commands import agent_command_entries
 from kolega_code.llm.models import MessageHistory
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
 from kolega_code.session.control import DEFAULT_REQUEST_TIMEOUT_SECONDS
@@ -149,6 +158,7 @@ class AcpAgent(Agent):
         self._sessions[session.session_id] = session
         self._attach_question_elicit(session)
         await self._emit_initial_usage(session)
+        await self._send_available_commands(session)
         return NewSessionResponse(
             session_id=session.session_id,
             config_options=self._factory.config_options_for(session),
@@ -178,6 +188,7 @@ class AcpAgent(Agent):
         self._sessions[session.session_id] = session
         self._attach_question_elicit(session)
         await self._emit_initial_usage(session)
+        await self._send_available_commands(session)
         await self._replay_transcript(session)
         return LoadSessionResponse(config_options=self._factory.config_options_for(session))
 
@@ -354,6 +365,19 @@ class AcpAgent(Agent):
         extension holds by reference, so it survives agent rebuilds.
         """
         session.question_state["elicit"] = functools.partial(self._elicit_answer, session.session_id)
+
+    async def _send_available_commands(self, session: AcpSession) -> None:
+        """Advertise the agent's slash commands for the client's command UI.
+
+        The agent's process loop dispatches exact-match commands itself (the
+        same ``CommandProcessor`` decorator the CLI uses), so advertising is
+        all the ACP server needs; the client sends ``/name args`` as a normal
+        prompt and the agent turns it into the command result.
+        """
+        commands = [
+            AvailableCommand(name=entry.name, description=entry.description) for entry in agent_command_entries()
+        ]
+        await self._send_session_update(session, update_available_commands(commands))
 
     async def _elicit_answer(
         self,

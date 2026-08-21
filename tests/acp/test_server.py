@@ -333,7 +333,23 @@ async def test_load_session_replays_transcript(tmp_path: Path) -> None:
     assert agents[0].message_id
     # The replay follows the initial usage update and precedes the response:
     # user prompt first, then the agent's reply.
-    assert [type(u).__name__ for u in conn.updates if type(u).__name__ != "UsageUpdate"][:2] == [
+    assert [
+        type(u).__name__ for u in conn.updates if type(u).__name__ not in ("UsageUpdate", "AvailableCommandsUpdate")
+    ][:2] == [
         "UserMessageChunk",
         "AgentMessageChunk",
     ]
+
+
+@pytest.mark.asyncio
+async def test_new_session_advertises_slash_commands(tmp_path: Path) -> None:
+    from acp.schema import AvailableCommandsUpdate
+
+    session, _cm = _make_session(tmp_path, StreamingLLM())
+    agent, conn = _make_agent(session)
+    await agent.new_session(cwd=str(tmp_path))
+
+    updates = [u for u in conn.updates if isinstance(u, AvailableCommandsUpdate)]
+    assert len(updates) == 1
+    names = [command.name for command in updates[0].available_commands]
+    assert names == ["help", "compress", "clear", "reset", "context"]

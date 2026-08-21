@@ -334,6 +334,7 @@ async def test_rebuild_agent_persists_live_history_first(tmp_path: Path) -> None
             restore: bool,
             permission_callback: Any,
             permission_mode: Any = None,
+            question_state: Any = None,
         ) -> tuple[Any, Any]:
             captured["history"] = record.history
             return session.agent, session.manager
