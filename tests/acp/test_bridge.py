@@ -180,3 +180,22 @@ async def test_background_terminal_noise_does_not_leak_into_other_tools() -> Non
 
     assert conn.updates[0].status == "pending"
     assert len(conn.updates) == 1
+
+
+@pytest.mark.asyncio
+async def test_debug_logging_handles_single_block_and_list_content() -> None:
+    import logging
+
+    logger = logging.getLogger("kolega_code.acp.bridge")
+    previous_level = logger.level
+    logger.setLevel(logging.DEBUG)
+    try:
+        conn = _FakeConn()
+        bridge = AcpBridge(cast(Client, conn))
+        await bridge.emit_chunk("s1", {"type": "response", "content": "hello", "complete": True, "uuid": "u1"})
+        await bridge.emit_chunk("s1", {"type": "thinking", "content": "hmm", "complete": False, "uuid": "u2"})
+        await bridge.handle_event("s1", _chat_event("tool_call", "Calling read", "c1", "read"))
+        await bridge.handle_event("s1", _chat_event("tool_result", "Wrote file", "c1"))
+        assert len(conn.updates) == 4
+    finally:
+        logger.setLevel(previous_level)

@@ -79,19 +79,32 @@ class AcpBridge:
 
     async def send(self, session_id: str, update: Any) -> None:
         if logger.isEnabledFor(logging.DEBUG):
-            blocks = getattr(update, "content", None) or []
-            preview = ""
-            if blocks:
-                text = getattr(getattr(blocks[0], "content", blocks[0]), "text", "")
-                preview = f" ({len(blocks)} block(s), '{str(text)[:60]}')"
             logger.debug(
                 "acp update kind=%s tc=%s st=%s%s",
                 getattr(update, "session_update", None) or type(update).__name__,
                 getattr(update, "tool_call_id", ""),
                 getattr(update, "status", ""),
-                preview,
+                self._content_preview(update),
             )
         await self._conn.session_update(session_id=session_id, update=update, source="kolega_code")
+
+    @staticmethod
+    def _content_preview(update: Any) -> str:
+        try:
+            blocks = getattr(update, "content", None)
+            if isinstance(blocks, list):
+                if not blocks:
+                    return ""
+                inner = getattr(blocks[0], "content", blocks[0])
+                text = str(getattr(inner, "text", "") or "")[:60]
+                return f" ({len(blocks)} block(s), '{text}')"
+            if blocks is not None:
+                inner = getattr(blocks, "content", blocks)
+                text = str(getattr(inner, "text", "") or "")[:60]
+                return f" ('{text}')"
+        except Exception:  # noqa: BLE001 — diagnostics must never break the wire
+            pass
+        return ""
 
     async def emit_usage(self, session_id: str) -> None:
         update = build_usage_update(self._agent, self._latest_context_tokens)
