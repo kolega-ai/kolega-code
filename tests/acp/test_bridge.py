@@ -199,3 +199,40 @@ async def test_debug_logging_handles_single_block_and_list_content() -> None:
         assert len(conn.updates) == 4
     finally:
         logger.setLevel(previous_level)
+
+
+@pytest.mark.asyncio
+async def test_replay_conversation_maps_transcript_items() -> None:
+    from acp.schema import AgentMessageChunk, ToolCallProgress, ToolCallStart, UserMessageChunk
+
+    from kolega_code.session.projection import ConversationItem
+
+    conn = _FakeConn()
+    bridge = AcpBridge(cast(Client, conn))
+    items = [
+        ConversationItem(kind="user", text="hello", seq=1),
+        ConversationItem(kind="thinking", text="hmm", seq=2),
+        ConversationItem(kind="assistant", text="hi there", seq=3),
+        ConversationItem(kind="tool", text="output text", tool_name="exec", tool_call_id="tc1", status="done", seq=4),
+        ConversationItem(kind="tool", text="boom", tool_name="edit", tool_call_id="tc2", status="failed", seq=5),
+        ConversationItem(kind="system", text="live notice", seq=6),
+    ]
+
+    await bridge.replay_conversation("s1", items)
+
+    updates = conn.updates
+    user = [u for u in updates if isinstance(u, UserMessageChunk)]
+    agent = [u for u in updates if isinstance(u, AgentMessageChunk)]
+    starts = [u for u in updates if isinstance(u, ToolCallStart)]
+    progresses = [u for u in updates if isinstance(u, ToolCallProgress)]
+    assert len(user) == 1
+    assert user[0].content.type == "text" and user[0].content.text == "hello"
+    assert user[0].message_id == "replay-1-user"
+    assert len(agent) == 1
+    assert agent[0].content.type == "text" and agent[0].content.text == "hi there"
+    assert agent[0].message_id == "replay-3-assistant"
+    assert len(starts) == 2
+    assert [s.title for s in starts] == ["exec", "edit"]
+    assert [(p.tool_call_id, p.status) for p in progresses] == [("tc1", "completed"), ("tc2", "failed")]
+    assert progresses[0].content is not None and progresses[0].content[0].content.text == "output text"
+    assert "live notice" not in [getattr(u, "text", "") for u in updates]

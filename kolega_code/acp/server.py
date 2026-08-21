@@ -20,7 +20,7 @@ from uuid import uuid4
 
 from acp import Agent, InitializeResponse, NewSessionResponse, PromptResponse
 from acp.exceptions import RequestError
-from acp.helpers import text_block, tool_content, update_current_mode, update_tool_call
+from acp.helpers import text_block, tool_content, update_current_mode, update_plan, update_tool_call
 from acp.interfaces import Client
 from acp.schema import (
     AgentCapabilities,
@@ -58,6 +58,7 @@ from kolega_code.acp.agent_factory import (
 from kolega_code.acp.bridge import AcpBridge
 from kolega_code.acp.diffs import AcpDiffProvider
 from kolega_code.acp.permissions import AcpPermissionBroker
+from kolega_code.acp.plans import task_entries_from_markdown
 from kolega_code.acp.session import AcpSession
 from kolega_code.acp.usage import build_usage_update
 from kolega_code.agent.prompts import build_implement_plan_prompt
@@ -66,6 +67,7 @@ from kolega_code.cli.session_store import SessionStoreError
 from kolega_code.llm.models import MessageHistory
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
 from kolega_code.session.control import DEFAULT_REQUEST_TIMEOUT_SECONDS
+from kolega_code.session.projection import replay
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +167,7 @@ class AcpAgent(Agent):
             return None
         self._sessions[session.session_id] = session
         await self._emit_initial_usage(session)
+        await self._replay_transcript(session)
         return LoadSessionResponse(config_options=self._factory.config_options_for(session))
 
     async def list_sessions(
@@ -332,6 +335,29 @@ class AcpAgent(Agent):
         if conn is None:
             return
         await conn.session_update(session_id=session.session_id, update=update, source="kolega_code")
+
+    async def _replay_transcript(self, session: AcpSession) -> None:
+        """Replay the persisted transcript before responding to ``session/load``.
+
+        The ACP spec requires the whole conversation to be re-sent as
+        ``session/update`` notifications on load. The journal's presentation
+        events fold through the same projection the TUI restores, so the editor
+        sees the same transcript; live-only notices are excluded by the bridge.
+        The plan view is then refreshed from the shared task list, mirroring the
+        TUI's restored sidebar.
+        """
+        try:
+            events = await self._factory.event_store(session.session_id).read(session.session_id)
+        except Exception:  # noqa: BLE001 — a missing or unreadable journal must not block the load
+            logger.exception("acp session/load: transcript replay failed (session=%s)", session.session_id)
+            return
+        bridge = AcpBridge(self._conn)
+        await bridge.replay_conversation(session.session_id, replay(events).conversation)
+        task_list = (session.record.task_list_markdown or "").strip()
+        if task_list:
+            entries = task_entries_from_markdown(task_list)
+            if entries:
+                await self._send_session_update(session, update_plan(entries))
 
     # -- turn machinery ----------------------------------------------------
 

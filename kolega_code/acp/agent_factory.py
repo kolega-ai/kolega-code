@@ -150,6 +150,10 @@ class AgentFactory:
             for record in records
         ]
 
+    def event_store(self, session_id: str) -> FileSessionEventStore:
+        """The session's durable event journal as a readable event store."""
+        return FileSessionEventStore(self._store.journal(session_id))
+
     # -- internal -----------------------------------------------------------
 
     @staticmethod

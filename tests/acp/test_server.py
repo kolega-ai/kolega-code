@@ -277,3 +277,63 @@ async def test_permission_callback_prompts_through_client(tmp_path: Path) -> Non
     assert prompted_session_id == new_session.session_id
     assert tool_call.tool_call_id == "call-9"
     assert options[0].kind == "allow_once"
+
+
+@pytest.mark.asyncio
+async def test_load_session_replays_transcript(tmp_path: Path) -> None:
+    from acp.schema import AgentMessageChunk, LoadSessionResponse, UserMessageChunk
+
+    from kolega_code.cli.session_event_store import FileSessionEventStore
+    from kolega_code.cli.session_journal import SessionJournal
+    from kolega_code.events import AgentEvent
+
+    session, _cm = _make_session(tmp_path, StreamingLLM())
+    journal = SessionJournal(session.session_id, tmp_path / "journal")
+    journal.start_epoch("test")
+    store = FileSessionEventStore(journal)
+    await store.append(
+        AgentEvent(
+            event_type="turn_started",
+            sender="agent",
+            content={"turn_id": "t1", "user_text": "hello"},
+        )
+    )
+    await store.append(
+        AgentEvent(
+            event_type="assistant_delta",
+            sender="agent",
+            content={"text": "hi there", "complete": True},
+            uuid="u1",
+        )
+    )
+    await store.append(
+        AgentEvent(event_type="turn_ended", sender="agent", content={"turn_id": "t1", "status": "completed"})
+    )
+
+    factory = _FakeFactory(session)
+    factory.event_store = lambda session_id: store  # type: ignore[method-assign]
+
+    async def _load(cwd: str, session_id: str, *, permission_callback: Any = None) -> AcpSession:
+        return session
+
+    factory.load_session = _load  # type: ignore[method-assign]
+
+    conn = _FakeConn()
+    agent = AcpAgent(factory=cast(Any, factory))
+    agent.on_connect(cast(Client, conn))
+
+    response = await agent.load_session(cwd=str(tmp_path), session_id=session.session_id)
+
+    assert isinstance(response, LoadSessionResponse)
+    users = [u for u in conn.updates if isinstance(u, UserMessageChunk)]
+    agents = [u for u in conn.updates if isinstance(u, AgentMessageChunk)]
+    assert users and users[0].content.text == "hello"
+    assert users[0].message_id
+    assert agents and agents[0].content.text == "hi there"
+    assert agents[0].message_id
+    # The replay follows the initial usage update and precedes the response:
+    # user prompt first, then the agent's reply.
+    assert [type(u).__name__ for u in conn.updates if type(u).__name__ != "UsageUpdate"][:2] == [
+        "UserMessageChunk",
+        "AgentMessageChunk",
+    ]

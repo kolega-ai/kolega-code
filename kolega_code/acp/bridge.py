@@ -25,6 +25,7 @@ from acp.helpers import (
     update_agent_thought,
     update_plan,
     update_tool_call,
+    update_user_message,
 )
 from acp.interfaces import Client
 from acp.schema import ToolCallStatus, ToolKind
@@ -33,6 +34,7 @@ from kolega_code.acp.diffs import AcpDiffProvider
 from kolega_code.acp.plans import task_entries_from_markdown
 from kolega_code.acp.usage import build_usage_update
 from kolega_code.events import AgentEvent
+from kolega_code.session.projection import ConversationItem
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +138,44 @@ class AcpBridge:
 
     def response_text(self) -> str:
         return "".join(self._turn_response_parts)
+
+    async def replay_conversation(self, session_id: str, items: list[ConversationItem]) -> None:
+        """Replay the persisted transcript as session updates (session/load).
+
+        ACP requires the agent to replay the entire conversation before
+        responding to ``session/load``. The items come from the same projection
+        the TUI restores, so the editor sees what the TUI would show. Live-only
+        notice items (system/status) are not conversation history and are
+        deliberately not replayed.
+        """
+        for item in items:
+            if item.kind == "user":
+                update = update_user_message(text_block(item.text))
+                if item.seq is not None:
+                    update.message_id = f"replay-{item.seq}-user"
+                await self.send(session_id, update)
+            elif item.kind == "assistant":
+                update = update_agent_message(text_block(item.text))
+                if item.seq is not None:
+                    update.message_id = f"replay-{item.seq}-assistant"
+                await self.send(session_id, update)
+            elif item.kind == "thinking":
+                await self.send(session_id, update_agent_thought(text_block(item.text)))
+            elif item.kind == "tool":
+                tool_call_id = item.tool_call_id or f"replay-tool-{item.seq}"
+                name = item.tool_name or "tool"
+                await self.send(
+                    session_id,
+                    start_tool_call(tool_call_id, name, kind=TOOL_KINDS.get(name, "other"), status="pending"),
+                )
+                if item.status == "failed":
+                    status: ToolCallStatus = "failed"
+                elif item.status == "running":
+                    status = "in_progress"
+                else:
+                    status = "completed"
+                content = [tool_content(text_block(item.text))] if item.text else None
+                await self.send(session_id, update_tool_call(tool_call_id, status=status, content=content))
 
     async def handle_event(self, session_id: str, event: AgentEvent) -> None:
         """Map one agent event to tool-call lifecycle updates.
