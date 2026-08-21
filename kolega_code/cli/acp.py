@@ -28,10 +28,12 @@ def run_acp(args: Any) -> int:
     )
     from acp import run_agent
 
+    from kolega_code import __version__ as kolega_version
     from kolega_code.acp.agent_factory import AgentFactory
     from kolega_code.acp.server import AcpAgent
     from kolega_code.permissions import PermissionMode, normalize_permission_mode
 
+    log.info("kolega-code acp %s starting (permission-mode=%s)", kolega_version, getattr(args, "permission_mode", None))
     permission_mode = normalize_permission_mode(
         getattr(args, "permission_mode", None),
         default=PermissionMode.ASK,
