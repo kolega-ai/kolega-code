@@ -17,6 +17,7 @@ from kolega_code.acp.diffs import AcpDiffProvider
 from kolega_code.acp.permissions import AcpPermissionBroker
 from kolega_code.acp.server import AcpAgent
 from kolega_code.acp.session import AcpSession
+from kolega_code.acp.usage import build_usage_update, context_window_for
 
 __all__ = [
     "ACP_AGENT_MODE",
@@ -28,4 +29,6 @@ __all__ = [
     "AcpSession",
     "AgentFactory",
     "TOOL_KINDS",
+    "build_usage_update",
+    "context_window_for",
 ]

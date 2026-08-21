@@ -18,7 +18,6 @@ import logging
 from typing import Any
 
 from acp.helpers import (
-    SessionUpdate,
     start_tool_call,
     text_block,
     tool_content,
@@ -30,6 +29,7 @@ from acp.interfaces import Client
 from acp.schema import ToolCallStatus, ToolKind
 
 from kolega_code.acp.diffs import AcpDiffProvider
+from kolega_code.acp.usage import build_usage_update
 from kolega_code.events import AgentEvent
 
 logger = logging.getLogger(__name__)
@@ -69,14 +69,21 @@ class AcpBridge:
 
     TERMINAL_BUFFER_MAX_CHARS = 20_000
 
-    def __init__(self, conn: Client, diff_provider: AcpDiffProvider | None = None) -> None:
+    def __init__(self, conn: Client, diff_provider: AcpDiffProvider | None = None, agent: Any = None) -> None:
         self._conn = conn
         self._diffs = diff_provider
+        self._agent = agent
         self._terminal_text: dict[str, str] = {}
         self._active_execute_tool: str | None = None
+        self._latest_context_tokens: int | None = None
 
-    async def send(self, session_id: str, update: SessionUpdate) -> None:
+    async def send(self, session_id: str, update: Any) -> None:
         await self._conn.session_update(session_id=session_id, update=update, source="kolega_code")
+
+    async def emit_usage(self, session_id: str) -> None:
+        update = build_usage_update(self._agent, self._latest_context_tokens)
+        if update is not None:
+            await self.send(session_id, update)
 
     async def emit_chunk(self, session_id: str, chunk: dict[str, Any]) -> None:
         """Map one generator chunk to an agent message or thought update.
@@ -107,6 +114,11 @@ class AcpBridge:
         """
         if event.event_type in ("terminal_command", "terminal_output"):
             await self._handle_terminal_event(session_id, event)
+            return
+        if event.event_type == "llm_context_update" and event.content:
+            tokens = event.content.get("input_tokens")
+            if isinstance(tokens, int) and tokens >= 0:
+                self._latest_context_tokens = tokens
             return
         if event.event_type != "chat_message" or not event.content:
             return

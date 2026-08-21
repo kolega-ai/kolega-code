@@ -46,6 +46,7 @@ from kolega_code.acp.bridge import AcpBridge
 from kolega_code.acp.diffs import AcpDiffProvider
 from kolega_code.acp.permissions import AcpPermissionBroker
 from kolega_code.acp.session import AcpSession
+from kolega_code.acp.usage import build_usage_update
 from kolega_code.cli.config import CliConfigError
 from kolega_code.cli.session_store import SessionStoreError
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
@@ -119,6 +120,7 @@ class AcpAgent(Agent):
         except _HANDLED_CONFIG_ERRORS as exc:
             raise AgentFactory.protocol_error(exc) from exc
         self._sessions[session.session_id] = session
+        await self._emit_initial_usage(session)
         return NewSessionResponse(
             session_id=session.session_id,
             config_options=self._factory.config_options_for(session),
@@ -145,6 +147,7 @@ class AcpAgent(Agent):
         if session is None:
             return None
         self._sessions[session.session_id] = session
+        await self._emit_initial_usage(session)
         return LoadSessionResponse(config_options=self._factory.config_options_for(session))
 
     async def list_sessions(
@@ -266,6 +269,14 @@ class AcpAgent(Agent):
 
         return callback
 
+    async def _emit_initial_usage(self, session: AcpSession) -> None:
+        conn = getattr(self, "_conn", None)
+        if conn is None:
+            return
+        update = build_usage_update(session.agent)
+        if update is not None:
+            await conn.session_update(session_id=session.session_id, update=update, source="kolega_code")
+
     # -- turn machinery ----------------------------------------------------
 
     async def _run_turn(self, session: AcpSession, text: str) -> StopReason:
@@ -276,7 +287,7 @@ class AcpAgent(Agent):
         results still render.
         """
         session.drain_events()
-        bridge = AcpBridge(self._conn, diff_provider=AcpDiffProvider.for_session(session))
+        bridge = AcpBridge(self._conn, diff_provider=AcpDiffProvider.for_session(session), agent=session.agent)
         session.turn_task = asyncio.create_task(self._drive_turn(session, bridge, text))
         pump = asyncio.create_task(self._pump_events(session, bridge))
         try:
@@ -289,6 +300,7 @@ class AcpAgent(Agent):
                 pass
             await self._drain_residual(session, bridge)
             session.turn_task = None
+            await bridge.emit_usage(session.session_id)
 
     async def _drive_turn(self, session: AcpSession, bridge: AcpBridge, text: str) -> str:
         try:
