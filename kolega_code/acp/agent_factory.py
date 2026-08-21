@@ -30,10 +30,12 @@ from acp.schema import (
     SessionInfo,
 )
 
+from kolega_code.acp.questions import build_question_extension
 from kolega_code.acp.session import AcpSession
-from kolega_code.agent import CoderAgent, ToolExtension
+from kolega_code.agent import CoderAgent, PromptExtension, ToolExtension
 from kolega_code.agent.planningagent import PlanningAgent
 from kolega_code.agent.prompt_provider import AgentMode
+from kolega_code.agent.prompts import BUILD_QUESTION_PROMPT, PLANNING_QUESTION_PROMPT
 from kolega_code.agent.tool_definitions import tool_description_asset
 from kolega_code.agent.volatile_context import VolatileSection
 from kolega_code.cli.config import CliConfigOverrides, build_agent_config, config_summary
@@ -304,6 +306,7 @@ class AgentFactory:
             restore=True,
             permission_callback=session.permission_callback,
             permission_mode=old.permission_mode,
+            question_state=session.question_state,
         )
         session.agent = agent
         session.manager = manager
@@ -326,12 +329,14 @@ class AgentFactory:
             if restore
             else self._permission_mode
         )
+        question_state: dict[str, Any] = {}
         agent, manager = await self._construct_agent(
             record,
             config,
             restore=restore,
             permission_callback=permission_callback,
             permission_mode=permission_mode,
+            question_state=question_state,
         )
         session = AcpSession(
             session_id=record.session_id,
@@ -340,6 +345,7 @@ class AgentFactory:
             manager=manager,
             permission_callback=permission_callback,
             config=config,
+            question_state=question_state,
         )
         self._acp_sessions[record.session_id] = session
         return session
@@ -352,6 +358,7 @@ class AgentFactory:
         restore: bool,
         permission_callback: PermissionCallback | None,
         permission_mode: PermissionMode | None = None,
+        question_state: dict[str, Any] | None = None,
     ) -> tuple[CoderAgent, CliConnectionManager]:
         journal = self._store.journal(record.session_id)
         recorder = self._store.recorder(record.session_id)
@@ -365,6 +372,16 @@ class AgentFactory:
         interaction_mode = record.interaction_mode or MODE_BUILD
         agent_class = agent_class_for(interaction_mode)
         agent_holder: dict[str, Any] = {}
+        question_markdown = PLANNING_QUESTION_PROMPT if interaction_mode == MODE_PLAN else BUILD_QUESTION_PROMPT
+        prompt_extensions = [
+            PromptExtension(
+                id="acp-questions",
+                title="Asking the User",
+                markdown=question_markdown,
+                modes=[ACP_AGENT_MODE],
+                propagate_to_sub_agents=False,
+            ),
+        ]
         agent = agent_class(
             project_path=Path(record.project_path),
             workspace_id=record.workspace_id,
@@ -374,7 +391,11 @@ class AgentFactory:
             agent_mode=ACP_AGENT_MODE,
             permission_mode=permission_mode or self._permission_mode,
             permission_callback=permission_callback,
-            tool_extensions=[self._task_list_extension(record, agent_holder, interaction_mode)],
+            prompt_extensions=prompt_extensions,
+            tool_extensions=[
+                self._task_list_extension(record, agent_holder, interaction_mode),
+                build_question_extension(question_state or {}),
+            ],
             # Mirror the ask path: a resumed session hands the recorder over after
             # restoring history, so construction never double-records a resumed turn.
             session_recorder=None if restore else recorder,

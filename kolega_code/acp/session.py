@@ -28,6 +28,9 @@ class AcpSession:
     permission_callback: Any = None
     #: The AgentConfig the agent was built with, reused by mode-switch rebuilds.
     config: Any = None
+    #: Shared with the ask_user_choice tool extension; the server binds the
+    #: ``elicit`` callable here so questions survive agent rebuilds.
+    question_state: dict[str, Any] = field(default_factory=dict)
     #: In-flight turn task; None when the session is idle. Set and cleared by the server.
     turn_task: asyncio.Task | None = field(default=None, repr=False)
 

@@ -13,6 +13,7 @@ Phase 0 (transport skeleton) is preserved in the module's git history; see
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -23,11 +24,16 @@ from acp.exceptions import RequestError
 from acp.helpers import text_block, tool_content, update_current_mode, update_plan, update_tool_call
 from acp.interfaces import Client
 from acp.schema import (
+    AcceptElicitationResponse,
     AgentCapabilities,
     AudioContentBlock,
     ClientCapabilities,
     ConfigOptionUpdate,
+    ElicitationFormSessionMode,
+    ElicitationSchema,
+    ElicitationStringPropertySchema,
     EmbeddedResourceContentBlock,
+    EnumOption,
     HttpMcpServer,
     ImageContentBlock,
     Implementation,
@@ -68,6 +74,7 @@ from kolega_code.llm.models import MessageHistory
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
 from kolega_code.session.control import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from kolega_code.session.projection import replay
+from kolega_code.tools.core import ToolError
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +102,7 @@ class AcpAgent(Agent):
         self._sessions: dict[str, AcpSession] = {}
         self._brokers: dict[str, AcpPermissionBroker] = {}
         self._conn: Client
+        self._client_capabilities: ClientCapabilities | None = None
 
     def on_connect(self, conn: Client) -> None:
         self._conn = conn
@@ -107,6 +115,7 @@ class AcpAgent(Agent):
         **kwargs: Any,
     ) -> InitializeResponse:
         logger.info("acp initialize (protocol %s, client=%s)", protocol_version, client_info)
+        self._client_capabilities = client_capabilities
         return InitializeResponse(
             protocol_version=protocol_version,
             agent_capabilities=AgentCapabilities(
@@ -138,6 +147,7 @@ class AcpAgent(Agent):
         except _HANDLED_CONFIG_ERRORS as exc:
             raise AgentFactory.protocol_error(exc) from exc
         self._sessions[session.session_id] = session
+        self._attach_question_elicit(session)
         await self._emit_initial_usage(session)
         return NewSessionResponse(
             session_id=session.session_id,
@@ -166,6 +176,7 @@ class AcpAgent(Agent):
         if session is None:
             return None
         self._sessions[session.session_id] = session
+        self._attach_question_elicit(session)
         await self._emit_initial_usage(session)
         await self._replay_transcript(session)
         return LoadSessionResponse(config_options=self._factory.config_options_for(session))
@@ -335,6 +346,52 @@ class AcpAgent(Agent):
         if conn is None:
             return
         await conn.session_update(session_id=session.session_id, update=update, source="kolega_code")
+
+    def _attach_question_elicit(self, session: AcpSession) -> None:
+        """Bind the elicitation bridge to the session's ask_user_choice tool.
+
+        The bound callable lives on ``session.question_state``, which the tool
+        extension holds by reference, so it survives agent rebuilds.
+        """
+        session.question_state["elicit"] = functools.partial(self._elicit_answer, session.session_id)
+
+    async def _elicit_answer(
+        self,
+        session_id: str,
+        question: str,
+        labels: list[str],
+        descriptions: list[str],
+    ) -> str:
+        """Ask one choice question through the client's elicitation surface."""
+        capabilities = self._client_capabilities
+        elicitation = getattr(capabilities, "elicitation", None) if capabilities is not None else None
+        if elicitation is None or not getattr(elicitation, "form", None):
+            raise ToolError(
+                "This editor client does not support interactive question forms; "
+                "ask the user directly in the conversation instead."
+            )
+        conn = getattr(self, "_conn", None)
+        if conn is None:
+            raise ToolError("No client connection is available for questions.")
+        options = [
+            EnumOption(const=label, title=label, description=description or None)
+            for label, description in zip(labels, descriptions)
+        ]
+        schema = ElicitationSchema(
+            properties={"answer": ElicitationStringPropertySchema(type="string", title=question, one_of=options)},
+            required=["answer"],
+        )
+        response = await conn.create_elicitation(
+            message=question,
+            mode=ElicitationFormSessionMode(session_id=session_id, requested_schema=schema),
+        )
+        if isinstance(response, AcceptElicitationResponse):
+            content = response.content or {}
+            answer = content.get("answer")
+            if answer:
+                return str(answer)
+            raise ToolError("The client accepted the question but returned no answer.")
+        raise ToolError("The user declined to answer the question.")
 
     async def _replay_transcript(self, session: AcpSession) -> None:
         """Replay the persisted transcript before responding to ``session/load``.
