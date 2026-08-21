@@ -20,7 +20,7 @@ from uuid import uuid4
 
 from acp import Agent, InitializeResponse, NewSessionResponse, PromptResponse
 from acp.exceptions import RequestError
-from acp.helpers import update_current_mode, update_plan
+from acp.helpers import text_block, tool_content, update_current_mode, update_plan, update_tool_call
 from acp.interfaces import Client
 from acp.schema import (
     AgentCapabilities,
@@ -33,6 +33,7 @@ from acp.schema import (
     ListSessionsResponse,
     LoadSessionResponse,
     McpServerStdio,
+    PermissionOption,
     ResourceContentBlock,
     SessionCapabilities,
     SessionCloseCapabilities,
@@ -50,6 +51,7 @@ from kolega_code.acp.agent_factory import (
     CONFIG_PERMISSION_AUTO,
     INTERACTION_MODES,
     MODE_BUILD,
+    MODE_PLAN,
     AgentFactory,
 )
 from kolega_code.acp.bridge import AcpBridge
@@ -57,9 +59,12 @@ from kolega_code.acp.diffs import AcpDiffProvider
 from kolega_code.acp.permissions import AcpPermissionBroker
 from kolega_code.acp.session import AcpSession
 from kolega_code.acp.usage import build_usage_update
+from kolega_code.agent.prompts import build_implement_plan_prompt
 from kolega_code.cli.config import CliConfigError
 from kolega_code.cli.session_store import SessionStoreError
+from kolega_code.llm.models import MessageHistory
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
+from kolega_code.session.control import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -345,7 +350,91 @@ class AcpAgent(Agent):
             await self._drain_residual(session, bridge)
             session.turn_task = None
             await bridge.emit_usage(session.session_id)
-            await bridge.emit_plan(session.session_id, session.record.interaction_mode or MODE_BUILD)
+            plan = self._consume_plan(session, bridge)
+            if plan:
+                session.record.latest_plan_markdown = plan
+                session.record.plan_pending = True
+                await bridge.emit_plan(session.session_id, plan)
+                await self._request_plan_approval(session, plan)
+
+    def _consume_plan(self, session: AcpSession, bridge: AcpBridge) -> str | None:
+        """The plan from write_plan, else the planning turn's response text."""
+        consume = getattr(session.agent, "consume_completed_plan", None)
+        if callable(consume):
+            plan = consume()
+            if plan:
+                return str(plan)
+        if (session.record.interaction_mode or MODE_BUILD) == MODE_PLAN:
+            text = bridge.response_text().strip()
+            if text:
+                return text
+        return None
+
+    async def _request_plan_approval(self, session: AcpSession, plan: str) -> None:
+        """Plan approval mirroring the TUI's plan_actions: implement, implement
+        with cleared context, or discuss. Approving switches the session to
+        build mode and auto-starts the implementation turn."""
+        conn = getattr(self, "_conn", None)
+        if conn is None:
+            return
+        preview = plan[:400] + ("…" if len(plan) > 400 else "")
+        tool_call = update_tool_call(
+            f"plan-approval-{session.session_id[:8]}",
+            title="Approve implementation plan?",
+            kind="other",
+            status="pending",
+            content=[tool_content(text_block(preview))],
+        )
+        options = [
+            PermissionOption(option_id="implement_plan", name="Implement plan", kind="allow_once"),
+            PermissionOption(
+                option_id="implement_plan_clear", name="Implement with cleared context", kind="allow_once"
+            ),
+            PermissionOption(option_id="discuss_plan", name="Discuss", kind="reject_once"),
+        ]
+        try:
+            response = await asyncio.wait_for(
+                conn.request_permission(session.session_id, tool_call, options),
+                timeout=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+            )
+        except Exception:  # noqa: BLE001 — approval prompts are best-effort
+            logger.exception("acp plan approval prompt failed (session=%s)", session.session_id)
+            return
+        outcome = getattr(response, "outcome", None)
+        if isinstance(outcome, dict):
+            selected = outcome.get("outcome") == "selected"
+            option_id = str(outcome.get("optionId") or "")
+        else:
+            selected = getattr(outcome, "outcome", None) == "selected"
+            option_id = str(getattr(outcome, "option_id", "") or "")
+        if selected and option_id in ("implement_plan", "implement_plan_clear"):
+            session.record.plan_pending = False
+            session.record.plan_reofferable = False
+            if option_id == "implement_plan_clear":
+                self._clear_agent_context(session)
+            await self._factory.set_interaction_mode(session, MODE_BUILD)
+            await self._emit_current_mode(session)
+            await self._run_turn(session, build_implement_plan_prompt(plan))
+            logger.info("acp plan approved and implementation started (session=%s)", session.session_id)
+            return
+        if selected and option_id == "discuss_plan":
+            session.record.plan_pending = False
+            session.record.plan_reofferable = True
+            logger.info("acp plan deferred for discussion (session=%s)", session.session_id)
+            return
+        # Unanswered, cancelled, or unknown: keep the plan pending.
+        logger.info("acp plan approval pending (session=%s)", session.session_id)
+
+    def _clear_agent_context(self, session: AcpSession) -> None:
+        """Wipe LLM context for a fresh implementation, mirroring the TUI."""
+        recorder = getattr(session.agent, "session_recorder", None)
+        if recorder is not None and hasattr(recorder, "start_epoch"):
+            recorder.start_epoch("acp_implement_plan_clear")
+        session.agent.history = MessageHistory()
+        session.agent.last_compression_index = None
+        session.agent.reset_volatile_context()
+        session.record.history = []
+        session.record.compaction = {}
 
     async def _drive_turn(self, session: AcpSession, bridge: AcpBridge, text: str) -> str:
         try:

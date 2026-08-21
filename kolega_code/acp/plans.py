@@ -22,3 +22,29 @@ def plan_entries_from_markdown(text: str) -> list[PlanEntry]:
     if not entries and text.strip():
         entries.append(plan_entry(text.strip()[:500]))
     return entries
+
+
+def task_entries_from_markdown(text: str) -> list[PlanEntry]:
+    """The shared task list's checkbox markdown as plan entries.
+
+    ``- [x]`` items map to completed entries; everything else pending, so the
+    editor's plan view renders the TUI's checklist with live status.
+    """
+    entries: list[PlanEntry] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- [x]") or stripped.startswith("- [X]"):
+            content = stripped[5:].strip()
+            if content:
+                entries.append(plan_entry(content[:500], status="completed"))
+        elif stripped.startswith("- [ ]"):
+            content = stripped[5:].strip()
+            if content:
+                entries.append(plan_entry(content[:500]))
+        elif stripped.startswith("- "):
+            content = stripped[2:].strip()
+            if content:
+                entries.append(plan_entry(content[:500]))
+    if not entries and text.strip():
+        entries.append(plan_entry(text.strip()[:500]))
+    return entries

@@ -31,9 +31,10 @@ from acp.schema import (
 )
 
 from kolega_code.acp.session import AcpSession
-from kolega_code.agent import CoderAgent
+from kolega_code.agent import CoderAgent, ToolExtension
 from kolega_code.agent.planningagent import PlanningAgent
 from kolega_code.agent.prompt_provider import AgentMode
+from kolega_code.agent.tool_definitions import tool_description_asset
 from kolega_code.cli.config import CliConfigOverrides, build_agent_config, config_summary
 from kolega_code.cli.connection import CliConnectionManager
 from kolega_code.cli.provider_registry import PROVIDER_LABELS, ui_model_options
@@ -149,6 +150,53 @@ class AgentFactory:
         ]
 
     # -- internal -----------------------------------------------------------
+
+    @staticmethod
+    def _task_list_extension(record: SessionRecord, agent_holder: dict[str, Any], mode: str) -> ToolExtension:
+        """Shared task-list tools backed by the session record.
+
+        Build mode can read and update the list; plan mode gets a read-only
+        view (same split as the TUI). Updates broadcast a ``task_list_update``
+        chat event so the bridge can refresh the editor's plan view live.
+        """
+
+        async def get_task_list() -> str:
+            return record.task_list_markdown or "No task list has been set."
+
+        async def update_task_list(task_list_markdown: str) -> str:
+            record.task_list_markdown = task_list_markdown.strip()
+            agent = agent_holder.get("agent")
+            if agent is not None:
+                await agent.send_chat_message(
+                    message_type="task_list_update",
+                    content=task_list_markdown.strip(),
+                    tool_call_id=str(getattr(agent, "current_tool_call_id", "") or ""),
+                )
+            return "Task list updated."
+
+        tools: dict[str, Any] = {"get_task_list": get_task_list}
+        if mode == MODE_BUILD:
+            tools["update_task_list"] = update_task_list
+        return ToolExtension(
+            name="acp-shared-task-list",
+            tools=tools,
+            tool_descriptions={name: tool_description_asset(name) for name in tools},
+            tool_schemas={
+                "get_task_list": {"type": "object", "properties": {}, "required": []},
+                "update_task_list": {
+                    "type": "object",
+                    "properties": {
+                        "task_list_markdown": {
+                            "type": "string",
+                            "description": "The full current shared task list as Markdown.",
+                        }
+                    },
+                    "required": ["task_list_markdown"],
+                },
+            },
+            tool_groups={"planning_tools": list(tools)},
+            propagate_to_sub_agents=False,
+        )
 
     def _load_settings(self) -> None:
         settings_store = SettingsStore()
@@ -288,6 +336,7 @@ class AgentFactory:
         )
         interaction_mode = record.interaction_mode or MODE_BUILD
         agent_class = agent_class_for(interaction_mode)
+        agent_holder: dict[str, Any] = {}
         agent = agent_class(
             project_path=Path(record.project_path),
             workspace_id=record.workspace_id,
@@ -297,10 +346,12 @@ class AgentFactory:
             agent_mode=ACP_AGENT_MODE,
             permission_mode=permission_mode or self._permission_mode,
             permission_callback=permission_callback,
+            tool_extensions=[self._task_list_extension(record, agent_holder, interaction_mode)],
             # Mirror the ask path: a resumed session hands the recorder over after
             # restoring history, so construction never double-records a resumed turn.
             session_recorder=None if restore else recorder,
         )
+        agent_holder["agent"] = agent
         lsp_messages = await agent.tool_collection.initialize()
         for message in lsp_messages:
             logger.debug("acp lsp: %s", message)

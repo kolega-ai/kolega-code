@@ -39,9 +39,8 @@ class _FakeConn:
 
     async def request_permission(self, session_id: str, tool_call: Any, options: list[Any], **kwargs: Any) -> Any:
         self.permission_calls.append((session_id, tool_call, options))
-        return RequestPermissionResponse.model_validate(
-            {"outcome": {"outcome": "selected", "optionId": OPTION_ALLOW_ONCE}}
-        )
+        option_id = options[0].option_id if options else OPTION_ALLOW_ONCE
+        return RequestPermissionResponse.model_validate({"outcome": {"outcome": "selected", "optionId": option_id}})
 
 
 class EventStream:
