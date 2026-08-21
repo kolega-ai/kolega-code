@@ -5,8 +5,8 @@ session recording — one ``CoderAgent`` per ACP session.
 
 Sessions use ``AgentMode.CLI`` (the standard interactive coder template; the
 editor thread has a human present) with an *explicit* permission mode:
-``PermissionMode.AUTO`` in Phase 1, upgraded to ``ASK`` with the
-``session/request_permission`` bridge in Phase 2. The ``ASK`` agent mode is
+``PermissionMode.ASK`` with a client-bound ``permission_callback`` (the
+``session/request_permission`` bridge). The ``ASK`` agent mode is
 deliberately not used: it is the autonomous ``ask``-CLI template whose
 permission handling is hardcoded to auto-approve.
 
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Awaitable, Callable
 
 from acp.exceptions import RequestError
 from acp.schema import SessionInfo
@@ -31,33 +32,46 @@ from kolega_code.cli.connection import CliConnectionManager
 from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore, SessionStoreError
 from kolega_code.cli.settings import SettingsStore
-from kolega_code.permissions import PermissionMode
+from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
 from kolega_code.session.recording import RecordingConnectionManager
 
 logger = logging.getLogger(__name__)
 
 ACP_AGENT_MODE = AgentMode.CLI
-# Phase 1: auto-approve so turns complete without a permission bridge.
-# Phase 2: PermissionMode.ASK + permission_callback -> session/request_permission.
-ACP_PERMISSION_MODE = PermissionMode.AUTO
+ACP_PERMISSION_MODE = PermissionMode.ASK
+
+PermissionCallback = Callable[[PermissionRequest], Awaitable[PermissionDecision]]
 
 
 class AgentFactory:
     """Opens, loads, and persists ACP sessions backed by the session store."""
 
-    def __init__(self) -> None:
+    def __init__(self, permission_mode: PermissionMode = ACP_PERMISSION_MODE) -> None:
+        self._permission_mode = permission_mode
         self._store = SessionStore()
         self._acp_sessions: dict[str, AcpSession] = {}
 
-    async def open_session(self, cwd: str) -> AcpSession:
+    async def open_session(
+        self,
+        cwd: str,
+        *,
+        session_id: str | None = None,
+        permission_callback: PermissionCallback | None = None,
+    ) -> AcpSession:
         project_path = Path(cwd).resolve()
         settings_store = SettingsStore()
         settings = settings_store.load()
         config = build_agent_config(project_path, settings=settings, settings_store=settings_store)
-        record = self._store.create(project_path, ACP_AGENT_MODE.value, config_summary(config))
-        return await self._build_session(record, config, restore=False)
+        record = self._store.create(project_path, ACP_AGENT_MODE.value, config_summary(config), session_id=session_id)
+        return await self._build_session(record, config, restore=False, permission_callback=permission_callback)
 
-    async def load_session(self, cwd: str, session_id: str) -> AcpSession | None:
+    async def load_session(
+        self,
+        cwd: str,
+        session_id: str,
+        *,
+        permission_callback: PermissionCallback | None = None,
+    ) -> AcpSession | None:
         try:
             record = self._store.load(session_id)
         except SessionStoreError as exc:
@@ -66,7 +80,7 @@ class AgentFactory:
         settings_store = SettingsStore()
         settings = settings_store.load()
         config = build_agent_config(Path(record.project_path), settings=settings, settings_store=settings_store)
-        return await self._build_session(record, config, restore=True)
+        return await self._build_session(record, config, restore=True, permission_callback=permission_callback)
 
     def persist(self, session: AcpSession) -> None:
         """Flush the agent's conversation state into the session record."""
@@ -99,6 +113,7 @@ class AgentFactory:
         config,
         *,
         restore: bool,
+        permission_callback: PermissionCallback | None,
     ) -> AcpSession:
         """Compose the durable agent stack for one session (the ``ask`` recipe + recording)."""
         journal = self._store.journal(record.session_id)
@@ -117,7 +132,8 @@ class AgentFactory:
             connection_manager=recording,
             config=config,
             agent_mode=ACP_AGENT_MODE,
-            permission_mode=ACP_PERMISSION_MODE,
+            permission_mode=self._permission_mode,
+            permission_callback=permission_callback,
             # Mirror the ask path: a resumed session hands the recorder over after
             # restoring history, so construction never double-records a resumed turn.
             session_recorder=None if restore else recorder,

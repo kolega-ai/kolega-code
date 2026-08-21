@@ -1,4 +1,4 @@
-"""ACP agent side for kolega-code (Phase 1: core turn loop).
+"""ACP agent side for kolega-code.
 
 Makes kolega-code usable from ACP clients (Zed, JetBrains, VS Code via
 extensions, Neovim, Emacs) by serving the Agent Client Protocol v1 over
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from kolega_code.acp.agent_factory import ACP_AGENT_MODE, ACP_PERMISSION_MODE, AgentFactory
 from kolega_code.acp.bridge import TOOL_KINDS, AcpBridge
+from kolega_code.acp.permissions import AcpPermissionBroker
 from kolega_code.acp.server import AcpAgent
 from kolega_code.acp.session import AcpSession
 
@@ -21,6 +22,7 @@ __all__ = [
     "ACP_PERMISSION_MODE",
     "AcpAgent",
     "AcpBridge",
+    "AcpPermissionBroker",
     "AcpSession",
     "AgentFactory",
     "TOOL_KINDS",

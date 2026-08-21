@@ -15,14 +15,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from acp.interfaces import Client
-from acp.schema import AgentMessageChunk
+from acp.schema import AgentMessageChunk, RequestPermissionResponse
 
+from kolega_code.acp.permissions import OPTION_ALLOW_ONCE
 from kolega_code.acp.server import AcpAgent
 from kolega_code.acp.session import AcpSession
 from kolega_code.cli.connection import CliConnectionManager
 from kolega_code.cli.session_store import SessionRecord
 from kolega_code.llm.models import Message, TextBlock
 from kolega_code.llm.providers.models import TokenCount
+from kolega_code.permissions import PermissionKind, PermissionRequest
 
 from tests.agent.compaction_helpers import build_agent
 
@@ -30,9 +32,16 @@ from tests.agent.compaction_helpers import build_agent
 class _FakeConn:
     def __init__(self) -> None:
         self.updates: list[Any] = []
+        self.permission_calls: list[tuple[str, Any, list[Any]]] = []
 
     async def session_update(self, session_id: str, update: Any, source: str = "") -> None:
         self.updates.append(update)
+
+    async def request_permission(self, session_id: str, tool_call: Any, options: list[Any], **kwargs: Any) -> Any:
+        self.permission_calls.append((session_id, tool_call, options))
+        return RequestPermissionResponse.model_validate(
+            {"outcome": {"outcome": "selected", "optionId": OPTION_ALLOW_ONCE}}
+        )
 
 
 class EventStream:
@@ -97,8 +106,20 @@ class _FakeFactory:
     def __init__(self, session: AcpSession) -> None:
         self._session = session
 
-    async def open_session(self, cwd: str) -> AcpSession:
-        return self._session
+    async def open_session(
+        self,
+        cwd: str,
+        *,
+        session_id: str | None = None,
+        permission_callback: Any = None,
+    ) -> AcpSession:
+        resolved_id = session_id or self._session.session_id
+        return AcpSession(
+            session_id=resolved_id,
+            record=self._session.record,
+            agent=self._session.agent,
+            manager=self._session.manager,
+        )
 
     def persist(self, session: AcpSession) -> None:
         pass
@@ -131,9 +152,9 @@ async def test_prompt_streams_text_and_completes(tmp_path: Path) -> None:
     llm = StreamingLLM(events=[_text_event("hello " * 12)])  # >50 chars guarantees a chunk yield
     session, _cm = _make_session(tmp_path, llm)
     agent, conn = _make_agent(session)
-    await agent.new_session(cwd=str(tmp_path))
+    new_session = await agent.new_session(cwd=str(tmp_path))
 
-    response = await agent.prompt(session_id=session.session_id, prompt=[{"type": "text", "text": "hi"}])  # pyright: ignore[reportArgumentType]
+    response = await agent.prompt(session_id=new_session.session_id, prompt=[{"type": "text", "text": "hi"}])  # pyright: ignore[reportArgumentType]
 
     assert response.stop_reason == "end_turn"
     texts = [u.content.text for u in conn.updates if isinstance(u, AgentMessageChunk)]
@@ -147,13 +168,13 @@ async def test_cancel_interrupts_turn_with_cancelled_stop_reason(tmp_path: Path)
     blocking.stream = AsyncMock(side_effect=lambda *a, **k: BlockingStream())
     session, _cm = _make_session(tmp_path, blocking)
     agent, _conn = _make_agent(session)
-    await agent.new_session(cwd=str(tmp_path))
+    new_session = await agent.new_session(cwd=str(tmp_path))
 
     prompt_task = asyncio.create_task(
-        agent.prompt(session_id=session.session_id, prompt=[{"type": "text", "text": "hi"}])  # pyright: ignore[reportArgumentType],
+        agent.prompt(session_id=new_session.session_id, prompt=[{"type": "text", "text": "hi"}])  # pyright: ignore[reportArgumentType],
     )
     await asyncio.sleep(0.05)
-    await agent.cancel(session_id=session.session_id)
+    await agent.cancel(session_id=new_session.session_id)
     response = await prompt_task
 
     assert response.stop_reason == "cancelled"
@@ -186,7 +207,13 @@ async def test_new_session_converts_config_errors_to_protocol_errors(tmp_path: P
     from kolega_code.cli.config import CliConfigError
 
     class _RaisingFactory(_FakeFactory):
-        async def open_session(self, cwd: str) -> AcpSession:
+        async def open_session(
+            self,
+            cwd: str,
+            *,
+            session_id: str | None = None,
+            permission_callback: Any = None,
+        ) -> AcpSession:
             raise CliConfigError("no model configured")
 
     session, _cm = _make_session(tmp_path, StreamingLLM())
@@ -200,4 +227,31 @@ async def test_new_session_registers_and_returns_session_id(tmp_path: Path) -> N
     session, _cm = _make_session(tmp_path, StreamingLLM())
     agent, _conn = _make_agent(session)
     response = await agent.new_session(cwd=str(tmp_path))
-    assert response.session_id == session.session_id
+    assert response.session_id
+    assert response.session_id != session.session_id
+    assert agent._sessions[response.session_id].agent is session.agent  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_permission_callback_prompts_through_client(tmp_path: Path) -> None:
+    session, _cm = _make_session(tmp_path, StreamingLLM())
+    agent, conn = _make_agent(session)
+    new_session = await agent.new_session(cwd=str(tmp_path))
+    session.agent.current_tool_call_id = "call-9"
+
+    callback = agent._permission_callback_for(new_session.session_id)  # noqa: SLF001
+    decision = await callback(
+        PermissionRequest(
+            kind=PermissionKind.COMMAND,
+            tool_name="exec_command",
+            inputs={"command": "echo hi"},
+            command="echo hi",
+        ),
+    )
+
+    assert decision.allowed is True
+    assert len(conn.permission_calls) == 1
+    prompted_session_id, tool_call, options = conn.permission_calls[0]
+    assert prompted_session_id == new_session.session_id
+    assert tool_call.tool_call_id == "call-9"
+    assert options[0].kind == "allow_once"

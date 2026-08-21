@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from pathlib import Path
+from typing import Any, Awaitable, Callable
+from uuid import uuid4
 
 from acp import Agent, InitializeResponse, NewSessionResponse, PromptResponse
 from acp.exceptions import RequestError
@@ -37,9 +39,11 @@ from acp.schema import (
 
 from kolega_code.acp.agent_factory import AgentFactory
 from kolega_code.acp.bridge import AcpBridge
+from kolega_code.acp.permissions import AcpPermissionBroker
 from kolega_code.acp.session import AcpSession
 from kolega_code.cli.config import CliConfigError
 from kolega_code.cli.session_store import SessionStoreError
+from kolega_code.permissions import PermissionDecision, PermissionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +54,8 @@ _PromptBlock = (
 _McpServer = list[HttpMcpServer | SseMcpServer | McpServerStdio] | None
 
 _HANDLED_CONFIG_ERRORS = (CliConfigError, SessionStoreError)
+
+PermissionCallback = Callable[[PermissionRequest], Awaitable[PermissionDecision]]
 
 
 class AcpAgent(Agent):
@@ -63,6 +69,7 @@ class AcpAgent(Agent):
     def __init__(self, factory: AgentFactory | None = None) -> None:
         self._factory = factory or AgentFactory()
         self._sessions: dict[str, AcpSession] = {}
+        self._brokers: dict[str, AcpPermissionBroker] = {}
         self._conn: Client
 
     def on_connect(self, conn: Client) -> None:
@@ -88,8 +95,13 @@ class AcpAgent(Agent):
         **kwargs: Any,
     ) -> NewSessionResponse:
         logger.info("acp new session (cwd=%s)", cwd)
+        session_id = uuid4().hex
         try:
-            session = await self._factory.open_session(cwd)
+            session = await self._factory.open_session(
+                cwd,
+                session_id=session_id,
+                permission_callback=self._permission_callback_for(session_id),
+            )
         except _HANDLED_CONFIG_ERRORS as exc:
             raise AgentFactory.protocol_error(exc) from exc
         self._sessions[session.session_id] = session
@@ -106,7 +118,11 @@ class AcpAgent(Agent):
         if session_id in self._sessions:
             return LoadSessionResponse()
         try:
-            session = await self._factory.load_session(cwd, session_id)
+            session = await self._factory.load_session(
+                cwd,
+                session_id,
+                permission_callback=self._permission_callback_for(session_id),
+            )
         except _HANDLED_CONFIG_ERRORS as exc:
             raise AgentFactory.protocol_error(exc) from exc
         if session is None:
@@ -123,6 +139,7 @@ class AcpAgent(Agent):
     async def close_session(self, session_id: str, **kwargs: Any) -> None:
         logger.info("acp session/close (session=%s)", session_id)
         self._sessions.pop(session_id, None)
+        self._brokers.pop(session_id, None)
         await self._factory.close_session(session_id)
         return None
 
@@ -190,6 +207,28 @@ class AcpAgent(Agent):
 
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:
         logger.debug("acp ignoring extension notification %s", method)
+
+    # -- permissions --------------------------------------------------------
+
+    def _permission_callback_for(self, session_id: str) -> PermissionCallback:
+        """One per-session agent callback that answers through the ACP client."""
+
+        async def callback(request: PermissionRequest) -> PermissionDecision:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return PermissionDecision(allowed=False, reason="Session is no longer active.")
+            broker = self._brokers.get(session_id)
+            if broker is None:
+                broker = AcpPermissionBroker(
+                    self._conn,
+                    session_id,
+                    Path(session.record.project_path),
+                    lambda: session.agent,
+                )
+                self._brokers[session_id] = broker
+            return await broker(request)
+
+        return callback
 
     # -- turn machinery ----------------------------------------------------
 

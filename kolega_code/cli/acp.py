@@ -28,10 +28,16 @@ def run_acp(args: Any) -> int:
     )
     from acp import run_agent
 
+    from kolega_code.acp.agent_factory import AgentFactory
     from kolega_code.acp.server import AcpAgent
+    from kolega_code.permissions import PermissionMode, normalize_permission_mode
 
+    permission_mode = normalize_permission_mode(
+        getattr(args, "permission_mode", None),
+        default=PermissionMode.ASK,
+    )
     try:
-        asyncio.run(run_agent(AcpAgent()))
+        asyncio.run(run_agent(AcpAgent(factory=AgentFactory(permission_mode=permission_mode))))
     except KeyboardInterrupt:
         return 130
     return 0

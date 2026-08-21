@@ -797,6 +797,12 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     )
     acp.set_defaults(command="acp")
     acp.add_argument("--debug", action="store_true", help="Enable debug logging (to stderr).")
+    acp.add_argument(
+        "--permission-mode",
+        choices=[mode.value for mode in PermissionMode],
+        default=PermissionMode.ASK.value,
+        help="Tool permission mode: ask (prompt through the editor) or auto (approve everything).",
+    )
 
     return parser
 
