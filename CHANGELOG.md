@@ -6,6 +6,48 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.32.0 - 2026-08-24
+
+### Added
+
+- **Editor integration over the Agent Client Protocol (ACP).** `kolega-code acp`
+  serves the full Kolega Code agent — models, tools, permissions, skills,
+  plan/build modes, sub-agent fan-out — to editors over stdio; Zed hosts it
+  natively through an `agent_servers` entry, and the new Editor Integration
+  docs page covers setup and flags (`--permission-mode`, `--acp-log`,
+  `--debug`). Each editor thread is an ordinary persisted Kolega Code session
+  that replays in the TUI, `kolega-code sessions`, exports, and `/share`.
+  Over the wire the agent server provides: TUI-faithful plan/build session
+  modes with task-list checklist rendering in the plan view and mid-turn mode
+  switching; tool approvals prompted through the editor
+  (`session/request_permission`) plus a model select and auto-approve toggle
+  as session config options; sub-agent dispatch cards with live progress and
+  per-subagent transcripts (Zed's `subagent_session_info` convention);
+  compaction shown as a collapsible thought view; advertised slash commands;
+  user questions via client elicitation; file edits rendered as diffs;
+  streamed terminal output; context-usage updates; and session load/restore so
+  clients can reopen previous threads.
+- Added DeepSeek V4 Flash Vision (`deepseek-v4-flash-vision-exp`),
+  DeepSeek's first multimodal model (experimental): 1M-token context, image
+  input, hosted web search, and `none`/`low`/`high`/`max` reasoning effort on
+  the Responses API.
+
+### Changed
+
+- OpenRouter catalog refreshed from the 2026-08-24 snapshots: 274 tool-capable
+  models, 20 featured.
+
+### Fixed
+
+- Sub-agents launched by `dispatch_agent` now run in auto permission mode.
+  An ask-mode parent previously passed its approval callback down to the
+  sub-agent, which could hang a turn waiting for a prompt that ACP clients
+  cannot render for delegated work.
+- Streaming consumers now receive reasoning and response text as clean,
+  ordered segments: thinking is flushed the moment prose starts (and vice
+  versa) instead of interleaving at buffer boundaries, and a lower flush
+  threshold makes streaming feel more responsive in every frontend.
+
 ## 0.31.0 - 2026-08-20
 
 ### Added

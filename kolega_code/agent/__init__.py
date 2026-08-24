@@ -51,4 +51,4 @@ __all__ = [
     "ToolExtension",
 ]
 
-__version__ = "0.31.0"
+__version__ = "0.32.0"
