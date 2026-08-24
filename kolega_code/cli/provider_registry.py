@@ -64,6 +64,7 @@ MODEL_LABELS: dict[str, str] = {
     # DeepSeek
     "deepseek-v4-pro": "DeepSeek V4 Pro",
     "deepseek-v4-flash": "DeepSeek V4 Flash",
+    "deepseek-v4-flash-vision-exp": "DeepSeek V4 Flash Vision (Exp)",
     # Z.AI (GLM Coding Plan)
     "glm-5.3": "GLM-5.3",
     "glm-5.2": "GLM-5.2",

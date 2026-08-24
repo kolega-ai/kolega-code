@@ -136,7 +136,9 @@ def test_vision_only_model_options_follow_catalog_capabilities():
         "Kimi K2.7 Code": "accounts/fireworks/models/kimi-k2p7-code",
         "MiniMax M3": "accounts/fireworks/models/minimax-m3",
     }
-    assert ui_model_options("deepseek", vision_only=True) == []
+    assert dict(ui_model_options("deepseek", vision_only=True)) == {
+        "DeepSeek V4 Flash Vision (Exp)": "deepseek-v4-flash-vision-exp"
+    }
 
 
 def test_ollama_cloud_smoke_model_is_available_without_live_call():
