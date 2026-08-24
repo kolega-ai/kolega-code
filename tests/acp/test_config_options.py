@@ -112,6 +112,27 @@ async def test_set_config_option_rejects_unknown_session(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_set_config_option_permission_mode_allowed_mid_turn(tmp_path: Path) -> None:
+    session, _cm = _make_session(tmp_path, StreamingLLM())
+    factory = _FakeFactory(session)
+    agent = AcpAgent(factory=cast(Any, factory))
+    new_session = await agent.new_session(cwd=str(tmp_path))
+
+    async def _forever() -> None:
+        await asyncio.Event().wait()
+
+    registered = agent._sessions[new_session.session_id]  # noqa: SLF001
+    registered.turn_task = asyncio.create_task(_forever())
+    try:
+        response = await agent.set_config_option(CONFIG_PERMISSION_AUTO, new_session.session_id, "auto")
+    finally:
+        registered.turn_task.cancel()
+
+    assert [mode for _, mode in factory.permission_mode_calls] == [PermissionMode.AUTO]
+    assert response.config_options == factory.config_options
+
+
+@pytest.mark.asyncio
 async def test_set_config_option_rejects_active_turn(tmp_path: Path) -> None:
     session, _cm = _make_session(tmp_path, StreamingLLM())
     factory = _FakeFactory(session)
@@ -125,9 +146,13 @@ async def test_set_config_option_rejects_active_turn(tmp_path: Path) -> None:
     registered.turn_task = asyncio.create_task(_forever())
     try:
         with pytest.raises(RequestError):
-            await agent.set_config_option(CONFIG_PERMISSION_AUTO, new_session.session_id, True)
+            await agent.set_config_option(CONFIG_MODE, new_session.session_id, "plan")
+        with pytest.raises(RequestError):
+            await agent.set_config_option(CONFIG_MODEL, new_session.session_id, "x/y")
     finally:
         registered.turn_task.cancel()
+    assert factory.interaction_mode_calls == []
+    assert factory.model_calls == []
 
 
 @pytest.mark.asyncio
