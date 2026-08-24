@@ -325,6 +325,16 @@ class AcpAgent(Agent):
         session = self._sessions.get(session_id)
         if session is None:
             raise RequestError.resource_not_found(session_id)
+        if config_id == CONFIG_PERMISSION_AUTO:
+            # Live flag flip (no rebuild), so it stays settable mid-turn.
+            if isinstance(value, str):
+                auto = value.strip().lower() in ("auto", "true", "1", "yes")
+            else:
+                auto = bool(value)
+            mode = PermissionMode.AUTO if auto else PermissionMode.ASK
+            await self._factory.set_permission_mode(session, mode)
+            logger.info("acp session config: permission mode -> %s (session=%s)", mode.value, session_id)
+            return SetSessionConfigOptionResponse(config_options=self._factory.config_options_for(session))
         if not session.idle():
             raise RequestError.invalid_request({"message": "config options apply between turns only"})
         if config_id == CONFIG_MODEL:
@@ -336,16 +346,6 @@ class AcpAgent(Agent):
             except _HANDLED_CONFIG_ERRORS as exc:
                 raise AgentFactory.protocol_error(exc) from exc
             logger.info("acp session config: model -> %s/%s (session=%s)", provider, model, session_id)
-        elif config_id == CONFIG_PERMISSION_AUTO:
-            # The option is a select ("ask"/"auto"); legacy clients that
-            # persisted the older boolean values keep working.
-            if isinstance(value, str):
-                auto = value.strip().lower() in ("auto", "true", "1", "yes")
-            else:
-                auto = bool(value)
-            mode = PermissionMode.AUTO if auto else PermissionMode.ASK
-            await self._factory.set_permission_mode(session, mode)
-            logger.info("acp session config: permission mode -> %s (session=%s)", mode.value, session_id)
         elif config_id == CONFIG_MODE:
             if value not in INTERACTION_MODES:
                 raise RequestError.invalid_params({"message": f"unknown mode {value!r}; available: build, plan"})
