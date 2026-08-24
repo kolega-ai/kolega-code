@@ -1,4 +1,4 @@
-<system-reminder>
+<system-reminder source="agent_loop">
 {% if attempt == 1 %}
 Your last message hit the output-token limit and was cut off mid-reply. Continue exactly from where it stopped — do not repeat what you already wrote. If you are producing a very large output, emit it in smaller pieces or write it to a file with a tool instead of one giant message.
 {% elif attempt == 2 %}

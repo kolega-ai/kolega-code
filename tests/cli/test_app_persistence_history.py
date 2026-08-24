@@ -20,6 +20,7 @@ from kolega_code.llm.exceptions import (
 from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult, WebSearchCallBlock
 from kolega_code.events import AgentEvent
 from kolega_code.agent.prompt_provider import AgentMode
+from kolega_code.agent.prompts import build_silent_turn_nudge
 from kolega_code.cli.config import build_agent_config, config_summary
 from kolega_code.cli.provider_registry import (
     DEEPSEEK_DEFAULT_MODEL,
@@ -121,6 +122,11 @@ def test_standalone_system_reminder_history_item_fast_path() -> None:
     session_reminder = '<system-reminder source="session">\nRuntime context\n</system-reminder>'
     assert _is_standalone_system_reminder_history_item(
         Message(role="user", content=[TextBlock(session_reminder)]).to_dict()
+    )
+    # Agent-loop retry nudges carry source="agent_loop" so the same fast path hides
+    # them from the transcript after a model switch or session resume.
+    assert _is_standalone_system_reminder_history_item(
+        Message(role="user", content=[TextBlock(build_silent_turn_nudge(1))]).to_dict()
     )
 
     large_ordinary_text = "x" * 1_000_000 + reminder
@@ -555,9 +561,11 @@ async def test_textual_app_renders_resumed_history_in_chat(tmp_path: Path, monke
     leading_text = f"Quoted reminder:\n{reminder}"
     trailing_text = f"{reminder}\nAdditional notes."
     tool_reminder = '<system-reminder source="tool">Tool output</system-reminder>'
+    nudge = build_silent_turn_nudge(1)
     history = [
         Message(role="user", content=[TextBlock("Please read the README")]).to_dict(),
         Message(role="user", content=[TextBlock(reminder)]).to_dict(),
+        Message(role="user", content=[TextBlock(nudge)]).to_dict(),
         Message(role="user", content=[TextBlock(prose)]).to_dict(),
         Message(role="user", content=[TextBlock(code_fence)]).to_dict(),
         Message(role="user", content=[TextBlock(leading_text)]).to_dict(),
@@ -604,6 +612,8 @@ async def test_textual_app_renders_resumed_history_in_chat(tmp_path: Path, monke
             ("tool_error", "Permission denied", "write_file"),
             ("assistant", "Done.", None),
         ]
+        # The retry nudge is runtime context, not a user message: never rendered.
+        assert not any("only internal reasoning" in entry.content for entry in app.conversation_entries)
 
 
 @pytest.mark.asyncio
