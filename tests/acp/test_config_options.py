@@ -51,10 +51,18 @@ async def test_set_config_option_flips_permission_mode(tmp_path: Path) -> None:
     agent = AcpAgent(factory=cast(Any, factory))
     new_session = await agent.new_session(cwd=str(tmp_path))
 
-    first = await agent.set_config_option(CONFIG_PERMISSION_AUTO, new_session.session_id, True)
-    second = await agent.set_config_option(CONFIG_PERMISSION_AUTO, new_session.session_id, False)
+    first = await agent.set_config_option(CONFIG_PERMISSION_AUTO, new_session.session_id, "auto")
+    second = await agent.set_config_option(CONFIG_PERMISSION_AUTO, new_session.session_id, "ask")
+    # Legacy clients that persisted the older boolean values keep working.
+    await agent.set_config_option(CONFIG_PERMISSION_AUTO, new_session.session_id, True)
+    await agent.set_config_option(CONFIG_PERMISSION_AUTO, new_session.session_id, False)
 
-    assert [mode for _, mode in factory.permission_mode_calls] == [PermissionMode.AUTO, PermissionMode.ASK]
+    assert [mode for _, mode in factory.permission_mode_calls] == [
+        PermissionMode.AUTO,
+        PermissionMode.ASK,
+        PermissionMode.AUTO,
+        PermissionMode.ASK,
+    ]
     assert first.config_options == factory.config_options
     assert second.config_options == factory.config_options
 
@@ -150,8 +158,9 @@ async def test_real_factory_builds_both_options(isolated_cli_env: None, tmp_path
     model_option, permission_option, mode_option = options
     assert isinstance(model_option, SessionConfigOptionSelect)
     assert model_option.current_value == "anthropic/claude-haiku-4-5-20251001"
-    assert isinstance(permission_option, SessionConfigOptionBoolean)
-    assert permission_option.current_value is False
+    assert isinstance(permission_option, SessionConfigOptionSelect)
+    assert permission_option.current_value == "ask"
+    assert [entry.value for entry in permission_option.options] == ["ask", "auto"]
     assert isinstance(mode_option, SessionConfigOptionSelect)
     assert mode_option.current_value == "build"
     assert [entry.value for entry in mode_option.options] == ["build", "plan"]

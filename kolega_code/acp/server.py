@@ -337,7 +337,13 @@ class AcpAgent(Agent):
                 raise AgentFactory.protocol_error(exc) from exc
             logger.info("acp session config: model -> %s/%s (session=%s)", provider, model, session_id)
         elif config_id == CONFIG_PERMISSION_AUTO:
-            mode = PermissionMode.AUTO if bool(value) else PermissionMode.ASK
+            # The option is a select ("ask"/"auto"); legacy clients that
+            # persisted the older boolean values keep working.
+            if isinstance(value, str):
+                auto = value.strip().lower() in ("auto", "true", "1", "yes")
+            else:
+                auto = bool(value)
+            mode = PermissionMode.AUTO if auto else PermissionMode.ASK
             await self._factory.set_permission_mode(session, mode)
             logger.info("acp session config: permission mode -> %s (session=%s)", mode.value, session_id)
         elif config_id == CONFIG_MODE:

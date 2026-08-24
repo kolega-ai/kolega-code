@@ -267,12 +267,19 @@ class AgentFactory:
         )
 
     @staticmethod
-    def _permission_option(session: AcpSession) -> SessionConfigOptionBoolean:
-        return SessionConfigOptionBoolean(
-            type="boolean",
+    def _permission_option(session: AcpSession) -> SessionConfigOptionSelect:
+        # A select rather than the ACP boolean: vscode-acp renders only
+        # select-type config options (its UI skips every other type), and Zed
+        # renders selects just as well.
+        return SessionConfigOptionSelect(
+            type="select",
             id=CONFIG_PERMISSION_AUTO,
-            name="Auto-approve tools",
-            current_value=session.agent.permission_mode == PermissionMode.AUTO,
+            name="Permissions",
+            current_value="auto" if session.agent.permission_mode == PermissionMode.AUTO else "ask",
+            options=[
+                SessionConfigSelectOption(value="ask", name="Ask"),
+                SessionConfigSelectOption(value="auto", name="Auto-approve"),
+            ],
         )
 
     @staticmethod
