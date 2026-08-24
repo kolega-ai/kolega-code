@@ -1,0 +1,150 @@
+---
+title: Editor Integration
+description: Use Kolega Code from Zed, VS Code, and other editors over the Agent Client Protocol (ACP).
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+**Editor integration** runs the full Kolega Code agent — models, tools, permissions,
+skills, plan/build modes, sub-agent fan-out — inside your editor. The editor spawns
+`kolega-code acp`, a small server that speaks the **Agent Client Protocol (ACP)**
+over stdio, and renders the agent's work natively.
+
+## How it works
+
+- `kolega-code acp` is one process per editor connection, owned by the editor's
+  agent-server lifecycle.
+- Each editor thread is an ordinary Kolega Code session: it persists to the same
+  session store as the TUI, so editor threads replay in the TUI, in `kolega-code
+  sessions`, in exports, and in `/share` like any other session.
+- Tool permissions, model selection, and plan/build mode are per-session. The
+  agent's tool set, skills, MCP servers, hooks, and project configuration behave
+  exactly as they do in the TUI.
+
+```txt
+usage: kolega-code acp [--debug] [--acp-log PATH] [--permission-mode {auto,ask}]
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--permission-mode ask` (default) | Tool approvals are prompted through the editor. |
+| `--permission-mode auto` | Approve every tool call without prompting. |
+| `--debug` | Debug logging to stderr. |
+| `--acp-log PATH` | Append a JSON traffic log of every protocol frame to `PATH`. |
+
+## Zed
+
+Zed hosts ACP agents natively — no plugin needed.
+
+1. Open `~/.config/zed/settings.json` and add an `agent_servers` entry:
+
+```json
+{
+  "agent_servers": {
+    "Kolega Code": {
+      "command": "/absolute/path/to/bin/kolega-code",
+      "args": ["acp", "--permission-mode", "ask", "--acp-log", "/tmp/kolega-acp.log"]
+    }
+  }
+}
+```
+
+<Aside type="caution" title="Use an absolute binary path">
+A bare `kolega-code` resolves to whatever is on Zed's `PATH`, which is often a
+different binary than the one you think you are using — an installed release can
+shadow a dev checkout. Point `command` at the exact binary you want:
+`which kolega-code` (or `/path/to/checkout/.venv/bin/kolega-code` for a checkout).
+</Aside>
+
+2. Restart Zed, open the agent panel, select **Kolega Code**, and start a thread.
+
+Zed remembers changes you make through the session option selectors (model,
+permissions, mode) as its own defaults, and restores open threads across restarts
+by replaying the session.
+
+## VS Code
+
+VS Code has no native ACP support; use the community [ACP Client](https://marketplace.visualstudio.com/items?itemName=formulahendry.acp-client)
+extension.
+
+1. Install it (`code --install-extension formulahendry.acp-client`).
+2. Add Kolega Code to your VS Code user settings:
+
+```json
+{
+  "acp.agents": {
+    "kolega-code": {
+      "command": "/absolute/path/to/bin/kolega-code",
+      "args": ["acp", "--permission-mode", "ask", "--acp-log", "/tmp/kolega-acp.log"]
+    }
+  }
+}
+```
+
+3. Reload the window, open your project folder, and connect to the agent from the
+   ACP panel in the Activity Bar.
+
+<Aside>
+Setting `acp.agents` replaces the extension's built-in agent list while present;
+delete the setting to restore them.
+</Aside>
+
+## What the editor shows
+
+- **Conversation** — streamed responses and collapsible thinking blocks, with
+  durable threads: reopening a thread restores the full transcript, including
+  tool calls.
+- **Tool calls** — read/edit/execute cards; file edits render as diffs in Zed.
+- **Permissions** — approval prompts for commands, edits, and MCP tools. Allow
+  once, allow always, or deny; saved rules persist across sessions. Sub-agents
+  always run auto-approved, exactly as in the TUI.
+- **Session options** — a model selector, a permissions selector
+  (`Ask` / `Auto-approve`), and a plan/build mode selector, applied per session.
+- **Plan mode** — plan-mode turns end in an approval prompt
+  (**Implement plan** / **Clear context and implement plan** / **Discuss further**)
+  with the full plan text. Approving switches the session to build mode and
+  starts the implementation turn automatically.
+- **Task list** — the agent's shared task list renders in the editor's plan view
+  with checkbox status, kept in sync as the agent checks items off.
+- **Slash commands** — type `/` for autocomplete:
+
+| Command | Effect |
+| --- | --- |
+| `/help` | List available commands. |
+| `/compress` | Compress the conversation history. |
+| `/clear` | Clear message history. |
+| `/reset` | Alias of `/clear`. |
+| `/context` | Show the current context token count. |
+
+- **User questions** — when the agent calls `ask_user_choice`, Zed renders a
+  native question form. Clients without elicitation support get a tool error and
+  the model asks in chat instead.
+- **Sub-agents** — Gigacode fan-out and `dispatch_agent` show as tool cards with
+  live progress in the card title. In Zed, reopening a thread expands each
+  dispatch into a nested transcript card containing the sub-agent's full
+  conversation.
+- **Compaction** — when the conversation is compressed, the editor shows a
+  collapsible block with the summary, and restored threads replay the last one.
+- **Usage** — the context-window meter updates after each turn.
+
+## Client differences
+
+| Feature | Zed | vscode-acp |
+| --- | --- | --- |
+| Terminal output | Not rendered in the panel (client-owned terminals planned) | Rendered |
+| Diff rendering | Yes | Text results |
+| Session option selectors | Yes | Yes |
+| Elicitation forms | Yes | No — falls back to chat |
+| Nested sub-agent transcripts | Yes (on thread reopen) | Flat tool cards |
+
+## Troubleshooting
+
+- **Nothing renders, or the wrong agent behavior:** check which binary the editor
+  is actually launching (the shadowing caveat above) and restart the editor after
+  changing its config.
+- **Zed traffic:** `--acp-log /tmp/kolega-acp.log` writes every protocol frame;
+  `--debug` adds server-side detail to stderr.
+- **VS Code traffic:** the extension logs all frames to the *ACP Traffic* output
+  channel (`acp.logTraffic`).
+- **One turn at a time:** a second prompt while a turn is running is rejected;
+  cancel the running turn first.

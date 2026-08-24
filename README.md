@@ -70,12 +70,38 @@ use Kolega Code as an ordinary terminal coding agent:
   (including OAuth-enabled HTTP servers) as permission-gated tools.
 - **Interactive or scriptable:** Textual TUI with queued follow-ups, one-shot
   `kolega-code ask` with JSON output, session list/export/resume, `doctor`.
+- **Editor integration:** drive the full agent from Zed or VS Code over the
+  Agent Client Protocol — streamed responses, tool cards, diffs, permission
+  prompts, plan/build approval, session restore, slash commands, and sub-agent
+  transcripts ([docs](https://kolega-ai.github.io/kolega-code/editor-integration/)).
 - **Extensibility:** agent skills, project prompt-template overrides
   ([docs](https://kolega-ai.github.io/kolega-code/configuration/prompt-overrides/)),
   lifecycle hooks, persistent project permission rules.
 - **Local-first state:** sessions, settings, permissions, OAuth tokens, and
   API-key settings stay on your machine with restrictive permissions where
   applicable.
+
+## Editor integration (ACP)
+
+`kolega-code acp` serves the Agent Client Protocol, so Zed and VS Code can host
+the full agent — including permissions, plan/build modes, and sub-agent
+transcripts. Configure Zed with:
+
+```json
+{
+  "agent_servers": {
+    "Kolega Code": {
+      "command": "/absolute/path/to/bin/kolega-code",
+      "args": ["acp", "--permission-mode", "ask"]
+    }
+  }
+}
+```
+
+Use an absolute binary path: a bare `kolega-code` resolves to whatever is on the
+editor's `PATH`, so an installed release can shadow a dev checkout. Full setup
+for Zed, VS Code, and other ACP clients is in the
+[editor integration docs](https://kolega-ai.github.io/kolega-code/editor-integration/).
 
 ## Quick start
 
