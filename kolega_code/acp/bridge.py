@@ -107,6 +107,9 @@ class AcpBridge:
         self._active_execute_tool: str | None = None
         self._latest_context_tokens: int | None = None
         self._turn_response_parts: list[str] = []
+        #: Dispatch tool_call_id -> tool name, so delegate status lines can
+        #: label the dispatching card's title.
+        self._dispatch_labels: dict[str, str] = {}
 
     async def send(self, session_id: str, update: Any) -> None:
         if logger.isEnabledFor(logging.DEBUG):
@@ -212,12 +215,19 @@ class AcpBridge:
         parallel, so the single active execute tool is unambiguous.
         """
         if event.event_type in ("terminal_command", "terminal_output"):
+            if event.sub_agent_info:
+                # Delegated terminal activity belongs to the nested transcript,
+                # not the parent trajectory.
+                return
             await self._handle_terminal_event(session_id, event)
             return
         if event.event_type == "compaction_status":
             await self._handle_compaction_event(session_id, event)
             return
         if event.event_type == "llm_context_update" and event.content:
+            if event.sub_agent_info:
+                # A delegate's context drives its own card, not the parent meter.
+                return
             tokens = event.content.get("input_tokens")
             if isinstance(tokens, int) and tokens >= 0:
                 self._latest_context_tokens = tokens
@@ -228,18 +238,29 @@ class AcpBridge:
         message_type = str(content.get("message_type") or "")
         tool_call_id = str(content.get("tool_call_id") or "")
 
-        # Sub-agent lifecycle: status lines attach to the dispatching tool call.
+        # Sub-agent lifecycle: status lines attach to the dispatching card, and
+        # its title carries the message so progress is visible live (Zed
+        # renders tool-card titles, not tool content).
         if event.sub_agent_info and content.get("status") and content.get("message") and message_type == "":
             parent_tool_call_id = str(event.sub_agent_info.get("parent_tool_call_id") or "")
             if parent_tool_call_id:
+                message = str(content.get("message"))
+                label = self._dispatch_labels.get(parent_tool_call_id, "sub-agent")
                 await self.send(
                     session_id,
                     update_tool_call(
                         parent_tool_call_id,
+                        title=f"{label} · {message}",
                         status="in_progress",
-                        content=[tool_content(text_block(str(content.get("message"))))],
+                        content=[tool_content(text_block(message))],
                     ),
                 )
+            return
+
+        # Everything else from a delegate renders inside the nested transcript
+        # card (replayed through the sub-session load), never in the parent
+        # trajectory: suppress its tool calls live instead of flattening them.
+        if event.sub_agent_info:
             return
 
         if message_type == "tool_call":
@@ -247,6 +268,8 @@ class AcpBridge:
             title = str(content.get("text") or f"Calling {name}")
             if name in EXECUTE_TOOLS:
                 self._active_execute_tool = tool_call_id
+            if name in SUB_AGENT_DISPATCH_TOOLS:
+                self._dispatch_labels[tool_call_id] = name
             start = start_tool_call(tool_call_id, title, kind=TOOL_KINDS.get(name, "other"), status="pending")
             if name in SUB_AGENT_DISPATCH_TOOLS:
                 start.field_meta = _subagent_meta(session_id, tool_call_id, name)

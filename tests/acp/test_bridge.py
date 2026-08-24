@@ -366,3 +366,79 @@ async def test_replay_marks_dispatch_tool_cards() -> None:
     assert [s.tool_call_id for s in starts] == ["tc1", "tc2"]
     assert (starts[0].field_meta or {})["subagent_session_info"]["session_id"] == sub_session_id("s1", "tc1")
     assert starts[1].field_meta is None
+
+
+@pytest.mark.asyncio
+async def test_dispatch_card_title_tracks_subagent_status() -> None:
+    from acp.schema import ToolCallProgress, ToolCallStart
+
+    from kolega_code.events import AgentEvent
+
+    conn = _FakeConn()
+    bridge = AcpBridge(cast(Client, conn))
+    await bridge.handle_event("s1", _chat_event("tool_call", "Calling dispatch_agent", "tc1", "dispatch_agent"))
+    await bridge.handle_event(
+        "s1",
+        AgentEvent(
+            event_type="chat_message",
+            sender="agent",
+            content={"status": "GENERATING", "message": "Starting review task"},
+            sub_agent_info={"agent_id": "a1", "parent_tool_call_id": "tc1"},
+        ),
+    )
+
+    starts = [u for u in conn.updates if isinstance(u, ToolCallStart)]
+    progress = [u for u in conn.updates if isinstance(u, ToolCallProgress)]
+    assert len(starts) == 1
+    assert len(progress) == 1
+    assert progress[0].tool_call_id == "tc1"
+    assert progress[0].title == "dispatch_agent · Starting review task"
+
+
+@pytest.mark.asyncio
+async def test_subagent_tool_calls_do_not_enter_parent_trajectory() -> None:
+    from acp.schema import ToolCallProgress, ToolCallStart
+
+    from kolega_code.events import AgentEvent
+
+    conn = _FakeConn()
+    bridge = AcpBridge(cast(Client, conn))
+    sub_info = {"agent_id": "a1", "parent_tool_call_id": "tc1"}
+    await bridge.handle_event(
+        "s1",
+        AgentEvent(
+            event_type="chat_message",
+            sender="agent",
+            content={
+                "message_type": "tool_call",
+                "text": "Calling exec",
+                "tool_description": "exec_command",
+                "tool_call_id": "sub-exec-1",
+            },
+            sub_agent_info=sub_info,
+        ),
+    )
+    await bridge.handle_event(
+        "s1",
+        AgentEvent(
+            event_type="chat_message",
+            sender="agent",
+            content={"message_type": "tool_result", "text": "done", "tool_call_id": "sub-exec-1"},
+            sub_agent_info=sub_info,
+        ),
+    )
+    await bridge.handle_event(
+        "s1",
+        AgentEvent(
+            event_type="terminal_output",
+            sender="agent",
+            content={"output": "stdout", "terminal_id": "t1"},
+            sub_agent_info=sub_info,
+        ),
+    )
+    # The main agent's own calls still map.
+    await bridge.handle_event("s1", _chat_event("tool_call", "Calling read", "main-1", "read"))
+
+    starts = [u for u in conn.updates if isinstance(u, ToolCallStart)]
+    assert [s.tool_call_id for s in starts] == ["main-1"]
+    assert not any(isinstance(u, ToolCallProgress) for u in conn.updates)
