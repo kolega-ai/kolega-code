@@ -1,4 +1,4 @@
-<system-reminder>
+<system-reminder source="agent_loop">
 {% if attempt == 1 %}
 Your last turn ended with only internal reasoning — no tool call and no visible message. Thinking is invisible and changes nothing on its own. Act now: emit the tool call you were planning, or reply with a visible message. Do not narrate what you will do — do it.
 {% elif attempt == 2 %}

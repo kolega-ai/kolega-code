@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from kolega_code.agent.baseagent import BaseAgent
+from kolega_code.agent.prompts import SILENT_TURN_EXHAUSTED_NOTICE, build_silent_turn_nudge, build_truncated_turn_nudge
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.llm.models import Message, TextBlock, ThinkingBlock, ToolCall, ToolResult
 
@@ -77,6 +78,24 @@ def _llm_status_events(connection_manager):
         if event is not None and getattr(event, "event_type", None) == "llm_status_update":
             events.append(event)
     return events
+
+
+def test_agent_loop_nudges_are_source_tagged_reminders() -> None:
+    # The TUI transcript filter hides standalone history items only when they start
+    # with '<system-reminder source="'. The agent-loop nudges must carry a source so
+    # a model switch or session resume never renders them as visible user messages.
+    nudges = [
+        build_silent_turn_nudge(1),
+        build_silent_turn_nudge(2),
+        build_silent_turn_nudge(3),
+        SILENT_TURN_EXHAUSTED_NOTICE,
+        build_truncated_turn_nudge(1),
+        build_truncated_turn_nudge(2),
+        build_truncated_turn_nudge(3),
+    ]
+    for nudge in nudges:
+        assert nudge.startswith('<system-reminder source="agent_loop">'), nudge
+        assert nudge.endswith("</system-reminder>"), nudge
 
 
 @pytest.mark.asyncio
