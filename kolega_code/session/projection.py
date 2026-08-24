@@ -287,6 +287,18 @@ def fold(state: PresentationState, event: AgentEvent) -> PresentationState:
 # ---------------------------------------------------------------------------
 
 
+def sub_agent_key(info: Optional[dict]) -> Optional[str]:
+    """Identity of the delegate an event belongs to (public helper).
+
+    ``agent_id`` matters as much as ``dispatch_id``: a workflow leaves
+    ``dispatch_id`` unset, so keying on the name alone folded every agent of a
+    fan-out into one activity.
+    """
+    if not info:
+        return None
+    return str(info.get("dispatch_id") or info.get("agent_id") or info.get("agent_name") or "sub-agent")
+
+
 def _sub_agent_key(event: AgentEvent) -> Optional[str]:
     """Identity of the delegate an event belongs to.
 
@@ -295,10 +307,7 @@ def _sub_agent_key(event: AgentEvent) -> Optional[str]:
     fan-out into one activity — a dozen parallel agents appearing as a single
     "general-agent" whose task line was whichever one happened to arrive first.
     """
-    info = event.sub_agent_info
-    if not info:
-        return None
-    return str(info.get("dispatch_id") or info.get("agent_id") or info.get("agent_name") or "sub-agent")
+    return sub_agent_key(event.sub_agent_info)
 
 
 def _sub_agent(state: PresentationState, key: str, event: AgentEvent) -> SubAgentActivity:

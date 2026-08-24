@@ -87,7 +87,11 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
         assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == saved_plan
         plan_actions = app.query_one("#plan_actions", ActionList)
         assert plan_actions.display is True
-        assert [option.id for option in plan_actions.options] == ["implement_plan"]
+        assert [option.id for option in plan_actions.options] == [
+            "implement_plan",
+            "implement_plan_clear",
+            "discuss_plan",
+        ]
         assert app.query_one("#composer", ChatComposer).disabled is False
 
 

@@ -891,9 +891,13 @@ class KolegaCodeApp(
             self.session.updated_at = updated_at
 
     def _restore_plan_action_visibility(self) -> None:
+        # A pending plan always gets the full decision set on restore:
+        # `_plan_decision_active` is in-memory only, so gating on it hid
+        # "Clear context and implement plan" and "Discuss further" whenever a
+        # session with a pending plan was resumed.
         self._set_plan_actions_visible(
             self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE and self._plan_pending,
-            allow_discuss=self._plan_decision_active,
+            allow_discuss=self._plan_pending,
         )
 
     def _restore_prompt_history(self) -> None:

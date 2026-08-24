@@ -129,6 +129,10 @@ export default defineConfig({
           items: [{ label: "Recurring Prompts", slug: "loop" }],
         },
         {
+          label: "Editor Integration",
+          items: [{ label: "Zed & VS Code (ACP)", slug: "editor-integration" }],
+        },
+        {
           label: "Troubleshooting",
           items: [
             {
