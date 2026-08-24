@@ -403,6 +403,7 @@ async def test_subagent_tool_calls_do_not_enter_parent_trajectory() -> None:
 
     conn = _FakeConn()
     bridge = AcpBridge(cast(Client, conn))
+    await bridge.handle_event("s1", _chat_event("tool_call", "Calling dispatch_agent", "tc1", "dispatch_agent"))
     sub_info = {"agent_id": "a1", "parent_tool_call_id": "tc1"}
     await bridge.handle_event(
         "s1",
@@ -439,6 +440,61 @@ async def test_subagent_tool_calls_do_not_enter_parent_trajectory() -> None:
     # The main agent's own calls still map.
     await bridge.handle_event("s1", _chat_event("tool_call", "Calling read", "main-1", "read"))
 
+    # No new cards for the delegate's tools: the only start is the main
+    # agent's read, and the only progress updates target the dispatch card.
     starts = [u for u in conn.updates if isinstance(u, ToolCallStart)]
-    assert [s.tool_call_id for s in starts] == ["main-1"]
-    assert not any(isinstance(u, ToolCallProgress) for u in conn.updates)
+    assert [s.tool_call_id for s in starts] == ["tc1", "main-1"]
+    progress = [u for u in conn.updates if isinstance(u, ToolCallProgress)]
+    assert progress and all(p.tool_call_id == "tc1" for p in progress)
+    assert progress[0].title == "dispatch_agent · Calling exec"
+
+
+@pytest.mark.asyncio
+async def test_subagent_terminal_command_tracks_dispatch_card() -> None:
+    from acp.schema import ToolCallProgress
+
+    from kolega_code.events import AgentEvent
+
+    conn = _FakeConn()
+    bridge = AcpBridge(cast(Client, conn))
+    await bridge.handle_event("s1", _chat_event("tool_call", "Calling dispatch_agent", "tc1", "dispatch_agent"))
+    await bridge.handle_event(
+        "s1",
+        AgentEvent(
+            event_type="terminal_command",
+            sender="agent",
+            content={"command": "git status --porcelain\nsecond line", "terminal_id": "t1"},
+            sub_agent_info={"agent_id": "a1", "parent_tool_call_id": "tc1"},
+        ),
+    )
+
+    progress = [u for u in conn.updates if isinstance(u, ToolCallProgress)]
+    assert len(progress) == 1
+    assert progress[0].tool_call_id == "tc1"
+    # Multi-line commands collapse to the first line for the card title.
+    assert progress[0].title == "dispatch_agent · git status --porcelain"
+
+
+@pytest.mark.asyncio
+async def test_subagent_progress_title_is_length_capped() -> None:
+    from acp.schema import ToolCallProgress
+
+    from kolega_code.events import AgentEvent
+
+    conn = _FakeConn()
+    bridge = AcpBridge(cast(Client, conn))
+    await bridge.handle_event("s1", _chat_event("tool_call", "Calling dispatch_agent", "tc1", "dispatch_agent"))
+    await bridge.handle_event(
+        "s1",
+        AgentEvent(
+            event_type="terminal_command",
+            sender="agent",
+            content={"command": "x" * 200, "terminal_id": "t1"},
+            sub_agent_info={"agent_id": "a1", "parent_tool_call_id": "tc1"},
+        ),
+    )
+
+    progress = [u for u in conn.updates if isinstance(u, ToolCallProgress)]
+    assert progress and progress[0].title is not None
+    assert progress[0].title.endswith("…")
+    assert len(progress[0].title) <= len("dispatch_agent · ") + 80

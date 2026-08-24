@@ -214,20 +214,16 @@ class AcpBridge:
         call only positionally: exec tools are mutating and never run in
         parallel, so the single active execute tool is unambiguous.
         """
+        if event.sub_agent_info:
+            await self._handle_sub_agent_event(session_id, event)
+            return
         if event.event_type in ("terminal_command", "terminal_output"):
-            if event.sub_agent_info:
-                # Delegated terminal activity belongs to the nested transcript,
-                # not the parent trajectory.
-                return
             await self._handle_terminal_event(session_id, event)
             return
         if event.event_type == "compaction_status":
             await self._handle_compaction_event(session_id, event)
             return
         if event.event_type == "llm_context_update" and event.content:
-            if event.sub_agent_info:
-                # A delegate's context drives its own card, not the parent meter.
-                return
             tokens = event.content.get("input_tokens")
             if isinstance(tokens, int) and tokens >= 0:
                 self._latest_context_tokens = tokens
@@ -237,31 +233,6 @@ class AcpBridge:
         content = event.content
         message_type = str(content.get("message_type") or "")
         tool_call_id = str(content.get("tool_call_id") or "")
-
-        # Sub-agent lifecycle: status lines attach to the dispatching card, and
-        # its title carries the message so progress is visible live (Zed
-        # renders tool-card titles, not tool content).
-        if event.sub_agent_info and content.get("status") and content.get("message") and message_type == "":
-            parent_tool_call_id = str(event.sub_agent_info.get("parent_tool_call_id") or "")
-            if parent_tool_call_id:
-                message = str(content.get("message"))
-                label = self._dispatch_labels.get(parent_tool_call_id, "sub-agent")
-                await self.send(
-                    session_id,
-                    update_tool_call(
-                        parent_tool_call_id,
-                        title=f"{label} · {message}",
-                        status="in_progress",
-                        content=[tool_content(text_block(message))],
-                    ),
-                )
-            return
-
-        # Everything else from a delegate renders inside the nested transcript
-        # card (replayed through the sub-session load), never in the parent
-        # trajectory: suppress its tool calls live instead of flattening them.
-        if event.sub_agent_info:
-            return
 
         if message_type == "tool_call":
             name = str(content.get("tool_description") or "tool")
@@ -313,6 +284,63 @@ class AcpBridge:
         else:
             return
         await self.send(session_id, update_agent_thought_text(text))
+
+    async def _handle_sub_agent_event(self, session_id: str, event: AgentEvent) -> None:
+        """Route a delegate's activity to the dispatching card's title.
+
+        The nested transcript card only exists after the thread view is
+        rebuilt from replayed history; live, the dispatch card's title is the
+        one channel that updates as the delegate works (Zed renders tool-card
+        titles live). The delegate's own tool calls, terminal commands, and
+        lifecycle statuses all land there instead of polluting the parent
+        trajectory. Everything else is left to the recorded nested transcript.
+        """
+        if event.event_type == "compaction_status" or not event.content:
+            return
+        parent_tool_call_id = str((event.sub_agent_info or {}).get("parent_tool_call_id") or "")
+        if not parent_tool_call_id:
+            return
+        label = self._dispatch_labels.get(parent_tool_call_id, "sub-agent")
+        content = event.content
+        progress: str | None = None
+        status_message: str | None = None
+        if event.event_type == "terminal_command":
+            progress = str(content.get("command") or "").strip() or None
+        elif event.event_type == "chat_message":
+            message_type = str(content.get("message_type") or "")
+            if message_type == "" and content.get("status") and content.get("message"):
+                status_message = str(content.get("message"))
+            elif message_type == "tool_call":
+                progress = str(content.get("text") or content.get("tool_description") or "").strip() or None
+        if progress is None and status_message is None:
+            return
+        if status_message is not None:
+            await self.send(
+                session_id,
+                update_tool_call(
+                    parent_tool_call_id,
+                    title=self._progress_label(label, status_message),
+                    status="in_progress",
+                    content=[tool_content(text_block(status_message))],
+                ),
+            )
+            return
+        await self.send(
+            session_id,
+            update_tool_call(
+                parent_tool_call_id,
+                title=self._progress_label(label, progress or ""),
+                status="in_progress",
+            ),
+        )
+
+    @staticmethod
+    def _progress_label(label: str, text: str) -> str:
+        """One-line, length-capped card title (Zed truncates multi-line titles)."""
+        line = (text or "").strip().splitlines()[0].strip()
+        if len(line) > 80:
+            line = line[:79] + "…"
+        return f"{label} · {line}" if line else label
 
     async def _handle_terminal_event(self, session_id: str, event: AgentEvent) -> None:
         assert event.content is not None
