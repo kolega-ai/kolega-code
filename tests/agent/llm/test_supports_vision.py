@@ -48,6 +48,8 @@ def test_supports_vision_flag_present_on_every_entry():
         # Non-vision models
         ("deepseek", "deepseek-v4-pro", False),
         ("deepseek", "deepseek-v4-flash", False),
+        # First multimodal DeepSeek model (launched 2026-08-21).
+        ("deepseek", "deepseek-v4-flash-vision-exp", True),
         ("fireworks", "accounts/fireworks/models/deepseek-v4-pro", False),
         ("fireworks", "accounts/fireworks/models/deepseek-v4-flash", False),
         ("fireworks", "accounts/fireworks/models/glm-5p2", False),

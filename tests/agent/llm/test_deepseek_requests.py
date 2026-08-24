@@ -179,3 +179,13 @@ def test_responses_build_request_clamps_pro_cap() -> None:
     oversized = _responses_request(GenerationParams(max_completion_tokens=384000), model=pro)
     assert oversized["max_output_tokens"] == 64000
     assert _responses_request(GenerationParams(max_completion_tokens=4096), model=pro)["max_output_tokens"] == 4096
+
+
+def test_responses_build_request_passes_vision_exp_cap_through() -> None:
+    vision = "deepseek-v4-flash-vision-exp"
+    # Flash-family: the catalog's real 384K ceiling passes through unclamped.
+    assert _responses_request(None, model=vision)["max_output_tokens"] == 384000
+    assert (
+        _responses_request(GenerationParams(max_completion_tokens=384000), model=vision)["max_output_tokens"] == 384000
+    )
+    assert _responses_request(GenerationParams(max_completion_tokens=4096), model=vision)["max_output_tokens"] == 4096

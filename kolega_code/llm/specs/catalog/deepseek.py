@@ -65,4 +65,18 @@ DEEPSEEK_SPECS = {
             mode="openai_responses_reasoning",
         ),
     },
+    ("deepseek", "deepseek-v4-flash-vision-exp"): {
+        "context_length": 1000000,
+        "max_completion_tokens": 384000,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_vision": True,
+        "supports_hosted_web_search": True,
+        "preferred_edit_protocol": "claude_code",
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "high", "max"),
+            default="high",
+            mode="openai_responses_reasoning",
+        ),
+    },
 }
