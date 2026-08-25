@@ -8,16 +8,37 @@ cautious recipient are all pinned here.
 
 from __future__ import annotations
 
+import asyncio
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from kolega_code.session.inbox import (
     MAX_PEER_TEXT_CHARS,
+    MESSAGING_PROTOCOL_VERSION,
     DeliveryOutcome,
+    ENVELOPE_MAX_BYTES,
     InboxRegistration,
     InboxRegistry,
     PeerMessage,
     PeerMessageError,
+    PeerSocketServer,
+    encode_envelope,
+    is_pid_alive,
+    messaging_dir,
+    parse_envelope,
+    parse_socket_name,
     resolve_inbound_decision,
+    send_over_socket,
+    socket_path_for,
+    sweep_stale_sockets,
     validate_peer_text,
 )
 
@@ -278,3 +299,346 @@ def test_shared_registry_is_a_registry() -> None:
     from kolega_code.session.inbox import SHARED_INBOX_REGISTRY
 
     assert isinstance(SHARED_INBOX_REGISTRY, InboxRegistry)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: same-machine cross-process transport.
+# ---------------------------------------------------------------------------
+
+
+def _short_state_root() -> Path:
+    """A state root short enough for real AF_UNIX binds on macOS.
+
+    pytest's tmp_path nests too deep for the 104-byte sun_path limit; the
+    production default state dir sits far below it. Each call gets a fresh
+    /tmp directory so tests never share a messaging dir.
+    """
+    try:
+        # /tmp explicitly: pytest rewrites TMPDIR into its deep per-test tree,
+        # which blows the 104-byte AF_UNIX limit on macOS.
+        return Path(tempfile.mkdtemp(prefix="kolega-msg-", dir="/tmp"))
+    except (OSError, FileNotFoundError):
+        return Path(tempfile.mkdtemp(prefix="kolega-msg-"))
+
+
+@pytest.fixture
+def short_state_root() -> Any:
+    root = _short_state_root()
+    yield root
+    import shutil
+
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def _make_server(
+    outcomes: list[str] | None = None,
+    *,
+    state_root: Path | None = None,
+    session_id: str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+) -> tuple[PeerSocketServer, list[PeerMessage]]:
+    received: list[PeerMessage] = []
+
+    async def deliver(message: PeerMessage) -> str:
+        received.append(message)
+        if outcomes:
+            return outcomes.pop(0)
+        return DeliveryOutcome.ACCEPTED.value
+
+    server = PeerSocketServer(
+        directory=messaging_dir(state_root if state_root is not None else _short_state_root()),
+        session_id=session_id,
+        pid=os.getpid(),
+        describe_status=(lambda: "idle"),
+        deliver_message=deliver,
+    )
+    return server, received
+
+
+# -- Socket naming, liveness, sweeping ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.4242.sock", ("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", 4242)),
+        ("shortid.1.sock", None),
+        ("notes.txt", None),
+        ("missing-pid.sock", None),
+        ("aaaa-bbbb.notapid.sock", None),
+    ],
+)
+def test_parse_socket_name(name: str, expected: tuple[str, int] | None) -> None:
+    assert parse_socket_name(name) == expected
+
+
+def test_is_pid_alive() -> None:
+    assert is_pid_alive(os.getpid()) is True
+    assert is_pid_alive(-1) is False
+
+
+def test_sweep_removes_only_dead_pid_sockets(tmp_path: Path) -> None:
+    directory = messaging_dir(tmp_path / "state")
+    dead = socket_path_for(directory, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", 2**22 - 1)
+    foreign = directory / "someone-elses-file.txt"
+    dead.write_bytes(b"")
+    foreign.write_bytes(b"keep me")
+    live = socket_path_for(directory, "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee", os.getpid())
+    live.write_bytes(b"")
+
+    removed = sweep_stale_sockets(directory)
+
+    assert removed == [dead]
+    assert not dead.exists()
+    assert foreign.exists(), "unparsable files are never touched"
+    assert live.exists(), "a live pid's socket survives the sweep"
+
+
+# -- Envelope validation -------------------------------------------------------
+
+
+def test_encode_and_parse_message_round_trip() -> None:
+    envelope = {
+        "v": MESSAGING_PROTOCOL_VERSION,
+        "kind": "message",
+        "sender_id": "s-1",
+        "sender_title": "alpha",
+        "sender_project": "/tmp/p",
+        "sender_mode": "auto",
+        "text": "hello",
+        "reply_to": None,
+        "sender_pid": os.getpid(),
+    }
+    parsed = parse_envelope(encode_envelope(envelope))
+
+    assert parsed["kind"] == "message"
+    assert parsed["sender_id"] == "s-1"
+    assert parsed["sender_mode"] == "auto"
+    assert parsed["text"] == "hello"
+    assert parsed["reply_to"] is None
+    assert parsed["sender_pid"] == os.getpid()
+
+
+def test_parse_status_envelope() -> None:
+    parsed = parse_envelope({"v": 1, "kind": "status"})
+    assert parsed == {"v": 1, "kind": "status"}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"v": 2, "kind": "message", "sender_id": "s", "text": "hi"},
+        {"v": 1, "kind": "explode", "sender_id": "s", "text": "hi"},
+        {"v": 1, "kind": "message", "text": "hi"},
+        {"v": 1, "kind": "message", "sender_id": "s"},
+        {"v": 1, "kind": "message", "sender_id": "s", "text": ""},
+        {"v": 1, "kind": "message", "sender_id": "s", "text": "x" * (MAX_PEER_TEXT_CHARS + 1)},
+        {"v": 1, "kind": "message", "sender_id": "", "text": "hi"},
+        {"v": 1, "kind": "message", "sender_id": " ", "text": "hi"},
+        {"v": 1, "kind": "message", "sender_id": 7, "text": "hi"},
+        {"v": 1, "kind": "message", "sender_id": "s", "text": 42},
+    ],
+)
+@pytest.mark.asyncio
+async def test_malformed_envelopes_are_rejected(payload: dict) -> None:
+    with pytest.raises(PeerMessageError):
+        parse_envelope(encode_envelope(payload))
+
+
+@pytest.mark.asyncio
+async def test_non_json_and_oversized_lines_are_rejected() -> None:
+    for bad in [b"not json\n", b"[1,2]\n", b"", b"   \n"]:
+        with pytest.raises(PeerMessageError):
+            parse_envelope(bad)
+    with pytest.raises(PeerMessageError):
+        encode_envelope({"text": "x" * (ENVELOPE_MAX_BYTES + 10)})
+
+
+# -- Server round trip ---------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_socket_delivers_message_and_reports_outcome(short_state_root: Any) -> None:
+    server, received = _make_server(state_root=short_state_root)
+    path = await server.start()
+    try:
+        response = await send_over_socket(
+            path,
+            {
+                "v": MESSAGING_PROTOCOL_VERSION,
+                "kind": "message",
+                "sender_id": "remote-1",
+                "sender_title": "remote",
+                "text": "over the wire",
+            },
+        )
+
+        assert response["ok"] is True
+        assert response["outcome"] == DeliveryOutcome.ACCEPTED.value
+        assert response["message_id"]
+        (received,) = received
+        assert received.text == "over the wire"
+        assert received.sender_session_id == "remote-1"
+    finally:
+        await server.stop()
+    assert not path.exists(), "stop unlinks the socket file"
+
+
+@pytest.mark.asyncio
+async def test_socket_status_query_reports_live_state(short_state_root: Any) -> None:
+    server, _received = _make_server(state_root=short_state_root)
+    path = await server.start()
+    try:
+        response = await send_over_socket(path, {"v": MESSAGING_PROTOCOL_VERSION, "kind": "status"})
+        assert response == {"ok": True, "status": "idle"}
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_socket_surfaces_recipient_policy_errors_to_the_sender(short_state_root: Any) -> None:
+    server, _received = _make_server(outcomes=[DeliveryOutcome.REFUSED.value], state_root=short_state_root)
+    path = await server.start()
+    try:
+        response = await send_over_socket(
+            path,
+            {"v": MESSAGING_PROTOCOL_VERSION, "kind": "message", "sender_id": "r", "text": "hi"},
+        )
+        assert response["ok"] is True
+        assert response["outcome"] == "refused"
+
+        bad = await send_over_socket(
+            path,
+            {"v": MESSAGING_PROTOCOL_VERSION, "kind": "message", "sender_id": "r", "text": ""},
+        )
+        assert bad["ok"] is False
+        assert "empty" in bad["error"].lower()
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_unreachable_socket_raises_instead_of_faking_success(tmp_path: Path) -> None:
+    with pytest.raises(PeerMessageError, match="Could not reach"):
+        await send_over_socket(tmp_path / "nothing-here.sock", {"v": 1, "kind": "status"})
+
+
+@pytest.mark.asyncio
+async def test_start_refuses_to_steal_a_live_owner_socket(short_state_root: Any) -> None:
+    first, _ = _make_server(state_root=short_state_root)
+    second, _ = _make_server(state_root=short_state_root)
+    # Same session id and pid => same path. The second bind must fail loudly.
+    await first.start()
+    try:
+        with pytest.raises(PeerMessageError, match="refusing to bind"):
+            await second.start()
+    finally:
+        await first.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_sweeps_a_dead_owner_socket_at_same_path(short_state_root: Any) -> None:
+    directory = messaging_dir(short_state_root)
+    stale = socket_path_for(directory, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", 2**22 - 1)
+    stale.write_bytes(b"")
+    server, _received = _make_server(state_root=short_state_root)
+    path = await server.start()
+    try:
+        assert path.exists()
+    finally:
+        await server.stop()
+
+
+# -- Genuine cross-process exchange -------------------------------------------
+
+
+CHILD_SERVER_PROGRAM = """
+import asyncio, json, os, sys
+from pathlib import Path
+
+sys.path.insert(0, {repo!r})
+
+from kolega_code.session.inbox import PeerSocketServer, messaging_dir
+
+state_root = Path({state_root!r})
+received = []
+
+async def deliver(message):
+    received.append(message.to_dict() if hasattr(message, "to_dict") else message.text)
+    return "accepted"
+
+async def main():
+    server = PeerSocketServer(
+        directory=messaging_dir(state_root),
+        session_id={session_id!r},
+        pid=os.getpid(),
+        describe_status=lambda: "busy",
+        deliver_message=deliver,
+    )
+    path = await server.start()
+    print(json.dumps({{"ready": str(path)}}), flush=True)
+    await asyncio.sleep(30)
+
+asyncio.run(main())
+"""
+
+
+@pytest.mark.asyncio
+async def test_cross_process_delivery_over_a_real_socket() -> None:
+    """A child process owns the socket; this process sends to it.
+
+    Hermetic two-process proof of the transport: no LLM, no TUI — protocol,
+    liveness naming, and honest error responses across a real process boundary.
+    """
+    import shutil
+
+    repo = str(Path(__file__).resolve().parents[2])
+    state_root = _short_state_root()
+    session_id = "cccccccc-dddd-eeee-ffff-000000000000"
+
+    program = CHILD_SERVER_PROGRAM.format(repo=repo, state_root=str(state_root), session_id=session_id)
+    proc = subprocess.Popen(
+        [sys.executable, "-c", program],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ},
+    )
+    try:
+        assert proc.stdout is not None
+        deadline = time.monotonic() + 15
+        ready: dict = {}
+        while time.monotonic() < deadline:
+            line = proc.stdout.readline().decode()
+            if line.strip():
+                ready = json.loads(line)
+                break
+            if proc.poll() is not None:
+                raise AssertionError(f"child exited early: {proc.stderr.read().decode() if proc.stderr else ''}")
+            await asyncio.sleep(0.05)
+        assert ready.get("ready"), f"child never reported ready: {ready}"
+
+        status = await send_over_socket(Path(ready["ready"]), {"v": 1, "kind": "status"})
+        assert status == {"ok": True, "status": "busy"}
+
+        sent = await send_over_socket(
+            Path(ready["ready"]),
+            {
+                "v": 1,
+                "kind": "message",
+                "sender_id": "parent-session",
+                "sender_title": "parent",
+                "text": "cross-process hello",
+            },
+        )
+        assert sent["ok"] is True
+        assert sent["outcome"] == "accepted"
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
+
+    # After the child dies, its socket file is stale and gets swept.
+    await asyncio.sleep(0.2)
+    try:
+        removed = sweep_stale_sockets(messaging_dir(state_root))
+        assert removed, "the dead child's socket must be swept"
+    finally:
+        shutil.rmtree(state_root, ignore_errors=True)
