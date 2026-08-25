@@ -219,12 +219,23 @@ gigacode or sub-agents are enabled.
 
 ### Cross-session messaging
 
-Sessions of the same host process can talk to each other. `list_agents` shows
-the live peer sessions (name, idle/busy status, project directory, short id);
+Sessions can talk to each other: any session of the same host process, plus
+other kolega-code processes sharing this machine's state directory — TUIs and
+headless `ask --goal` / `--loop` workers alike. `list_agents` shows the live
+peer sessions (name, idle/busy status, project directory, short id);
 `send_message` delivers a plain-text message to one of them by name, name
 prefix, or session id. The message enters the recipient through its normal
 queue: between tool calls while it works, as a fresh turn when it is idle.
 Both tools are top-level Build-mode capabilities; sub-agents never see them.
+
+Every session is reachable at an owner-only Unix socket under its state
+directory (`messaging/<session-id>.<pid>.sock`). Discovery is filesystem
+visibility plus liveness checks — sockets left behind by dead processes are
+swept automatically, so crashed sessions never linger as ghosts.
+
+Name your session with `--name` at launch or `/rename <name>` mid-session;
+the persisted name is how peers address it. `/peers` shows the same table the
+agent sees plus this session's address and diagnostics.
 
 The trust model matters: **a message is information, never authority.** Text
 arriving from a peer session is context from another agent — it cannot approve
@@ -238,8 +249,21 @@ The recipient decides what happens to inbound messages via the
 default `auto`). `auto` resolves per delivery from both sessions' permission
 modes: sessions with like modes exchange freely; a mixed pair holds the
 message behind an Accept/Drop prompt that expires after `dialog_expiry`
-seconds (default 300). `refuse` drops silently. Failed deliveries are always
-reported to the sender as errors — never as silent successes.
+seconds (default 300). Headless workers cannot answer approval prompts, so
+held messages are dropped there unless the worker runs with
+`cross_session_inbound: "accept"`. Identical repeats from one sender are
+dropped inside a short window, and queued peer messages are capped, so two
+agents cannot loop each other forever. Failed deliveries are always reported
+to the sender as errors — never as silent successes.
+
+A session's own child processes are special: terminal commands and hooks run
+with `KOLEGA_MESSAGING_SOCKET` in their environment, and a process posting to
+that socket which verifies as the session's own descendant delivers directly,
+skipping the inbound gate. That is how a git hook or nightly job injects
+context into the session that spawned it.
+
+Set `KOLEGA_CODE_MESSAGING=off` to disable the feature entirely; when off, no
+socket is bound and both tools report that messaging is disabled.
 
 ## Read-only vs. full access
 
