@@ -48,6 +48,7 @@ from kolega_code.session.inbox import (
     PeerSocketServer,
     messaging_dir,
     messaging_enabled,
+    own_child_bypass,
     provenance_preamble,
     recipient_queue_full,
     resolve_inbound_decision,
@@ -606,6 +607,17 @@ class KolegaCodeApp(
     async def _deliver_peer_message(self, message: PeerMessage) -> str:
         """Inbound hook registered with the inbox. The recipient decides."""
         await self._emit_peer_event(KnownEventType.PEER_MESSAGE_RECEIVED, message)
+        # Own-child delivery: a message from one of this session's own child
+        # processes (a git hook, a terminal command) skips the inbound gate —
+        # that is how a script injects context into the session that spawned
+        # it. Verification fails closed: an unverifiable pid stays gated.
+        if own_child_bypass(message.sender_pid, os.getpid()):
+            if recipient_queue_full(sum(1 for item in self._queued_messages if item.is_peer)):
+                self._log_status(messages.PEER_QUEUE_FULL.format(limit=50), "info")
+                return DeliveryOutcome.REFUSED.value
+            self._enqueue_peer_message(message)
+            await self._emit_peer_event(KnownEventType.PEER_MESSAGE_DELIVERED, message)
+            return DeliveryOutcome.ACCEPTED.value
         # Loop protection first: an identical repeat from one sender inside the
         # window is dropped regardless of policy, so two agents cannot bounce
         # the same message back and forth forever. Silent toward the sender.

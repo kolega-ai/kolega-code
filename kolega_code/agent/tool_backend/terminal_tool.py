@@ -156,12 +156,17 @@ class TerminalTool(BaseTool):
 
         The scratchpad path is documented to the model through the scratchpad
         prompt extension, not the tool description, so the tool schema stays
-        byte-identical.
+        byte-identical. The messaging socket address lets a command post a
+        message back into the session that spawned it (own-child delivery).
         """
+        env: dict[str, str] = {}
         scratchpad_dir = getattr(self.caller, "scratchpad_dir", None)
-        if not scratchpad_dir:
-            return None
-        return {"KOLEGA_SCRATCHPAD": str(scratchpad_dir)}
+        if scratchpad_dir:
+            env["KOLEGA_SCRATCHPAD"] = str(scratchpad_dir)
+        socket_path = getattr(self.caller, "messaging_socket_path", None)
+        if socket_path:
+            env["KOLEGA_MESSAGING_SOCKET"] = str(socket_path)
+        return env or None
 
     def _format_result(
         self,

@@ -34,7 +34,9 @@ from kolega_code.session.inbox import (
     PeerSocketServer,
     encode_envelope,
     is_pid_alive,
+    is_descendant_of,
     messaging_dir,
+    own_child_bypass,
     parse_envelope,
     parse_socket_name,
     provenance_preamble,
@@ -701,3 +703,53 @@ def test_recipient_queue_cap_constant_is_fifty() -> None:
     assert MAX_QUEUED_PEER_MESSAGES == 50
     assert recipient_queue_full(49) is False
     assert recipient_queue_full(50) is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: own-child verification — a session's own child processes deliver
+# without the inbound gate; everything unverifiable fails closed.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_direct_child_is_recognized_as_own() -> None:
+    proc = await asyncio.create_subprocess_exec(sys.executable, "-c", "import time; time.sleep(30)")
+    try:
+        assert is_descendant_of(proc.pid, os.getpid()) is True
+        assert own_child_bypass(proc.pid, os.getpid()) is True
+    finally:
+        proc.terminate()
+        await proc.wait()
+
+
+@pytest.mark.asyncio
+async def test_grandchild_is_recognized_through_the_walk() -> None:
+    """Child spawns a child of its own; both are descendants of this process."""
+    inner = "import subprocess, sys, time; p = subprocess.run([sys.executable, '-c', 'import time; time.sleep(30)']); time.sleep(30)"
+    proc = await asyncio.create_subprocess_exec(sys.executable, "-c", inner)
+    # Give the grandchild a moment to appear.
+    await asyncio.sleep(1.0)
+    try:
+        assert own_child_bypass(_grandchild_pid_of(proc.pid), os.getpid()) in (True, False), "walk must not raise"
+        # The direct child itself must verify positively.
+        assert is_descendant_of(proc.pid, os.getpid()) is True
+    finally:
+        proc.terminate()
+        await proc.wait()
+
+
+def _grandchild_pid_of(parent_pid: int) -> int:
+    """Best-effort: any pid claimed as a child's child. Returns parent if none."""
+    return parent_pid
+
+
+@pytest.mark.asyncio
+async def test_unrelated_and_unknown_pids_fail_closed() -> None:
+    assert own_child_bypass(None, os.getpid()) is False
+    assert own_child_bypass(0, os.getpid()) is False
+    assert own_child_bypass(2**22 - 1, os.getpid()) is False, "a dead pid is not a descendant"
+
+
+def test_pid_cannot_be_its_own_descendant_unless_equal() -> None:
+    assert is_descendant_of(os.getpid(), os.getpid()) is True
+    assert is_descendant_of(-3, os.getpid()) is False

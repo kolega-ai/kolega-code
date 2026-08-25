@@ -12,6 +12,7 @@ import asyncio
 import importlib
 import inspect
 import json
+import os
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +47,9 @@ class HookCapabilities:
     prompt_runner: Optional[PromptRunner] = None
     agent_runner: Optional[AgentRunner] = None
     log: Optional[LogFn] = None
+    #: Extra environment for command hooks (e.g. the session's messaging
+    #: socket), merged over the inherited process environment.
+    extra_env: Optional[dict[str, str]] = None
 
 
 async def run_hook(event: LifecycleEvent, spec: HookSpec, caps: HookCapabilities) -> HookOutcome:
@@ -67,12 +71,16 @@ async def _run_command(event: LifecycleEvent, spec: HookSpec, caps: HookCapabili
         raise HookExecutionError("command hook has no command")
 
     payload = json.dumps(event.to_hook_input()).encode("utf-8")
+    env: Optional[dict[str, str]] = None
+    if caps.extra_env:
+        env = {**os.environ, **caps.extra_env}
     proc = await asyncio.create_subprocess_exec(
         *shlex.split(spec.command),
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=str(caps.project_path) if caps.project_path else None,
+        env=env,
     )
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(payload), timeout=spec.timeout)

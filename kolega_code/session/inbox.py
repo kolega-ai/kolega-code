@@ -40,6 +40,8 @@ import asyncio
 import json
 import os
 import re
+import subprocess
+import sys
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -84,6 +86,9 @@ class PeerMessage:
     text: str = ""
     reply_to: Optional[str] = None
     created_at: str = field(default_factory=utc_now_iso)
+    #: Sender's OS pid, when the transport knows it (socket envelopes carry it).
+    #: Lets a recipient recognize messages from its own child processes.
+    sender_pid: Optional[int] = None
 
     @classmethod
     def create(
@@ -94,6 +99,7 @@ class PeerMessage:
         text: str,
         sender_mode: str = "ask",
         reply_to: Optional[str] = None,
+        sender_pid: Optional[int] = None,
     ) -> "PeerMessage":
         return cls(
             message_id=uuid.uuid4().hex,
@@ -102,6 +108,7 @@ class PeerMessage:
             sender_mode=sender_mode,
             text=text,
             reply_to=reply_to,
+            sender_pid=sender_pid,
         )
 
 
@@ -576,6 +583,7 @@ class PeerSocketServer:
                         sender_mode=envelope["sender_mode"],
                         text=envelope["text"],
                         reply_to=envelope["reply_to"],
+                        sender_pid=envelope.get("sender_pid"),
                     )
                     outcome = await self._deliver_message(message)
                     response = {"ok": True, "message_id": message.message_id, "outcome": outcome}
@@ -812,3 +820,62 @@ class PeerRepeatGuard:
 def recipient_queue_full(queued_peer_count: int) -> bool:
     """Whether another accepted peer message would exceed the recipient's cap."""
     return queued_peer_count >= MAX_QUEUED_PEER_MESSAGES
+
+
+# ---------------------------------------------------------------------------
+# Own-child verification: a session's own child processes (hooks, terminal
+# commands) may post back into their parent session without the inbound gate —
+# that is how a git hook or nightly job injects context into the session that
+# spawned it. Verification is a ppid walk; anything unverifiable fails closed
+# to the normal gated path.
+# ---------------------------------------------------------------------------
+
+_OWN_CHILD_MAX_DEPTH = 32
+
+
+def _parent_pid(pid: int) -> Optional[int]:
+    """The ppid of ``pid``, or None when it cannot be determined."""
+    try:
+        if sys.platform == "linux":
+            stat_text = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+            # Field 4 (1-indexed incl. comm in parens): take after the last ')'.
+            fields = stat_text.rsplit(")", 1)[1].split()
+            return int(fields[1])
+        output = subprocess.run(
+            ["ps", "-o", "ppid=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if output.returncode != 0:
+            return None
+        return int(output.stdout.strip())
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def is_descendant_of(child_pid: int, ancestor_pid: int) -> bool:
+    """Whether ``child_pid`` is (or is under) ``ancestor_pid`` right now.
+
+    Verified while both are alive; a process whose lineage cannot be walked is
+    not treated as a descendant — the gate stays closed rather than opening on
+    a guess.
+    """
+    if child_pid <= 0 or ancestor_pid <= 0 or child_pid == ancestor_pid:
+        return child_pid == ancestor_pid and child_pid > 0
+    current = child_pid
+    for _depth in range(_OWN_CHILD_MAX_DEPTH):
+        parent = _parent_pid(current)
+        if parent is None:
+            return False
+        if parent == ancestor_pid:
+            return True
+        if parent <= 1:
+            return False
+        current = parent
+    return False
+
+
+def own_child_bypass(sender_pid: Optional[int], recipient_pid: int) -> bool:
+    """True when a message came from the recipient's own child process."""
+    return bool(sender_pid) and is_descendant_of(int(sender_pid), recipient_pid)  # type: ignore[arg-type]

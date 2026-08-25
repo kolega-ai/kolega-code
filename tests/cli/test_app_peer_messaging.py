@@ -8,6 +8,8 @@ lands back in the composer.
 
 from __future__ import annotations
 
+import asyncio
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -1062,3 +1064,109 @@ async def test_recipient_queue_cap_bounds_accepted_peer_messages(
 
             peer_queued = [queued for queued in app_b._queued_messages if queued.is_peer]
             assert len(peer_queued) == MAX_QUEUED_PEER_MESSAGES
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: script injection — child processes see the socket and can post back.
+# ---------------------------------------------------------------------------
+
+
+def test_terminal_session_env_exports_the_messaging_socket() -> None:
+    from kolega_code.agent.tool_backend.terminal_tool import TerminalTool
+
+    tool = object.__new__(TerminalTool)
+
+    class _Caller:
+        scratchpad_dir: str | None = "/tmp/scratch"
+        messaging_socket_path: str | None = "/tmp/state/messaging/abc.123.sock"
+
+    tool.caller = _Caller()
+
+    env = tool._session_env()
+    assert env == {
+        "KOLEGA_SCRATCHPAD": "/tmp/scratch",
+        "KOLEGA_MESSAGING_SOCKET": "/tmp/state/messaging/abc.123.sock",
+    }
+
+    _Caller.messaging_socket_path = None
+    assert tool._session_env() == {"KOLEGA_SCRATCHPAD": "/tmp/scratch"}
+
+
+@pytest.mark.asyncio
+async def test_command_hook_receives_messaging_socket_env(tmp_path: Path) -> None:
+    from kolega_code.hooks import HookEvent, LifecycleEvent
+    from kolega_code.hooks.backends import HookCapabilities, run_hook
+    from kolega_code.hooks.config import HookSpec
+
+    import os as _os
+    import shlex
+
+    socket_path = tmp_path / "messaging" / "abc.123.sock"
+    out_path = tmp_path / "captured-env.txt"
+    code = f"import os; open({_os.fspath(out_path)!r}, 'w').write(os.environ.get('KOLEGA_MESSAGING_SOCKET', 'MISSING'))"
+    spec = HookSpec(
+        type="command",
+        scope="command",
+        command=f"{sys.executable} -c {shlex.quote(code)}",
+        timeout=30,
+    )
+    caps = HookCapabilities(project_path=tmp_path, extra_env={"KOLEGA_MESSAGING_SOCKET": str(socket_path)})
+    await run_hook(LifecycleEvent(name=HookEvent.SESSION_START, payload={}), spec, caps)
+    assert out_path.read_text() == str(socket_path)
+
+
+@pytest.mark.asyncio
+async def test_own_child_message_bypasses_an_inbound_hold(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real child process of this test posts into a hold-policy recipient.
+
+    Everything else would park behind approval; the own-child pid verifies and
+    delivers directly.
+    """
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch, settings=CliSettings(cross_session_inbound="hold"))
+    app_b._turn_active = True
+
+    async with app_a.run_test():
+        async with app_b.run_test():
+            child = await asyncio.create_subprocess_exec(sys.executable, "-c", "import time; time.sleep(30)")
+            try:
+                message = PeerMessage.create(
+                    sender_session_id="hook-script",
+                    sender_title="git-hook",
+                    text="build finished",
+                    sender_pid=child.pid,
+                )
+                outcome = await app_b._deliver_peer_message(message)
+                assert outcome == "accepted"
+                queued = [queued for queued in app_b._queued_messages if queued.is_peer]
+                assert len(queued) == 1
+                assert queued[0].display_text == "build finished"
+            finally:
+                child.terminate()
+                await child.wait()
+
+
+@pytest.mark.asyncio
+async def test_unverified_pid_still_goes_through_the_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A claimed pid that cannot be verified as our descendant stays gated."""
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch, settings=CliSettings(cross_session_inbound="hold"))
+
+    async with app_a.run_test():
+        async with app_b.run_test() as pilot_b:
+            message = PeerMessage.create(
+                sender_session_id="stranger",
+                sender_title="stranger",
+                text="claim to be family",
+                sender_pid=2**22 - 1,  # dead pid; ancestry unverifiable → fail closed
+            )
+            outcome = await app_b._deliver_peer_message(message)
+            assert outcome in ("held", "refused")
+            assert not [queued for queued in app_b._queued_messages if queued.is_peer]
+            # The gated message raises the hold question; answer it so the
+            # prompt panel settles before teardown.
+            await _poll(
+                lambda: app_b._pending_question is not None,
+                pilot_b,
+                description="the hold question to appear",
+            )
+            await app_b._answer_pending_question("Drop")
+            await _poll(lambda: app_b.control_channel.pending() == [], pilot_b, description="settle")

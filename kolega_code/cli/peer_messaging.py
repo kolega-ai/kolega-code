@@ -28,6 +28,7 @@ from kolega_code.session.inbox import (
     PeerSocketServer,
     messaging_dir,
     messaging_enabled,
+    own_child_bypass,
     provenance_preamble,
     recipient_queue_full,
     resolve_inbound_decision,
@@ -139,6 +140,13 @@ class HeadlessPeerInbox:
         await self._record(KnownEventType.PEER_MESSAGE_RECEIVED, message)
         policy = self.settings.get_cross_session_inbound()
         decision = resolve_inbound_decision(policy, self.permission_mode_value, message.sender_mode)
+        # Own-child delivery skips the inbound gate entirely (fails closed).
+        if own_child_bypass(message.sender_pid, os.getpid()):
+            if recipient_queue_full(len(self._queue)):
+                return DeliveryOutcome.REFUSED.value
+            self._queue.append(message)
+            await self._record(KnownEventType.PEER_MESSAGE_DELIVERED, message)
+            return DeliveryOutcome.ACCEPTED.value
         if not self._repeat_guard.allow(message.sender_session_id, message.text):
             # Loop protection: identical repeats inside the window are dropped
             # silently toward the sender, regardless of policy.
