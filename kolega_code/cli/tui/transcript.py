@@ -1532,6 +1532,13 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         streaming = None if entry.complete else theme.g(Glyph.ELLIPSIS)
         if entry.kind == "user":
             return self._format_indented_text(entry.content, prefix=(theme.g(Glyph.USER) + " ", Color.USER))
+        if entry.kind == "peer_message":
+            sender = "peer"
+            origin = entry.origin
+            if isinstance(origin, dict) and origin.get("title"):
+                sender = str(origin["title"])
+            header = theme.role_header(theme.g(Glyph.SUB_AGENT), f"← {sender}", Color.TOOL)
+            return self._entry_renderable(header, entry.content)
         if entry.kind == "assistant":
             prefix = (theme.g(Glyph.AGENT) + " ", Color.AGENT)
             if entry.complete and entry.content.strip():

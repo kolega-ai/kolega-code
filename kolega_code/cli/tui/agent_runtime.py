@@ -621,31 +621,56 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         await self._persist_goal_async()
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=note, tone="warning"))
 
-    def _queue_user_message(self, text: str, attachments: list[dict] | None = None) -> None:
+    def _queue_user_message(
+        self,
+        text: str,
+        attachments: list[dict] | None = None,
+        *,
+        origin: dict | None = None,
+        model_text: str | None = None,
+    ) -> None:
+        """Queue one follow-up message for delivery between turns or at a tool boundary.
+
+        ``origin`` marks inputs that did not come from the local user (a peer
+        session's message): they render as ``peer_message`` entries instead of
+        user entries and are never restored into the composer. ``model_text``
+        lets the caller send framing the model needs (the provenance preamble)
+        while the transcript keeps the raw text.
+        """
         self._queued_message_seq += 1
-        entry = tui_state.ConversationEntry(kind="queued", content=text)
+        entry = tui_state.ConversationEntry(kind="queued", content=text, tone=None)
+        entry.origin = origin
         queued = tui_state.QueuedMessage(
             queue_id=f"queued-{self._queued_message_seq}",
-            text=text,
+            text=model_text if model_text is not None else text,
             attachments=[dict(item) for item in attachments] if attachments else None,
             entry=entry,
+            display_text=text,
+            origin=origin,
         )
         # Keep the future transcript entry unmounted while pending; the queue
         # widget is the only waiting-message preview until this item starts.
         self._queued_messages.append(queued)
         self._refresh_queued_messages_panel()
-        self._log_status(messages.QUEUED_MESSAGE, "info")
+        if queued.is_peer:
+            sender = str((origin or {}).get("title") or "peer")
+            self._log_status(messages.PEER_MESSAGE_QUEUED.format(sender=sender), "info")
+        else:
+            self._log_status(messages.QUEUED_MESSAGE, "info")
 
     def _queued_messages_preview(self) -> str:
         if not self._queued_messages:
             return messages.QUEUE_EMPTY
         lines = [f"{messages.QUEUE_LIST_TITLE} {len(self._queued_messages)}"]
         for index, queued in enumerate(self._queued_messages, start=1):
-            preview = " ".join(queued.text.strip().split()) or "(empty)"
+            preview = " ".join(queued.display_text.strip().split()) or "(empty)"
             if len(preview) > 120:
                 preview = preview[:117] + "…"
             suffix = ""
-            if queued.attachments:
+            if queued.is_peer:
+                sender = str((queued.origin or {}).get("title") or "peer")
+                suffix = f" ({messages.PEER_QUEUE_FROM.format(sender=sender)})"
+            elif queued.attachments:
                 suffix = f" ({len(queued.attachments)} attachment(s))"
             lines.append(f"{index}. {preview}{suffix}")
         return "\n".join(lines)
@@ -683,7 +708,21 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         if not queued:
             return 0
 
-        queued_text = "\n\n".join(item.text for item in queued)
+        # Peer messages carry model-facing framing (the provenance preamble) and
+        # were never typed here; restoring their wrapped text into the composer
+        # would paste machinery the user did not write. Drop them with a notice.
+        peers = [item for item in queued if item.is_peer]
+        own = [item for item in queued if not item.is_peer]
+        if peers:
+            self._log_status(messages.PEER_MESSAGES_DROPPED_ON_RESTORE.format(count=len(peers)), "info")
+
+        if not own:
+            self._queued_messages.clear()
+            self._remove_queued_entries_from_transcript(queued)
+            self._refresh_queued_messages_panel()
+            return 0
+
+        queued_text = "\n\n".join(item.display_text for item in own)
         try:
             composer = self.query_one("#composer", tui_widgets.ChatComposer)
             existing_text = getattr(composer, "text", "") or ""
@@ -695,7 +734,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         self._queued_messages.clear()
         self._remove_queued_entries_from_transcript(queued)
         self._refresh_queued_messages_panel()
-        return len(queued)
+        return len(own)
 
     def _schedule_maybe_start_queued_message(self) -> None:
         try:
@@ -719,7 +758,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             return False
 
         queued = self._queued_messages.pop(0)
-        queued.entry.kind = "user"
+        if queued.is_peer:
+            queued.entry.kind = "peer_message"
+        else:
+            queued.entry.kind = "user"
         queued.entry.tone = None
         if queued.entry not in self.conversation_entries:
             self._add_conversation_entry(queued.entry)
@@ -755,13 +797,16 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         self._queued_messages.clear()
         inputs: list[QueuedUserInput] = []
         for queued in taken:
-            queued.entry.kind = "user"
+            if queued.is_peer:
+                queued.entry.kind = "peer_message"
+            else:
+                queued.entry.kind = "user"
             queued.entry.tone = None
             if queued.entry not in self.conversation_entries:
                 self._add_conversation_entry(queued.entry)
             else:
                 self._invalidate_conversation(queued.entry)
-            inputs.append(QueuedUserInput(text=queued.text, attachments=queued.attachments))
+            inputs.append(QueuedUserInput(text=queued.text, attachments=queued.attachments, origin=queued.origin))
         self._refresh_queued_messages_panel()
         self._clear_composer_hint()
         self._log_status(messages.QUEUE_DELIVERED_MID_TURN.format(count=len(inputs)), "info")

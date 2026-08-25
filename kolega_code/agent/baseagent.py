@@ -101,8 +101,17 @@ HOOK_DECISION_SYSTEM_PROMPT = (
 
 @dataclass
 class QueuedUserInput:
+    """A host-drained user message delivered into the running turn.
+
+    ``origin`` carries provenance for inputs that did not come from the local
+    user typing — e.g. ``{"kind": "peer", "session_id": ..., "title": ...}``
+    for a cross-session message. None means an ordinary typed message; hosts
+    may attach their own shapes and must tolerate unknown ones.
+    """
+
     text: str
     attachments: Optional[List[Dict[str, Any]]] = None
+    origin: Optional[Dict[str, Any]] = None
 
 
 def _image_payloads(blocks: List[Any]) -> List[Tuple[str, str]]:
@@ -2130,6 +2139,7 @@ class BaseAgent(LogMixin):
         if not inputs:
             return
 
+        peer_count = 0
         for item in inputs:
             blocks = await self.build_user_content(item.text, item.attachments)
             if self.session_recorder is not None:
@@ -2138,11 +2148,20 @@ class BaseAgent(LogMixin):
                     Message(role="user", content=blocks),
                 )
             self.append_user_message(blocks)
+            origin = item.origin if isinstance(item.origin, dict) else None
+            if origin is not None and origin.get("kind") == "peer":
+                peer_count += 1
 
-        await self.log_info(
-            f"Delivered {len(inputs)} queued user message(s)",
-            sender=self.agent_name,
-        )
+        if peer_count:
+            await self.log_info(
+                f"Delivered {len(inputs)} queued input(s), {peer_count} from a peer session",
+                sender=self.agent_name,
+            )
+        else:
+            await self.log_info(
+                f"Delivered {len(inputs)} queued user message(s)",
+                sender=self.agent_name,
+            )
 
     async def process_message_stream(
         self, message: str, attachments: Optional[List[Dict[str, Any]]] = None

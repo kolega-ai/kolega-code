@@ -60,6 +60,12 @@ QUEUE_EMPTY = "No queued messages."
 QUEUE_CLEARED = "Cleared {count} queued message(s)."
 QUEUE_LIST_TITLE = "Queued messages:"
 QUEUE_DELIVERED_MID_TURN = "Delivered {count} queued message(s) to the current turn."
+# Peer messages (cross-session): queue-preview attribution and lifecycle notices.
+PEER_QUEUE_FROM = "from {sender}"
+PEER_MESSAGE_QUEUED = (
+    "Peer message from {sender} queued. It will be delivered at the next tool boundary, or when this turn finishes."
+)
+PEER_MESSAGES_DROPPED_ON_RESTORE = "{count} peer message(s) dropped — they are not restored into the composer."
 
 # Turn status strip finals
 DONE_IN = "Done in {duration}"
