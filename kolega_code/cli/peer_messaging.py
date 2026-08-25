@@ -201,3 +201,26 @@ async def start_headless_peer_inbox(
     )
     await inbox.start(agent)
     return inbox
+
+
+def store_title_lookup(store: Any) -> Any:
+    """A discovery ``title_lookup`` backed by the shared session store."""
+    titles_by_id = {record.session_id: record.title for record in store.list()}
+    return titles_by_id.get
+
+
+def format_peer_table(peers: Any) -> str:
+    """The one true rendering of discovered peers, shared by the tool and /peers."""
+    if not peers:
+        return "No other live sessions to message."
+    lines = ["Live peer sessions:"]
+    for peer in peers:
+        project = Path(peer.project_path).name if peer.project_path else ""
+        location = f" — {project}" if project else ""
+        remote = "" if peer.source == "process" else " (remote)"
+        lines.append(f"- {peer.title} — {peer.status}{remote}{location} — id {peer.session_id[:8]}")
+    return "\n".join(lines)
+
+
+#: Display-name cap shared by /rename, --name, and the send/receive paths.
+PEER_NAME_MAX_CHARS = 64

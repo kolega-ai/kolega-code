@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from pathlib import Path
 
 from kolega_code.agent import (
     AgentConfig,
@@ -488,31 +487,22 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
 
     def _peer_messaging_tool_extension(self) -> ToolExtension:
         async def _discovered_peers():
+            from kolega_code.cli.peer_messaging import store_title_lookup
             from kolega_code.session.inbox import discover_peers, messaging_dir
 
-            # Socket peers carry only their session id on disk; the session
-            # store (same state dir) supplies human titles for them.
-            titles_by_id = {record.session_id: record.title for record in self.store.list()}
             return await discover_peers(
                 self.inbox_registry,
                 messaging_dir(self.store.root),
                 exclude_session_id=self.session.session_id,
-                title_lookup=lambda sid: titles_by_id.get(sid),
+                title_lookup=store_title_lookup(self.store),
             )
 
         async def list_agents() -> str:
+            from kolega_code.cli.peer_messaging import format_peer_table
+
             if not messaging_enabled():
                 return f"Cross-session messaging is disabled by {MESSAGING_ENV_FLAG}=off; no peers are visible."
-            peers = await _discovered_peers()
-            if not peers:
-                return "No other live sessions to message."
-            lines = ["Live peer sessions:"]
-            for peer in peers:
-                project = Path(peer.project_path).name if peer.project_path else ""
-                location = f" — {project}" if project else ""
-                remote = "" if peer.source == "process" else " (remote)"
-                lines.append(f"- {peer.title} — {peer.status}{remote}{location} — id {peer.session_id[:8]}")
-            return "\n".join(lines)
+            return format_peer_table(await _discovered_peers())
 
         async def send_message(recipient: str, text: str) -> str:
             import os as _os

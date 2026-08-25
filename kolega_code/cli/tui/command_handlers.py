@@ -77,6 +77,8 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             "/goal": self._command_goal,
             "/loop": self._command_loop,
             "/tasks": self._command_tasks,
+            "/peers": self._command_peers,
+            "/rename": self._command_rename,
             "/prompts": self._command_prompts,
             "/queue-clear": self._command_queue_clear,
             "/rewind": self._command_rewind,
@@ -578,6 +580,77 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             tui_state.ConversationEntry(kind="system", content=f"{messages.TASK_LIST_HEADER}\n\n{content}")
         )
         self._refresh_planning_sidebar()
+
+    async def _command_peers(self, args: str) -> None:
+        """Show reachable peer sessions and this session's messaging state.
+
+        Same discovery the list_agents tool uses — one view for the model and
+        the human — plus diagnostics: own name/address and why peers might be
+        missing (feature gate off, no socket).
+        """
+        if args.strip():
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content="Usage: /peers"))
+            return
+
+        from kolega_code.cli.peer_messaging import format_peer_table, store_title_lookup
+        from kolega_code.session.inbox import (
+            MESSAGING_ENV_FLAG,
+            discover_peers,
+            messaging_dir,
+            messaging_enabled,
+        )
+
+        lines = [f"This session: {self.session.title} ({self.session.session_id[:8]})"]
+        if not messaging_enabled():
+            lines.append(f"Cross-session messaging is disabled by {MESSAGING_ENV_FLAG}=off.")
+        elif self.messaging_socket_path:
+            lines.append(f"Address: {self.messaging_socket_path}")
+        else:
+            lines.append("Transport: in-process only (no socket bound).")
+        try:
+            peers = await discover_peers(
+                self.inbox_registry,
+                messaging_dir(self.store.root),
+                exclude_session_id=self.session.session_id,
+                title_lookup=store_title_lookup(self.store),
+            )
+        except Exception as exc:  # noqa: BLE001 — a broken transport must not break /peers
+            lines.append(f"Discovery failed: {exc}")
+            peers = []
+        lines.append(format_peer_table(peers))
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content="\n".join(lines)))
+
+    async def _command_rename(self, args: str) -> None:
+        """Rename this session; the persisted title becomes its peer address."""
+        from ..peer_messaging import PEER_NAME_MAX_CHARS
+
+        name = args.strip()
+        if not name or len(name) > PEER_NAME_MAX_CHARS:
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(
+                    kind="system",
+                    content=f"Usage: /rename <name> (1–{PEER_NAME_MAX_CHARS} characters)",
+                    tone="warning",
+                )
+            )
+            return
+
+        previous = self.session.title
+        self.session.title = name
+        try:
+            await self._save_session_async()
+        except Exception as exc:  # noqa: BLE001 — keep the in-memory rename, report the failure
+            self.session.title = previous
+            self._notify_user(f"Rename failed: {exc}", severity="warning")
+            return
+        # The inbox registration reads session.title live, so peers see the new
+        # name on their next discovery without re-registration.
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(
+                kind="system",
+                content=messages.PEER_RENAMED.format(previous=previous, name=name),
+            )
+        )
 
     async def _command_sidebar(self, args: str) -> None:
         await self.action_toggle_sidebar()

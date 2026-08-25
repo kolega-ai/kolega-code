@@ -423,6 +423,10 @@ def _add_tui_args(parser: argparse.ArgumentParser) -> None:
         help="Resume the latest saved session, or resume the given session ID (legacy thread IDs are also accepted).",
     )
     parser.add_argument("--browser-visible", action="store_true", help="Launch visible Playwright browser windows.")
+    parser.add_argument(
+        "--name",
+        help="Name this session; the persisted name is how peer sessions address it.",
+    )
     parser.add_argument("--show-logs", action="store_true", help="Show the diagnostic Logs sidebar tab.")
     parser.add_argument(
         "--permission-mode",
@@ -491,6 +495,10 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     ask = subparsers.add_parser("ask", help="Run a single prompt and print the answer.")
     ask.add_argument("prompt", nargs="?", default=None, help="Prompt to send to Kolega Code.")
     ask.add_argument("--project", default=".", type=Path, help="Project directory to work in.")
+    ask.add_argument(
+        "--name",
+        help="Name this session; the persisted name is how peer sessions address it.",
+    )
     ask.add_argument(
         "--goal",
         default=None,
@@ -1173,6 +1181,7 @@ def _run_tui(args: argparse.Namespace) -> int:
         args.resume,
         args.session,
     )
+    _apply_launch_name(store, session, getattr(args, "name", None))
     effective_permission_mode = _resolve_tui_permission_mode(
         session,
         settings,
@@ -1445,6 +1454,47 @@ def _record_ask_run_terminal(
         logging.getLogger(__name__).exception("Failed to record the run terminal event")
 
 
+def _resolve_ask_session(
+    args: argparse.Namespace,
+    store: SessionStore,
+    project_path: Path,
+    summary: dict,
+    resumed_session: Optional[SessionRecord],
+) -> tuple[SessionRecord, bool]:
+    """Resolve (session, restoring_session) for an ask run from its persistence flags."""
+    if args.session:
+        session = resumed_session or _get_or_create_session(
+            store, project_path, CLI_AGENT_MODE, summary, args.session, force_new=False
+        )
+        restoring_session = resumed_session is not None
+        session = _normalize_cli_session_mode(store, session, persist=True)
+        return session, restoring_session
+    if args.save:
+        return store.create(project_path, CLI_AGENT_MODE, summary), False
+    return SessionRecord.create(project_path, CLI_AGENT_MODE, summary), False
+
+
+def _apply_launch_name(
+    store: SessionStore,
+    session: SessionRecord,
+    raw_name: Optional[str],
+    *,
+    persistable: bool = True,
+) -> None:
+    """Apply --name at launch. The persisted title is a peer's address for the
+    session, so invalid names fail loudly instead of being silently mangled."""
+    from .peer_messaging import PEER_NAME_MAX_CHARS
+
+    if not raw_name:
+        return
+    name = str(raw_name).strip()
+    if not name or len(name) > PEER_NAME_MAX_CHARS:
+        raise SystemExit(f"Error: --name must be 1-{PEER_NAME_MAX_CHARS} characters.")
+    session.title = name
+    if persistable:
+        store.save(session)
+
+
 async def _run_ask(args: argparse.Namespace) -> int:
     launch_project_path = _select_startup_project(args.project, args)
     project_path = launch_project_path
@@ -1552,16 +1602,8 @@ async def _run_ask(args: argparse.Namespace) -> int:
             print(f"hooks: {diagnostic}", file=sys.stderr)
 
     restoring_session = False
-    if args.session:
-        session = resumed_session or _get_or_create_session(
-            store, project_path, CLI_AGENT_MODE, summary, args.session, force_new=False
-        )
-        restoring_session = resumed_session is not None
-        session = _normalize_cli_session_mode(store, session, persist=True)
-    elif args.save:
-        session = store.create(project_path, CLI_AGENT_MODE, summary)
-    else:
-        session = SessionRecord.create(project_path, CLI_AGENT_MODE, summary)
+    session, restoring_session = _resolve_ask_session(args, store, project_path, summary, resumed_session)
+    _apply_launch_name(store, session, getattr(args, "name", None), persistable=bool(args.save or args.session))
 
     # Every run records the semantic journal; unsaved runs use an in-memory
     # sink with the same id/seq/schema rules and never touch the state dir.

@@ -898,3 +898,119 @@ async def test_send_message_to_unreachable_peer_is_an_explicit_error(
         send = _extension(app).tools["send_message"]
         with pytest.raises(ToolError):
             await send(recipient="eeeeeeee", text="anyone there?")
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: /rename and /peers — naming is addressing.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rename_updates_persisted_title_and_peer_discovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
+
+    async with app_a.run_test():
+        async with app_b.run_test() as pilot_b:
+            await app_b._command_rename("deploy-bot")
+            await pilot_b.pause()
+
+            assert app_b.session.title == "deploy-bot"
+            reloaded = app_b.store.load(app_b.session.session_id)
+            assert reloaded.title == "deploy-bot", "the persisted title is the peer address"
+
+            # Live callables: discovery reflects the new name without re-registration.
+            result = await _extension(app_a).tools["list_agents"]()
+            assert "deploy-bot" in result
+
+            # Prefix addressing by the new name works immediately.
+            receipt = await _extension(app_a).tools["send_message"](recipient="deploy", text="hi")
+            assert receipt.startswith("Message delivered to deploy-bot")
+
+
+@pytest.mark.asyncio
+async def test_rename_rejects_invalid_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.cli.peer_messaging import PEER_NAME_MAX_CHARS
+
+    registry, _app_a, app_b = _two_apps(tmp_path, monkeypatch)
+
+    async with app_b.run_test():
+        original_title = app_b.session.title
+        for bad in ["", "   ", "x" * (PEER_NAME_MAX_CHARS + 1)]:
+            await app_b._command_rename(bad)
+        assert app_b.session.title == original_title
+
+        entries = [entry.content for entry in app_b.conversation_entries if entry.kind == "system"]
+        assert any("Usage: /rename" in content for content in entries)
+
+
+@pytest.mark.asyncio
+async def test_peers_command_shows_address_and_discovered_sessions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
+
+    async with app_a.run_test():
+        async with app_b.run_test():
+            await app_b._command_peers("")
+
+            (entry,) = [
+                entry
+                for entry in app_b.conversation_entries
+                if entry.kind == "system" and "This session:" in entry.content
+            ]
+            assert f"This session: beta ({app_b.session.session_id[:8]})" in entry.content
+            assert "Address:" in entry.content, "a bound session shows its socket address"
+            assert "alpha" in entry.content
+            assert "idle" in entry.content
+
+
+@pytest.mark.asyncio
+async def test_peers_command_reports_the_disabled_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.session.inbox import MESSAGING_ENV_FLAG
+
+    monkeypatch.setenv(MESSAGING_ENV_FLAG, "off")
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
+
+    async with app_b.run_test():
+        await app_b._command_peers("")
+        (entry,) = [
+            entry
+            for entry in app_b.conversation_entries
+            if entry.kind == "system" and MESSAGING_ENV_FLAG in entry.content
+        ]
+        assert "disabled" in entry.content
+
+
+@pytest.mark.asyncio
+async def test_launch_name_flag_renames_the_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--name persists before mount so the bound session starts addressed."""
+    from kolega_code.cli.main import _apply_launch_name
+
+    install_fake_agents(monkeypatch)
+    project = tmp_path / "project"
+    project.mkdir(exist_ok=True)
+    state_root = _short_state_root()
+    store = SessionStore(state_root)
+    session = store.create(project, "code", {"model": "test"}, title="untitled")
+
+    _apply_launch_name(store, session, "  nightlies ")
+
+    reloaded = store.load(session.session_id)
+    assert reloaded.title == "nightlies"
+
+
+def test_launch_name_flag_validates_loudly(tmp_path: Path) -> None:
+    from kolega_code.cli.main import _apply_launch_name
+    from kolega_code.cli.peer_messaging import PEER_NAME_MAX_CHARS
+
+    store = SessionStore(tmp_path / "state")
+    project = tmp_path / "project"
+    project.mkdir()
+    session = store.create(project, "code", {"model": "test"})
+
+    with pytest.raises(SystemExit, match="--name"):
+        _apply_launch_name(store, session, "   ", persistable=True)
+    with pytest.raises(SystemExit, match="--name"):
+        _apply_launch_name(store, session, "x" * (PEER_NAME_MAX_CHARS + 1), persistable=True)
