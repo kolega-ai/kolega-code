@@ -1,4 +1,6 @@
-Send a plain-text message to another agent session in this host process.
+Send a plain-text message to another agent session: any session of this
+host process, or any other kolega-code process sharing this machine's
+state directory.
 
 The recipient is one of the sessions reported by list_agents: its exact name,
 a unique prefix of that name, or a session id. Addressing must be unambiguous —

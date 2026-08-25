@@ -39,7 +39,14 @@ from kolega_code.mcp.config import LoadedMCPConfig, server_fingerprint
 from kolega_code.mcp.service import MCPService, mcp_tool_name_adjustment_note
 from kolega_code.mcp.tools import build_mcp_tool_extension
 from kolega_code.permissions import PermissionDecision
-from kolega_code.session.inbox import DeliveryOutcome, PeerMessage, PeerMessageError, validate_peer_text
+from kolega_code.session.inbox import (
+    MESSAGING_ENV_FLAG,
+    DeliveryOutcome,
+    PeerMessage,
+    PeerMessageError,
+    messaging_enabled,
+    validate_peer_text as validate_peer_message_text,
+)
 from kolega_code.session.runtime import deserialize_permission_request
 from kolega_code.tools import ToolError
 from textual.widgets import Static
@@ -480,46 +487,91 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         )
 
     def _peer_messaging_tool_extension(self) -> ToolExtension:
+        async def _discovered_peers():
+            from kolega_code.session.inbox import discover_peers, messaging_dir
+
+            # Socket peers carry only their session id on disk; the session
+            # store (same state dir) supplies human titles for them.
+            titles_by_id = {record.session_id: record.title for record in self.store.list()}
+            return await discover_peers(
+                self.inbox_registry,
+                messaging_dir(self.store.root),
+                exclude_session_id=self.session.session_id,
+                title_lookup=lambda sid: titles_by_id.get(sid),
+            )
+
         async def list_agents() -> str:
-            peers = self.inbox_registry.list_agents(exclude_session_id=self.session.session_id)
+            if not messaging_enabled():
+                return f"Cross-session messaging is disabled by {MESSAGING_ENV_FLAG}=off; no peers are visible."
+            peers = await _discovered_peers()
             if not peers:
-                return "No other live sessions in this process to message."
+                return "No other live sessions to message."
             lines = ["Live peer sessions:"]
             for peer in peers:
-                project = Path(peer.project_path).name or peer.project_path
-                lines.append(f"- {peer.title} — {peer.status} — {project} — id {peer.session_id[:8]}")
+                project = Path(peer.project_path).name if peer.project_path else ""
+                location = f" — {project}" if project else ""
+                remote = "" if peer.source == "process" else " (remote)"
+                lines.append(f"- {peer.title} — {peer.status}{remote}{location} — id {peer.session_id[:8]}")
             return "\n".join(lines)
 
         async def send_message(recipient: str, text: str) -> str:
+            import os as _os
+
+            from kolega_code.session.inbox import (
+                deliver_to_discovered_peer,
+                messaging_enabled,
+                resolve_summary,
+            )
+
             clean_recipient = str(recipient or "").strip()
             if not clean_recipient:
                 raise ToolError("'recipient' must name a live session (see list_agents).")
             try:
-                cleaned_text = validate_peer_text(str(text or ""))
+                cleaned_text = validate_peer_message_text(str(text or ""))
             except PeerMessageError as exc:
                 raise ToolError(str(exc)) from exc
+
+            message = PeerMessage.create(
+                sender_session_id=self.session.session_id,
+                sender_title=self.session.title,
+                sender_mode=self.permission_mode.value,
+                text=cleaned_text,
+            )
+
+            # In-process first; the socket directory answers for everyone else.
             try:
                 registration = self.inbox_registry.resolve(
                     clean_recipient,
                     exclude_session_id=self.session.session_id,
                 )
-                message = PeerMessage.create(
-                    sender_session_id=self.session.session_id,
-                    sender_title=self.session.title,
-                    sender_mode=self.permission_mode.value,
-                    text=cleaned_text,
-                )
-                outcome = await self.inbox_registry.deliver(
-                    registration.session_id,
-                    message,
-                    sender_session_id=self.session.session_id,
-                )
+            except PeerMessageError:
+                registration = None
+
+            try:
+                if registration is not None:
+                    outcome = await self.inbox_registry.deliver(
+                        registration.session_id,
+                        message,
+                        sender_session_id=self.session.session_id,
+                    )
+                    addressed = f"{registration.describe_title()} ({registration.session_id[:8]})"
+                else:
+                    if not messaging_enabled():
+                        raise ToolError(f"Cross-session messaging is disabled by {MESSAGING_ENV_FLAG}=off.")
+                    peers = await _discovered_peers()
+                    summary = resolve_summary(peers, clean_recipient)
+                    _, outcome = await deliver_to_discovered_peer(
+                        summary,
+                        message,
+                        sender_project=str(self.active_project_path),
+                        sender_pid=_os.getpid(),
+                    )
+                    addressed = f"{summary.title} ({summary.session_id[:8]})"
             except PeerMessageError as exc:
                 # A delivery failure must reach the model as an error, never as a
                 # plausible-looking success.
                 raise ToolError(str(exc)) from exc
 
-            addressed = f"{registration.describe_title()} ({registration.session_id[:8]})"
             if outcome == DeliveryOutcome.HELD.value:
                 return f"Message delivered to {addressed}. It is awaiting the recipient's review."
             return f"Message delivered to {addressed}."

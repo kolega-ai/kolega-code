@@ -113,6 +113,13 @@ class AgentSummary:
     title: str
     project_path: str
     status: str  # "idle" | "busy"
+    #: "process": live in this process (registry). "socket": another process
+    #: sharing this state dir. "unreachable": socket present, owner alive,
+    #: but nobody answering — listed so its presence is visible, never as
+    #: something a send can succeed against.
+    source: str = "process"
+    #: Socket path for socket-sourced peers; None for in-process ones.
+    socket_path: Optional[str] = None
 
 
 @dataclass
@@ -623,3 +630,142 @@ async def send_over_socket(
     if not isinstance(response, dict) or not isinstance(response.get("ok"), bool):
         raise PeerMessageError(f"Peer at {path} sent an unrecognized response.")
     return response
+
+
+# ---------------------------------------------------------------------------
+# Cross-process discovery: the messaging dir plus the in-process registry.
+# ---------------------------------------------------------------------------
+
+#: Per-peer budget for a status query during discovery. Discovery must stay
+#: snappy even when one peer's process is wedged.
+DISCOVERY_STATUS_TIMEOUT_SECONDS = 1.5
+
+
+async def discover_peers(
+    registry: InboxRegistry,
+    directory: Path,
+    *,
+    exclude_session_id: Optional[str] = None,
+    title_lookup: Optional[Callable[[str], Optional[str]]] = None,
+    status_timeout: float = DISCOVERY_STATUS_TIMEOUT_SECONDS,
+) -> list[AgentSummary]:
+    """Every visible peer: in-process registrations plus socket-bound sessions.
+
+    Socket files whose owning pid is dead are swept here — discovery doubles as
+    the liveness check, so orphans never accumulate. A live pid whose socket
+    does not answer within the timeout is reported as ``unreachable``: visible,
+    but clearly not something a send can succeed against. In-process entries
+    win over socket entries for the same session id.
+    """
+    sweep_stale_sockets(directory)
+    peers: dict[str, AgentSummary] = {}
+    for summary in registry.list_agents(exclude_session_id=exclude_session_id):
+        peers[summary.session_id] = summary
+
+    try:
+        entries = sorted(directory.iterdir(), key=lambda p: p.name)
+    except OSError:
+        entries = []
+    for entry in entries:
+        parsed = parse_socket_name(entry.name)
+        if parsed is None:
+            continue
+        session_id, _pid = parsed
+        if session_id == exclude_session_id or session_id in peers:
+            continue
+        title = (title_lookup(session_id) if title_lookup else None) or session_id[:8]
+        status = "unreachable"
+        try:
+            response = await send_over_socket(
+                entry,
+                {"v": MESSAGING_PROTOCOL_VERSION, "kind": "status"},
+                timeout=status_timeout,
+            )
+            if response.get("ok") and isinstance(response.get("status"), str):
+                status = response["status"]
+        except PeerMessageError:
+            pass
+        peers[session_id] = AgentSummary(
+            session_id=session_id,
+            title=title,
+            project_path="",
+            status=status,
+            source="socket",
+            socket_path=str(entry),
+        )
+
+    return sorted(peers.values(), key=lambda peer: (peer.title.casefold(), peer.session_id))
+
+
+def resolve_summary(
+    summaries: list[AgentSummary],
+    query: str,
+    *,
+    exclude_session_id: Optional[str] = None,
+) -> AgentSummary:
+    """Address one discovered peer by exact name, unique prefix, or session id.
+
+    Same rules as :func:`resolve_recipient`, applied to discovery results so
+    addressing behaves identically across processes and inside one.
+    """
+    cleaned = _normalize_query(query)
+    needle = cleaned.casefold()
+    candidates = [s for s in summaries if s.session_id != exclude_session_id]
+
+    exact = [s for s in candidates if s.title.strip().casefold() == needle]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        raise PeerMessageError(f"Multiple sessions are named '{cleaned}'; address one by session id.")
+
+    prefixed = [s for s in candidates if s.title.strip().casefold().startswith(needle)]
+    if len(prefixed) > 1:
+        raise PeerMessageError(f"'{cleaned}' matches multiple sessions.")
+    if len(prefixed) == 1:
+        return prefixed[0]
+
+    if cleaned in {s.session_id for s in candidates}:
+        return next(s for s in candidates if s.session_id == cleaned)
+    by_id = [s for s in candidates if s.session_id.startswith(cleaned)]
+    if len(by_id) > 1:
+        raise PeerMessageError(f"'{cleaned}' matches multiple sessions.")
+    if len(by_id) == 1:
+        return by_id[0]
+
+    raise PeerMessageError(f"No reachable session matches '{query}'.")
+
+
+async def deliver_to_discovered_peer(
+    summary: AgentSummary,
+    message: PeerMessage,
+    *,
+    sender_project: str = "",
+    sender_pid: Optional[int] = None,
+    timeout: float = SOCKET_IO_TIMEOUT_SECONDS,
+) -> tuple[str, str]:
+    """Send a message to a socket-sourced peer; returns (message_id, outcome).
+
+    Raises :class:`PeerMessageError` when the peer cannot be reached or rejects
+    at the transport level. The recipient's inbound policy decides the outcome
+    exactly as it would for an in-process sender.
+    """
+    if summary.socket_path is None:
+        raise PeerMessageError(f"Session '{summary.title}' is only reachable in-process.")
+    envelope: dict[str, Any] = {
+        "v": MESSAGING_PROTOCOL_VERSION,
+        "kind": "message",
+        "sender_id": message.sender_session_id,
+        "sender_title": message.sender_title,
+        "sender_project": sender_project,
+        "sender_mode": message.sender_mode,
+        "text": message.text,
+        "reply_to": message.reply_to,
+        "sender_pid": sender_pid if sender_pid is not None else os.getpid(),
+    }
+    response = await send_over_socket(Path(summary.socket_path), envelope, timeout=timeout)
+    if not response.get("ok"):
+        error = str(response.get("error") or "delivery failed")
+        raise PeerMessageError(f"Peer '{summary.title}' rejected the message: {error}")
+    message_id = str(response.get("message_id") or "")
+    outcome = str(response.get("outcome") or DeliveryOutcome.ACCEPTED.value)
+    return message_id, outcome

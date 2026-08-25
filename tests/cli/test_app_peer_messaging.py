@@ -555,10 +555,12 @@ async def test_list_agents_tool_formats_live_peers(tmp_path: Path, monkeypatch: 
             assert app_b.session.session_id[:8] in result
             assert "alpha" not in result.split("Live peer sessions:")[1], "self is never listed"
 
-            # Empty registry says so explicitly instead of returning "".
+            # Unregistered from the in-process registry, B remains reachable
+            # through its bound socket and shows up as a remote peer.
             registry.unregister(app_b.session.session_id)
-            empty = await _extension(app_a).tools["list_agents"]()
-            assert "No other live sessions" in empty
+            result = await _extension(app_a).tools["list_agents"]()
+            assert app_b.session.session_id[:8] in result
+            assert "(remote)" in result
 
 
 @pytest.mark.asyncio
@@ -797,3 +799,102 @@ async def test_messaging_gate_defaults_on(monkeypatch: pytest.MonkeyPatch) -> No
     assert messaging_enabled() is True
     monkeypatch.setenv(MESSAGING_ENV_FLAG, "off")
     assert messaging_enabled() is False
+
+
+@pytest.mark.asyncio
+async def test_tool_discovers_and_delivers_to_socket_only_peers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bare socket server (another process's shape) is discoverable and messagable."""
+    import os
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.session.inbox import PeerSocketServer, messaging_dir
+
+    install_fake_agents(monkeypatch)
+    project = tmp_path / "project"
+    project.mkdir(exist_ok=True)
+    config = build_test_config(project)
+    state_root = _short_state_root()
+    store = SessionStore(state_root)
+    remote_session_id = "dddddddd-eeee-ffff-0000-111111111111"
+    # The other process's persisted record: what gives its socket a human name.
+    store.create(project, "code", {"model": "test"}, session_id=remote_session_id, title="remote-worker")
+    own_session = store.create(project, "code", config_summary(config), title="solo")
+    app = KolegaCodeApp(
+        project_path=project,
+        config=config,
+        mode="code",
+        store=store,
+        session=own_session,
+        inbox_registry=InboxRegistry(),
+    )
+
+    received: list[PeerMessage] = []
+
+    async def deliver(message: PeerMessage) -> str:
+        received.append(message)
+        return "accepted"
+
+    remote_server = PeerSocketServer(
+        directory=messaging_dir(state_root),
+        session_id=remote_session_id,
+        pid=os.getpid(),
+        describe_status=lambda: "busy",
+        deliver_message=deliver,
+    )
+
+    async with app.run_test():
+        await remote_server.start()
+        try:
+            result = await _extension(app).tools["list_agents"]()
+            assert "remote-worker" in result
+            assert "(remote)" in result
+            assert "busy" in result
+
+            receipt = await _extension(app).tools["send_message"](recipient="remote", text="hello across processes")
+            assert receipt.startswith("Message delivered to remote-worker")
+            assert len(received) == 1
+            assert received[0].text == "hello across processes"
+            assert received[0].sender_session_id == own_session.session_id
+        finally:
+            await remote_server.stop()
+
+
+@pytest.mark.asyncio
+async def test_send_message_to_unreachable_peer_is_an_explicit_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live-pid socket that never answers: listed unreachable; sends fail loudly."""
+    import os
+
+    from kolega_code.tools import ToolError
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    install_fake_agents(monkeypatch)
+    project = tmp_path / "project"
+    project.mkdir(exist_ok=True)
+    config = build_test_config(project)
+    state_root = _short_state_root()
+    store = SessionStore(state_root)
+    session = store.create(project, "code", config_summary(config), title="solo")
+    app = KolegaCodeApp(
+        project_path=project,
+        config=config,
+        mode="code",
+        store=store,
+        session=session,
+        inbox_registry=InboxRegistry(),
+    )
+
+    from kolega_code.session.inbox import messaging_dir, socket_path_for
+
+    directory = messaging_dir(state_root)
+    ghost = socket_path_for(directory, "eeeeeeee-ffff-0000-1111-222222222222", os.getpid())
+    ghost.write_bytes(b"")  # our own live pid, but nothing listens here
+
+    async with app.run_test():
+        send = _extension(app).tools["send_message"]
+        with pytest.raises(ToolError):
+            await send(recipient="eeeeeeee", text="anyone there?")
