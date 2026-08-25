@@ -149,6 +149,39 @@ def _coerce_compression_threshold(raw: object) -> Optional[float]:
     return None
 
 
+#: Policies for how inbound cross-session peer messages are handled. The default
+# ("auto") resolves per delivery using both sessions' permission modes; the
+# explicit values apply verbatim.
+CROSS_SESSION_INBOUND_POLICIES = ("auto", "accept", "hold", "refuse")
+DEFAULT_CROSS_SESSION_INBOUND = "auto"
+# How long a held peer message waits for an approval answer before expiring.
+DEFAULT_DIALOG_EXPIRY_SECONDS = 300.0
+
+
+def _coerce_cross_session_inbound(raw: object) -> Optional[str]:
+    """Normalize a stored inbound policy, dropping unrecognized values.
+
+    Tolerant of hand-edits like every sibling field: an unknown policy degrades
+    to None (the ``auto`` default applies downstream) instead of failing startup.
+    """
+    if raw is None:
+        return None
+    value = str(raw).strip().lower()
+    return value if value in CROSS_SESSION_INBOUND_POLICIES else None
+
+
+def _coerce_dialog_expiry(raw: object) -> Optional[float]:
+    """Normalize a stored hold-expiry duration in seconds; non-positive becomes None.
+
+    Tolerant of hand-edits: anything that is not a positive number becomes None
+    (the built-in default of 300s applies downstream). Note bool is a subclass
+    of int, so it must be rejected explicitly."""
+    if raw is None or isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    value = float(raw)
+    return value if value > 0 else None
+
+
 @dataclass
 class CliSettings:
     active_provider: Optional[str] = None
@@ -204,6 +237,13 @@ class CliSettings:
     # Additive optional field — absent in older files -> None -> the agent's
     # built-in default (95%).
     compression_threshold: Optional[float] = None
+    # How inbound cross-session peer messages are handled ("auto"/"accept"/"hold"/"refuse").
+    # Additive optional field — absent in older files -> None -> "auto" is applied
+    # downstream, resolved per delivery from both sessions' permission modes.
+    cross_session_inbound: Optional[str] = None
+    # Seconds a held peer message waits for an approval answer before expiring.
+    # Additive optional field — absent in older files -> None -> default 300s.
+    dialog_expiry: Optional[float] = None
     # Custom model endpoints keyed by endpoint id (provider value "custom:<id>").
     # Additive optional field — absent in older files -> empty mapping.
     custom_endpoints: dict[str, dict] = field(default_factory=dict)
@@ -257,6 +297,10 @@ class CliSettings:
             skills_enabled=data.get("skills_enabled"),
             # Additive optional field; absent in older files -> None (default 95%).
             compression_threshold=_coerce_compression_threshold(data.get("compression_threshold")),
+            # Additive optional fields; absent in older files -> None (defaults
+            # "auto" / 300s apply downstream).
+            cross_session_inbound=_coerce_cross_session_inbound(data.get("cross_session_inbound")),
+            dialog_expiry=_coerce_dialog_expiry(data.get("dialog_expiry")),
             # Additive optional field; absent in older files -> empty mapping.
             custom_endpoints=_coerce_custom_endpoints(data.get("custom_endpoints")),
         )
@@ -284,8 +328,18 @@ class CliSettings:
             "subagents_enabled": self.subagents_enabled,
             "skills_enabled": self.skills_enabled,
             "compression_threshold": self.compression_threshold,
+            "cross_session_inbound": self.cross_session_inbound,
+            "dialog_expiry": self.dialog_expiry,
             "custom_endpoints": self.custom_endpoints,
         }
+
+    def get_cross_session_inbound(self) -> str:
+        """The effective inbound policy: the saved one, or the ``auto`` default."""
+        return self.cross_session_inbound or DEFAULT_CROSS_SESSION_INBOUND
+
+    def get_dialog_expiry(self) -> float:
+        """The effective hold-expiry in seconds: the saved one, or the 300s default."""
+        return self.dialog_expiry if self.dialog_expiry is not None else DEFAULT_DIALOG_EXPIRY_SECONDS
 
     def get_api_key(self, provider: str) -> Optional[str]:
         return self.api_keys.get(provider)

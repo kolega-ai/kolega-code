@@ -481,6 +481,57 @@ def test_web_search_settings_absent_in_old_file_default_to_none() -> None:
     assert SETTINGS_SCHEMA_VERSION == 3
 
 
+def test_settings_store_round_trips_cross_session_messaging(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    store.save(CliSettings(cross_session_inbound="refuse", dialog_expiry=60.0))
+
+    loaded = store.load()
+    assert loaded.cross_session_inbound == "refuse"
+    assert loaded.dialog_expiry == 60.0
+    assert loaded.to_dict()["cross_session_inbound"] == "refuse"
+    assert loaded.to_dict()["dialog_expiry"] == 60.0
+
+    # Absent in older files -> None -> the built-in defaults apply downstream.
+    store.save(CliSettings())
+    reloaded = SettingsStore(tmp_path).load()
+    assert reloaded.cross_session_inbound is None
+    assert reloaded.dialog_expiry is None
+    assert reloaded.get_cross_session_inbound() == "auto"
+    assert reloaded.get_dialog_expiry() == 300.0
+
+
+@pytest.mark.parametrize("raw", ["ACCEPT", " Hold ", "refuse"])
+def test_valid_cross_session_inbound_loads_normalized(raw: str) -> None:
+    settings = CliSettings.from_dict({"schema_version": 3, "cross_session_inbound": raw})
+
+    assert settings.cross_session_inbound == raw.strip().lower()
+
+
+@pytest.mark.parametrize("raw", ["yolo", "", "accept-all", True, 5, ["hold"], {"policy": "hold"}, None])
+def test_invalid_cross_session_inbound_coerced_to_none(raw: object) -> None:
+    """Hand-edited settings must degrade to the default, never crash startup."""
+    settings = CliSettings.from_dict({"schema_version": 3, "cross_session_inbound": raw})
+
+    assert settings.cross_session_inbound is None
+    assert settings.get_cross_session_inbound() == "auto"
+
+
+@pytest.mark.parametrize("raw,expected", [(1, 1.0), (0.5, 0.5), (300, 300.0), (45.5, 45.5)])
+def test_valid_dialog_expiry_loads(raw: object, expected: float) -> None:
+    settings = CliSettings.from_dict({"schema_version": 3, "dialog_expiry": raw})
+
+    assert settings.dialog_expiry == expected
+    assert settings.get_dialog_expiry() == expected
+
+
+@pytest.mark.parametrize("raw", [0, -10, "300", True, [30], {"seconds": 30}])
+def test_invalid_dialog_expiry_coerced_to_none(raw: object) -> None:
+    settings = CliSettings.from_dict({"schema_version": 3, "dialog_expiry": raw})
+
+    assert settings.dialog_expiry is None
+    assert settings.get_dialog_expiry() == 300.0
+
+
 # ---------------------------------------------------------------------------
 # F1: LSP project trust round-trip
 # ---------------------------------------------------------------------------
