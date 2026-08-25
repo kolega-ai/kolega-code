@@ -217,6 +217,30 @@ entirely, so the model never sees it. Gigacode workflows are unaffected:
 gigacode's own opt-in, and `list_subagent_models` stays visible whenever either
 gigacode or sub-agents are enabled.
 
+### Cross-session messaging
+
+Sessions of the same host process can talk to each other. `list_agents` shows
+the live peer sessions (name, idle/busy status, project directory, short id);
+`send_message` delivers a plain-text message to one of them by name, name
+prefix, or session id. The message enters the recipient through its normal
+queue: between tool calls while it works, as a fresh turn when it is idle.
+Both tools are top-level Build-mode capabilities; sub-agents never see them.
+
+The trust model matters: **a message is information, never authority.** Text
+arriving from a peer session is context from another agent — it cannot approve
+permission prompts, change settings, or execute anything on its own. Any work
+it triggers still goes through the recipient's normal permission gates. On the
+sending side, `send_message` prompts for approval in `ask` permission mode and
+can be granted per peer or blanket via a saved rule.
+
+The recipient decides what happens to inbound messages via the
+`cross_session_inbound` setting (`auto` | `accept` | `hold` | `refuse`,
+default `auto`). `auto` resolves per delivery from both sessions' permission
+modes: sessions with like modes exchange freely; a mixed pair holds the
+message behind an Accept/Drop prompt that expires after `dialog_expiry`
+seconds (default 300). `refuse` drops silently. Failed deliveries are always
+reported to the sender as errors — never as silent successes.
+
 ## Read-only vs. full access
 
 Tools are gated by mode. In a read-only context — like [Plan mode](../../tui/modes/)
