@@ -21,7 +21,12 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 from kolega_code.events import KnownEventType
 from kolega_code.permissions import PermissionKind, PermissionMode
-from kolega_code.session.inbox import InboxRegistry, PeerMessage
+from kolega_code.session.inbox import (
+    MESSAGING_PROTOCOL_VERSION,
+    InboxRegistry,
+    PeerMessage,
+    send_over_socket,
+)
 
 from kolega_code.tools import ToolError
 
@@ -167,13 +172,38 @@ async def test_restore_to_composer_drops_peer_and_keeps_typed_messages(
 # ---------------------------------------------------------------------------
 
 
+#: State roots created by _two_apps; drained by the autouse fixture below.
+_SHORT_STATE_ROOTS: list[Path] = []
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_short_state_roots():
+    yield
+    import shutil
+
+    while _SHORT_STATE_ROOTS:
+        shutil.rmtree(_SHORT_STATE_ROOTS.pop(), ignore_errors=True)
+
+
+def _short_state_root() -> Path:
+    """Short root so real socket binds stay under the AF_UNIX limit."""
+    import tempfile
+
+    try:
+        root = Path(tempfile.mkdtemp(prefix="kolega-peer-", dir="/tmp"))
+    except OSError:
+        root = Path(tempfile.mkdtemp(prefix="kolega-peer-"))
+    _SHORT_STATE_ROOTS.append(root)
+    return root
+
+
 def _two_apps(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
     settings: CliSettings | None = None,
 ):
-    """Two mounted-able apps sharing one injected registry."""
+    """Two mounted-able apps sharing one injected registry and state dir."""
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -182,9 +212,10 @@ def _two_apps(
     project = tmp_path / "project"
     project.mkdir(exist_ok=True)
     config = build_test_config(project)
-    store = SessionStore(tmp_path / "state")
+    state_root = _short_state_root()
+    store = SessionStore(state_root)
     if settings is not None:
-        SettingsStore(tmp_path / "state").save(settings)
+        SettingsStore(state_root).save(settings)
     registry = InboxRegistry()
     session_a = store.create(project, "code", config_summary(config), title="alpha")
     session_b = store.create(project, "code", config_summary(config), title="beta")
@@ -669,3 +700,100 @@ async def test_send_message_approval_dialog_shows_recipient_and_preview(
             finally:
                 app_b._pending_approval = None
                 app_b._set_approval_actions_visible(False)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: cross-process transport — the TUI binds its inbox socket.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sessions_bind_owner_only_sockets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    from kolega_code.session.inbox import parse_socket_name
+
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
+
+    async with app_a.run_test():
+        async with app_b.run_test():
+            for app in (app_a, app_b):
+                assert app.messaging_socket_path is not None
+                assert app.messaging_socket_path.exists()
+                parsed = parse_socket_name(app.messaging_socket_path.name)
+                assert parsed is not None
+                session_id, pid = parsed
+                assert session_id == app.session.session_id
+                assert pid == os.getpid()
+
+            # The bound path is what child processes will see.
+            agent = app_a.agent
+            assert agent is not None
+            assert getattr(agent, "messaging_socket_path") == app_a.messaging_socket_path
+
+
+@pytest.mark.asyncio
+async def test_envelope_over_the_socket_lands_in_the_recipient_queue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A raw socket client (what another process would be) delivers into B."""
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
+
+    async with app_a.run_test():
+        async with app_b.run_test() as pilot_b:
+            assert app_b.messaging_socket_path is not None
+            response = await send_over_socket(
+                app_b.messaging_socket_path,
+                {
+                    "v": MESSAGING_PROTOCOL_VERSION,
+                    "kind": "message",
+                    "sender_id": app_a.session.session_id,
+                    "sender_title": "alpha",
+                    "sender_mode": "ask",
+                    "text": "over the wire",
+                },
+            )
+
+            assert response["ok"] is True
+            assert response["outcome"] == "accepted"
+
+            await _poll(
+                lambda: any(entry.kind == "peer_message" for entry in app_b.conversation_entries),
+                pilot_b,
+                description="the delivered peer turn to start",
+            )
+            await wait_for_turn_idle(app_b, pilot_b)
+            await pilot_b.pause(0.05)
+
+            store_events = FileSessionEventStore(app_b.store.journal(app_b.session.session_id))
+            recorded = await store_events.read(app_b.session.session_id, types={KnownEventType.PEER_MESSAGE_DELIVERED})
+            assert len(recorded) == 1
+
+
+@pytest.mark.asyncio
+async def test_feature_gate_disables_the_socket_transport(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.session.inbox import MESSAGING_ENV_FLAG, messaging_enabled
+
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
+    monkeypatch.setenv(MESSAGING_ENV_FLAG, "off")
+
+    assert messaging_enabled() is False
+
+    async with app_a.run_test():
+        async with app_b.run_test():
+            assert app_a.messaging_socket_path is None
+            agent = app_a.agent
+            assert agent is not None
+            assert getattr(agent, "messaging_socket_path") is None
+
+
+@pytest.mark.asyncio
+async def test_messaging_gate_defaults_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.session.inbox import MESSAGING_ENV_FLAG, messaging_enabled
+
+    monkeypatch.delenv(MESSAGING_ENV_FLAG, raising=False)
+    assert messaging_enabled() is True
+    monkeypatch.setenv(MESSAGING_ENV_FLAG, "ON")
+    assert messaging_enabled() is True
+    monkeypatch.setenv(MESSAGING_ENV_FLAG, "off")
+    assert messaging_enabled() is False

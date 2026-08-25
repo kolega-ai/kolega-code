@@ -1421,6 +1421,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 # and the terminal safety checker; the prompt extension above is what
                 # the model sees.
                 self.agent.scratchpad_dir = scratchpad_dir_for(self.project_path, self.session.session_id)
+            # Expose this session's messaging socket for child processes (terminal
+            # commands and hooks); None when the transport is unavailable.
+            self.agent.messaging_socket_path = self.messaging_socket_path
             # Mid-turn queue delivery: the running turn drains composer messages
             # queued while it works (main agent only; sub-agents never get this).
             self.agent.set_queued_input_provider(self._provide_queued_user_inputs)

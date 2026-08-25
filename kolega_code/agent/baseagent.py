@@ -395,6 +395,10 @@ class BaseAgent(LogMixin):
         # Sandbox/E2B hosts are unchanged, as are sub-agents, which inherit the
         # section and the resolved directory from their parent.
         self.scratchpad_dir: Optional[Path] = None
+        # This session's cross-process messaging socket, injected by the host
+        # after construction and exported to terminal commands/hooks. None when
+        # the transport is unavailable (feature off, bind failure, sandbox).
+        self.messaging_socket_path: Optional[Path] = None
         if not sub_agent and isinstance(self.filesystem, LocalFileSystem):
             from kolega_code.scratchpad import SCRATCHPAD_PROMPT_EXTENSION_ID, ensure_scratchpad_dir
 

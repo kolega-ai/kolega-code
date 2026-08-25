@@ -72,6 +72,7 @@ PEER_HOLD_ACCEPT_DESC = "Deliver it into this session"
 PEER_HOLD_DROP_DESC = "Discard it silently"
 PEER_MESSAGE_ACCEPTED = "Accepted the held peer message from {sender} — queued for delivery."
 PEER_MESSAGE_DROPPED = "Dropped the held peer message from {sender}."
+MESSAGING_SOCKET_UNAVAILABLE = "Peer messaging is in-process only: {reason}"
 
 # Turn status strip finals
 DONE_IN = "Done in {duration}"

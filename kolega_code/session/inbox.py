@@ -461,6 +461,19 @@ def parse_envelope(line: bytes | str | dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+#: Environment kill switch. ``KOLEGA_CODE_MESSAGING`` is read from the process
+#: environment (or an injected mapping for tests/hosts); any value other than
+#: ``off`` leaves messaging enabled. Unlike silent feature flags, the off state
+#: is surfaced wherever peers would be listed.
+MESSAGING_ENV_FLAG = "KOLEGA_CODE_MESSAGING"
+
+
+def messaging_enabled(env: Optional[Mapping[str, str]] = None) -> bool:
+    """Whether cross-session messaging is enabled for this process."""
+    source = env if env is not None else os.environ
+    return str(source.get(MESSAGING_ENV_FLAG, "")).strip().lower() != "off"
+
+
 class PeerSocketServer:
     """One session's inbound socket server.
 

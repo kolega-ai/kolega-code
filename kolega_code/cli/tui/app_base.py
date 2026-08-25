@@ -132,6 +132,10 @@ class KolegaAppBase(App):
         #: This session's entry point into the process-wide peer inbox
         #: (cross-session messaging). Shared by default; hosts may inject one.
         inbox_registry: InboxRegistry
+        #: Path of this session's bound messaging socket, or None when the
+        #: cross-process transport is unavailable.
+        messaging_socket_path: Path | None
+        _inbox_socket: object | None
         _hook_dispatcher: HookDispatcher | None
         _session_started: bool
         #: True once action_quit has saved the session; gates the post-quit

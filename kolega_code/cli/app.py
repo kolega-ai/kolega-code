@@ -44,6 +44,9 @@ from kolega_code.session.inbox import (
     InboxRegistration,
     InboxRegistry,
     PeerMessage,
+    PeerSocketServer,
+    messaging_dir,
+    messaging_enabled,
     provenance_preamble,
     resolve_inbound_decision,
 )
@@ -266,6 +269,10 @@ class KolegaCodeApp(
         # process-wide peer inbox. Hosts running isolated fleets inject their
         # own registry; the shared default serves the ordinary CLI.
         self.inbox_registry = inbox_registry if inbox_registry is not None else SHARED_INBOX_REGISTRY
+        # Phase 2: this session's cross-process socket. Bound on mount when the
+        # feature is enabled; None means in-process-only.
+        self._inbox_socket: Optional[PeerSocketServer] = None
+        self.messaging_socket_path: Optional[Path] = None
         self._hook_dispatcher: Optional[HookDispatcher] = None
         self._session_started = False
         #: Set when action_quit saves the session cleanly; main.py prints the
@@ -517,6 +524,39 @@ class KolegaCodeApp(
     def _unregister_from_inbox(self) -> None:
         self.inbox_registry.unregister(self.session.session_id)
 
+    async def _start_inbox_socket(self) -> None:
+        """Bind this session's cross-process inbox socket.
+
+        Never breaks startup: a socket that cannot bind (feature gate off,
+        unwritable state dir, path-length limits) degrades to in-process-only
+        messaging with a notice, not a failed launch.
+        """
+        if not messaging_enabled():
+            self.messaging_socket_path = None
+            return
+        try:
+            self._inbox_socket = PeerSocketServer(
+                directory=messaging_dir(self.store.root),
+                session_id=self.session.session_id,
+                pid=os.getpid(),
+                describe_status=lambda: "busy" if (self._turn_active or self.agent_worker is not None) else "idle",
+                deliver_message=self._deliver_peer_message,
+            )
+            self.messaging_socket_path = await self._inbox_socket.start()
+        except Exception as exc:  # noqa: BLE001 — degraded transport beats a dead TUI
+            self._inbox_socket = None
+            self.messaging_socket_path = None
+            self._log_status(messages.MESSAGING_SOCKET_UNAVAILABLE.format(reason=str(exc)[:200]), "info")
+
+    async def _stop_inbox_socket(self) -> None:
+        server, self._inbox_socket = self._inbox_socket, None
+        self.messaging_socket_path = None
+        if server is not None:
+            try:
+                await server.stop()
+            except Exception:  # noqa: BLE001 — shutdown must always complete
+                pass
+
     def _enqueue_peer_message(self, message: PeerMessage) -> None:
         """Queue a peer message on the recipient's own rhythm.
 
@@ -608,6 +648,7 @@ class KolegaCodeApp(
     async def on_mount(self) -> None:
         self.settings = self.settings_store.load()
         self._register_with_inbox()
+        await self._start_inbox_socket()
         self._restore_prompt_history()
         # Attach usage persistence before any turn can run: the sink journals
         # every ledger-settled non-history response, and its start marker must
@@ -2144,7 +2185,19 @@ class KolegaCodeApp(
             self._share_server.request_stop()
             self._share_server = None
         # Same backstop for the peer inbox: a dead session must not stay
-        # discoverable by its siblings.
+        # discoverable by its siblings. The async stop runs on the loop; the
+        # immediate unlink stops new connections even if the loop exits first.
+        if self._inbox_socket is not None:
+            try:
+                asyncio.get_running_loop().create_task(self._stop_inbox_socket())
+            except RuntimeError:
+                pass
+            try:
+                self._inbox_socket.path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            self._inbox_socket = None
+            self.messaging_socket_path = None
         self._unregister_from_inbox()
         self._close_memory_manager()
 
@@ -2198,6 +2251,7 @@ class KolegaCodeApp(
                 if self._usage_sink is not None:
                     await self._usage_sink.aclose()
             finally:
+                await self._stop_inbox_socket()
                 self._unregister_from_inbox()
                 self._close_memory_manager()
                 self.exit()
