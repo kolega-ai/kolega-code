@@ -362,3 +362,134 @@ async def test_execute_single_tool_denies_gated_tool_before_dispatch(tmp_path, a
     assert result.is_error is True
     assert "Permission denied" in result.content
     handler.assert_not_awaited()
+
+
+def test_send_message_permission_is_gated_as_message():
+    request = permission_request_for_tool(
+        "send_message",
+        {"recipient": "deploy-bot", "text": "Please rerun the nightly job\n\nthanks"},
+    )
+
+    assert request is not None
+    assert request.kind == PermissionKind.MESSAGE
+    assert request.summary == "to deploy-bot: Please rerun the nightly job"
+
+
+def test_message_permission_summary_truncates_to_first_line():
+    request = permission_request_for_tool("send_message", {"recipient": "p", "text": "x" * 200 + "\nsecond line"})
+
+    assert request is not None
+    line = request.summary.split("\n")[0]
+    assert len(request.summary) < 100
+    assert "second line" not in request.summary
+    assert line.startswith("to p: ")
+    assert request.summary.endswith("...")
+
+
+def test_message_permission_without_recipient_still_renders():
+    request = permission_request_for_tool("send_message", {"recipient": "", "text": ""})
+
+    assert request is not None
+    assert request.summary == ""
+    assert request.kind == PermissionKind.MESSAGE
+
+
+def test_message_tool_rule_allows_any_recipient():
+    request = permission_request_for_tool("send_message", {"recipient": "deploy-bot", "text": "hi"})
+    assert request is not None
+
+    rule = PermissionRule.create(
+        kind=PermissionKind.MESSAGE, tool="send_message", match_type="tool", pattern="send_message"
+    )
+    assert rule.matches(request)
+    wildcard = PermissionRule.create(kind=PermissionKind.MESSAGE, tool="*", match_type="tool", pattern="*")
+    assert wildcard.matches(request)
+
+
+def test_message_recipient_rule_is_name_scoped():
+    request = permission_request_for_tool("send_message", {"recipient": "Deploy-Bot", "text": "hi"})
+    assert request is not None
+    other = permission_request_for_tool("send_message", {"recipient": "other", "text": "hi"})
+    assert other is not None
+
+    rule = PermissionRule.create(
+        kind=PermissionKind.MESSAGE, tool="send_message", match_type="recipient", pattern="deploy-bot"
+    )
+    assert rule.matches(request)  # case-insensitive recipient match
+    assert not rule.matches(other)
+
+
+def test_edit_rules_never_match_message_requests():
+    """A path/tool edit grant must not authorize sending messages."""
+    request = permission_request_for_tool("send_message", {"recipient": "p", "text": "hi"})
+    assert request is not None
+
+    rule = PermissionRule.create(kind=PermissionKind.EDIT, tool="*", match_type="tool", pattern="*")
+    assert not rule.matches(request)
+
+
+def test_allow_rule_options_for_message_include_recipient_and_blanket():
+    request = permission_request_for_tool("send_message", {"recipient": "deploy-bot", "text": "hi"})
+    assert request is not None
+
+    options = allow_rule_options(request)
+    rules = {(option.rule.match_type, option.rule.pattern) for option in options}
+
+    assert ("recipient", "deploy-bot") in rules
+    assert ("tool", "send_message") in rules
+
+
+def test_message_rule_options_without_recipient_offer_blanket_only():
+    request = permission_request_for_tool("send_message", {"text": "hi"})
+    assert request is not None
+
+    options = allow_rule_options(request)
+    assert [(option.rule.match_type, option.rule.pattern) for option in options] == [("tool", "send_message")]
+
+
+@pytest.mark.asyncio
+async def test_execute_single_tool_denies_message_before_dispatch(tmp_path, agent_config, monkeypatch):
+    """The MESSAGE kind rides the same ASK-mode gate as commands and edits."""
+    handler = AsyncMock(return_value="sent")
+
+    class TestTools:
+        def registry(self):
+            return ToolRegistry(
+                [
+                    Tool(
+                        name="send_message",
+                        definition=ToolDefinition(name="send_message", description="", parameters=[]),
+                        handler=handler,
+                    )
+                ]
+            )
+
+    async def deny(_request):
+        return PermissionDecision(allowed=False, reason="No.")
+
+    agent = BaseAgent(
+        project_path=tmp_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=AsyncMock(spec=AgentConnectionManager),
+        config=agent_config,
+        permission_mode=PermissionMode.ASK,
+        permission_callback=deny,
+    )
+    monkeypatch.setattr(agent, "tool_collection", TestTools())
+    agent.send_chat_message = AsyncMock()
+    agent.log_info = AsyncMock()
+    agent.log_warning = AsyncMock()
+
+    result = await agent.execute_single_tool(
+        ToolCall(
+            id="tool_2",
+            name="send_message",
+            input={"recipient": "peer", "text": "hello"},
+            execution_id="exec_2",
+        )
+    )
+
+    assert result.is_error is True
+    assert "Permission denied" in result.content
+    handler.assert_not_awaited()
