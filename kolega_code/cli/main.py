@@ -47,6 +47,9 @@ from kolega_code.agent.prompt_dump import (
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config
 from kolega_code.llm.exceptions import LLMBillingError, billing_error_message
 from kolega_code.llm.models import Message, TextBlock
+
+from .peer_messaging import start_headless_peer_inbox
+from .session_event_store import FileSessionEventStore
 from kolega_code.mcp.config import (
     _SERVER_ID_MAX_LENGTH,
     LoadedMCPConfig,
@@ -1849,6 +1852,20 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 ),
             )
 
+        # Cross-session messaging (phase 2): long-lived workers (--goal/--loop on
+        # a persisted session) accept inbound peer messages for their lifetime.
+        # A bare one-shot ask has nothing to receive into and binds nothing.
+        peer_inbox = await start_headless_peer_inbox(
+            store_root=store.root,
+            session_id=session.session_id,
+            agent=agent,
+            settings=settings,
+            permission_mode_value=permission_mode.value,
+            json_mode=args.json,
+            journal_factory=lambda: FileSessionEventStore(store.journal(session.session_id)),
+            enabled=(goal_state is not None or loop_state is not None) and (args.save or args.session),
+        )
+
         attachments, unresolved_mentions = build_file_attachments(prompt or "", project_path)
         for mention in unresolved_mentions:
             print(f"Note: @{mention} not found, sent as plain text", file=sys.stderr)
@@ -1898,10 +1915,26 @@ async def _run_ask(args: argparse.Namespace) -> int:
         # the moment they are journaled. Consuming the stream drives the turn
         # (and prints the answer text in plain mode).
         async def _consume_turn(stream) -> None:
-            async for chunk in stream:
-                response_chunks.append(chunk)
-                if not args.json and chunk.get("type") == "response" and chunk.get("content"):
-                    print(chunk["content"], end="" if not chunk.get("complete") else "\n")
+            if peer_inbox is not None:
+                peer_inbox.mark_busy()
+            try:
+                async for chunk in stream:
+                    response_chunks.append(chunk)
+                    if not args.json and chunk.get("type") == "response" and chunk.get("content"):
+                        print(chunk["content"], end="" if not chunk.get("complete") else "\n")
+            finally:
+                if peer_inbox is not None:
+                    peer_inbox.mark_idle()
+
+        async def _drain_pending_peer_turns() -> None:
+            """Deliver queued peer messages as their own turn while idle.
+
+            Mid-turn arrivals drain at tool boundaries via the queued-input
+            provider; this covers messages that landed between turns.
+            """
+            while peer_inbox is not None and peer_inbox.pending_texts():
+                joined = "\n\n".join(peer_inbox.pop_all())
+                await _consume_turn(agent.process_message_stream(joined))
 
         stream = (
             agent.process_message_stream(turn_prompt, attachments)
@@ -1921,6 +1954,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 json_mode=args.json,
                 consume_turn=_consume_turn,
                 drain_tokens=_drain_tokens,
+                drain_peer_turns=_drain_pending_peer_turns,
             )
 
         # --goal: evaluate and auto-continue until the goal is met or the cap is hit.
@@ -1932,6 +1966,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 json_mode=args.json,
                 consume_turn=_consume_turn,
                 drain_tokens=_drain_tokens,
+                drain_peer_turns=_drain_pending_peer_turns,
             )
 
         if args.save or args.session:
@@ -1970,6 +2005,8 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 await pump_task
             except asyncio.CancelledError:
                 pass
+        if peer_inbox is not None:
+            await peer_inbox.stop()
         while not manager.events.empty():
             event = manager.events.get_nowait()
             _print_ask_event(event, args.json)
@@ -2042,11 +2079,13 @@ async def _run_ask_loop_iterations(
     json_mode: bool,
     consume_turn,
     drain_tokens,
+    drain_peer_turns,
 ) -> None:
     """Re-run the loop prompt until the iteration cap or the expiry is hit."""
     drain_tokens(loop_state)
     loop_state.advance_after_completion()
     while loop_state.is_active:
+        await drain_peer_turns()
         await _sleep_until_loop_fire(loop_state, session_recorder, json_mode)
         if not loop_state.is_active:
             break
@@ -2079,6 +2118,7 @@ async def _run_ask_goal_iterations(
     json_mode: bool,
     consume_turn,
     drain_tokens,
+    drain_peer_turns,
 ) -> int:
     """Evaluate and auto-continue until the goal is met or the turn cap is hit.
 
@@ -2087,6 +2127,9 @@ async def _run_ask_goal_iterations(
     """
     drain_tokens(goal_state)
     while not goal_state.met and goal_state.turns_evaluated < goal_state.max_turns:
+        # Messages that arrived between turns run before the next verdict, so a
+        # peer's input can influence what the worker does, not just what it says.
+        await drain_peer_turns()
         verdict = await agent.evaluate_goal_condition(goal_state.condition)
         goal_state.turns_evaluated += 1
         goal_state.last_reason = verdict.reason
