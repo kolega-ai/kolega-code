@@ -44,10 +44,12 @@ from kolega_code.session.inbox import (
     InboxRegistration,
     InboxRegistry,
     PeerMessage,
+    PeerRepeatGuard,
     PeerSocketServer,
     messaging_dir,
     messaging_enabled,
     provenance_preamble,
+    recipient_queue_full,
     resolve_inbound_decision,
 )
 from kolega_code.session.recording import RecordingConnectionManager
@@ -273,6 +275,9 @@ class KolegaCodeApp(
         # feature is enabled; None means in-process-only.
         self._inbox_socket: Optional[PeerSocketServer] = None
         self.messaging_socket_path: Optional[Path] = None
+        # Loop protection: identical repeats from one sender inside the window
+        # are dropped before they can bounce two agents into a forever loop.
+        self._peer_repeat_guard = PeerRepeatGuard()
         self._hook_dispatcher: Optional[HookDispatcher] = None
         self._session_started = False
         #: Set when action_quit saves the session cleanly; main.py prints the
@@ -601,6 +606,12 @@ class KolegaCodeApp(
     async def _deliver_peer_message(self, message: PeerMessage) -> str:
         """Inbound hook registered with the inbox. The recipient decides."""
         await self._emit_peer_event(KnownEventType.PEER_MESSAGE_RECEIVED, message)
+        # Loop protection first: an identical repeat from one sender inside the
+        # window is dropped regardless of policy, so two agents cannot bounce
+        # the same message back and forth forever. Silent toward the sender.
+        if not self._peer_repeat_guard.allow(message.sender_session_id, message.text):
+            self._log_status(messages.PEER_REPEAT_DROPPED.format(sender=message.sender_title), "info")
+            return DeliveryOutcome.ACCEPTED.value
         policy = self.settings.get_cross_session_inbound()
         decision = resolve_inbound_decision(policy, self.permission_mode.value, message.sender_mode)
         if decision is DeliveryOutcome.REFUSED:
@@ -611,6 +622,9 @@ class KolegaCodeApp(
         if decision is DeliveryOutcome.HELD:
             self._schedule_hold_approval(message)
             return DeliveryOutcome.HELD.value
+        if recipient_queue_full(sum(1 for item in self._queued_messages if item.is_peer)):
+            self._log_status(messages.PEER_QUEUE_FULL.format(limit=50), "info")
+            return DeliveryOutcome.REFUSED.value
         self._enqueue_peer_message(message)
         await self._emit_peer_event(KnownEventType.PEER_MESSAGE_DELIVERED, message)
         return DeliveryOutcome.ACCEPTED.value

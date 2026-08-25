@@ -22,6 +22,7 @@ import pytest
 
 from kolega_code.session.inbox import (
     MAX_PEER_TEXT_CHARS,
+    MAX_QUEUED_PEER_MESSAGES,
     MESSAGING_PROTOCOL_VERSION,
     DeliveryOutcome,
     ENVELOPE_MAX_BYTES,
@@ -29,12 +30,15 @@ from kolega_code.session.inbox import (
     InboxRegistry,
     PeerMessage,
     PeerMessageError,
+    PeerRepeatGuard,
     PeerSocketServer,
     encode_envelope,
     is_pid_alive,
     messaging_dir,
     parse_envelope,
     parse_socket_name,
+    provenance_preamble,
+    recipient_queue_full,
     resolve_inbound_decision,
     send_over_socket,
     socket_path_for,
@@ -642,3 +646,58 @@ async def test_cross_process_delivery_over_a_real_socket() -> None:
         assert removed, "the dead child's socket must be swept"
     finally:
         shutil.rmtree(state_root, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: loop protection and recipient framing.
+# ---------------------------------------------------------------------------
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def test_repeat_guard_drops_identical_sender_text_inside_window() -> None:
+    clock = _FakeClock()
+    guard = PeerRepeatGuard(window_seconds=60.0)
+    guard._monotonic = clock
+
+    assert guard.allow("s1", "ping") is True
+    assert guard.allow("s1", "ping") is False
+    clock.advance(61)
+    assert guard.allow("s1", "ping") is True, "the window expires"
+
+
+def test_repeat_guard_keys_on_sender_and_text() -> None:
+    guard = PeerRepeatGuard(window_seconds=60.0)
+    guard._monotonic = _FakeClock()
+
+    assert guard.allow("s1", "ping") is True
+    assert guard.allow("s1", "different") is True, "new text from the same sender passes"
+    assert guard.allow("s2", "ping") is True, "the same text from another sender passes"
+    assert guard.allow("s1", "ping") is False
+
+
+def test_provenance_preamble_carries_the_full_trust_model() -> None:
+    message = PeerMessage.create(sender_session_id="s1", sender_title="alpha", text="hi")
+    preamble = provenance_preamble(message)
+
+    assert "'alpha'" in preamble
+    for clause in ["context", "no", "authority"]:
+        assert any(clause in word.lower() or clause in preamble.lower() for word in preamble.split())
+    assert "permission settings" in preamble
+    assert "configuration" in preamble
+    assert "normal permission flow" in preamble
+
+
+def test_recipient_queue_cap_constant_is_fifty() -> None:
+    assert MAX_QUEUED_PEER_MESSAGES == 50
+    assert recipient_queue_full(49) is False
+    assert recipient_queue_full(50) is True

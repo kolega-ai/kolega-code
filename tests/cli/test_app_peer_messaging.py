@@ -492,8 +492,14 @@ async def test_auto_matrix_holds_mixed_permission_modes_end_to_end(
 
             # Recipient switches to bypass mode; a fellow bypasser is accepted.
             app_b.permission_mode = PermissionMode.AUTO
+            accepted_msg = PeerMessage.create(
+                sender_session_id=app_a.session.session_id,
+                sender_title="alpha",
+                sender_mode="auto",
+                text="second note between equals",
+            )
             outcome = await registry.deliver(
-                app_b.session.session_id, mixed, sender_session_id=app_a.session.session_id
+                app_b.session.session_id, accepted_msg, sender_session_id=app_a.session.session_id
             )
             assert outcome == "accepted"
             await _poll(
@@ -1014,3 +1020,45 @@ def test_launch_name_flag_validates_loudly(tmp_path: Path) -> None:
         _apply_launch_name(store, session, "   ", persistable=True)
     with pytest.raises(SystemExit, match="--name"):
         _apply_launch_name(store, session, "x" * (PEER_NAME_MAX_CHARS + 1), persistable=True)
+
+
+@pytest.mark.asyncio
+async def test_identical_repeats_from_one_sender_are_dropped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two agents bouncing the same message must not self-loop forever."""
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
+    app_b._turn_active = True  # hold everything in the queue for inspection
+
+    async with app_a.run_test():
+        async with app_b.run_test():
+            deliver = app_b._deliver_peer_message
+            message = _message_from(app_a)
+
+            first = await deliver(message)
+            second = await deliver(_message_from(app_a))
+            third = await deliver(_message_from(app_a, text="a different note"))
+
+            assert first == "accepted"
+            assert second == "accepted", "silent drop still reports success to the sender"
+            assert third == "accepted"
+            texts = [queued.display_text for queued in app_b._queued_messages]
+            assert texts.count("hello from alpha") == 1, "the identical repeat was dropped"
+            assert "a different note" in texts
+
+
+@pytest.mark.asyncio
+async def test_recipient_queue_cap_bounds_accepted_peer_messages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kolega_code.session.inbox import MAX_QUEUED_PEER_MESSAGES
+
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
+    app_b._turn_active = True
+
+    async with app_a.run_test():
+        async with app_b.run_test():
+            deliver = app_b._deliver_peer_message
+            for index in range(MAX_QUEUED_PEER_MESSAGES + 5):
+                await deliver(_message_from(app_a, text=f"message number {index}"))
+
+            peer_queued = [queued for queued in app_b._queued_messages if queued.is_peer]
+            assert len(peer_queued) == MAX_QUEUED_PEER_MESSAGES

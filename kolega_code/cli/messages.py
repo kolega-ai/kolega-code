@@ -74,6 +74,8 @@ PEER_MESSAGE_ACCEPTED = "Accepted the held peer message from {sender} — queued
 PEER_MESSAGE_DROPPED = "Dropped the held peer message from {sender}."
 MESSAGING_SOCKET_UNAVAILABLE = "Peer messaging is in-process only: {reason}"
 PEER_RENAMED = "Renamed '{previous}' → '{name}'. Peers can address this session by its new name."
+PEER_REPEAT_DROPPED = "Dropped an identical repeat from {sender} (loop protection)."
+PEER_QUEUE_FULL = "Dropped an inbound peer message — the queue cap ({limit}) is full."
 
 # Turn status strip finals
 DONE_IN = "Done in {duration}"

@@ -21,12 +21,15 @@ from typing import Any, Optional
 
 from kolega_code.events import AgentEvent, KnownEventType
 from kolega_code.session.inbox import (
+    MAX_QUEUED_PEER_MESSAGES,
     DeliveryOutcome,
     PeerMessage,
+    PeerRepeatGuard,
     PeerSocketServer,
     messaging_dir,
     messaging_enabled,
     provenance_preamble,
+    recipient_queue_full,
     resolve_inbound_decision,
 )
 
@@ -54,6 +57,7 @@ class HeadlessPeerInbox:
         self._server: Optional[PeerSocketServer] = None
         self._queue: list[PeerMessage] = []
         self._turn_active = False
+        self._repeat_guard = PeerRepeatGuard()
 
     # -- Lifecycle ---------------------------------------------------------
 
@@ -135,6 +139,10 @@ class HeadlessPeerInbox:
         await self._record(KnownEventType.PEER_MESSAGE_RECEIVED, message)
         policy = self.settings.get_cross_session_inbound()
         decision = resolve_inbound_decision(policy, self.permission_mode_value, message.sender_mode)
+        if not self._repeat_guard.allow(message.sender_session_id, message.text):
+            # Loop protection: identical repeats inside the window are dropped
+            # silently toward the sender, regardless of policy.
+            return DeliveryOutcome.ACCEPTED.value
         if decision is not DeliveryOutcome.ACCEPTED:
             # No interactive surface exists here: a hold can never be answered,
             # so it degrades to an explicit drop rather than parking silently.
@@ -142,6 +150,14 @@ class HeadlessPeerInbox:
             if not self.json_mode:
                 print(
                     f"peers: dropped inbound message from {message.sender_title} (policy {policy})",
+                    file=sys.stderr,
+                )
+            return DeliveryOutcome.REFUSED.value
+        if recipient_queue_full(len(self._queue)):
+            if not self.json_mode:
+                print(
+                    f"peers: dropped inbound message from {message.sender_title} "
+                    f"(queue cap {MAX_QUEUED_PEER_MESSAGES} full)",
                     file=sys.stderr,
                 )
             return DeliveryOutcome.REFUSED.value
