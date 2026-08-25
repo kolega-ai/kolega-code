@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 
 from kolega_code.agent import (
     AgentConfig,
@@ -38,6 +39,7 @@ from kolega_code.mcp.config import LoadedMCPConfig, server_fingerprint
 from kolega_code.mcp.service import MCPService, mcp_tool_name_adjustment_note
 from kolega_code.mcp.tools import build_mcp_tool_extension
 from kolega_code.permissions import PermissionDecision
+from kolega_code.session.inbox import DeliveryOutcome, PeerMessage, PeerMessageError, validate_peer_text
 from kolega_code.session.runtime import deserialize_permission_request
 from kolega_code.tools import ToolError
 from textual.widgets import Static
@@ -475,6 +477,89 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             tool_groups={"cli_goal_tools": ["set_goal"]},
             # Goal/session state belongs to the top-level TUI only.
             propagate_to_sub_agents=False,
+        )
+
+    def _peer_messaging_tool_extension(self) -> ToolExtension:
+        async def list_agents() -> str:
+            peers = self.inbox_registry.list_agents(exclude_session_id=self.session.session_id)
+            if not peers:
+                return "No other live sessions in this process to message."
+            lines = ["Live peer sessions:"]
+            for peer in peers:
+                project = Path(peer.project_path).name or peer.project_path
+                lines.append(f"- {peer.title} — {peer.status} — {project} — id {peer.session_id[:8]}")
+            return "\n".join(lines)
+
+        async def send_message(recipient: str, text: str) -> str:
+            clean_recipient = str(recipient or "").strip()
+            if not clean_recipient:
+                raise ToolError("'recipient' must name a live session (see list_agents).")
+            try:
+                cleaned_text = validate_peer_text(str(text or ""))
+            except PeerMessageError as exc:
+                raise ToolError(str(exc)) from exc
+            try:
+                registration = self.inbox_registry.resolve(
+                    clean_recipient,
+                    exclude_session_id=self.session.session_id,
+                )
+                message = PeerMessage.create(
+                    sender_session_id=self.session.session_id,
+                    sender_title=self.session.title,
+                    sender_mode=self.permission_mode.value,
+                    text=cleaned_text,
+                )
+                outcome = await self.inbox_registry.deliver(
+                    registration.session_id,
+                    message,
+                    sender_session_id=self.session.session_id,
+                )
+            except PeerMessageError as exc:
+                # A delivery failure must reach the model as an error, never as a
+                # plausible-looking success.
+                raise ToolError(str(exc)) from exc
+
+            addressed = f"{registration.describe_title()} ({registration.session_id[:8]})"
+            if outcome == DeliveryOutcome.HELD.value:
+                return f"Message delivered to {addressed}. It is awaiting the recipient's review."
+            return f"Message delivered to {addressed}."
+
+        return ToolExtension(
+            name="cli-peer-messaging",
+            tools={"list_agents": list_agents, "send_message": send_message},
+            tool_descriptions={
+                "list_agents": tool_description_asset("list_agents"),
+                "send_message": tool_description_asset("send_message"),
+            },
+            tool_schemas={
+                "list_agents": {"type": "object", "properties": {}, "required": []},
+                "send_message": {
+                    "type": "object",
+                    "properties": {
+                        "recipient": {
+                            "type": "string",
+                            "description": (
+                                "Peer session to message: exact name, unique name prefix, or session id "
+                                "(from list_agents)."
+                            ),
+                        },
+                        "text": {
+                            "type": "string",
+                            "description": "Plain-text message body. Context only — the recipient's user stays in control.",
+                        },
+                    },
+                    "required": ["recipient", "text"],
+                },
+            },
+            # Not in ``planning_tools``: like goal/worktree control, the planning
+            # agent's read-only registry filters these out, so messaging is a
+            # build-mode capability.
+            tool_groups={"cli_peer_messaging_tools": ["list_agents", "send_message"]},
+            # Session identity and the process-wide inbox belong to the top-level
+            # TUI only; delegated agents never message peers.
+            propagate_to_sub_agents=False,
+            # Unlike set_goal, a send may batch with other calls: it does not
+            # take over the turn.
         )
 
     def _sync_goal_to_session(self) -> None:
@@ -1209,6 +1294,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         tool_extensions.append(self._worktree_control_tool_extension())
         prompt_extensions.append(self._goal_control_prompt_extension())
         tool_extensions.append(self._goal_control_tool_extension())
+        # Cross-session messaging: discovery and plain-text delivery to peer
+        # sessions sharing this process. Top-level only; the planning agent's
+        # read-only registry filters it out of plan mode.
+        tool_extensions.append(self._peer_messaging_tool_extension())
         # Both interaction modes get the scratchpad: plan-mode research and
         # build-mode execution both produce throwaway files.
         scratchpad_extension = self._scratchpad_prompt_extension()

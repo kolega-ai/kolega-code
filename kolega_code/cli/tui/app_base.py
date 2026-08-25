@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from .. import messages
     from ..config import CliConfigOverrides
     from kolega_code.session.control import ControlChannel
+    from kolega_code.session.inbox import InboxRegistry
     from kolega_code.session.recording import RecordingConnectionManager
     from kolega_code.session.runtime import SessionRuntime
     from kolega_code.web.hosting import ShareServer
@@ -128,6 +129,9 @@ class KolegaAppBase(App):
         #: Carries prompts to this client and answers back, the same way any
         #: other frontend would.
         control_channel: ControlChannel
+        #: This session's entry point into the process-wide peer inbox
+        #: (cross-session messaging). Shared by default; hosts may inject one.
+        inbox_registry: InboxRegistry
         _hook_dispatcher: HookDispatcher | None
         _session_started: bool
         #: True once action_quit has saved the session; gates the post-quit

@@ -20,8 +20,10 @@ from kolega_code.cli.session_event_store import FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 from kolega_code.events import KnownEventType
-from kolega_code.permissions import PermissionMode
+from kolega_code.permissions import PermissionKind, PermissionMode
 from kolega_code.session.inbox import InboxRegistry, PeerMessage
+
+from kolega_code.tools import ToolError
 
 from ._app_test_utils import (
     _build_sub_agent_test_app,
@@ -470,3 +472,200 @@ async def test_auto_matrix_holds_mixed_permission_modes_end_to_end(
             )
             await wait_for_turn_idle(app_b, pilot_b)
             await pilot_b.pause(0.05)
+
+
+# ---------------------------------------------------------------------------
+# Commit 6: the list_agents / send_message model-facing tools.
+# ---------------------------------------------------------------------------
+
+
+def _extension(app):
+    """Build the real tool extension; closures only need app attributes."""
+    return app._peer_messaging_tool_extension()
+
+
+@pytest.mark.asyncio
+async def test_peer_messaging_extension_reaches_agent_construction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_build_agent must hand the extension to every top-level agent generation."""
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        agent = app.agent
+        assert agent is not None
+        # FakeCoderAgent records its constructor kwargs, so the extension list
+        # _build_agent assembled is inspectable without building a real agent.
+        constructed_kwargs: dict = getattr(agent, "kwargs")
+        extensions = {ext.name: ext for ext in constructed_kwargs["tool_extensions"]}
+        assert "cli-peer-messaging" in extensions
+        extension = extensions["cli-peer-messaging"]
+        assert set(extension.tools) == {"list_agents", "send_message"}
+        assert extension.propagate_to_sub_agents is False
+        assert not extension.exclusive_tools
+        # Descriptions are declared data, loaded verbatim from the assets.
+        from kolega_code.agent.tool_definitions import tool_description_asset
+
+        assert extension.tool_descriptions["list_agents"] == tool_description_asset("list_agents")
+        assert extension.tool_descriptions["send_message"] == tool_description_asset("send_message")
+
+
+@pytest.mark.asyncio
+async def test_list_agents_tool_formats_live_peers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
+
+    async with app_a.run_test():
+        async with app_b.run_test():
+            result = await _extension(app_a).tools["list_agents"]()
+
+            assert "beta" in result
+            assert "idle" in result
+            assert "project" in result  # project basename
+            assert app_b.session.session_id[:8] in result
+            assert "alpha" not in result.split("Live peer sessions:")[1], "self is never listed"
+
+            # Empty registry says so explicitly instead of returning "".
+            registry.unregister(app_b.session.session_id)
+            empty = await _extension(app_a).tools["list_agents"]()
+            assert "No other live sessions" in empty
+
+
+@pytest.mark.asyncio
+async def test_send_message_tool_resolves_names_and_reports_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
+
+    async with app_a.run_test():
+        async with app_b.run_test():
+            result = await _extension(app_a).tools["send_message"](recipient="beta", text="ping from the tool")
+
+            assert result.startswith("Message delivered to beta (")
+            assert "awaiting" not in result
+            assert len(app_b._queued_messages) == 1
+            queued = app_b._queued_messages[0]
+            # The model text carries the preamble; the transcript keeps it raw.
+            assert "[Peer message from session 'alpha'" in queued.text
+            assert queued.text.endswith("ping from the tool")
+            assert queued.display_text == "ping from the tool"
+            assert queued.entry.content == "ping from the tool"
+
+            # Prefix addressing works too.
+            result = await _extension(app_a).tools["send_message"](recipient="bet", text="again")
+            assert result.startswith("Message delivered to beta (")
+
+
+@pytest.mark.asyncio
+async def test_send_message_tool_errors_are_explicit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.tools import ToolError
+
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
+
+    async with app_a.run_test():
+        async with app_b.run_test():
+            send = _extension(app_a).tools["send_message"]
+
+            with pytest.raises(ToolError, match="No reachable session"):
+                await send(recipient="ghost", text="hi")
+            with pytest.raises(ToolError, match="must name a live session"):
+                await send(recipient="  ", text="hi")
+            with pytest.raises(ToolError):
+                # Self-addressing: "alpha" resolves to nothing once self is excluded.
+                await send(recipient="alpha", text="note to self")
+            with pytest.raises(ToolError, match="must not be empty"):
+                await send(recipient="beta", text="   ")
+            with pytest.raises(ToolError, match="character limit"):
+                await send(recipient="beta", text="x" * 64_001)
+
+            assert app_b._queued_messages == [], "failed sends must not enqueue anything"
+
+
+@pytest.mark.asyncio
+async def test_send_message_tool_ambiguous_name_fails_loudly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two same-named peers make the name ambiguous for everyone else."""
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    install_fake_agents(monkeypatch)
+    project = tmp_path / "project"
+    project.mkdir(exist_ok=True)
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    registry = InboxRegistry()
+    session_a = store.create(project, "code", config_summary(config), title="observer")
+    session_b = store.create(project, "code", config_summary(config), title="worker")
+    session_c = store.create(project, "code", config_summary(config), title="worker")
+    common = {"mode": "code", "store": store, "inbox_registry": registry}
+    app_a = KolegaCodeApp(project_path=project, config=config, session=session_a, **common)
+    app_b = KolegaCodeApp(project_path=project, config=config, session=session_b, **common)
+    app_c = KolegaCodeApp(project_path=project, config=config, session=session_c, **common)
+
+    async with app_a.run_test():
+        async with app_b.run_test():
+            async with app_c.run_test():
+                with pytest.raises(ToolError, match="Multiple sessions are named"):
+                    await _extension(app_a).tools["send_message"](recipient="worker", text="hi")
+
+                # The id form still disambiguates.
+                result = await _extension(app_a).tools["send_message"](recipient=session_c.session_id[:8], text="hi")
+                assert f"Message delivered to worker ({session_c.session_id[:8]})" in result
+
+
+@pytest.mark.asyncio
+async def test_held_receipt_tells_the_sender_review_is_pending(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch, settings=CliSettings(cross_session_inbound="hold"))
+
+    async with app_a.run_test():
+        async with app_b.run_test() as pilot_b:
+            result = await _extension(app_a).tools["send_message"](recipient="beta", text="held please")
+
+            assert "awaiting the recipient's review" in result
+            await wait_for_question_prompt(app_b, pilot_b)
+            await app_b._answer_pending_question("Drop")
+            await _poll(lambda: app_b.control_channel.pending() == [], pilot_b, description="settle")
+
+
+@pytest.mark.asyncio
+async def test_send_message_approval_dialog_shows_recipient_and_preview(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.state import PendingApproval
+    from kolega_code.cli.tui.widgets import ActionList
+    from kolega_code.permissions import allow_rule_options, permission_request_for_tool
+
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
+
+    async with app_a.run_test():
+        async with app_b.run_test():
+            request = permission_request_for_tool(
+                "send_message",
+                {"recipient": "deploy-bot", "text": "Please rerun the nightly job"},
+            )
+            assert request is not None and request.kind == PermissionKind.MESSAGE
+
+            app_b._pending_approval = PendingApproval(
+                request=request,
+                request_id="req-peer",
+                rule_options=allow_rule_options(request),
+            )
+            app_b._set_approval_actions_visible(True)
+            try:
+                approval_actions = app_b.query_one("#approval_actions", ActionList)
+                prompts = [
+                    str(approval_actions.get_option(f"approval_option_{index}").prompt)
+                    for index in range(approval_actions.option_count)
+                ]
+                assert prompts[:2] == ["1. Allow once", "2. Deny"]
+                joined = "\n".join(prompts)
+                assert "Always allow messages to `deploy-bot`" in joined
+                assert "Always allow `send_message`" in joined
+
+                body = app_b._format_permission_content(request)
+                assert "deploy-bot" in body
+                assert "Please rerun the nightly job" in body
+            finally:
+                app_b._pending_approval = None
+                app_b._set_approval_actions_visible(False)
