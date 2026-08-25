@@ -8,16 +8,27 @@ lands back in the composer.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from kolega_code.agent.baseagent import QueuedUserInput
+from kolega_code.cli.config import config_summary
+from kolega_code.cli.session_event_store import FileSessionEventStore
+from kolega_code.cli.session_store import SessionStore
+from kolega_code.cli.settings import CliSettings, SettingsStore
+from kolega_code.events import KnownEventType
+from kolega_code.permissions import PermissionMode
+from kolega_code.session.inbox import InboxRegistry, PeerMessage
 
 from ._app_test_utils import (
     _build_sub_agent_test_app,
+    build_test_config,
+    install_fake_agents,
     renderable_text,
+    wait_for_question_prompt,
     wait_for_turn_idle,
 )
 
@@ -146,3 +157,316 @@ async def test_restore_to_composer_drops_peer_and_keeps_typed_messages(
         assert "my typed follow-up" in composer_text
         assert PREAMBLE not in composer_text, "the wrapped peer message never reaches the composer"
         assert app._queued_messages == []
+
+
+# ---------------------------------------------------------------------------
+# Commit 5: app wiring — registry registration, inbound policy, hold approval,
+# recorded PEER_MESSAGE_* events.
+# ---------------------------------------------------------------------------
+
+
+def _two_apps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    settings: CliSettings | None = None,
+):
+    """Two mounted-able apps sharing one injected registry."""
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    install_fake_agents(monkeypatch)
+    project = tmp_path / "project"
+    project.mkdir(exist_ok=True)
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    if settings is not None:
+        SettingsStore(tmp_path / "state").save(settings)
+    registry = InboxRegistry()
+    session_a = store.create(project, "code", config_summary(config), title="alpha")
+    session_b = store.create(project, "code", config_summary(config), title="beta")
+    common = {"mode": "code", "store": store, "inbox_registry": registry}
+    app_a = KolegaCodeApp(project_path=project, config=config, session=session_a, **common)
+    app_b = KolegaCodeApp(project_path=project, config=config, session=session_b, **common)
+    return registry, app_a, app_b
+
+
+def _message_from(app_a, text="hello from alpha"):
+    return PeerMessage.create(
+        sender_session_id=app_a.session.session_id,
+        sender_title="alpha",
+        text=text,
+    )
+
+
+async def _poll(predicate, pilot, *, timeout: float = 6.0, description: str):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for {description}")
+
+
+@pytest.mark.asyncio
+async def test_sessions_register_on_mount_and_are_visible_to_peers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
+
+    async with app_a.run_test():
+        async with app_b.run_test():
+            assert registry.is_registered(app_a.session.session_id)
+            assert registry.is_registered(app_b.session.session_id)
+
+            peers_seen_by_a = {
+                agent.session_id: agent for agent in registry.list_agents(exclude_session_id=app_a.session.session_id)
+            }
+            assert set(peers_seen_by_a) == {app_b.session.session_id}
+            assert peers_seen_by_a[app_b.session.session_id].title == "beta"
+            assert peers_seen_by_a[app_b.session.session_id].status == "idle"
+
+            # Live callables: status is read per query, so flipping B's state
+            # shows up on the next discovery, not in stale snapshots.
+            peers_snapshot = {
+                agent.session_id: agent for agent in registry.list_agents(exclude_session_id=app_a.session.session_id)
+            }
+            assert peers_snapshot[app_b.session.session_id].status == "idle"
+            app_b._turn_active = True
+            fresh = {
+                agent.session_id: agent for agent in registry.list_agents(exclude_session_id=app_a.session.session_id)
+            }
+            assert fresh[app_b.session.session_id].status == "busy"
+            app_b._turn_active = False
+
+    # Unregistration is the shutdown backstop; direct call keeps sessions private.
+    registry.unregister(app_b.session.session_id)
+    assert not registry.is_registered(app_b.session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_deliver_to_idle_recipient_starts_a_turn_and_records_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
+
+    async with app_a.run_test():
+        async with app_b.run_test() as pilot_b:
+            outcome = await registry.deliver(
+                app_b.session.session_id,
+                _message_from(app_a),
+                sender_session_id=app_a.session.session_id,
+            )
+            assert outcome == "accepted"
+
+            await _poll(
+                lambda: any(entry.kind == "peer_message" for entry in app_b.conversation_entries),
+                pilot_b,
+                description="the peer turn to start",
+            )
+            await wait_for_turn_idle(app_b, pilot_b)
+            await pilot_b.pause(0.05)
+
+            agent = app_b.agent
+            assert agent is not None
+            sent = getattr(agent, "messages")
+            assert len(sent) == 1
+            assert "[Peer message from session 'alpha'" in sent[0]
+            assert sent[0].endswith("hello from alpha")
+
+            (entry,) = [entry for entry in app_b.conversation_entries if entry.kind == "peer_message"]
+            assert entry.content == "hello from alpha"
+
+            store_events = FileSessionEventStore(app_b.store.journal(app_b.session.session_id))
+            recorded = await store_events.read(
+                app_b.session.session_id,
+                types={
+                    KnownEventType.PEER_MESSAGE_RECEIVED,
+                    KnownEventType.PEER_MESSAGE_DELIVERED,
+                },
+            )
+            assert [event.event_type for event in recorded] == [
+                KnownEventType.PEER_MESSAGE_RECEIVED,
+                KnownEventType.PEER_MESSAGE_DELIVERED,
+            ]
+            assert recorded[0].content["sender_id"] == app_a.session.session_id
+            assert recorded[0].content["text"] == "hello from alpha"
+
+
+@pytest.mark.asyncio
+async def test_deliver_while_busy_queues_and_starts_when_idle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
+
+    async with app_a.run_test():
+        async with app_b.run_test() as pilot_b:
+            app_b._turn_active = True  # simulate a running turn
+            outcome = await registry.deliver(
+                app_b.session.session_id,
+                _message_from(app_a),
+                sender_session_id=app_a.session.session_id,
+            )
+            assert outcome == "accepted"
+            assert len(app_b._queued_messages) == 1
+            assert "(from alpha)" in app_b._queued_messages_preview()
+
+            app_b._turn_active = False
+            app_b._schedule_maybe_start_queued_message()
+            await _poll(
+                lambda: any(entry.kind == "peer_message" for entry in app_b.conversation_entries),
+                pilot_b,
+                description="the queued peer turn to start",
+            )
+            await wait_for_turn_idle(app_b, pilot_b)
+            await pilot_b.pause(0.05)
+
+
+@pytest.mark.asyncio
+async def test_refuse_policy_drops_silently_without_erroring_the_sender(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch, settings=CliSettings(cross_session_inbound="refuse"))
+
+    async with app_a.run_test():
+        async with app_b.run_test() as pilot_b:
+            outcome = await registry.deliver(
+                app_b.session.session_id,
+                _message_from(app_a),
+                sender_session_id=app_a.session.session_id,
+            )
+
+            assert outcome == "refused"
+            assert app_b._queued_messages == []
+            await pilot_b.pause(0.05)
+            assert not any(entry.kind == "peer_message" for entry in app_b.conversation_entries)
+
+
+@pytest.mark.asyncio
+async def test_hold_policy_asks_and_acceptance_delivers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch, settings=CliSettings(cross_session_inbound="hold"))
+
+    async with app_a.run_test():
+        async with app_b.run_test() as pilot_b:
+            outcome = await registry.deliver(
+                app_b.session.session_id,
+                _message_from(app_a),
+                sender_session_id=app_a.session.session_id,
+            )
+            assert outcome == "held"
+            assert app_b._queued_messages == [], "a held message must not enter the queue before approval"
+
+            await wait_for_question_prompt(app_b, pilot_b)
+            assert app_b._pending_question is not None
+            assert "alpha" in app_b._pending_question.question
+
+            await app_b._answer_pending_question("Accept")
+
+            await _poll(
+                lambda: any(entry.kind == "peer_message" for entry in app_b.conversation_entries),
+                pilot_b,
+                description="the accepted peer turn to start",
+            )
+            await wait_for_turn_idle(app_b, pilot_b)
+            await pilot_b.pause(0.05)
+
+            store_events = FileSessionEventStore(app_b.store.journal(app_b.session.session_id))
+            delivered = await store_events.read(app_b.session.session_id, types={KnownEventType.PEER_MESSAGE_DELIVERED})
+            assert len(delivered) == 1
+
+
+@pytest.mark.asyncio
+async def test_hold_policy_drop_leaves_nothing_behind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch, settings=CliSettings(cross_session_inbound="hold"))
+
+    async with app_a.run_test():
+        async with app_b.run_test() as pilot_b:
+            outcome = await registry.deliver(
+                app_b.session.session_id,
+                _message_from(app_a),
+                sender_session_id=app_a.session.session_id,
+            )
+            assert outcome == "held"
+
+            await wait_for_question_prompt(app_b, pilot_b)
+            await app_b._answer_pending_question("Drop")
+
+            await _poll(
+                lambda: app_b.control_channel.pending() == [],
+                pilot_b,
+                description="the hold request to settle",
+            )
+            await pilot_b.pause(0.05)
+            assert app_b._queued_messages == []
+            assert not any(entry.kind == "peer_message" for entry in app_b.conversation_entries)
+
+
+@pytest.mark.asyncio
+async def test_hold_approval_expires_after_dialog_expiry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    registry, app_a, app_b = _two_apps(
+        tmp_path,
+        monkeypatch,
+        settings=CliSettings(cross_session_inbound="hold", dialog_expiry=0.3),
+    )
+
+    async with app_a.run_test():
+        async with app_b.run_test() as pilot_b:
+            outcome = await registry.deliver(
+                app_b.session.session_id,
+                _message_from(app_a),
+                sender_session_id=app_a.session.session_id,
+            )
+            assert outcome == "held"
+            await wait_for_question_prompt(app_b, pilot_b)
+
+            # Never answered: the short dialog expiry must settle it to Drop.
+            await _poll(
+                lambda: app_b.control_channel.pending() == [],
+                pilot_b,
+                timeout=5.0,
+                description="the hold approval to expire",
+            )
+            await _poll(
+                lambda: app_b._pending_question is None,
+                pilot_b,
+                description="the expired prompt to clear",
+            )
+            await pilot_b.pause(0.05)
+            assert app_b._queued_messages == []
+
+
+@pytest.mark.asyncio
+async def test_auto_matrix_holds_mixed_permission_modes_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ask recipient + bypassing sender holds; equals accept immediately."""
+    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
+
+    async with app_a.run_test():
+        async with app_b.run_test() as pilot_b:
+            mixed = PeerMessage.create(
+                sender_session_id=app_a.session.session_id,
+                sender_title="alpha",
+                sender_mode="auto",
+                text="from a bypassing sender",
+            )
+            outcome = await registry.deliver(
+                app_b.session.session_id, mixed, sender_session_id=app_a.session.session_id
+            )
+            assert outcome == "held"
+            await wait_for_question_prompt(app_b, pilot_b)
+            await app_b._answer_pending_question("Drop")
+            await _poll(lambda: app_b.control_channel.pending() == [], pilot_b, description="settle")
+
+            # Recipient switches to bypass mode; a fellow bypasser is accepted.
+            app_b.permission_mode = PermissionMode.AUTO
+            outcome = await registry.deliver(
+                app_b.session.session_id, mixed, sender_session_id=app_a.session.session_id
+            )
+            assert outcome == "accepted"
+            await _poll(
+                lambda: any(entry.kind == "peer_message" for entry in app_b.conversation_entries),
+                pilot_b,
+                description="the accepted peer turn to start",
+            )
+            await wait_for_turn_idle(app_b, pilot_b)
+            await pilot_b.pause(0.05)

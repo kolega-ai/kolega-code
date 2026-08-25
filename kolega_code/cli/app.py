@@ -36,8 +36,17 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option
 
-from kolega_code.agent import AgentConfig
+from kolega_code.agent import AgentConfig, AgentEvent, KnownEventType
 from kolega_code.extensions import ExtensionSelection, KolegaExtensionLoadError
+from kolega_code.session.inbox import (
+    SHARED_INBOX_REGISTRY,
+    DeliveryOutcome,
+    InboxRegistration,
+    InboxRegistry,
+    PeerMessage,
+    provenance_preamble,
+    resolve_inbound_decision,
+)
 from kolega_code.session.recording import RecordingConnectionManager
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
 from kolega_code.agent.prompt_dump import list_prompt_overrides
@@ -166,6 +175,7 @@ class KolegaCodeApp(
         startup_config_error: Optional[str] = None,
         extension_selection: Optional[ExtensionSelection] = None,
         resuming_session: bool = False,
+        inbox_registry: Optional[InboxRegistry] = None,
     ) -> None:
         super().__init__()
         self._terminal_control_filter = tui_terminal_display.TerminalControlFilter()
@@ -252,6 +262,10 @@ class KolegaCodeApp(
         # A single client holds control; viewers of a shared session may watch a
         # prompt appear but never answer it.
         self.control_channel.acquire(tui_constants.TUI_CLIENT_ID)
+        # Cross-session messaging (phase 1): this session's entry in the
+        # process-wide peer inbox. Hosts running isolated fleets inject their
+        # own registry; the shared default serves the ordinary CLI.
+        self.inbox_registry = inbox_registry if inbox_registry is not None else SHARED_INBOX_REGISTRY
         self._hook_dispatcher: Optional[HookDispatcher] = None
         self._session_started = False
         #: Set when action_quit saves the session cleanly; main.py prints the
@@ -482,8 +496,118 @@ class KolegaCodeApp(
             pass
         return header
 
+    # ------------------------------------------------------------------
+    # Cross-session messaging (phase 1): the in-process peer inbox.
+    # ------------------------------------------------------------------
+
+    def _register_with_inbox(self) -> None:
+        """Publish this session's live entry so sibling sessions can see and
+        message it. Callables, not snapshots: every query reads current state."""
+        self.inbox_registry.register(
+            InboxRegistration(
+                session_id=self.session.session_id,
+                describe_title=lambda: self.session.title,
+                describe_project_path=lambda: str(self.active_project_path),
+                describe_status=lambda: "busy" if (self._turn_active or self.agent_worker is not None) else "idle",
+                describe_permission_mode=lambda: self.permission_mode.value,
+                deliver_message=self._deliver_peer_message,
+            )
+        )
+
+    def _unregister_from_inbox(self) -> None:
+        self.inbox_registry.unregister(self.session.session_id)
+
+    def _enqueue_peer_message(self, message: PeerMessage) -> None:
+        """Queue a peer message on the recipient's own rhythm.
+
+        The transcript keeps the raw text; the model receives the provenance
+        preamble followed by the text. The existing queue machinery provides
+        the delivery guarantees — between tool calls during a turn, a fresh
+        turn when idle, never interrupting a running tool.
+        """
+        origin = {"kind": "peer", "session_id": message.sender_session_id, "title": message.sender_title}
+        model_text = f"{provenance_preamble(message)}\n\n{message.text}"
+        self._queue_user_message(message.text, origin=origin, model_text=model_text)
+        self._schedule_maybe_start_queued_message()
+
+    async def _emit_peer_event(self, event_type: str, message: PeerMessage) -> None:
+        """Record a peer-message lifecycle event on this session's stream.
+
+        Rides the same recording transport as everything else, so replays show
+        arrival and acceptance. Observability only: a transport failure must
+        never break delivery itself.
+        """
+        event = AgentEvent(
+            sender="peer-inbox",
+            event_type=event_type,
+            session_id=self.session.session_id,
+            content={
+                "message_id": message.message_id,
+                "sender_id": message.sender_session_id,
+                "sender_title": message.sender_title,
+                "text": message.text,
+                "reply_to": message.reply_to,
+            },
+        )
+        try:
+            await self.recording_connection_manager.broadcast_event(
+                event,
+                self.session.workspace_id,
+                self.session.thread_id,
+            )
+        except Exception:
+            pass
+
+    async def _deliver_peer_message(self, message: PeerMessage) -> str:
+        """Inbound hook registered with the inbox. The recipient decides."""
+        await self._emit_peer_event(KnownEventType.PEER_MESSAGE_RECEIVED, message)
+        policy = self.settings.get_cross_session_inbound()
+        decision = resolve_inbound_decision(policy, self.permission_mode.value, message.sender_mode)
+        if decision is DeliveryOutcome.REFUSED:
+            # Silent toward the sender (it still reports success), but the user
+            # sees why nothing happened.
+            self._log_status(messages.PEER_MESSAGE_REFUSED.format(sender=message.sender_title), "info")
+            return DeliveryOutcome.REFUSED.value
+        if decision is DeliveryOutcome.HELD:
+            self._schedule_hold_approval(message)
+            return DeliveryOutcome.HELD.value
+        self._enqueue_peer_message(message)
+        await self._emit_peer_event(KnownEventType.PEER_MESSAGE_DELIVERED, message)
+        return DeliveryOutcome.ACCEPTED.value
+
+    def _schedule_hold_approval(self, message: PeerMessage) -> None:
+        """Park a held message behind an Accept/Drop prompt that expires.
+
+        Rides the control channel's question flow, so expiry resolves to the
+        default (Drop) via the channel's timeout machinery — a held message can
+        never park silently forever.
+        """
+        expiry_seconds = self.settings.get_dialog_expiry()
+
+        async def ask() -> None:
+            response = await self.control_channel.request(
+                "question",
+                {
+                    "question": messages.PEER_HOLD_QUESTION.format(sender=message.sender_title),
+                    "options": ["Accept", "Drop"],
+                    "descriptions": [messages.PEER_HOLD_ACCEPT_DESC, messages.PEER_HOLD_DROP_DESC],
+                },
+                default={"answer": "Drop"},
+                timeout=expiry_seconds,
+            )
+            answered = str((response or {}).get("answer") or "").strip().lower()
+            if answered == "accept":
+                self._log_status(messages.PEER_MESSAGE_ACCEPTED.format(sender=message.sender_title), "info")
+                self._enqueue_peer_message(message)
+                await self._emit_peer_event(KnownEventType.PEER_MESSAGE_DELIVERED, message)
+            else:
+                self._log_status(messages.PEER_MESSAGE_DROPPED.format(sender=message.sender_title), "info")
+
+        self.run_worker(ask(), name="peer-hold-approval", group="peer-messaging")
+
     async def on_mount(self) -> None:
         self.settings = self.settings_store.load()
+        self._register_with_inbox()
         self._restore_prompt_history()
         # Attach usage persistence before any turn can run: the sink journals
         # every ledger-settled non-history response, and its start marker must
@@ -2019,6 +2143,9 @@ class KolegaCodeApp(
         if self._share_server is not None:
             self._share_server.request_stop()
             self._share_server = None
+        # Same backstop for the peer inbox: a dead session must not stay
+        # discoverable by its siblings.
+        self._unregister_from_inbox()
         self._close_memory_manager()
 
     def on_worker_state_changed(self, event) -> None:
@@ -2071,6 +2198,7 @@ class KolegaCodeApp(
                 if self._usage_sink is not None:
                     await self._usage_sink.aclose()
             finally:
+                self._unregister_from_inbox()
                 self._close_memory_manager()
                 self.exit()
 

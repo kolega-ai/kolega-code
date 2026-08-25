@@ -75,6 +75,12 @@ class KnownEventType:
     # left decision points absent from the recording entirely.
     CONTROL_REQUESTED = "control_requested"
     CONTROL_RESOLVED = "control_resolved"
+    # Cross-session messaging: a peer session's message arriving at this
+    # session's inbox, and that message being accepted into its delivery queue.
+    # Recorded so a replay shows both arrival and acceptance; unknown to older
+    # consumers, which treat unrecognized types as inert like any other.
+    PEER_MESSAGE_RECEIVED = "peer_message_received"
+    PEER_MESSAGE_DELIVERED = "peer_message_delivered"
 
 
 class ArtifactPurpose:

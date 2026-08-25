@@ -119,6 +119,7 @@ class ControlChannel:
         payload: dict[str, Any],
         *,
         default: dict[str, Any],
+        timeout: Optional[float] = None,
     ) -> dict[str, Any]:
         """Ask the controlling client a question and wait for its answer.
 
@@ -126,7 +127,12 @@ class ControlChannel:
         if the lease is released before an answer arrives. Never raises for those
         cases: a prompt that cannot be answered has to resolve one way or another,
         and the caller decides which way by choosing the default.
+
+        ``timeout`` overrides the channel default for this one request — a
+        short-lived approval (a held peer message, say) must not inherit the
+        generous turn-prompt budget.
         """
+        effective_timeout = self.timeout if timeout is None else timeout
         request = ControlRequest(
             request_id=str(uuid.uuid4()),
             kind=kind,
@@ -145,7 +151,7 @@ class ControlChannel:
             return await request.future
 
         try:
-            return await asyncio.wait_for(asyncio.shield(request.future), timeout=self.timeout)
+            return await asyncio.wait_for(asyncio.shield(request.future), timeout=effective_timeout)
         except asyncio.TimeoutError:
             self._settle(request, default, reason="timeout")
             return default

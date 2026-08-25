@@ -66,6 +66,12 @@ PEER_MESSAGE_QUEUED = (
     "Peer message from {sender} queued. It will be delivered at the next tool boundary, or when this turn finishes."
 )
 PEER_MESSAGES_DROPPED_ON_RESTORE = "{count} peer message(s) dropped — they are not restored into the composer."
+PEER_MESSAGE_REFUSED = "Refused an inbound peer message from {sender} (cross_session_inbound=refuse)."
+PEER_HOLD_QUESTION = "Accept a peer message from {sender}?"
+PEER_HOLD_ACCEPT_DESC = "Deliver it into this session"
+PEER_HOLD_DROP_DESC = "Discard it silently"
+PEER_MESSAGE_ACCEPTED = "Accepted the held peer message from {sender} — queued for delivery."
+PEER_MESSAGE_DROPPED = "Dropped the held peer message from {sender}."
 
 # Turn status strip finals
 DONE_IN = "Done in {duration}"
