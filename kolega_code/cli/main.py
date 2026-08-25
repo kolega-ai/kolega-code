@@ -1704,6 +1704,9 @@ async def _run_ask(args: argparse.Namespace) -> int:
     # and records the run terminal.
     usage_sink: Optional[SessionUsageSink] = None
     pump_task: Optional[asyncio.Task] = None
+    # Initialized before the try so the finally can stop the inbox even when an
+    # earlier failure skipped its setup.
+    peer_inbox = None
     usage_ledger = UsageLedger()
     response_chunks: list[dict] = []
     exit_code = 0
