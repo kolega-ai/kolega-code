@@ -15,23 +15,20 @@ The registry is deliberately boring plumbing:
   so a registration describes any kind of session.
 - **Delivery failures are errors.** An unknown or self-targeted recipient raises
   instead of reporting success — a send that silently went nowhere is the worst
-  kind of lie. What the recipient's inbound *policy* does with an accepted-for-
-  review or dropped message is the recipient's business and reported honestly
-  (:class:`DeliveryOutcome`) without becoming an error.
-- **The recipient decides.** ``deliver`` hands the message to the owning
-  session's callback; whether it lands in the queue immediately, waits behind an
-  approval, or is dropped is resolved there, using both sessions' permission
-  modes (:func:`resolve_inbound_decision`). A message must not ride a permissive
-  sender's authority into a cautious recipient.
+  kind of lie. A policy refusal (queue full) is not an error: the recipient
+  decided, and the outcome says so.
+- **Arrival is unconditional.** A peer message is queued exactly like input
+  typed by the local user — same queue, same delivery rhythm. The only gates
+  are loop protection: identical repeats inside a short window are suppressed,
+  and the queue holds a bounded number of messages.
 
 The bottom half of this module is the same-machine cross-process transport
 (phase 2): every live session binds one owner-only Unix socket under the state
-directory, named ``<session_id>.<pid>.sock``. Discovery is filesystem
+directory, named ``<encoded-session-id>.<pid>.sock``. Discovery is filesystem
 visibility plus a liveness probe — two sessions can reach each other only when
 they see the same state dir — and the wire protocol is one JSON line in, one
-JSON line out. Delivery over a socket lands in the recipient's ordinary inbox,
-so the Phase 1 policy pipeline (accept/hold/refuse) applies unchanged to remote
-senders.
+JSON line out. Delivery over a socket lands in the recipient's ordinary inbox
+exactly as an in-process send does.
 """
 
 from __future__ import annotations
@@ -69,9 +66,7 @@ class DeliveryOutcome(str, Enum):
 
     #: Accepted straight into the recipient's queue.
     ACCEPTED = "accepted"
-    #: Parked pending an approval answer at the recipient.
-    HELD = "held"
-    #: Dropped by the recipient's inbound policy.
+    #: Not queued: the queue cap was full.
     REFUSED = "refused"
 
 
@@ -82,10 +77,6 @@ class PeerMessage:
     message_id: str
     sender_session_id: str
     sender_title: str
-    #: Sender's permission mode ("ask"/"auto") at send time — the recipient's
-    #: inbound policy needs it to apply the asymmetry rule without trusting
-    #: anything but the transport it arrived on.
-    sender_mode: str = "ask"
     text: str = ""
     reply_to: Optional[str] = None
     created_at: str = field(default_factory=utc_now_iso)
@@ -97,14 +88,12 @@ class PeerMessage:
         sender_session_id: str,
         sender_title: str,
         text: str,
-        sender_mode: str = "ask",
         reply_to: Optional[str] = None,
     ) -> "PeerMessage":
         return cls(
             message_id=uuid.uuid4().hex,
             sender_session_id=sender_session_id,
             sender_title=sender_title,
-            sender_mode=sender_mode,
             text=text,
             reply_to=reply_to,
         )
@@ -217,29 +206,6 @@ def resolve_recipient(
     entries = [(reg.describe_title(), sid) for sid, reg in registrations.items() if sid != exclude_session_id]
     _title, session_id = _resolve_addressing(entries, query)
     return registrations[session_id]
-
-
-def resolve_inbound_decision(policy: str, recipient_mode: str, sender_mode: str) -> DeliveryOutcome:
-    """Resolve the recipient-side inbound decision for one message.
-
-    Explicit policies apply verbatim. The ``auto`` default is asymmetric by
-    permission mode, so a message can never ride a permissive sender's authority
-    into a cautious recipient: like-minded pairs receive freely, mixed pairs hold
-    for approval. Unknown policies degrade to ``auto``.
-    """
-    normalized = (policy or "").strip().lower()
-    if normalized == "accept":
-        return DeliveryOutcome.ACCEPTED
-    if normalized == "hold":
-        return DeliveryOutcome.HELD
-    if normalized == "refuse":
-        return DeliveryOutcome.REFUSED
-    # "auto" (and anything unrecognized): accept between equals, otherwise hold.
-    recipient_bypasses = recipient_mode == "auto"
-    sender_bypasses = sender_mode == "auto"
-    if recipient_bypasses == sender_bypasses:
-        return DeliveryOutcome.ACCEPTED
-    return DeliveryOutcome.HELD
 
 
 def validate_peer_text(text: str) -> str:
@@ -533,7 +499,6 @@ def parse_envelope(line: bytes | str | dict[str, Any]) -> dict[str, Any]:
         "sender_id": sender_id.strip(),
         "sender_title": str(payload.get("sender_title") or sender_id),
         "sender_project": str(payload.get("sender_project") or ""),
-        "sender_mode": str(payload.get("sender_mode") or "ask"),
         "text": text,
         "reply_to": reply_to if isinstance(reply_to, str) and reply_to else None,
     }
@@ -632,7 +597,6 @@ class PeerSocketServer:
                     message = PeerMessage.create(
                         sender_session_id=envelope["sender_id"],
                         sender_title=envelope["sender_title"],
-                        sender_mode=envelope["sender_mode"],
                         text=envelope["text"],
                         reply_to=envelope["reply_to"],
                     )
@@ -834,7 +798,6 @@ async def deliver_to_discovered_peer(
         "sender_id": message.sender_session_id,
         "sender_title": message.sender_title,
         "sender_project": sender_project,
-        "sender_mode": message.sender_mode,
         "text": message.text,
         "reply_to": message.reply_to,
     }
@@ -892,9 +855,6 @@ class InboundNoticeKind(str, Enum):
     #: An identical repeat inside the window (loop protection). The sender
     #: still sees success.
     REPEAT_DROPPED = "repeat_dropped"
-    #: The recipient's policy refused it — or a hold degraded to a drop on a
-    #: host with no interactive surface.
-    POLICY_DROPPED = "policy_dropped"
     #: The queue cap is full.
     QUEUE_FULL = "queue_full"
 
@@ -903,60 +863,37 @@ class InboundNoticeKind(str, Enum):
 class InboundNotice:
     kind: InboundNoticeKind
     message: PeerMessage
-    #: The effective inbound policy, for POLICY_DROPPED diagnostics.
-    policy: str = ""
 
 
 async def deliver_inbound(
     message: PeerMessage,
     *,
-    policy: str,
-    recipient_mode: str,
     repeat_guard: PeerRepeatGuard,
     queued_count: Callable[[], int],
     record_event: Callable[[str], Awaitable[None]],
     enqueue: Callable[[PeerMessage], None],
     notify: Callable[[InboundNotice], None] = lambda _notice: None,
-    hold_for_review: Optional[Callable[[PeerMessage], None]] = None,
 ) -> str:
     """The one inbound ladder every host shares.
 
-    Order matters and is identical everywhere: journal the arrival, suppress
-    verbatim repeats for loop protection, resolve the inbound policy from both
-    sessions' modes, then either park it for review, refuse it, or enqueue it
-    and journal the delivery. Hosts supply only the mechanics that genuinely
-    differ — where events go, how messages queue, how notices render, and
-    whether a held message can be asked about interactively (``None`` means a
-    hold degrades to an explicit drop).
+    Arrival is unconditional; loop protection is the only gate. Order matters
+    and is identical everywhere: journal the arrival, suppress verbatim repeats
+    from one sender inside the window, refuse when the queue is full, otherwise
+    enqueue and journal the delivery. Hosts supply only the mechanics that
+    differ — where events go, how messages queue, how notices render.
 
     Returns the :class:`DeliveryOutcome` value reported to the sender.
     """
     await record_event(KnownEventType.PEER_MESSAGE_RECEIVED)
 
-    def queue_full() -> bool:
-        return recipient_queue_full(queued_count())
-
-    # Loop protection before policy: an identical repeat from one sender inside
-    # the window is dropped regardless of policy, so two agents cannot bounce
-    # the same message back and forth forever. Silent toward the sender.
+    # Loop protection first: an identical repeat from one sender inside the
+    # window is dropped silently toward the sender, so two agents cannot bounce
+    # the same message back and forth forever.
     if not repeat_guard.allow(message.sender_session_id, message.text):
         notify(InboundNotice(InboundNoticeKind.REPEAT_DROPPED, message))
         return DeliveryOutcome.ACCEPTED.value
 
-    decision = resolve_inbound_decision(policy, recipient_mode, message.sender_mode)
-    if decision is DeliveryOutcome.REFUSED:
-        notify(InboundNotice(InboundNoticeKind.POLICY_DROPPED, message, policy=policy))
-        return DeliveryOutcome.REFUSED.value
-    if decision is DeliveryOutcome.HELD:
-        if hold_for_review is not None:
-            hold_for_review(message)
-            return DeliveryOutcome.HELD.value
-        # No interactive surface exists here: a hold can never be answered, so
-        # it degrades to an explicit drop rather than parking silently. The
-        # sender still sees success (reference silent-drop parity).
-        notify(InboundNotice(InboundNoticeKind.POLICY_DROPPED, message, policy=policy))
-        return DeliveryOutcome.REFUSED.value
-    if queue_full():
+    if recipient_queue_full(queued_count()):
         notify(InboundNotice(InboundNoticeKind.QUEUE_FULL, message))
         return DeliveryOutcome.REFUSED.value
     enqueue(message)

@@ -41,15 +41,11 @@ class HeadlessPeerInbox:
         *,
         store_root: Path,
         session_id: str,
-        settings: Any,
-        permission_mode_value: str,
         json_mode: bool,
         journal_factory: Any,
     ) -> None:
         self.store_root = store_root
         self.session_id = session_id
-        self.settings = settings
-        self.permission_mode_value = permission_mode_value
         self.json_mode = json_mode
         #: Zero-arg callable returning the session's FileSessionEventStore.
         self.journal_factory = journal_factory
@@ -122,27 +118,20 @@ class HeadlessPeerInbox:
     # -- Inbound -----------------------------------------------------------
 
     async def _deliver(self, message: PeerMessage) -> str:
-        """Inbound hook shared with the socket transport. No surface, no holds.
+        """Inbound hook shared with the socket transport.
 
-        All sequencing lives in :func:`deliver_inbound`; a hold degrades to an
-        explicit drop here because nobody can answer one.
+        All sequencing lives in :func:`deliver_inbound`; this host only says
+        where events go, how messages queue, and how notices render.
         """
 
         def notify(notice: InboundNotice) -> None:
             if notice.kind is InboundNoticeKind.REPEAT_DROPPED:
                 return  # loop protection is silent toward the sender
             sender = notice.message.sender_title
-            if notice.kind is InboundNoticeKind.POLICY_DROPPED:
-                self._notice(f"peers: dropped inbound message from {sender} (policy {notice.policy})")
-            else:
-                self._notice(
-                    f"peers: dropped inbound message from {sender} (queue cap {MAX_QUEUED_PEER_MESSAGES} full)"
-                )
+            self._notice(f"peers: dropped inbound message from {sender} (queue cap {MAX_QUEUED_PEER_MESSAGES} full)")
 
         return await deliver_inbound(
             message,
-            policy=self.settings.get_cross_session_inbound(),
-            recipient_mode=self.permission_mode_value,
             repeat_guard=self._repeat_guard,
             queued_count=lambda: len(self._queue),
             record_event=lambda event_type: self._record(event_type, message),
@@ -170,8 +159,6 @@ async def start_headless_peer_inbox(
     store_root: Path,
     session_id: str,
     agent: Any,
-    settings: Any,
-    permission_mode_value: str,
     json_mode: bool,
     journal_factory: Any,
     enabled: bool,
@@ -188,8 +175,6 @@ async def start_headless_peer_inbox(
     inbox = HeadlessPeerInbox(
         store_root=store_root,
         session_id=session_id,
-        settings=settings,
-        permission_mode_value=permission_mode_value,
         json_mode=json_mode,
         journal_factory=journal_factory,
     )

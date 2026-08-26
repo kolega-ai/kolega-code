@@ -20,7 +20,7 @@ from kolega_code.cli.session_event_store import FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 from kolega_code.events import KnownEventType
-from kolega_code.permissions import PermissionKind, PermissionMode
+from kolega_code.permissions import PermissionKind
 from kolega_code.session.inbox import (
     MAX_PEER_TEXT_BYTES,
     MESSAGING_PROTOCOL_VERSION,
@@ -36,7 +36,6 @@ from ._app_test_utils import (
     build_test_config,
     install_fake_agents,
     renderable_text,
-    wait_for_question_prompt,
     wait_for_turn_idle,
 )
 
@@ -355,163 +354,6 @@ async def test_deliver_while_busy_queues_and_starts_when_idle(tmp_path: Path, mo
             await pilot_b.pause(0.05)
 
 
-@pytest.mark.asyncio
-async def test_refuse_policy_drops_silently_without_erroring_the_sender(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch, settings=CliSettings(cross_session_inbound="refuse"))
-
-    async with app_a.run_test():
-        async with app_b.run_test() as pilot_b:
-            outcome = await registry.deliver(
-                app_b.session.session_id,
-                _message_from(app_a),
-                sender_session_id=app_a.session.session_id,
-            )
-
-            assert outcome == "refused"
-            assert app_b._queued_messages == []
-            await pilot_b.pause(0.05)
-            assert not any(entry.kind == "peer_message" for entry in app_b.conversation_entries)
-
-
-@pytest.mark.asyncio
-async def test_hold_policy_asks_and_acceptance_delivers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch, settings=CliSettings(cross_session_inbound="hold"))
-
-    async with app_a.run_test():
-        async with app_b.run_test() as pilot_b:
-            outcome = await registry.deliver(
-                app_b.session.session_id,
-                _message_from(app_a),
-                sender_session_id=app_a.session.session_id,
-            )
-            assert outcome == "held"
-            assert app_b._queued_messages == [], "a held message must not enter the queue before approval"
-
-            await wait_for_question_prompt(app_b, pilot_b)
-            assert app_b._pending_question is not None
-            assert "alpha" in app_b._pending_question.question
-
-            await app_b._answer_pending_question("Accept")
-
-            await _poll(
-                lambda: any(entry.kind == "peer_message" for entry in app_b.conversation_entries),
-                pilot_b,
-                description="the accepted peer turn to start",
-            )
-            await wait_for_turn_idle(app_b, pilot_b)
-            await pilot_b.pause(0.05)
-
-            store_events = FileSessionEventStore(app_b.store.journal(app_b.session.session_id))
-            delivered = await store_events.read(app_b.session.session_id, types={KnownEventType.PEER_MESSAGE_DELIVERED})
-            assert len(delivered) == 1
-
-
-@pytest.mark.asyncio
-async def test_hold_policy_drop_leaves_nothing_behind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch, settings=CliSettings(cross_session_inbound="hold"))
-
-    async with app_a.run_test():
-        async with app_b.run_test() as pilot_b:
-            outcome = await registry.deliver(
-                app_b.session.session_id,
-                _message_from(app_a),
-                sender_session_id=app_a.session.session_id,
-            )
-            assert outcome == "held"
-
-            await wait_for_question_prompt(app_b, pilot_b)
-            await app_b._answer_pending_question("Drop")
-
-            await _poll(
-                lambda: app_b.control_channel.pending() == [],
-                pilot_b,
-                description="the hold request to settle",
-            )
-            await pilot_b.pause(0.05)
-            assert app_b._queued_messages == []
-            assert not any(entry.kind == "peer_message" for entry in app_b.conversation_entries)
-
-
-@pytest.mark.asyncio
-async def test_hold_approval_expires_after_dialog_expiry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    registry, app_a, app_b = _two_apps(
-        tmp_path,
-        monkeypatch,
-        settings=CliSettings(cross_session_inbound="hold", dialog_expiry=0.3),
-    )
-
-    async with app_a.run_test():
-        async with app_b.run_test() as pilot_b:
-            outcome = await registry.deliver(
-                app_b.session.session_id,
-                _message_from(app_a),
-                sender_session_id=app_a.session.session_id,
-            )
-            assert outcome == "held"
-            await wait_for_question_prompt(app_b, pilot_b)
-
-            # Never answered: the short dialog expiry must settle it to Drop.
-            await _poll(
-                lambda: app_b.control_channel.pending() == [],
-                pilot_b,
-                timeout=5.0,
-                description="the hold approval to expire",
-            )
-            await _poll(
-                lambda: app_b._pending_question is None,
-                pilot_b,
-                description="the expired prompt to clear",
-            )
-            await pilot_b.pause(0.05)
-            assert app_b._queued_messages == []
-
-
-@pytest.mark.asyncio
-async def test_auto_matrix_holds_mixed_permission_modes_end_to_end(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """ask recipient + bypassing sender holds; equals accept immediately."""
-    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
-
-    async with app_a.run_test():
-        async with app_b.run_test() as pilot_b:
-            mixed = PeerMessage.create(
-                sender_session_id=app_a.session.session_id,
-                sender_title="alpha",
-                sender_mode="auto",
-                text="from a bypassing sender",
-            )
-            outcome = await registry.deliver(
-                app_b.session.session_id, mixed, sender_session_id=app_a.session.session_id
-            )
-            assert outcome == "held"
-            await wait_for_question_prompt(app_b, pilot_b)
-            await app_b._answer_pending_question("Drop")
-            await _poll(lambda: app_b.control_channel.pending() == [], pilot_b, description="settle")
-
-            # Recipient switches to bypass mode; a fellow bypasser is accepted.
-            app_b.permission_mode = PermissionMode.AUTO
-            accepted_msg = PeerMessage.create(
-                sender_session_id=app_a.session.session_id,
-                sender_title="alpha",
-                sender_mode="auto",
-                text="second note between equals",
-            )
-            outcome = await registry.deliver(
-                app_b.session.session_id, accepted_msg, sender_session_id=app_a.session.session_id
-            )
-            assert outcome == "accepted"
-            await _poll(
-                lambda: any(entry.kind == "peer_message" for entry in app_b.conversation_entries),
-                pilot_b,
-                description="the accepted peer turn to start",
-            )
-            await wait_for_turn_idle(app_b, pilot_b)
-            await pilot_b.pause(0.05)
-
-
 # ---------------------------------------------------------------------------
 # Commit 6: the list_agents / send_message model-facing tools.
 # ---------------------------------------------------------------------------
@@ -653,20 +495,6 @@ async def test_send_message_tool_ambiguous_name_fails_loudly(tmp_path: Path, mon
 
 
 @pytest.mark.asyncio
-async def test_held_receipt_tells_the_sender_review_is_pending(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch, settings=CliSettings(cross_session_inbound="hold"))
-
-    async with app_a.run_test():
-        async with app_b.run_test() as pilot_b:
-            result = await _extension(app_a).tools["send_message"](recipient="beta", text="held please")
-
-            assert "awaiting the recipient's review" in result
-            await wait_for_question_prompt(app_b, pilot_b)
-            await app_b._answer_pending_question("Drop")
-            await _poll(lambda: app_b.control_channel.pending() == [], pilot_b, description="settle")
-
-
-@pytest.mark.asyncio
 async def test_send_message_approval_dialog_shows_recipient_and_preview(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -753,7 +581,6 @@ async def test_envelope_over_the_socket_lands_in_the_recipient_queue(
                     "kind": "message",
                     "sender_id": app_a.session.session_id,
                     "sender_title": "alpha",
-                    "sender_mode": "ask",
                     "text": "over the wire",
                 },
             )

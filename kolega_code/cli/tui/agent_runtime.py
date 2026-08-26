@@ -39,7 +39,6 @@ from kolega_code.mcp.service import MCPService, mcp_tool_name_adjustment_note
 from kolega_code.mcp.tools import build_mcp_tool_extension
 from kolega_code.permissions import PermissionDecision
 from kolega_code.session.inbox import (
-    DeliveryOutcome,
     PeerMessage,
     PeerMessageError,
     validate_peer_text as validate_peer_message_text,
@@ -517,7 +516,6 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             message = PeerMessage.create(
                 sender_session_id=self.session.session_id,
                 sender_title=self.session.title,
-                sender_mode=self.permission_mode.value,
                 text=cleaned_text,
             )
 
@@ -552,8 +550,6 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 # plausible-looking success.
                 raise ToolError(str(exc)) from exc
 
-            if outcome == DeliveryOutcome.HELD.value:
-                return f"Message delivered to {addressed}. It is awaiting the recipient's review."
             return f"Message delivered to {addressed}."
 
         return ToolExtension(

@@ -1,9 +1,8 @@
 """Headless worker peer inbox: goal/loop workers receive over their socket.
 
-The policy surface is narrower than the TUI's by necessity: nothing here can
-answer a hold prompt, so holds degrade to explicit drops rather than parking
-silently. These tests pin that behavior, the queue/drain split, and the
-recorded PEER_MESSAGE_* events.
+These tests pin the queue/drain split and the recorded PEER_MESSAGE_* events:
+mid-turn arrivals drain via the queued-input provider, between-turn arrivals
+run as their own turn before the next goal verdict or loop fire.
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ import pytest
 from kolega_code.cli.peer_messaging import HeadlessPeerInbox, start_headless_peer_inbox
 from kolega_code.cli.session_event_store import FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore
-from kolega_code.cli.settings import CliSettings, SettingsStore
 from kolega_code.events import KnownEventType
 from kolega_code.session.inbox import send_over_socket
 
@@ -53,18 +51,14 @@ def _cleanup_state_roots():
         shutil.rmtree(_STATE_ROOTS.pop(), ignore_errors=True)
 
 
-def _inbox(state_root: Path, *, settings: CliSettings | None = None, mode: str = "ask"):
+def _inbox(state_root: Path):
     project = state_root / "project"
     project.mkdir(exist_ok=True)
     store = SessionStore(state_root)
-    if settings is not None:
-        SettingsStore(state_root).save(settings)
     session = store.create(project, "code", {"model": "test"}, title="worker")
     inbox = HeadlessPeerInbox(
         store_root=state_root,
         session_id=session.session_id,
-        settings=settings or CliSettings(),
-        permission_mode_value=mode,
         json_mode=True,
         journal_factory=lambda: FileSessionEventStore(store.journal(session.session_id)),
     )
@@ -100,8 +94,6 @@ async def test_start_helper_returns_none_when_not_a_worker() -> None:
             store_root=state_root,
             session_id="s",
             agent=_FakeAgent(),
-            settings=CliSettings(),
-            permission_mode_value="ask",
             json_mode=True,
             journal_factory=lambda: None,
             enabled=False,
@@ -149,32 +141,6 @@ async def test_accepted_delivery_queues_and_records_events() -> None:
             KnownEventType.PEER_MESSAGE_RECEIVED,
             KnownEventType.PEER_MESSAGE_DELIVERED,
         ]
-    finally:
-        await inbox.stop()
-
-
-@pytest.mark.asyncio
-async def test_hold_policy_drops_explicitly_instead_of_parking() -> None:
-    """No interactive surface exists on a worker; a hold can never be answered."""
-    inbox, store, session = _inbox(_short_state_root(), settings=CliSettings(cross_session_inbound="hold"))
-    await inbox.start(_FakeAgent())
-    try:
-        response = await send_over_socket(
-            inbox._server.path,  # type: ignore[attr-defined]
-            {"v": 1, "kind": "message", "sender_id": "r", "sender_title": "remote", "text": "hi"},
-        )
-        assert response["ok"] is True
-        assert response["outcome"] == "refused"
-        assert inbox.pending_texts() == []
-
-        received = await FileSessionEventStore(store.journal(session.session_id)).read(
-            session.session_id, types={KnownEventType.PEER_MESSAGE_RECEIVED}
-        )
-        delivered = await FileSessionEventStore(store.journal(session.session_id)).read(
-            session.session_id, types={KnownEventType.PEER_MESSAGE_DELIVERED}
-        )
-        assert len(received) == 1
-        assert delivered == []
     finally:
         await inbox.stop()
 

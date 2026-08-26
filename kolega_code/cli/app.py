@@ -36,7 +36,7 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option
 
-from kolega_code.agent import AgentConfig, AgentEvent, KnownEventType
+from kolega_code.agent import AgentConfig, AgentEvent
 from kolega_code.extensions import ExtensionSelection, KolegaExtensionLoadError
 from kolega_code.session.inbox import (
     SHARED_INBOX_REGISTRY,
@@ -598,61 +598,22 @@ class KolegaCodeApp(
         sender = notice.message.sender_title
         if notice.kind is InboundNoticeKind.REPEAT_DROPPED:
             self._log_status(messages.PEER_REPEAT_DROPPED.format(sender=sender), "info")
-        elif notice.kind is InboundNoticeKind.POLICY_DROPPED:
-            # Silent toward the sender (it still reports success); the user
-            # sees why nothing happened.
-            self._log_status(messages.PEER_MESSAGE_REFUSED.format(sender=sender), "info")
         else:
             self._log_status(messages.PEER_QUEUE_FULL.format(limit=MAX_QUEUED_PEER_MESSAGES), "info")
 
     async def _deliver_peer_message(self, message: PeerMessage) -> str:
-        """Inbound hook registered with the inbox. The recipient decides.
-
-        All sequencing lives in :func:`deliver_inbound`; this host only says
-        where events and queued messages go, how notices render, and that a
-        held message can be asked about interactively.
-        """
+        """Inbound hook registered with the inbox: peer messages are queued
+        like typed input. All sequencing lives in :func:`deliver_inbound`;
+        this host only says where events go, how messages queue, and how
+        notices render."""
         return await deliver_inbound(
             message,
-            policy=self.settings.get_cross_session_inbound(),
-            recipient_mode=self.permission_mode.value,
             repeat_guard=self._peer_repeat_guard,
             queued_count=lambda: sum(1 for item in self._queued_messages if item.is_peer),
             record_event=lambda event_type: self._emit_peer_event(event_type, message),
             enqueue=self._enqueue_peer_message,
             notify=self._render_peer_notice,
-            hold_for_review=self._schedule_hold_approval,
         )
-
-    def _schedule_hold_approval(self, message: PeerMessage) -> None:
-        """Park a held message behind an Accept/Drop prompt that expires.
-
-        Rides the control channel's question flow, so expiry resolves to the
-        default (Drop) via the channel's timeout machinery — a held message can
-        never park silently forever.
-        """
-        expiry_seconds = self.settings.get_dialog_expiry()
-
-        async def ask() -> None:
-            response = await self.control_channel.request(
-                "question",
-                {
-                    "question": messages.PEER_HOLD_QUESTION.format(sender=message.sender_title),
-                    "options": ["Accept", "Drop"],
-                    "descriptions": [messages.PEER_HOLD_ACCEPT_DESC, messages.PEER_HOLD_DROP_DESC],
-                },
-                default={"answer": "Drop"},
-                timeout=expiry_seconds,
-            )
-            answered = str((response or {}).get("answer") or "").strip().lower()
-            if answered == "accept":
-                self._log_status(messages.PEER_MESSAGE_ACCEPTED.format(sender=message.sender_title), "info")
-                self._enqueue_peer_message(message)
-                await self._emit_peer_event(KnownEventType.PEER_MESSAGE_DELIVERED, message)
-            else:
-                self._log_status(messages.PEER_MESSAGE_DROPPED.format(sender=message.sender_title), "info")
-
-        self.run_worker(ask(), name="peer-hold-approval", group="peer-messaging")
 
     async def on_mount(self) -> None:
         self.settings = self.settings_store.load()

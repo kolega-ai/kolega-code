@@ -1904,8 +1904,6 @@ async def _run_ask(args: argparse.Namespace) -> int:
             store_root=store.root,
             session_id=session.session_id,
             agent=agent,
-            settings=settings,
-            permission_mode_value=permission_mode.value,
             json_mode=args.json,
             journal_factory=lambda: FileSessionEventStore(store.journal(session.session_id)),
             enabled=(goal_state is not None or loop_state is not None) and (args.save or args.session),

@@ -246,17 +246,12 @@ it triggers still goes through the recipient's normal permission gates. On the
 sending side, `send_message` prompts for approval in `ask` permission mode and
 can be granted per peer or blanket via a saved rule.
 
-The recipient decides what happens to inbound messages via the
-`cross_session_inbound` setting (`auto` | `accept` | `hold` | `refuse`,
-default `auto`). `auto` resolves per delivery from both sessions' permission
-modes: sessions with like modes exchange freely; a mixed pair holds the
-message behind an Accept/Drop prompt that expires after `dialog_expiry`
-seconds (default 300). Headless workers cannot answer approval prompts, so
-held messages are dropped there unless the worker runs with
-`cross_session_inbound: "accept"`. Identical repeats from one sender are
-dropped inside a short window, and queued peer messages are capped, so two
-agents cannot loop each other forever. Failed deliveries are always reported
-to the sender as errors — never as silent successes.
+Inbound messages are queued exactly like input typed at the keyboard —
+delivered between tool calls or as a fresh turn. Two loop protections bound
+misbehaving agents: identical repeats from one sender are dropped inside a
+short window, and the queue holds a bounded number of peer messages. Failed
+deliveries (unknown or unreachable peers) are always reported to the sender as
+errors — never as silent successes.
 
 ## Read-only vs. full access
 

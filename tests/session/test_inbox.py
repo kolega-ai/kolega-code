@@ -40,7 +40,6 @@ from kolega_code.session.inbox import (
     parse_socket_name,
     provenance_preamble,
     recipient_queue_full,
-    resolve_inbound_decision,
     send_over_socket,
     socket_path_for,
     sweep_stale_sockets,
@@ -175,49 +174,18 @@ def test_resolve_duplicate_titles_are_ambiguous_not_silent() -> None:
     assert registry.resolve("2").session_id == "2"
 
 
-# -- Inbound policy ----------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "recipient_mode,sender_mode,expected",
-    [
-        ("ask", "ask", DeliveryOutcome.ACCEPTED),
-        ("auto", "auto", DeliveryOutcome.ACCEPTED),
-        ("ask", "auto", DeliveryOutcome.HELD),
-        ("auto", "ask", DeliveryOutcome.HELD),
-    ],
-)
-def test_auto_policy_is_asymmetric_by_permission_mode(
-    recipient_mode: str, sender_mode: str, expected: DeliveryOutcome
-) -> None:
-    assert resolve_inbound_decision("auto", recipient_mode, sender_mode) is expected
-
-
-@pytest.mark.parametrize("recipient_mode,sender_mode", [("ask", "ask"), ("ask", "auto"), ("auto", "ask")])
-def test_explicit_policies_override_the_matrix(recipient_mode: str, sender_mode: str) -> None:
-    assert resolve_inbound_decision("accept", recipient_mode, sender_mode) is DeliveryOutcome.ACCEPTED
-    assert resolve_inbound_decision("hold", recipient_mode, sender_mode) is DeliveryOutcome.HELD
-    assert resolve_inbound_decision("refuse", recipient_mode, sender_mode) is DeliveryOutcome.REFUSED
-
-
-@pytest.mark.parametrize("policy", [None, "", "nonsense"])
-def test_unknown_policy_degrades_to_auto(policy: object) -> None:
-    assert resolve_inbound_decision(policy, "ask", "ask") is DeliveryOutcome.ACCEPTED  # type: ignore[arg-type]
-    assert resolve_inbound_decision(policy, "auto", "ask") is DeliveryOutcome.HELD  # type: ignore[arg-type]
-
-
 # -- Delivery ----------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_deliver_routes_to_the_registration_outcome() -> None:
-    outcomes = [DeliveryOutcome.HELD.value]
+    outcomes = [DeliveryOutcome.REFUSED.value]
     registry = InboxRegistry()
     registry.register(_registration(outcomes=outcomes))
 
     outcome = await registry.deliver("s1", _message(), sender_session_id="s2")
 
-    assert outcome == DeliveryOutcome.HELD.value
+    assert outcome == DeliveryOutcome.REFUSED.value
 
 
 @pytest.mark.asyncio
@@ -268,7 +236,6 @@ def test_peer_message_create_stamps_identity_and_time() -> None:
     message = PeerMessage.create(sender_session_id="s1", sender_title="a", text="hi")
 
     assert message.message_id
-    assert message.sender_mode == "ask"
     assert message.created_at  # utc_now_iso stamped by default factory
     assert message.reply_to is None
 
@@ -408,7 +375,6 @@ def test_encode_and_parse_message_round_trip() -> None:
         "sender_id": "s-1",
         "sender_title": "alpha",
         "sender_project": "/tmp/p",
-        "sender_mode": "auto",
         "text": "hello",
         "reply_to": None,
     }
@@ -416,7 +382,6 @@ def test_encode_and_parse_message_round_trip() -> None:
 
     assert parsed["kind"] == "message"
     assert parsed["sender_id"] == "s-1"
-    assert parsed["sender_mode"] == "auto"
     assert parsed["text"] == "hello"
     assert parsed["reply_to"] is None
 
@@ -471,7 +436,6 @@ def test_multibyte_text_at_the_byte_cap_encodes_cleanly() -> None:
         "sender_id": "s",
         "sender_title": "t",
         "sender_project": "",
-        "sender_mode": "ask",
         "text": text,
         "reply_to": None,
     }
