@@ -781,35 +781,6 @@ async def test_envelope_over_the_socket_lands_in_the_recipient_queue(
 
 
 @pytest.mark.asyncio
-async def test_feature_gate_disables_the_socket_transport(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from kolega_code.session.inbox import MESSAGING_ENV_FLAG, messaging_enabled
-
-    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
-    monkeypatch.setenv(MESSAGING_ENV_FLAG, "off")
-
-    assert messaging_enabled() is False
-
-    async with app_a.run_test():
-        async with app_b.run_test():
-            assert app_a.messaging_socket_path is None
-            agent = app_a.agent
-            assert agent is not None
-            assert getattr(agent, "messaging_socket_path") is None
-
-
-@pytest.mark.asyncio
-async def test_messaging_gate_defaults_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    from kolega_code.session.inbox import MESSAGING_ENV_FLAG, messaging_enabled
-
-    monkeypatch.delenv(MESSAGING_ENV_FLAG, raising=False)
-    assert messaging_enabled() is True
-    monkeypatch.setenv(MESSAGING_ENV_FLAG, "ON")
-    assert messaging_enabled() is True
-    monkeypatch.setenv(MESSAGING_ENV_FLAG, "off")
-    assert messaging_enabled() is False
-
-
-@pytest.mark.asyncio
 async def test_tool_discovers_and_delivers_to_socket_only_peers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -972,23 +943,6 @@ async def test_peers_command_shows_address_and_discovered_sessions(
             assert "Address:" in entry.content, "a bound session shows its socket address"
             assert "alpha" in entry.content
             assert "idle" in entry.content
-
-
-@pytest.mark.asyncio
-async def test_peers_command_reports_the_disabled_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from kolega_code.session.inbox import MESSAGING_ENV_FLAG
-
-    monkeypatch.setenv(MESSAGING_ENV_FLAG, "off")
-    registry, app_a, app_b = _two_apps(tmp_path, monkeypatch)
-
-    async with app_b.run_test():
-        await app_b._command_peers("")
-        (entry,) = [
-            entry
-            for entry in app_b.conversation_entries
-            if entry.kind == "system" and MESSAGING_ENV_FLAG in entry.content
-        ]
-        assert "disabled" in entry.content
 
 
 @pytest.mark.asyncio

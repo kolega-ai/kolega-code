@@ -586,24 +586,17 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
 
         Same discovery the list_agents tool uses — one view for the model and
         the human — plus diagnostics: own name/address and why peers might be
-        missing (feature gate off, no socket).
+        missing (no socket).
         """
         if args.strip():
             self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content="Usage: /peers"))
             return
 
         from kolega_code.cli.peer_messaging import format_peer_table, store_title_lookup
-        from kolega_code.session.inbox import (
-            MESSAGING_ENV_FLAG,
-            discover_peers,
-            messaging_dir,
-            messaging_enabled,
-        )
+        from kolega_code.session.inbox import discover_peers, messaging_dir
 
         lines = [f"This session: {self.session.title} ({self.session.session_id[:8]})"]
-        if not messaging_enabled():
-            lines.append(f"Cross-session messaging is disabled by {MESSAGING_ENV_FLAG}=off.")
-        elif self.messaging_socket_path:
+        if self.messaging_socket_path:
             lines.append(f"Address: {self.messaging_socket_path}")
         else:
             lines.append("Transport: in-process only (no socket bound).")

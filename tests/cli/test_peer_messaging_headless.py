@@ -19,7 +19,7 @@ from kolega_code.cli.session_event_store import FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 from kolega_code.events import KnownEventType
-from kolega_code.session.inbox import MESSAGING_ENV_FLAG, send_over_socket
+from kolega_code.session.inbox import send_over_socket
 
 
 class _FakeAgent:
@@ -95,28 +95,7 @@ async def test_start_binds_socket_and_wires_the_provider() -> None:
 
 
 @pytest.mark.asyncio
-async def test_disabled_gate_binds_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(MESSAGING_ENV_FLAG, "off")
-    state_root = _short_state_root()
-    try:
-        inbox, _store, _session = _inbox(state_root)
-        agent = _FakeAgent()
-
-        await inbox.start(agent)
-
-        assert inbox._server is None
-        assert agent.messaging_socket_path is None
-    finally:
-        import shutil
-
-        shutil.rmtree(state_root, ignore_errors=True)
-
-
-@pytest.mark.asyncio
-async def test_start_helper_returns_none_when_not_a_worker(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv(MESSAGING_ENV_FLAG, raising=False)
+async def test_start_helper_returns_none_when_not_a_worker() -> None:
     state_root = _short_state_root()
     try:
         inbox = await start_headless_peer_inbox(

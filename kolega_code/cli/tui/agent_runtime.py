@@ -39,11 +39,9 @@ from kolega_code.mcp.service import MCPService, mcp_tool_name_adjustment_note
 from kolega_code.mcp.tools import build_mcp_tool_extension
 from kolega_code.permissions import PermissionDecision
 from kolega_code.session.inbox import (
-    MESSAGING_ENV_FLAG,
     DeliveryOutcome,
     PeerMessage,
     PeerMessageError,
-    messaging_enabled,
     validate_peer_text as validate_peer_message_text,
 )
 from kolega_code.session.runtime import deserialize_permission_request
@@ -500,8 +498,6 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         async def list_agents() -> str:
             from kolega_code.cli.peer_messaging import format_peer_table
 
-            if not messaging_enabled():
-                return f"Cross-session messaging is disabled by {MESSAGING_ENV_FLAG}=off; no peers are visible."
             return format_peer_table(await _discovered_peers())
 
         async def send_message(recipient: str, text: str) -> str:
@@ -509,7 +505,6 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
 
             from kolega_code.session.inbox import (
                 deliver_to_discovered_peer,
-                messaging_enabled,
                 resolve_summary,
             )
 
@@ -546,8 +541,6 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                     )
                     addressed = f"{registration.describe_title()} ({registration.session_id[:8]})"
                 else:
-                    if not messaging_enabled():
-                        raise ToolError(f"Cross-session messaging is disabled by {MESSAGING_ENV_FLAG}=off.")
                     peers = await _discovered_peers()
                     summary = resolve_summary(peers, clean_recipient)
                     _, outcome = await deliver_to_discovered_peer(
