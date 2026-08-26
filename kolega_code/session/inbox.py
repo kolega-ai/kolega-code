@@ -40,8 +40,6 @@ import asyncio
 import json
 import os
 import re
-import subprocess
-import sys
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
@@ -87,9 +85,6 @@ class PeerMessage:
     text: str = ""
     reply_to: Optional[str] = None
     created_at: str = field(default_factory=utc_now_iso)
-    #: Sender's OS pid, when the transport knows it (socket envelopes carry it).
-    #: Lets a recipient recognize messages from its own child processes.
-    sender_pid: Optional[int] = None
 
     @classmethod
     def create(
@@ -100,7 +95,6 @@ class PeerMessage:
         text: str,
         sender_mode: str = "ask",
         reply_to: Optional[str] = None,
-        sender_pid: Optional[int] = None,
     ) -> "PeerMessage":
         return cls(
             message_id=uuid.uuid4().hex,
@@ -109,7 +103,6 @@ class PeerMessage:
             sender_mode=sender_mode,
             text=text,
             reply_to=reply_to,
-            sender_pid=sender_pid,
         )
 
     def event_content(self) -> dict[str, Any]:
@@ -505,9 +498,6 @@ def parse_envelope(line: bytes | str | dict[str, Any]) -> dict[str, Any]:
         "text": text,
         "reply_to": reply_to if isinstance(reply_to, str) and reply_to else None,
     }
-    sender_pid = payload.get("sender_pid")
-    if isinstance(sender_pid, int) and sender_pid > 0:
-        normalized["sender_pid"] = sender_pid
     return normalized
 
 
@@ -604,7 +594,6 @@ class PeerSocketServer:
                         sender_mode=envelope["sender_mode"],
                         text=envelope["text"],
                         reply_to=envelope["reply_to"],
-                        sender_pid=envelope.get("sender_pid"),
                     )
                     outcome = await self._deliver_message(message)
                     response = {"ok": True, "message_id": message.message_id, "outcome": outcome}
@@ -786,7 +775,6 @@ async def deliver_to_discovered_peer(
     message: PeerMessage,
     *,
     sender_project: str = "",
-    sender_pid: Optional[int] = None,
     timeout: float = SOCKET_IO_TIMEOUT_SECONDS,
 ) -> tuple[str, str]:
     """Send a message to a socket-sourced peer; returns (message_id, outcome).
@@ -806,7 +794,6 @@ async def deliver_to_discovered_peer(
         "sender_mode": message.sender_mode,
         "text": message.text,
         "reply_to": message.reply_to,
-        "sender_pid": sender_pid if sender_pid is not None else os.getpid(),
     }
     response = await send_over_socket(Path(summary.socket_path), envelope, timeout=timeout)
     if not response.get("ok"):
@@ -880,7 +867,6 @@ class InboundNotice:
 async def deliver_inbound(
     message: PeerMessage,
     *,
-    recipient_pid: int,
     policy: str,
     recipient_mode: str,
     repeat_guard: PeerRepeatGuard,
@@ -892,8 +878,7 @@ async def deliver_inbound(
 ) -> str:
     """The one inbound ladder every host shares.
 
-    Order matters and is identical everywhere: journal the arrival, let own-
-    child processes past the gate (but not past the queue cap), suppress
+    Order matters and is identical everywhere: journal the arrival, suppress
     verbatim repeats for loop protection, resolve the inbound policy from both
     sessions' modes, then either park it for review, refuse it, or enqueue it
     and journal the delivery. Hosts supply only the mechanics that genuinely
@@ -907,18 +892,6 @@ async def deliver_inbound(
 
     def queue_full() -> bool:
         return recipient_queue_full(queued_count())
-
-    # Own-child delivery: a message from this session's own child processes (a
-    # git hook, a terminal command) skips the inbound gate — that is how a
-    # script injects context into the session that spawned it. Verification
-    # fails closed: an unverifiable pid stays gated.
-    if own_child_bypass(message.sender_pid, recipient_pid):
-        if queue_full():
-            notify(InboundNotice(InboundNoticeKind.QUEUE_FULL, message))
-            return DeliveryOutcome.REFUSED.value
-        enqueue(message)
-        await record_event(KnownEventType.PEER_MESSAGE_DELIVERED)
-        return DeliveryOutcome.ACCEPTED.value
 
     # Loop protection before policy: an identical repeat from one sender inside
     # the window is dropped regardless of policy, so two agents cannot bounce
@@ -946,62 +919,3 @@ async def deliver_inbound(
     enqueue(message)
     await record_event(KnownEventType.PEER_MESSAGE_DELIVERED)
     return DeliveryOutcome.ACCEPTED.value
-
-
-# ---------------------------------------------------------------------------
-# Own-child verification: a session's own child processes (hooks, terminal
-# commands) may post back into their parent session without the inbound gate —
-# that is how a git hook or nightly job injects context into the session that
-# spawned it. Verification is a ppid walk; anything unverifiable fails closed
-# to the normal gated path.
-# ---------------------------------------------------------------------------
-
-_OWN_CHILD_MAX_DEPTH = 32
-
-
-def _parent_pid(pid: int) -> Optional[int]:
-    """The ppid of ``pid``, or None when it cannot be determined."""
-    try:
-        if sys.platform == "linux":
-            stat_text = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
-            # Field 4 (1-indexed incl. comm in parens): take after the last ')'.
-            fields = stat_text.rsplit(")", 1)[1].split()
-            return int(fields[1])
-        output = subprocess.run(
-            ["ps", "-o", "ppid=", "-p", str(pid)],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if output.returncode != 0:
-            return None
-        return int(output.stdout.strip())
-    except (OSError, ValueError, IndexError):
-        return None
-
-
-def is_descendant_of(child_pid: int, ancestor_pid: int) -> bool:
-    """Whether ``child_pid`` is (or is under) ``ancestor_pid`` right now.
-
-    Verified while both are alive; a process whose lineage cannot be walked is
-    not treated as a descendant — the gate stays closed rather than opening on
-    a guess.
-    """
-    if child_pid <= 0 or ancestor_pid <= 0 or child_pid == ancestor_pid:
-        return child_pid == ancestor_pid and child_pid > 0
-    current = child_pid
-    for _depth in range(_OWN_CHILD_MAX_DEPTH):
-        parent = _parent_pid(current)
-        if parent is None:
-            return False
-        if parent == ancestor_pid:
-            return True
-        if parent <= 1:
-            return False
-        current = parent
-    return False
-
-
-def own_child_bypass(sender_pid: Optional[int], recipient_pid: int) -> bool:
-    """True when a message came from the recipient's own child process."""
-    return bool(sender_pid) and is_descendant_of(int(sender_pid), recipient_pid)  # type: ignore[arg-type]

@@ -62,10 +62,8 @@ def mock_base_agent():
     mock = Mock()
     mock.agent_name = "test_agent"
     # A bare Mock attribute would read as a truthy scratchpad dir; sessions
-    # without a scratchpad are the default in these tests. Same for the
-    # messaging socket: absent unless a test sets one.
+    # without a scratchpad are the default in these tests.
     mock.scratchpad_dir = None
-    mock.messaging_socket_path = None
     return mock
 
 

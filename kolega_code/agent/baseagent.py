@@ -395,10 +395,6 @@ class BaseAgent(LogMixin):
         # Sandbox/E2B hosts are unchanged, as are sub-agents, which inherit the
         # section and the resolved directory from their parent.
         self.scratchpad_dir: Optional[Path] = None
-        # This session's cross-process messaging socket, injected by the host
-        # after construction and exported to terminal commands/hooks. None when
-        # the transport is unavailable (feature off, bind failure, sandbox).
-        self.messaging_socket_path: Optional[Path] = None
         if not sub_agent and isinstance(self.filesystem, LocalFileSystem):
             from kolega_code.scratchpad import SCRATCHPAD_PROMPT_EXTENSION_ID, ensure_scratchpad_dir
 
@@ -1742,18 +1738,12 @@ class BaseAgent(LogMixin):
 
     def _hook_capabilities(self) -> HookCapabilities:
         """Capabilities passed to hook backends: project cwd, an LLM prompt runner,
-        a sub-agent runner (for `agent` hooks), and a log sink. The session's
-        messaging socket travels along so a command hook can message its own
-        session (own-child delivery)."""
-        extra_env: Optional[dict[str, str]] = None
-        if self.messaging_socket_path:
-            extra_env = {"KOLEGA_MESSAGING_SOCKET": str(self.messaging_socket_path)}
+        a sub-agent runner (for `agent` hooks), and a log sink."""
         return HookCapabilities(
             project_path=self.project_path,
             prompt_runner=self._run_hook_prompt,
             agent_runner=self._run_hook_agent,
             log=self._log_hook_message,
-            extra_env=extra_env,
         )
 
     async def _log_hook_message(self, message: str) -> None:

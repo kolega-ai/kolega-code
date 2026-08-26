@@ -24,7 +24,6 @@ from kolega_code.session.inbox import send_over_socket
 
 class _FakeAgent:
     def __init__(self) -> None:
-        self.messaging_socket_path: Path | None = None
         self.provider: Any = None
 
     def set_queued_input_provider(self, provider: Any) -> None:
@@ -82,12 +81,11 @@ async def test_start_binds_socket_and_wires_the_provider() -> None:
         await inbox.start(agent)
 
         assert inbox._server is not None
-        bound_path = agent.messaging_socket_path
-        assert bound_path == inbox._server.path
+        bound_path = inbox._server.path
         assert callable(agent.provider)
         await inbox.stop()
         assert inbox._server is None
-        assert bound_path is not None and not Path(bound_path).exists(), "stop unlinks the socket file"
+        assert not Path(bound_path).exists(), "stop unlinks the socket file"
     finally:
         import shutil
 

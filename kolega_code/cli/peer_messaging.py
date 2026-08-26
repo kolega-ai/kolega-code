@@ -14,7 +14,6 @@ in-process silence with a stderr notice instead of failing the run.
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -73,7 +72,6 @@ class HeadlessPeerInbox:
         if server is None:
             return
         self._server = server
-        agent.messaging_socket_path = server.path
         self._notice(f"peers: listening on {server.path}")
         agent.set_queued_input_provider(self._provide_queued_inputs)
 
@@ -143,7 +141,6 @@ class HeadlessPeerInbox:
 
         return await deliver_inbound(
             message,
-            recipient_pid=os.getpid(),
             policy=self.settings.get_cross_session_inbound(),
             recipient_mode=self.permission_mode_value,
             repeat_guard=self._repeat_guard,

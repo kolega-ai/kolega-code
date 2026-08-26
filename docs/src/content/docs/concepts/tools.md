@@ -258,12 +258,6 @@ dropped inside a short window, and queued peer messages are capped, so two
 agents cannot loop each other forever. Failed deliveries are always reported
 to the sender as errors — never as silent successes.
 
-A session's own child processes are special: terminal commands and hooks run
-with `KOLEGA_MESSAGING_SOCKET` in their environment, and a process posting to
-that socket which verifies as the session's own descendant delivers directly,
-skipping the inbound gate. That is how a git hook or nightly job injects
-context into the session that spawned it.
-
 ## Read-only vs. full access
 
 Tools are gated by mode. In a read-only context — like [Plan mode](../../tui/modes/)

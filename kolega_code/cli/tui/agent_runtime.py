@@ -501,8 +501,6 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             return format_peer_table(await _discovered_peers())
 
         async def send_message(recipient: str, text: str) -> str:
-            import os as _os
-
             from kolega_code.session.inbox import (
                 deliver_to_discovered_peer,
                 resolve_summary,
@@ -547,7 +545,6 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                         summary,
                         message,
                         sender_project=str(self.active_project_path),
-                        sender_pid=_os.getpid(),
                     )
                     addressed = f"{summary.title} ({summary.session_id[:8]})"
             except PeerMessageError as exc:
@@ -1456,9 +1453,6 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 # and the terminal safety checker; the prompt extension above is what
                 # the model sees.
                 self.agent.scratchpad_dir = scratchpad_dir_for(self.project_path, self.session.session_id)
-            # Expose this session's messaging socket for child processes (terminal
-            # commands and hooks); None when the transport is unavailable.
-            self.agent.messaging_socket_path = self.messaging_socket_path
             # Mid-turn queue delivery: the running turn drains composer messages
             # queued while it works (main agent only; sub-agents never get this).
             self.agent.set_queued_input_provider(self._provide_queued_user_inputs)

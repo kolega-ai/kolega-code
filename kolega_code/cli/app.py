@@ -614,7 +614,6 @@ class KolegaCodeApp(
         """
         return await deliver_inbound(
             message,
-            recipient_pid=os.getpid(),
             policy=self.settings.get_cross_session_inbound(),
             recipient_mode=self.permission_mode.value,
             repeat_guard=self._peer_repeat_guard,
