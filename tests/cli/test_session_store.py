@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -64,6 +65,30 @@ def test_session_store_writes_private_directory_layout(tmp_path: Path) -> None:
         assert stat.S_IMODE(store.path_for(record.session_id).stat().st_mode) == 0o600
         assert stat.S_IMODE(store.events_path_for(record.session_id).stat().st_mode) == 0o600
         assert stat.S_IMODE(store.terminal_output_dir_for(record.session_id).stat().st_mode) == 0o700
+
+
+def test_new_sessions_get_generated_peer_names(tmp_path: Path) -> None:
+    """Default titles are friendly random names — peers address sessions by them."""
+    from kolega_code.cli.peer_messaging import PEER_NAME_MAX_CHARS
+
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+
+    record = store.create(project, "code", {})
+    assert re.fullmatch(r"[a-z]+-[a-z]+-\d{4}", record.title), record.title
+    assert len(record.title) <= PEER_NAME_MAX_CHARS
+
+    # An explicit title still wins over generation.
+    named = store.create(project, "code", {}, title="deploy-bot")
+    assert named.title == "deploy-bot"
+
+    # The generated name persists: it is the cross-process peer address.
+    assert store.load(record.session_id).title == record.title
+
+    # Random enough that sibling sessions rarely collide.
+    titles = {store.create(project, "code", {}).title for _ in range(25)}
+    assert len(titles) > 1
 
 
 def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:
