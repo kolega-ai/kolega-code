@@ -51,9 +51,12 @@ from typing import Any, Optional
 from kolega_code.events import KnownEventType, utc_now_iso
 from kolega_code.local_state import ensure_private_dir
 
-#: Hard cap on peer-message text. Peer text is adversarial input from another
+#: Hard cap on peer-message text, measured against its JSON-encoded UTF-8
+#: form so a message that passes validation is guaranteed to fit one envelope
+#: regardless of script mix. Leaves ~8 KiB of the 64 KiB envelope for fields
+#: (title, project path, ids). Peer text is adversarial input from another
 #: agent; unbounded sizes would let one session flood another's context.
-MAX_PEER_TEXT_CHARS = 64_000
+MAX_PEER_TEXT_BYTES = 56 * 1024
 
 
 class PeerMessageError(RuntimeError):
@@ -239,13 +242,19 @@ def resolve_inbound_decision(policy: str, recipient_mode: str, sender_mode: str)
 
 
 def validate_peer_text(text: str) -> str:
-    """Reject empty or oversized peer text; return the cleaned text."""
+    """Reject empty or oversized peer text; return the cleaned text.
+
+    The limit applies to the JSON-encoded form of the text (what actually
+    travels), not the raw characters — so passing here guarantees the message
+    fits inside :data:`ENVELOPE_MAX_BYTES` together with any envelope fields.
+    """
     cleaned = text.strip()
     if not cleaned:
         raise PeerMessageError("Message text must not be empty.")
-    if len(cleaned) > MAX_PEER_TEXT_CHARS:
+    encoded_size = len(json.dumps(cleaned, ensure_ascii=False)) - 2  # minus enclosing quotes
+    if encoded_size > MAX_PEER_TEXT_BYTES:
         raise PeerMessageError(
-            f"Message text exceeds the {MAX_PEER_TEXT_CHARS}-character limit ({len(cleaned)} characters)."
+            f"Message text exceeds the {MAX_PEER_TEXT_BYTES}-byte limit ({encoded_size} bytes encoded)."
         )
     return cleaned
 
@@ -366,8 +375,15 @@ SHARED_INBOX_REGISTRY = InboxRegistry()
 
 MESSAGING_DIR_NAME = "messaging"
 MESSAGING_PROTOCOL_VERSION = 1
-#: Text cap plus envelope overhead; anything larger is refused before parsing.
-ENVELOPE_MAX_BYTES = 192 * 1024
+#: Wire budget for one JSON line, excluding its trailing newline. Deliberately
+#: 64 KiB — the platform's natural stream limit — because that is already
+#: generous for inter-agent plain text; text is capped separately via
+#: :data:`MAX_PEER_TEXT_BYTES` so validated messages always fit.
+ENVELOPE_MAX_BYTES = 64 * 1024
+#: StreamReader limit handed to both socket ends: comfortably above a maximal
+#: legal line (envelope + newline) so readline() can never die on an envelope
+#: we meant to accept.
+_STREAM_LIMIT_BYTES = ENVELOPE_MAX_BYTES + 1024
 #: How long either side waits on one request/response exchange.
 SOCKET_IO_TIMEOUT_SECONDS = 10.0
 #: Classic AF_UNIX ``sun_path`` limit. Bind failures past this must be explicit,
@@ -439,7 +455,7 @@ def sweep_stale_sockets(directory: Path) -> list[Path]:
 
 def encode_envelope(payload: dict[str, Any]) -> bytes:
     """One JSON line. Oversized envelopes are refused, never truncated."""
-    data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    data = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     if len(data) > ENVELOPE_MAX_BYTES:
         raise PeerMessageError(f"Envelope exceeds the {ENVELOPE_MAX_BYTES}-byte wire limit.")
     return data + b"\n"
@@ -557,7 +573,9 @@ class PeerSocketServer:
                 self.path.unlink()
             except OSError:
                 pass
-        self._server = await asyncio.start_unix_server(self._handle_connection, path=str(self.path))
+        self._server = await asyncio.start_unix_server(
+            self._handle_connection, path=str(self.path), limit=_STREAM_LIMIT_BYTES
+        )
         try:
             os.chmod(self.path, 0o600)
         except OSError:
@@ -651,7 +669,9 @@ async def send_over_socket(
     Every failure raises — an unreachable peer is an error, never a quiet no-op.
     """
     try:
-        reader, writer = await asyncio.wait_for(asyncio.open_unix_connection(str(path)), timeout=timeout)
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_unix_connection(str(path), limit=_STREAM_LIMIT_BYTES), timeout=timeout
+        )
     except (OSError, asyncio.TimeoutError) as exc:
         raise PeerMessageError(f"Could not reach peer socket {path}: {exc}") from exc
 

@@ -22,6 +22,7 @@ from kolega_code.cli.settings import CliSettings, SettingsStore
 from kolega_code.events import KnownEventType
 from kolega_code.permissions import PermissionKind, PermissionMode
 from kolega_code.session.inbox import (
+    MAX_PEER_TEXT_BYTES,
     MESSAGING_PROTOCOL_VERSION,
     InboxRegistry,
     PeerMessage,
@@ -613,8 +614,8 @@ async def test_send_message_tool_errors_are_explicit(tmp_path: Path, monkeypatch
                 await send(recipient="alpha", text="note to self")
             with pytest.raises(ToolError, match="must not be empty"):
                 await send(recipient="beta", text="   ")
-            with pytest.raises(ToolError, match="character limit"):
-                await send(recipient="beta", text="x" * 64_001)
+            with pytest.raises(ToolError, match="byte limit"):
+                await send(recipient="beta", text="x" * (MAX_PEER_TEXT_BYTES + 1))
 
             assert app_b._queued_messages == [], "failed sends must not enqueue anything"
 

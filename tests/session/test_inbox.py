@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 
 from kolega_code.session.inbox import (
-    MAX_PEER_TEXT_CHARS,
+    MAX_PEER_TEXT_BYTES,
     MAX_QUEUED_PEER_MESSAGES,
     MESSAGING_PROTOCOL_VERSION,
     DeliveryOutcome,
@@ -251,8 +251,8 @@ async def test_deliver_rejects_oversized_text() -> None:
     registry = InboxRegistry()
     registry.register(_registration())
 
-    oversized = PeerMessage.create(sender_session_id="s2", sender_title="p", text="x" * (MAX_PEER_TEXT_CHARS + 1))
-    with pytest.raises(PeerMessageError, match="character limit"):
+    oversized = PeerMessage.create(sender_session_id="s2", sender_title="p", text="x" * (MAX_PEER_TEXT_BYTES + 1))
+    with pytest.raises(PeerMessageError, match="byte limit"):
         await registry.deliver("s1", oversized)
 
 
@@ -430,7 +430,7 @@ def test_parse_status_envelope() -> None:
         {"v": 1, "kind": "message", "text": "hi"},
         {"v": 1, "kind": "message", "sender_id": "s"},
         {"v": 1, "kind": "message", "sender_id": "s", "text": ""},
-        {"v": 1, "kind": "message", "sender_id": "s", "text": "x" * (MAX_PEER_TEXT_CHARS + 1)},
+        {"v": 1, "kind": "message", "sender_id": "s", "text": "x" * (MAX_PEER_TEXT_BYTES + 1)},
         {"v": 1, "kind": "message", "sender_id": "", "text": "hi"},
         {"v": 1, "kind": "message", "sender_id": " ", "text": "hi"},
         {"v": 1, "kind": "message", "sender_id": 7, "text": "hi"},
@@ -450,6 +450,37 @@ async def test_non_json_and_oversized_lines_are_rejected() -> None:
             parse_envelope(bad)
     with pytest.raises(PeerMessageError):
         encode_envelope({"text": "x" * (ENVELOPE_MAX_BYTES + 10)})
+
+
+def test_multibyte_text_at_the_byte_cap_encodes_cleanly() -> None:
+    """Regression: CJK-heavy text once inflated ~3x past the wire cap at encode.
+
+    The limit is measured on the JSON-encoded form, so a max-size multibyte
+    message must validate AND survive encode/parse within ENVELOPE_MAX_BYTES.
+    """
+    text = "消" * (MAX_PEER_TEXT_BYTES // 3)  # exactly fills the byte budget
+    assert validate_peer_text(text) == text
+
+    envelope = {
+        "v": MESSAGING_PROTOCOL_VERSION,
+        "kind": "message",
+        "sender_id": "s",
+        "sender_title": "t",
+        "sender_project": "",
+        "sender_mode": "ask",
+        "text": text,
+        "reply_to": None,
+    }
+    data = encode_envelope(envelope)
+    assert len(data) <= ENVELOPE_MAX_BYTES + 1  # + trailing newline
+    assert parse_envelope(data)["text"] == text
+
+
+def test_control_char_heavy_text_is_measured_after_escaping() -> None:
+    """Each quote doubles on encode; validation must catch that, not just raw size."""
+    text = '"' * (MAX_PEER_TEXT_BYTES // 2 + 16)
+    with pytest.raises(PeerMessageError, match="byte limit"):
+        validate_peer_text(text)
 
 
 # -- Server round trip ---------------------------------------------------------
