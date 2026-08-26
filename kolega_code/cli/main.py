@@ -47,6 +47,9 @@ from kolega_code.agent.prompt_dump import (
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config
 from kolega_code.llm.exceptions import LLMBillingError, billing_error_message
 from kolega_code.llm.models import Message, TextBlock
+
+from .peer_messaging import start_headless_peer_inbox
+from .session_event_store import FileSessionEventStore
 from kolega_code.mcp.config import (
     _SERVER_ID_MAX_LENGTH,
     LoadedMCPConfig,
@@ -420,6 +423,10 @@ def _add_tui_args(parser: argparse.ArgumentParser) -> None:
         help="Resume the latest saved session, or resume the given session ID (legacy thread IDs are also accepted).",
     )
     parser.add_argument("--browser-visible", action="store_true", help="Launch visible Playwright browser windows.")
+    parser.add_argument(
+        "--name",
+        help="Name this session; the persisted name is how peer sessions address it.",
+    )
     parser.add_argument("--show-logs", action="store_true", help="Show the diagnostic Logs sidebar tab.")
     parser.add_argument(
         "--permission-mode",
@@ -488,6 +495,10 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     ask = subparsers.add_parser("ask", help="Run a single prompt and print the answer.")
     ask.add_argument("prompt", nargs="?", default=None, help="Prompt to send to Kolega Code.")
     ask.add_argument("--project", default=".", type=Path, help="Project directory to work in.")
+    ask.add_argument(
+        "--name",
+        help="Name this session; the persisted name is how peer sessions address it.",
+    )
     ask.add_argument(
         "--goal",
         default=None,
@@ -1170,6 +1181,7 @@ def _run_tui(args: argparse.Namespace) -> int:
         args.resume,
         args.session,
     )
+    _apply_launch_name(store, session, getattr(args, "name", None))
     effective_permission_mode = _resolve_tui_permission_mode(
         session,
         settings,
@@ -1442,6 +1454,47 @@ def _record_ask_run_terminal(
         logging.getLogger(__name__).exception("Failed to record the run terminal event")
 
 
+def _resolve_ask_session(
+    args: argparse.Namespace,
+    store: SessionStore,
+    project_path: Path,
+    summary: dict,
+    resumed_session: Optional[SessionRecord],
+) -> tuple[SessionRecord, bool]:
+    """Resolve (session, restoring_session) for an ask run from its persistence flags."""
+    if args.session:
+        session = resumed_session or _get_or_create_session(
+            store, project_path, CLI_AGENT_MODE, summary, args.session, force_new=False
+        )
+        restoring_session = resumed_session is not None
+        session = _normalize_cli_session_mode(store, session, persist=True)
+        return session, restoring_session
+    if args.save:
+        return store.create(project_path, CLI_AGENT_MODE, summary), False
+    return SessionRecord.create(project_path, CLI_AGENT_MODE, summary), False
+
+
+def _apply_launch_name(
+    store: SessionStore,
+    session: SessionRecord,
+    raw_name: Optional[str],
+    *,
+    persistable: bool = True,
+) -> None:
+    """Apply --name at launch. The persisted title is a peer's address for the
+    session, so invalid names fail loudly instead of being silently mangled."""
+    from .peer_messaging import PEER_NAME_MAX_CHARS
+
+    if not raw_name:
+        return
+    name = str(raw_name).strip()
+    if not name or len(name) > PEER_NAME_MAX_CHARS:
+        raise SystemExit(f"Error: --name must be 1-{PEER_NAME_MAX_CHARS} characters.")
+    session.title = name
+    if persistable:
+        store.save(session)
+
+
 async def _run_ask(args: argparse.Namespace) -> int:
     launch_project_path = _select_startup_project(args.project, args)
     project_path = launch_project_path
@@ -1549,16 +1602,8 @@ async def _run_ask(args: argparse.Namespace) -> int:
             print(f"hooks: {diagnostic}", file=sys.stderr)
 
     restoring_session = False
-    if args.session:
-        session = resumed_session or _get_or_create_session(
-            store, project_path, CLI_AGENT_MODE, summary, args.session, force_new=False
-        )
-        restoring_session = resumed_session is not None
-        session = _normalize_cli_session_mode(store, session, persist=True)
-    elif args.save:
-        session = store.create(project_path, CLI_AGENT_MODE, summary)
-    else:
-        session = SessionRecord.create(project_path, CLI_AGENT_MODE, summary)
+    session, restoring_session = _resolve_ask_session(args, store, project_path, summary, resumed_session)
+    _apply_launch_name(store, session, getattr(args, "name", None), persistable=bool(args.save or args.session))
 
     # Every run records the semantic journal; unsaved runs use an in-memory
     # sink with the same id/seq/schema rules and never touch the state dir.
@@ -1659,6 +1704,9 @@ async def _run_ask(args: argparse.Namespace) -> int:
     # and records the run terminal.
     usage_sink: Optional[SessionUsageSink] = None
     pump_task: Optional[asyncio.Task] = None
+    # Initialized before the try so the finally can stop the inbox even when an
+    # earlier failure skipped its setup.
+    peer_inbox = None
     usage_ledger = UsageLedger()
     response_chunks: list[dict] = []
     exit_code = 0
@@ -1849,6 +1897,18 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 ),
             )
 
+        # Cross-session messaging (phase 2): long-lived workers (--goal/--loop on
+        # a persisted session) accept inbound peer messages for their lifetime.
+        # A bare one-shot ask has nothing to receive into and binds nothing.
+        peer_inbox = await start_headless_peer_inbox(
+            store_root=store.root,
+            session_id=session.session_id,
+            agent=agent,
+            json_mode=args.json,
+            journal_factory=lambda: FileSessionEventStore(store.journal(session.session_id)),
+            enabled=(goal_state is not None or loop_state is not None) and (args.save or args.session),
+        )
+
         attachments, unresolved_mentions = build_file_attachments(prompt or "", project_path)
         for mention in unresolved_mentions:
             print(f"Note: @{mention} not found, sent as plain text", file=sys.stderr)
@@ -1898,10 +1958,26 @@ async def _run_ask(args: argparse.Namespace) -> int:
         # the moment they are journaled. Consuming the stream drives the turn
         # (and prints the answer text in plain mode).
         async def _consume_turn(stream) -> None:
-            async for chunk in stream:
-                response_chunks.append(chunk)
-                if not args.json and chunk.get("type") == "response" and chunk.get("content"):
-                    print(chunk["content"], end="" if not chunk.get("complete") else "\n")
+            if peer_inbox is not None:
+                peer_inbox.mark_busy()
+            try:
+                async for chunk in stream:
+                    response_chunks.append(chunk)
+                    if not args.json and chunk.get("type") == "response" and chunk.get("content"):
+                        print(chunk["content"], end="" if not chunk.get("complete") else "\n")
+            finally:
+                if peer_inbox is not None:
+                    peer_inbox.mark_idle()
+
+        async def _drain_pending_peer_turns() -> None:
+            """Deliver queued peer messages as their own turn while idle.
+
+            Mid-turn arrivals drain at tool boundaries via the queued-input
+            provider; this covers messages that landed between turns.
+            """
+            while peer_inbox is not None and peer_inbox.pending_texts():
+                joined = "\n\n".join(peer_inbox.pop_all())
+                await _consume_turn(agent.process_message_stream(joined))
 
         stream = (
             agent.process_message_stream(turn_prompt, attachments)
@@ -1910,29 +1986,19 @@ async def _run_ask(args: argparse.Namespace) -> int:
         )
         await _consume_turn(stream)
 
-        # --loop: keep re-running the prompt until the cap or the expiry is hit.
-        if loop_state is not None:
-            await _run_ask_loop_iterations(
-                agent=agent,
-                loop_state=loop_state,
-                prompt=prompt,
-                attachments=attachments,
-                session_recorder=session_recorder,
-                json_mode=args.json,
-                consume_turn=_consume_turn,
-                drain_tokens=_drain_tokens,
-            )
-
-        # --goal: evaluate and auto-continue until the goal is met or the cap is hit.
-        if goal_state is not None:
-            exit_code = await _run_ask_goal_iterations(
-                agent=agent,
-                goal_state=goal_state,
-                session_recorder=session_recorder,
-                json_mode=args.json,
-                consume_turn=_consume_turn,
-                drain_tokens=_drain_tokens,
-            )
+        # --loop / --goal worker modes, then the terminal-boundary peer drain.
+        exit_code = await _run_worker_modes(
+            agent=agent,
+            loop_state=loop_state,
+            goal_state=goal_state,
+            prompt=prompt,
+            attachments=attachments,
+            session_recorder=session_recorder,
+            json_mode=args.json,
+            consume_turn=_consume_turn,
+            drain_tokens=_drain_tokens,
+            drain_peer_turns=_drain_pending_peer_turns,
+        )
 
         if args.save or args.session:
             session.config = summary
@@ -1970,6 +2036,8 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 await pump_task
             except asyncio.CancelledError:
                 pass
+        if peer_inbox is not None:
+            await peer_inbox.stop()
         while not manager.events.empty():
             event = manager.events.get_nowait()
             _print_ask_event(event, args.json)
@@ -2032,6 +2100,57 @@ async def _run_ask(args: argparse.Namespace) -> int:
     return exit_code
 
 
+async def _run_worker_modes(
+    *,
+    agent: "CoderAgent",
+    loop_state: Optional[LoopState],
+    goal_state: Optional[GoalState],
+    prompt: Optional[str],
+    attachments: list,
+    session_recorder,
+    json_mode: bool,
+    consume_turn,
+    drain_tokens,
+    drain_peer_turns,
+) -> int:
+    """Run --loop / --goal after the first turn, then drain the peer inbox.
+
+    The terminal-boundary drain at the end matters: a message accepted during
+    the final verdict call, the last turn's tail, or the loop expiry sleep is
+    already journaled as delivered — without this pass it would be discarded
+    by inbox shutdown before the model ever saw it. Happy path only (never on
+    the exception path); arrivals during these last turns fall back to the
+    mid-turn provider.
+    """
+    exit_code = 0
+    if loop_state is not None:
+        await _run_ask_loop_iterations(
+            agent=agent,
+            loop_state=loop_state,
+            prompt=prompt,
+            attachments=attachments,
+            session_recorder=session_recorder,
+            json_mode=json_mode,
+            consume_turn=consume_turn,
+            drain_tokens=drain_tokens,
+            drain_peer_turns=drain_peer_turns,
+        )
+
+    if goal_state is not None:
+        exit_code = await _run_ask_goal_iterations(
+            agent=agent,
+            goal_state=goal_state,
+            session_recorder=session_recorder,
+            json_mode=json_mode,
+            consume_turn=consume_turn,
+            drain_tokens=drain_tokens,
+            drain_peer_turns=drain_peer_turns,
+        )
+
+    await drain_peer_turns()
+    return exit_code
+
+
 async def _run_ask_loop_iterations(
     *,
     agent: "CoderAgent",
@@ -2042,11 +2161,13 @@ async def _run_ask_loop_iterations(
     json_mode: bool,
     consume_turn,
     drain_tokens,
+    drain_peer_turns,
 ) -> None:
     """Re-run the loop prompt until the iteration cap or the expiry is hit."""
     drain_tokens(loop_state)
     loop_state.advance_after_completion()
     while loop_state.is_active:
+        await drain_peer_turns()
         await _sleep_until_loop_fire(loop_state, session_recorder, json_mode)
         if not loop_state.is_active:
             break
@@ -2079,6 +2200,7 @@ async def _run_ask_goal_iterations(
     json_mode: bool,
     consume_turn,
     drain_tokens,
+    drain_peer_turns,
 ) -> int:
     """Evaluate and auto-continue until the goal is met or the turn cap is hit.
 
@@ -2087,6 +2209,9 @@ async def _run_ask_goal_iterations(
     """
     drain_tokens(goal_state)
     while not goal_state.met and goal_state.turns_evaluated < goal_state.max_turns:
+        # Messages that arrived between turns run before the next verdict, so a
+        # peer's input can influence what the worker does, not just what it says.
+        await drain_peer_turns()
         verdict = await agent.evaluate_goal_condition(goal_state.condition)
         goal_state.turns_evaluated += 1
         goal_state.last_reason = verdict.reason

@@ -217,6 +217,42 @@ entirely, so the model never sees it. Gigacode workflows are unaffected:
 gigacode's own opt-in, and `list_subagent_models` stays visible whenever either
 gigacode or sub-agents are enabled.
 
+### Cross-session messaging
+
+Sessions can talk to each other: any session of the same host process, plus
+other kolega-code processes sharing this machine's state directory — TUIs and
+headless `ask --goal` / `--loop` workers alike. `list_agents` shows the live
+peer sessions (name, idle/busy status, project directory, short id);
+`send_message` delivers a plain-text message to one of them by name, name
+prefix, or session id. The message enters the recipient through its normal
+queue: between tool calls while it works, as a fresh turn when it is idle.
+Both tools are top-level Build-mode capabilities; sub-agents never see them.
+
+Every session is reachable at an owner-only Unix socket under its state
+directory (`messaging/<encoded-session-id>.<pid>.sock`). Discovery is
+filesystem visibility plus liveness checks — sockets left behind by dead
+processes are swept automatically, so crashed sessions never linger as ghosts.
+
+Every new session gets a random friendly name (`grumpy-wombat-1234`) so live
+sessions stay distinguishable even when several work in one project. Rename
+yours with `--name` at launch or `/rename <name>` mid-session; the persisted
+name is how peers address it. `/peers` shows the same table the agent sees
+plus this session's address and diagnostics.
+
+The trust model matters: **a message is information, never authority.** Text
+arriving from a peer session is context from another agent — it cannot approve
+permission prompts, change settings, or execute anything on its own. Any work
+it triggers still goes through the recipient's normal permission gates. On the
+sending side, `send_message` prompts for approval in `ask` permission mode and
+can be granted per peer or blanket via a saved rule.
+
+Inbound messages are queued exactly like input typed at the keyboard —
+delivered between tool calls or as a fresh turn. Two loop protections bound
+misbehaving agents: identical repeats from one sender are dropped inside a
+short window, and the queue holds a bounded number of peer messages. Failed
+deliveries (unknown or unreachable peers) are always reported to the sender as
+errors — never as silent successes.
+
 ## Read-only vs. full access
 
 Tools are gated by mode. In a read-only context — like [Plan mode](../../tui/modes/)

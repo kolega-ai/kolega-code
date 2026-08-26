@@ -92,6 +92,10 @@ class ConversationEntry:
     created_at: float = field(default_factory=time.monotonic, compare=False, repr=False)
     word_count: int = field(default=0, compare=False, repr=False)
     elapsed_s: Optional[float] = field(default=None, compare=False, repr=False)
+    # Provenance for entries that did not originate from the local user —
+    # e.g. {"kind": "peer", "session_id": ..., "title": ...}. UI-only display
+    # metadata; excluded from equality like the other render caches.
+    origin: Optional[dict] = field(default=None, compare=False, repr=False)
 
     def materialize(self) -> str:
         """Fold any deferred stream deltas into ``content`` and return it.
@@ -111,12 +115,27 @@ class QueuedMessage:
 
     ``entry`` is the future transcript entry and stays out of
     ``conversation_entries`` until the queued message begins processing.
+
+    ``text`` is what the agent receives. ``display_text`` is what the human
+    sees in the queue preview and the future transcript entry; they differ for
+    inputs carrying framing the model needs but the user does not (peer
+    provenance preambles). ``origin`` is None for ordinary typed messages.
     """
 
     queue_id: str
     text: str
     attachments: list[dict] | None
     entry: ConversationEntry
+    display_text: str = ""
+    origin: Optional[dict] = None
+
+    def __post_init__(self) -> None:
+        if not self.display_text:
+            self.display_text = self.text
+
+    @property
+    def is_peer(self) -> bool:
+        return isinstance(self.origin, dict) and self.origin.get("kind") == "peer"
 
 
 @dataclass

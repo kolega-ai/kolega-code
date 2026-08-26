@@ -845,9 +845,16 @@ async def test_logs_output_supports_mouse_drag_selection(tmp_path: Path, monkeyp
 
         await _wait_for_layout(pilot, selection_targets_are_ready)
 
-        await pilot.mouse_down(logs, offset=(0, 0))
-        await pilot._post_mouse_events([events.MouseMove], logs, offset=(19, 0), button=1)
-        await pilot.mouse_up(logs, offset=(19, 0))
+        # Startup diagnostics (e.g. the peer-socket degrade notice on long tmp
+        # paths) may occupy earlier rows; drag OUR line's row, not row 0.
+        target_row = next(
+            (i for i, strip in enumerate(logs.lines) if "select this log text" in strip.text),
+            0,
+        )
+
+        await pilot.mouse_down(logs, offset=(0, target_row))
+        await pilot._post_mouse_events([events.MouseMove], logs, offset=(19, target_row), button=1)
+        await pilot.mouse_up(logs, offset=(19, target_row))
 
         def selection_copied_text() -> bool:
             return (app.screen.get_selected_text() or "").strip() == "select this log text"

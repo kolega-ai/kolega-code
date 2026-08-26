@@ -385,6 +385,14 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
                     f"Tool: {request.mcp_tool}",
                 ]
             )
+        if request.kind.value == "message":
+            recipient = str(request.inputs.get("recipient") or "").strip()
+            text = str(request.inputs.get("text") or "").strip()
+            body = "\n".join(["Allow the agent to send a peer message?", "", f"To: {recipient}"])
+            if text:
+                preview = text if len(text) <= 400 else text[:397] + "..."
+                body += "\n\n" + preview
+            return body
         target = f" on {request.path}" if request.path else ""
         return f"Allow the agent to run {request.tool_name}{target}?"
 

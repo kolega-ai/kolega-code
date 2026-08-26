@@ -36,8 +36,23 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option
 
-from kolega_code.agent import AgentConfig
+from kolega_code.agent import AgentConfig, AgentEvent
 from kolega_code.extensions import ExtensionSelection, KolegaExtensionLoadError
+from kolega_code.session.inbox import (
+    SHARED_INBOX_REGISTRY,
+    MAX_QUEUED_PEER_MESSAGES,
+    InboxRegistration,
+    InboxRegistry,
+    PeerMessage,
+    PeerRepeatGuard,
+    PeerSocketServer,
+    bind_session_socket,
+    deliver_inbound,
+    InboundNotice,
+    InboundNoticeKind,
+    peer_model_text,
+    peer_origin,
+)
 from kolega_code.session.recording import RecordingConnectionManager
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
 from kolega_code.agent.prompt_dump import list_prompt_overrides
@@ -166,6 +181,7 @@ class KolegaCodeApp(
         startup_config_error: Optional[str] = None,
         extension_selection: Optional[ExtensionSelection] = None,
         resuming_session: bool = False,
+        inbox_registry: Optional[InboxRegistry] = None,
     ) -> None:
         super().__init__()
         self._terminal_control_filter = tui_terminal_display.TerminalControlFilter()
@@ -252,6 +268,17 @@ class KolegaCodeApp(
         # A single client holds control; viewers of a shared session may watch a
         # prompt appear but never answer it.
         self.control_channel.acquire(tui_constants.TUI_CLIENT_ID)
+        # Cross-session messaging (phase 1): this session's entry in the
+        # process-wide peer inbox. Hosts running isolated fleets inject their
+        # own registry; the shared default serves the ordinary CLI.
+        self.inbox_registry = inbox_registry if inbox_registry is not None else SHARED_INBOX_REGISTRY
+        # Phase 2: this session's cross-process socket. Bound on mount when the
+        # feature is enabled; None means in-process-only.
+        self._inbox_socket: Optional[PeerSocketServer] = None
+        self.messaging_socket_path: Optional[Path] = None
+        # Loop protection: identical repeats from one sender inside the window
+        # are dropped before they can bounce two agents into a forever loop.
+        self._peer_repeat_guard = PeerRepeatGuard()
         self._hook_dispatcher: Optional[HookDispatcher] = None
         self._session_started = False
         #: Set when action_quit saves the session cleanly; main.py prints the
@@ -482,8 +509,116 @@ class KolegaCodeApp(
             pass
         return header
 
+    # ------------------------------------------------------------------
+    # Cross-session messaging (phase 1): the in-process peer inbox.
+    # ------------------------------------------------------------------
+
+    def _peer_status(self) -> str:
+        return "busy" if (self._turn_active or self.agent_worker is not None) else "idle"
+
+    def _register_with_inbox(self) -> None:
+        """Publish this session's live entry so sibling sessions can see and
+        message it. Callables, not snapshots: every query reads current state."""
+        self.inbox_registry.register(
+            InboxRegistration(
+                session_id=self.session.session_id,
+                describe_title=lambda: self.session.title,
+                describe_project_path=lambda: str(self.active_project_path),
+                describe_status=self._peer_status,
+                deliver_message=self._deliver_peer_message,
+            )
+        )
+
+    def _unregister_from_inbox(self) -> None:
+        self.inbox_registry.unregister(self.session.session_id)
+
+    async def _start_inbox_socket(self) -> None:
+        """Bind this session's cross-process inbox socket.
+
+        Never breaks startup: any bind failure (unwritable state dir,
+        path-length limits) degrades to in-process-only messaging with a
+        notice, not a failed launch.
+        """
+        server = await bind_session_socket(
+            store_root=self.store.root,
+            session_id=self.session.session_id,
+            describe_status=self._peer_status,
+            deliver_message=self._deliver_peer_message,
+            on_unavailable=lambda reason: self._log_status(
+                messages.MESSAGING_SOCKET_UNAVAILABLE.format(reason=reason), "info"
+            ),
+        )
+        if server is not None:
+            self._inbox_socket = server
+            self.messaging_socket_path = server.path
+
+    async def _stop_inbox_socket(self) -> None:
+        server, self._inbox_socket = self._inbox_socket, None
+        self.messaging_socket_path = None
+        if server is not None:
+            try:
+                await server.stop()
+            except Exception:  # noqa: BLE001 — shutdown must always complete
+                pass
+
+    def _enqueue_peer_message(self, message: PeerMessage) -> None:
+        """Queue a peer message on the recipient's own rhythm.
+
+        The transcript keeps the raw text; the model receives the provenance
+        preamble followed by the text. The existing queue machinery provides
+        the delivery guarantees — between tool calls during a turn, a fresh
+        turn when idle, never interrupting a running tool.
+        """
+        self._queue_user_message(message.text, origin=peer_origin(message), model_text=peer_model_text(message))
+        self._schedule_maybe_start_queued_message()
+
+    async def _emit_peer_event(self, event_type: str, message: PeerMessage) -> None:
+        """Record a peer-message lifecycle event on this session's stream.
+
+        Rides the same recording transport as everything else, so replays show
+        arrival and acceptance. Observability only: a transport failure must
+        never break delivery itself.
+        """
+        event = AgentEvent(
+            sender="peer-inbox",
+            event_type=event_type,
+            session_id=self.session.session_id,
+            content=message.event_content(),
+        )
+        try:
+            await self.recording_connection_manager.broadcast_event(
+                event,
+                self.session.workspace_id,
+                self.session.thread_id,
+            )
+        except Exception:
+            pass
+
+    def _render_peer_notice(self, notice: InboundNotice) -> None:
+        sender = notice.message.sender_title
+        if notice.kind is InboundNoticeKind.REPEAT_DROPPED:
+            self._log_status(messages.PEER_REPEAT_DROPPED.format(sender=sender), "info")
+        else:
+            self._log_status(messages.PEER_QUEUE_FULL.format(limit=MAX_QUEUED_PEER_MESSAGES), "info")
+
+    async def _deliver_peer_message(self, message: PeerMessage) -> str:
+        """Inbound hook registered with the inbox: peer messages are queued
+        like typed input. All sequencing lives in :func:`deliver_inbound`;
+        this host only says where events go, how messages queue, and how
+        notices render."""
+        return await deliver_inbound(
+            message,
+            repeat_guard=self._peer_repeat_guard,
+            queued_count=lambda: sum(1 for item in self._queued_messages if item.is_peer),
+            record_event=lambda event_type: self._emit_peer_event(event_type, message),
+            enqueue=self._enqueue_peer_message,
+            notify=self._render_peer_notice,
+        )
+
     async def on_mount(self) -> None:
         self.settings = self.settings_store.load()
+        self._register_with_inbox()
+        await self._start_inbox_socket()
         self._restore_prompt_history()
         # Attach usage persistence before any turn can run: the sink journals
         # every ledger-settled non-history response, and its start marker must
@@ -2019,6 +2154,23 @@ class KolegaCodeApp(
         if self._share_server is not None:
             self._share_server.request_stop()
             self._share_server = None
+        # Same backstop for the peer inbox: a dead session must not stay
+        # discoverable. The synchronous unlink stops new connections even if
+        # the loop exits first; the captured server closes gracefully by task
+        # whenever the loop still has time to run it.
+        if self._inbox_socket is not None:
+            server = self._inbox_socket
+            self._inbox_socket = None
+            self.messaging_socket_path = None
+            try:
+                server.path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            try:
+                asyncio.get_running_loop().create_task(server.stop())
+            except RuntimeError:
+                pass
+        self._unregister_from_inbox()
         self._close_memory_manager()
 
     def on_worker_state_changed(self, event) -> None:
@@ -2071,6 +2223,8 @@ class KolegaCodeApp(
                 if self._usage_sink is not None:
                     await self._usage_sink.aclose()
             finally:
+                await self._stop_inbox_socket()
+                self._unregister_from_inbox()
                 self._close_memory_manager()
                 self.exit()
 

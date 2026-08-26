@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import secrets
 import shutil
 import sys
 import threading
@@ -27,6 +28,104 @@ from .session_journal import (
 from .session_usage import derive_session_usage
 
 SCHEMA_VERSION = 1
+
+#: Word pools for generated session display names ("cheesy-wombat-1234").
+#: Names are how peer sessions address each other (see cli/peer_messaging.py),
+#: so the pools are sized to keep accidental collisions rare while staying
+#: easy to say out loud. ~12M combinations.
+_SESSION_ADJECTIVES: tuple[str, ...] = (
+    "amber",
+    "breezy",
+    "bouncy",
+    "cheerful",
+    "cosmic",
+    "cozy",
+    "crispy",
+    "curious",
+    "dapper",
+    "eager",
+    "fizzy",
+    "fuzzy",
+    "giggly",
+    "glossy",
+    "goofy",
+    "groovy",
+    "hasty",
+    "jazzy",
+    "jolly",
+    "keen",
+    "lively",
+    "lucky",
+    "mellow",
+    "mighty",
+    "nifty",
+    "peppy",
+    "plucky",
+    "quirky",
+    "sassy",
+    "shiny",
+    "snappy",
+    "snazzy",
+    "spunky",
+    "sunny",
+    "twisty",
+    "upbeat",
+    "vivid",
+    "witty",
+    "zany",
+    "zesty",
+)
+_SESSION_NOUNS: tuple[str, ...] = (
+    "axolotl",
+    "badger",
+    "capybara",
+    "chinchilla",
+    "dormouse",
+    "ferret",
+    "gecko",
+    "heron",
+    "ibex",
+    "ibis",
+    "jackal",
+    "kiwi",
+    "lemur",
+    "llama",
+    "marmot",
+    "meerkat",
+    "narwhal",
+    "numbat",
+    "ocelot",
+    "okapi",
+    "otter",
+    "pangolin",
+    "platypus",
+    "possum",
+    "puffin",
+    "quail",
+    "quokka",
+    "raven",
+    "sloth",
+    "tapir",
+    "wallaby",
+    "wombat",
+    "yak",
+    "zebra",
+)
+
+
+def generate_session_name() -> str:
+    """A fresh friendly display name, e.g. ``cheesy-wombat-1234``.
+
+    Replaces the old project-basename default: sessions address each other by
+    name across processes, so every session in one directory sharing the same
+    basename forced id addressing everywhere. ``--name`` and ``/rename``
+    override; a rare random collision surfaces as the ordinary
+    ambiguous-recipient error rather than silent misdelivery.
+    """
+    adjective = secrets.choice(_SESSION_ADJECTIVES)
+    noun = secrets.choice(_SESSION_NOUNS)
+    number = secrets.randbelow(9000) + 1000  # always four digits
+    return f"{adjective}-{noun}-{number}"
 
 
 class SessionStoreError(RuntimeError):
@@ -85,7 +184,7 @@ class SessionRecord:
             workspace_id=f"cli-{uuid.uuid4().hex}",
             thread_id=uuid.uuid4().hex,
             mode=mode,
-            title=title or Path(resolved_project).name or "Kolega Code",
+            title=title or generate_session_name(),
             created_at=now,
             updated_at=now,
             config=config,

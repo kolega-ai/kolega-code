@@ -23,6 +23,9 @@ class PermissionKind(str, Enum):
     COMMAND = "command"
     EDIT = "edit"
     MCP = "mcp"
+    #: Cross-session peer messages (``send_message``): an outbound delivery of
+    #: agent-authored text to another session's inbox.
+    MESSAGE = "message"
 
 
 class PermissionStoreError(RuntimeError):
@@ -44,6 +47,11 @@ EDIT_PERMISSION_TOOLS = frozenset(
         "multi_edit",
         "resolve",
         "write",
+    }
+)
+MESSAGE_PERMISSION_TOOLS = frozenset(
+    {
+        "send_message",
     }
 )
 
@@ -69,6 +77,8 @@ class PermissionRequest:
             return self.command
         if self.kind == PermissionKind.MCP:
             return f"{self.mcp_server}/{self.mcp_tool}" if self.mcp_server else self.tool_name
+        if self.kind == PermissionKind.MESSAGE:
+            return self.command
         if self.path:
             return f"{self.tool_name} {self.path}"
         return self.tool_name
@@ -130,6 +140,8 @@ class PermissionRule:
             return _matches_command(self.match_type, self.pattern, request.command)
         if self.kind == PermissionKind.MCP:
             return _matches_mcp(self, request)
+        if self.kind == PermissionKind.MESSAGE:
+            return _matches_message(self, request)
 
         return _matches_edit(self, request)
 
@@ -234,6 +246,16 @@ def permission_request_for_tool(tool_name: str, inputs: dict[str, Any]) -> Optio
             path=path,
         )
 
+    if tool_name in MESSAGE_PERMISSION_TOOLS:
+        recipient = str(inputs.get("recipient") or "").strip()
+        text = str(inputs.get("text") or "")
+        return PermissionRequest(
+            kind=PermissionKind.MESSAGE,
+            tool_name=tool_name,
+            inputs=inputs,
+            command=_message_summary(recipient, text),
+        )
+
     mcp_target = _mcp_target_from_tool_name(tool_name)
     if mcp_target is not None:
         server_id, mcp_tool = mcp_target
@@ -253,6 +275,8 @@ def allow_rule_options(request: PermissionRequest) -> list[PermissionRuleOption]
         return _command_rule_options(request)
     if request.kind == PermissionKind.MCP:
         return _mcp_rule_options(request)
+    if request.kind == PermissionKind.MESSAGE:
+        return _message_rule_options(request)
     return _edit_rule_options(request)
 
 
@@ -298,6 +322,26 @@ def _matches_mcp(rule: PermissionRule, request: PermissionRequest) -> bool:
     if rule.match_type == "server":
         return bool(request.mcp_server) and request.mcp_server == rule.pattern
     return False
+
+
+def _matches_message(rule: PermissionRule, request: PermissionRequest) -> bool:
+    if rule.match_type == "tool":
+        return rule.pattern in {"*", request.tool_name}
+    if rule.match_type == "recipient":
+        recipient = str(request.inputs.get("recipient") or "").strip().casefold()
+        return bool(recipient) and recipient == rule.pattern.strip().casefold()
+    return False
+
+
+def _message_summary(recipient: str, text: str) -> str:
+    """Human-readable one-line summary for the approval dialog."""
+    lines = text.strip().splitlines()
+    preview = lines[0].strip() if lines else ""
+    if len(preview) > 80:
+        preview = preview[:77] + "..."
+    if not recipient:
+        return preview
+    return f"to {recipient}: {preview}" if preview else f"to {recipient}"
 
 
 def _mcp_target_from_tool_name(tool_name: str) -> Optional[tuple[str, str]]:
@@ -391,6 +435,42 @@ def _command_rule_options(request: PermissionRequest) -> list[PermissionRuleOpti
         )
 
     return _dedupe_options(options)
+
+
+def _message_rule_options(request: PermissionRequest) -> list[PermissionRuleOption]:
+    """Allow-rule choices for an outbound peer message.
+
+    Recipient-scoped first — "always message deploy-bot" is the useful grant —
+    then a blanket allow for any peer.
+    """
+    options: list[PermissionRuleOption] = []
+    recipient = str(request.inputs.get("recipient") or "").strip()
+    if recipient:
+        options.append(
+            PermissionRuleOption(
+                label=f"Always allow messages to `{recipient}`",
+                description="Allow send_message to this peer by name.",
+                rule=PermissionRule.create(
+                    kind=PermissionKind.MESSAGE,
+                    tool=request.tool_name,
+                    match_type="recipient",
+                    pattern=recipient,
+                ),
+            )
+        )
+    options.append(
+        PermissionRuleOption(
+            label=f"Always allow `{request.tool_name}`",
+            description="Allow messages to any peer session.",
+            rule=PermissionRule.create(
+                kind=PermissionKind.MESSAGE,
+                tool=request.tool_name,
+                match_type="tool",
+                pattern=request.tool_name,
+            ),
+        )
+    )
+    return options
 
 
 def _edit_rule_options(request: PermissionRequest) -> list[PermissionRuleOption]:

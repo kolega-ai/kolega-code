@@ -66,6 +66,8 @@ TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     SlashCommandEntry("goal", "Set, show, or clear an autonomous completion goal", CommandScope.TUI),
     SlashCommandEntry("loop", "Run a prompt on a repeating schedule", CommandScope.TUI),
     SlashCommandEntry("tasks", "Show the shared task list", CommandScope.TUI),
+    SlashCommandEntry("peers", "List reachable agent sessions you can message", CommandScope.TUI),
+    SlashCommandEntry("rename", "Rename this session (/rename <name>)", CommandScope.TUI),
     SlashCommandEntry("gigacode", "Toggle gigacode workflow orchestration on or off", CommandScope.TUI),
     SlashCommandEntry("prompts", "Dump, list, or validate project prompt override files", CommandScope.TUI),
     SlashCommandEntry("queue-clear", "Clear queued follow-up messages", CommandScope.TUI),

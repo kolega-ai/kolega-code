@@ -24,6 +24,7 @@ from kolega_code.permissions import (
     PermissionRequest,
     ProjectPermissionStore,
     allow_rule_options,
+    permission_request_for_tool,
 )
 from kolega_code.session.control import ControlChannel
 from kolega_code.session.runtime import (
@@ -211,6 +212,23 @@ async def test_saved_rule_is_honoured_without_asking(tmp_path: Path) -> None:
     runtime, emitted, _ = _runtime(tmp_path)
     await runtime.start()
     request = _request("ls -la")
+    option = allow_rule_options(request)[0]
+    ProjectPermissionStore(tmp_path).add_rule(option.rule)
+
+    decision = await runtime.permission_callback(request)
+
+    assert decision.allowed is True
+    assert "saved rule" in decision.reason
+    assert emitted == [], "a matching saved rule must not reach a client"
+
+
+@pytest.mark.asyncio
+async def test_saved_message_rule_is_honoured_without_asking(tmp_path: Path) -> None:
+    """A saved send_message grant dispatches without reaching a client."""
+    runtime, emitted, _ = _runtime(tmp_path)
+    await runtime.start()
+    request = permission_request_for_tool("send_message", {"recipient": "deploy-bot", "text": "hi"})
+    assert request is not None and request.kind == PermissionKind.MESSAGE
     option = allow_rule_options(request)[0]
     ProjectPermissionStore(tmp_path).add_rule(option.rule)
 
