@@ -546,6 +546,24 @@ async def test_start_sweeps_a_dead_owner_socket_at_same_path(short_state_root: A
         await server.stop()
 
 
+@pytest.mark.asyncio
+async def test_start_steals_a_stale_file_whose_pid_was_recycled(short_state_root: Any) -> None:
+    """A dead owner's filename with a recycled (still-alive) pid must not lock
+    the legitimate owner out: nothing answers the liveness probe, so the bind
+    proceeds instead of refusing forever."""
+    directory = messaging_dir(short_state_root)
+    ghost = socket_path_for(directory, "a" * 32, os.getpid())  # our live pid, nobody listening
+    ghost.write_bytes(b"")
+
+    server, _received = _make_server(state_root=short_state_root)
+    path = await server.start()
+    try:
+        assert path == ghost
+        assert path.exists()
+    finally:
+        await server.stop()
+
+
 # -- Genuine cross-process exchange -------------------------------------------
 
 

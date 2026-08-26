@@ -2155,19 +2155,21 @@ class KolegaCodeApp(
             self._share_server.request_stop()
             self._share_server = None
         # Same backstop for the peer inbox: a dead session must not stay
-        # discoverable by its siblings. The async stop runs on the loop; the
-        # immediate unlink stops new connections even if the loop exits first.
+        # discoverable. The synchronous unlink stops new connections even if
+        # the loop exits first; the captured server closes gracefully by task
+        # whenever the loop still has time to run it.
         if self._inbox_socket is not None:
-            try:
-                asyncio.get_running_loop().create_task(self._stop_inbox_socket())
-            except RuntimeError:
-                pass
-            try:
-                self._inbox_socket.path.unlink(missing_ok=True)
-            except OSError:
-                pass
+            server = self._inbox_socket
             self._inbox_socket = None
             self.messaging_socket_path = None
+            try:
+                server.path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            try:
+                asyncio.get_running_loop().create_task(server.stop())
+            except RuntimeError:
+                pass
         self._unregister_from_inbox()
         self._close_memory_manager()
 

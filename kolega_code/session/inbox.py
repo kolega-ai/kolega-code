@@ -539,9 +539,12 @@ class PeerSocketServer:
     async def start(self) -> Path:
         """Bind the socket, replacing a stale file left by a dead process.
 
-        A stale file with our session id but a *live* pid means another live
-        instance of this session exists — refuse to bind rather than steal its
-        traffic; identity churn must be visible, not silently overridden.
+        A file at our path means either a genuinely live owner or a stale
+        leftover whose embedded pid was recycled by some unrelated process —
+        liveness-by-name cannot tell them apart, so when the pid looks alive we
+        ask the endpoint itself: something answering a status query owns the
+        address and we refuse to steal it; silence means stale, whatever the
+        pid claims. Dead-pid leftovers are unlinked directly.
         """
         if len(str(self.path)) >= AF_UNIX_PATH_LIMIT:
             raise PeerMessageError(
@@ -552,11 +555,11 @@ class PeerSocketServer:
         ensure_private_dir(self.directory)
         if self.path.exists():
             parsed = parse_socket_name(self.path.name)
-            if parsed is not None and is_pid_alive(parsed[1]):
+            if parsed is not None and is_pid_alive(parsed[1]) and await socket_endpoint_is_live(self.path):
                 raise PeerMessageError(
                     f"Another live process (pid {parsed[1]}) already owns socket {self.path.name}; refusing to bind."
                 )
-            # Dead owner (or unconnectable leftover): unlink and rebind.
+            # Dead owner, recycled-pid leftover, or a foreign file: unlink.
             try:
                 self.path.unlink()
             except OSError:
@@ -687,6 +690,28 @@ async def send_over_socket(
     if not isinstance(response, dict) or not isinstance(response.get("ok"), bool):
         raise PeerMessageError(f"Peer at {path} sent an unrecognized response.")
     return response
+
+
+#: Bind-time budget for asking an existing socket whether anyone is home.
+BIND_LIVENESS_PROBE_SECONDS = 0.5
+
+
+async def socket_endpoint_is_live(path: Path) -> bool:
+    """Whether something currently answers a status query on this socket path.
+
+    Liveness-by-pid alone cannot distinguish a live server from a recycled pid
+    squatting on a dead session's filename; asking the endpoint is the
+    tiebreaker.
+    """
+    try:
+        response = await send_over_socket(
+            path,
+            {"v": MESSAGING_PROTOCOL_VERSION, "kind": "status"},
+            timeout=BIND_LIVENESS_PROBE_SECONDS,
+        )
+    except PeerMessageError:
+        return False
+    return isinstance(response, dict) and response.get("ok") is True
 
 
 # ---------------------------------------------------------------------------
