@@ -275,3 +275,52 @@ def test_ask_goal_tokens_accumulate_from_ledger_deltas(tmp_path, capsys, monkeyp
     goal_state = CapturingGoalState.instances[0]
     # 3 work streams (initial + 2 nudges) x 100 + 3 verifier calls x 7.
     assert goal_state.tokens_spent == 3 * 100 + 3 * 7
+
+
+def test_ask_goal_delivers_peer_message_arriving_during_final_verdict(tmp_path, capsys, monkeypatch, isolated_cli_env):
+    """A peer message accepted while the final verdict call runs must still be
+    delivered: it is journaled as DELIVERED at accept time, so discarding it in
+    inbox shutdown would lose mail the audit trail claims was seen."""
+    from kolega_code.cli import main as main_module
+    from kolega_code.session.inbox import PeerMessage
+
+    captured_inboxes: list = []
+
+    class TerminalArrivalAgent(GoalAskFakeAgent):
+        async def evaluate_goal_condition(self, condition):
+            verdict = await super().evaluate_goal_condition(condition)
+            if verdict.met and captured_inboxes:
+                # Simulate the peer message landing mid-verdict.
+                captured_inboxes[0]._queue.append(
+                    PeerMessage.create(
+                        sender_session_id="peer-session",
+                        sender_title="teammate",
+                        text="run the rollback first",
+                    )
+                )
+            return verdict
+
+    _reset_fake(monkeypatch)
+    monkeypatch.setattr(main_module, "CoderAgent", TerminalArrivalAgent)
+
+    real_start = main_module.start_headless_peer_inbox
+
+    async def capture_start(**kwargs):
+        inbox = await real_start(**kwargs)
+        if inbox is not None:
+            captured_inboxes.append(inbox)
+        return inbox
+
+    monkeypatch.setattr(main_module, "start_headless_peer_inbox", capture_start)
+
+    project = _setup_project(tmp_path, monkeypatch)
+    exit_code = main_module.main(["ask", "--goal", "make tests pass", "--save", "--json", "--project", str(project)])
+
+    assert exit_code == 0
+    assert len(captured_inboxes) == 1, "the --save goal worker must bind a peer inbox"
+    agent = GoalAskFakeAgent.instances[0]
+    # 1 task prompt + 1 terminal-boundary turn delivering the late message.
+    assert len(agent.messages) == 2
+    assert "run the rollback first" in agent.messages[1]
+    assert "information from another agent session" in agent.messages[1], "provenance framing intact"
+    assert captured_inboxes[0]._queue == [], "the terminal drain empties the queue"

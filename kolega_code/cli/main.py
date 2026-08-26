@@ -1986,31 +1986,19 @@ async def _run_ask(args: argparse.Namespace) -> int:
         )
         await _consume_turn(stream)
 
-        # --loop: keep re-running the prompt until the cap or the expiry is hit.
-        if loop_state is not None:
-            await _run_ask_loop_iterations(
-                agent=agent,
-                loop_state=loop_state,
-                prompt=prompt,
-                attachments=attachments,
-                session_recorder=session_recorder,
-                json_mode=args.json,
-                consume_turn=_consume_turn,
-                drain_tokens=_drain_tokens,
-                drain_peer_turns=_drain_pending_peer_turns,
-            )
-
-        # --goal: evaluate and auto-continue until the goal is met or the cap is hit.
-        if goal_state is not None:
-            exit_code = await _run_ask_goal_iterations(
-                agent=agent,
-                goal_state=goal_state,
-                session_recorder=session_recorder,
-                json_mode=args.json,
-                consume_turn=_consume_turn,
-                drain_tokens=_drain_tokens,
-                drain_peer_turns=_drain_pending_peer_turns,
-            )
+        # --loop / --goal worker modes, then the terminal-boundary peer drain.
+        exit_code = await _run_worker_modes(
+            agent=agent,
+            loop_state=loop_state,
+            goal_state=goal_state,
+            prompt=prompt,
+            attachments=attachments,
+            session_recorder=session_recorder,
+            json_mode=args.json,
+            consume_turn=_consume_turn,
+            drain_tokens=_drain_tokens,
+            drain_peer_turns=_drain_pending_peer_turns,
+        )
 
         if args.save or args.session:
             session.config = summary
@@ -2109,6 +2097,57 @@ async def _run_ask(args: argparse.Namespace) -> int:
         # while this command is alive, so there is no window to exploit.
         store.release_session_locks()
 
+    return exit_code
+
+
+async def _run_worker_modes(
+    *,
+    agent: "CoderAgent",
+    loop_state: Optional[LoopState],
+    goal_state: Optional[GoalState],
+    prompt: Optional[str],
+    attachments: list,
+    session_recorder,
+    json_mode: bool,
+    consume_turn,
+    drain_tokens,
+    drain_peer_turns,
+) -> int:
+    """Run --loop / --goal after the first turn, then drain the peer inbox.
+
+    The terminal-boundary drain at the end matters: a message accepted during
+    the final verdict call, the last turn's tail, or the loop expiry sleep is
+    already journaled as delivered — without this pass it would be discarded
+    by inbox shutdown before the model ever saw it. Happy path only (never on
+    the exception path); arrivals during these last turns fall back to the
+    mid-turn provider.
+    """
+    exit_code = 0
+    if loop_state is not None:
+        await _run_ask_loop_iterations(
+            agent=agent,
+            loop_state=loop_state,
+            prompt=prompt,
+            attachments=attachments,
+            session_recorder=session_recorder,
+            json_mode=json_mode,
+            consume_turn=consume_turn,
+            drain_tokens=drain_tokens,
+            drain_peer_turns=drain_peer_turns,
+        )
+
+    if goal_state is not None:
+        exit_code = await _run_ask_goal_iterations(
+            agent=agent,
+            goal_state=goal_state,
+            session_recorder=session_recorder,
+            json_mode=json_mode,
+            consume_turn=consume_turn,
+            drain_tokens=drain_tokens,
+            drain_peer_turns=drain_peer_turns,
+        )
+
+    await drain_peer_turns()
     return exit_code
 
 
