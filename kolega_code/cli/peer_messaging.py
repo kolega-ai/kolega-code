@@ -19,19 +19,18 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from kolega_code.events import AgentEvent, KnownEventType
+from kolega_code.events import AgentEvent
 from kolega_code.session.inbox import (
     MAX_QUEUED_PEER_MESSAGES,
-    DeliveryOutcome,
+    InboundNotice,
+    InboundNoticeKind,
     PeerMessage,
     PeerRepeatGuard,
     PeerSocketServer,
-    messaging_dir,
-    messaging_enabled,
-    own_child_bypass,
-    provenance_preamble,
-    recipient_queue_full,
-    resolve_inbound_decision,
+    bind_session_socket,
+    deliver_inbound,
+    peer_model_text,
+    peer_origin,
 )
 
 
@@ -63,32 +62,24 @@ class HeadlessPeerInbox:
     # -- Lifecycle ---------------------------------------------------------
 
     async def start(self, agent: Any) -> None:
-        """Bind the socket when messaging is enabled; degrade otherwise."""
-        if not messaging_enabled():
-            return
-
-        async def deliver(message: PeerMessage) -> str:
-            return await self._deliver(message)
-
-        server = PeerSocketServer(
-            directory=messaging_dir(self.store_root),
+        """Bind the session's socket; any bind failure degrades to in-process silence."""
+        server = await bind_session_socket(
+            store_root=self.store_root,
             session_id=self.session_id,
-            pid=os.getpid(),
             describe_status=lambda: "busy" if self._queue or self._active else "idle",
-            deliver_message=deliver,
+            deliver_message=self._deliver,
+            on_unavailable=lambda reason: self._notice(f"peers: socket unavailable ({reason})"),
         )
-        try:
-            path = await server.start()
-        except Exception as exc:  # noqa: BLE001 — transport degrades, run continues
-            if not self.json_mode:
-                print(f"peers: socket unavailable ({exc})", file=sys.stderr)
+        if server is None:
             return
-
         self._server = server
-        agent.messaging_socket_path = path
-        if not self.json_mode:
-            print(f"peers: listening on {path}", file=sys.stderr)
+        agent.messaging_socket_path = server.path
+        self._notice(f"peers: listening on {server.path}")
         agent.set_queued_input_provider(self._provide_queued_inputs)
+
+    def _notice(self, text: str) -> None:
+        if not self.json_mode:
+            print(text, file=sys.stderr)
 
     async def stop(self) -> None:
         server, self._server = self._server, None
@@ -112,7 +103,7 @@ class HeadlessPeerInbox:
 
     def pending_texts(self) -> list[str]:
         """Model-facing texts of queued messages, oldest first (non-destructive)."""
-        return [f"{provenance_preamble(message)}\n\n{message.text}" for message in self._queue]
+        return [peer_model_text(message) for message in self._queue]
 
     def pop_all(self) -> list[str]:
         texts = self.pending_texts()
@@ -125,11 +116,7 @@ class HeadlessPeerInbox:
         if not self._queue:
             return []
         inputs = [
-            QueuedUserInput(
-                text=f"{provenance_preamble(message)}\n\n{message.text}",
-                origin={"kind": "peer", "session_id": message.sender_session_id, "title": message.sender_title},
-            )
-            for message in self._queue
+            QueuedUserInput(text=peer_model_text(message), origin=peer_origin(message)) for message in self._queue
         ]
         self._queue.clear()
         return inputs
@@ -137,41 +124,34 @@ class HeadlessPeerInbox:
     # -- Inbound -----------------------------------------------------------
 
     async def _deliver(self, message: PeerMessage) -> str:
-        await self._record(KnownEventType.PEER_MESSAGE_RECEIVED, message)
-        policy = self.settings.get_cross_session_inbound()
-        decision = resolve_inbound_decision(policy, self.permission_mode_value, message.sender_mode)
-        # Own-child delivery skips the inbound gate entirely (fails closed).
-        if own_child_bypass(message.sender_pid, os.getpid()):
-            if recipient_queue_full(len(self._queue)):
-                return DeliveryOutcome.REFUSED.value
-            self._queue.append(message)
-            await self._record(KnownEventType.PEER_MESSAGE_DELIVERED, message)
-            return DeliveryOutcome.ACCEPTED.value
-        if not self._repeat_guard.allow(message.sender_session_id, message.text):
-            # Loop protection: identical repeats inside the window are dropped
-            # silently toward the sender, regardless of policy.
-            return DeliveryOutcome.ACCEPTED.value
-        if decision is not DeliveryOutcome.ACCEPTED:
-            # No interactive surface exists here: a hold can never be answered,
-            # so it degrades to an explicit drop rather than parking silently.
-            # The sender still sees success (reference silent-drop parity).
-            if not self.json_mode:
-                print(
-                    f"peers: dropped inbound message from {message.sender_title} (policy {policy})",
-                    file=sys.stderr,
+        """Inbound hook shared with the socket transport. No surface, no holds.
+
+        All sequencing lives in :func:`deliver_inbound`; a hold degrades to an
+        explicit drop here because nobody can answer one.
+        """
+
+        def notify(notice: InboundNotice) -> None:
+            if notice.kind is InboundNoticeKind.REPEAT_DROPPED:
+                return  # loop protection is silent toward the sender
+            sender = notice.message.sender_title
+            if notice.kind is InboundNoticeKind.POLICY_DROPPED:
+                self._notice(f"peers: dropped inbound message from {sender} (policy {notice.policy})")
+            else:
+                self._notice(
+                    f"peers: dropped inbound message from {sender} (queue cap {MAX_QUEUED_PEER_MESSAGES} full)"
                 )
-            return DeliveryOutcome.REFUSED.value
-        if recipient_queue_full(len(self._queue)):
-            if not self.json_mode:
-                print(
-                    f"peers: dropped inbound message from {message.sender_title} "
-                    f"(queue cap {MAX_QUEUED_PEER_MESSAGES} full)",
-                    file=sys.stderr,
-                )
-            return DeliveryOutcome.REFUSED.value
-        self._queue.append(message)
-        await self._record(KnownEventType.PEER_MESSAGE_DELIVERED, message)
-        return DeliveryOutcome.ACCEPTED.value
+
+        return await deliver_inbound(
+            message,
+            recipient_pid=os.getpid(),
+            policy=self.settings.get_cross_session_inbound(),
+            recipient_mode=self.permission_mode_value,
+            repeat_guard=self._repeat_guard,
+            queued_count=lambda: len(self._queue),
+            record_event=lambda event_type: self._record(event_type, message),
+            enqueue=self._queue.append,
+            notify=notify,
+        )
 
     async def _record(self, event_type: str, message: PeerMessage) -> None:
         try:
@@ -181,18 +161,11 @@ class HeadlessPeerInbox:
                     sender="peer-inbox",
                     event_type=event_type,
                     session_id=self.session_id,
-                    content={
-                        "message_id": message.message_id,
-                        "sender_id": message.sender_session_id,
-                        "sender_title": message.sender_title,
-                        "text": message.text,
-                        "reply_to": message.reply_to,
-                    },
+                    content=message.event_content(),
                 )
             )
         except Exception as exc:  # noqa: BLE001 — observability never blocks delivery
-            if not self.json_mode:
-                print(f"peers: could not record {event_type}: {exc}", file=sys.stderr)
+            self._notice(f"peers: could not record {event_type}: {exc}")
 
 
 async def start_headless_peer_inbox(
@@ -213,7 +186,7 @@ async def start_headless_peer_inbox(
     Never raises for bind failures — the transport degrades to in-process
     silence with a stderr notice so the run itself always proceeds.
     """
-    if not enabled or not messaging_enabled():
+    if not enabled:
         return None
     inbox = HeadlessPeerInbox(
         store_root=store_root,

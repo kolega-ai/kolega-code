@@ -40,18 +40,18 @@ from kolega_code.agent import AgentConfig, AgentEvent, KnownEventType
 from kolega_code.extensions import ExtensionSelection, KolegaExtensionLoadError
 from kolega_code.session.inbox import (
     SHARED_INBOX_REGISTRY,
-    DeliveryOutcome,
+    MAX_QUEUED_PEER_MESSAGES,
     InboxRegistration,
     InboxRegistry,
     PeerMessage,
     PeerRepeatGuard,
     PeerSocketServer,
-    messaging_dir,
-    messaging_enabled,
-    own_child_bypass,
-    provenance_preamble,
-    recipient_queue_full,
-    resolve_inbound_decision,
+    bind_session_socket,
+    deliver_inbound,
+    InboundNotice,
+    InboundNoticeKind,
+    peer_model_text,
+    peer_origin,
 )
 from kolega_code.session.recording import RecordingConnectionManager
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
@@ -513,6 +513,9 @@ class KolegaCodeApp(
     # Cross-session messaging (phase 1): the in-process peer inbox.
     # ------------------------------------------------------------------
 
+    def _peer_status(self) -> str:
+        return "busy" if (self._turn_active or self.agent_worker is not None) else "idle"
+
     def _register_with_inbox(self) -> None:
         """Publish this session's live entry so sibling sessions can see and
         message it. Callables, not snapshots: every query reads current state."""
@@ -521,8 +524,7 @@ class KolegaCodeApp(
                 session_id=self.session.session_id,
                 describe_title=lambda: self.session.title,
                 describe_project_path=lambda: str(self.active_project_path),
-                describe_status=lambda: "busy" if (self._turn_active or self.agent_worker is not None) else "idle",
-                describe_permission_mode=lambda: self.permission_mode.value,
+                describe_status=self._peer_status,
                 deliver_message=self._deliver_peer_message,
             )
         )
@@ -533,26 +535,22 @@ class KolegaCodeApp(
     async def _start_inbox_socket(self) -> None:
         """Bind this session's cross-process inbox socket.
 
-        Never breaks startup: a socket that cannot bind (feature gate off,
-        unwritable state dir, path-length limits) degrades to in-process-only
-        messaging with a notice, not a failed launch.
+        Never breaks startup: any bind failure (unwritable state dir,
+        path-length limits) degrades to in-process-only messaging with a
+        notice, not a failed launch.
         """
-        if not messaging_enabled():
-            self.messaging_socket_path = None
-            return
-        try:
-            self._inbox_socket = PeerSocketServer(
-                directory=messaging_dir(self.store.root),
-                session_id=self.session.session_id,
-                pid=os.getpid(),
-                describe_status=lambda: "busy" if (self._turn_active or self.agent_worker is not None) else "idle",
-                deliver_message=self._deliver_peer_message,
-            )
-            self.messaging_socket_path = await self._inbox_socket.start()
-        except Exception as exc:  # noqa: BLE001 — degraded transport beats a dead TUI
-            self._inbox_socket = None
-            self.messaging_socket_path = None
-            self._log_status(messages.MESSAGING_SOCKET_UNAVAILABLE.format(reason=str(exc)[:200]), "info")
+        server = await bind_session_socket(
+            store_root=self.store.root,
+            session_id=self.session.session_id,
+            describe_status=self._peer_status,
+            deliver_message=self._deliver_peer_message,
+            on_unavailable=lambda reason: self._log_status(
+                messages.MESSAGING_SOCKET_UNAVAILABLE.format(reason=reason), "info"
+            ),
+        )
+        if server is not None:
+            self._inbox_socket = server
+            self.messaging_socket_path = server.path
 
     async def _stop_inbox_socket(self) -> None:
         server, self._inbox_socket = self._inbox_socket, None
@@ -571,9 +569,7 @@ class KolegaCodeApp(
         the delivery guarantees — between tool calls during a turn, a fresh
         turn when idle, never interrupting a running tool.
         """
-        origin = {"kind": "peer", "session_id": message.sender_session_id, "title": message.sender_title}
-        model_text = f"{provenance_preamble(message)}\n\n{message.text}"
-        self._queue_user_message(message.text, origin=origin, model_text=model_text)
+        self._queue_user_message(message.text, origin=peer_origin(message), model_text=peer_model_text(message))
         self._schedule_maybe_start_queued_message()
 
     async def _emit_peer_event(self, event_type: str, message: PeerMessage) -> None:
@@ -587,13 +583,7 @@ class KolegaCodeApp(
             sender="peer-inbox",
             event_type=event_type,
             session_id=self.session.session_id,
-            content={
-                "message_id": message.message_id,
-                "sender_id": message.sender_session_id,
-                "sender_title": message.sender_title,
-                "text": message.text,
-                "reply_to": message.reply_to,
-            },
+            content=message.event_content(),
         )
         try:
             await self.recording_connection_manager.broadcast_event(
@@ -604,42 +594,36 @@ class KolegaCodeApp(
         except Exception:
             pass
 
-    async def _deliver_peer_message(self, message: PeerMessage) -> str:
-        """Inbound hook registered with the inbox. The recipient decides."""
-        await self._emit_peer_event(KnownEventType.PEER_MESSAGE_RECEIVED, message)
-        # Own-child delivery: a message from one of this session's own child
-        # processes (a git hook, a terminal command) skips the inbound gate —
-        # that is how a script injects context into the session that spawned
-        # it. Verification fails closed: an unverifiable pid stays gated.
-        if own_child_bypass(message.sender_pid, os.getpid()):
-            if recipient_queue_full(sum(1 for item in self._queued_messages if item.is_peer)):
-                self._log_status(messages.PEER_QUEUE_FULL.format(limit=50), "info")
-                return DeliveryOutcome.REFUSED.value
-            self._enqueue_peer_message(message)
-            await self._emit_peer_event(KnownEventType.PEER_MESSAGE_DELIVERED, message)
-            return DeliveryOutcome.ACCEPTED.value
-        # Loop protection first: an identical repeat from one sender inside the
-        # window is dropped regardless of policy, so two agents cannot bounce
-        # the same message back and forth forever. Silent toward the sender.
-        if not self._peer_repeat_guard.allow(message.sender_session_id, message.text):
-            self._log_status(messages.PEER_REPEAT_DROPPED.format(sender=message.sender_title), "info")
-            return DeliveryOutcome.ACCEPTED.value
-        policy = self.settings.get_cross_session_inbound()
-        decision = resolve_inbound_decision(policy, self.permission_mode.value, message.sender_mode)
-        if decision is DeliveryOutcome.REFUSED:
-            # Silent toward the sender (it still reports success), but the user
+    def _render_peer_notice(self, notice: InboundNotice) -> None:
+        sender = notice.message.sender_title
+        if notice.kind is InboundNoticeKind.REPEAT_DROPPED:
+            self._log_status(messages.PEER_REPEAT_DROPPED.format(sender=sender), "info")
+        elif notice.kind is InboundNoticeKind.POLICY_DROPPED:
+            # Silent toward the sender (it still reports success); the user
             # sees why nothing happened.
-            self._log_status(messages.PEER_MESSAGE_REFUSED.format(sender=message.sender_title), "info")
-            return DeliveryOutcome.REFUSED.value
-        if decision is DeliveryOutcome.HELD:
-            self._schedule_hold_approval(message)
-            return DeliveryOutcome.HELD.value
-        if recipient_queue_full(sum(1 for item in self._queued_messages if item.is_peer)):
-            self._log_status(messages.PEER_QUEUE_FULL.format(limit=50), "info")
-            return DeliveryOutcome.REFUSED.value
-        self._enqueue_peer_message(message)
-        await self._emit_peer_event(KnownEventType.PEER_MESSAGE_DELIVERED, message)
-        return DeliveryOutcome.ACCEPTED.value
+            self._log_status(messages.PEER_MESSAGE_REFUSED.format(sender=sender), "info")
+        else:
+            self._log_status(messages.PEER_QUEUE_FULL.format(limit=MAX_QUEUED_PEER_MESSAGES), "info")
+
+    async def _deliver_peer_message(self, message: PeerMessage) -> str:
+        """Inbound hook registered with the inbox. The recipient decides.
+
+        All sequencing lives in :func:`deliver_inbound`; this host only says
+        where events and queued messages go, how notices render, and that a
+        held message can be asked about interactively.
+        """
+        return await deliver_inbound(
+            message,
+            recipient_pid=os.getpid(),
+            policy=self.settings.get_cross_session_inbound(),
+            recipient_mode=self.permission_mode.value,
+            repeat_guard=self._peer_repeat_guard,
+            queued_count=lambda: sum(1 for item in self._queued_messages if item.is_peer),
+            record_event=lambda event_type: self._emit_peer_event(event_type, message),
+            enqueue=self._enqueue_peer_message,
+            notify=self._render_peer_notice,
+            hold_for_review=self._schedule_hold_approval,
+        )
 
     def _schedule_hold_approval(self, message: PeerMessage) -> None:
         """Park a held message behind an Accept/Drop prompt that expires.

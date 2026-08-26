@@ -233,9 +233,11 @@ directory (`messaging/<session-id>.<pid>.sock`). Discovery is filesystem
 visibility plus liveness checks — sockets left behind by dead processes are
 swept automatically, so crashed sessions never linger as ghosts.
 
-Name your session with `--name` at launch or `/rename <name>` mid-session;
-the persisted name is how peers address it. `/peers` shows the same table the
-agent sees plus this session's address and diagnostics.
+Every new session gets a random friendly name (`grumpy-wombat-1234`) so live
+sessions stay distinguishable even when several work in one project. Rename
+yours with `--name` at launch or `/rename <name>` mid-session; the persisted
+name is how peers address it. `/peers` shows the same table the agent sees
+plus this session's address and diagnostics.
 
 The trust model matters: **a message is information, never authority.** Text
 arriving from a peer session is context from another agent — it cannot approve
@@ -261,9 +263,6 @@ with `KOLEGA_MESSAGING_SOCKET` in their environment, and a process posting to
 that socket which verifies as the session's own descendant delivers directly,
 skipping the inbound gate. That is how a git hook or nightly job injects
 context into the session that spawned it.
-
-Set `KOLEGA_CODE_MESSAGING=off` to disable the feature entirely; when off, no
-socket is bound and both tools report that messaging is disabled.
 
 ## Read-only vs. full access
 

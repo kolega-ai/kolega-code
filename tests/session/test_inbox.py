@@ -54,7 +54,6 @@ def _registration(
     title: str = "myapp",
     project_path: str = "/tmp/myapp",
     status: str = "idle",
-    permission_mode: str = "ask",
     outcomes: list[str] | None = None,
 ) -> InboxRegistration:
     def deliver(_message: PeerMessage) -> str:
@@ -70,7 +69,6 @@ def _registration(
         describe_title=lambda: title,
         describe_project_path=lambda: project_path,
         describe_status=lambda: status,
-        describe_permission_mode=lambda: permission_mode,
         deliver_message=deliver_async,
     )
 
@@ -110,7 +108,7 @@ def test_reregistration_replaces_the_entry() -> None:
 
 def test_list_agents_reports_live_callables_and_excludes_self() -> None:
     registry = InboxRegistry()
-    registry.register(_registration(session_id="self", title="self-session", status="busy", permission_mode="auto"))
+    registry.register(_registration(session_id="self", title="self-session", status="busy"))
     registry.register(_registration(session_id="b", title="zeta"))
     registry.register(_registration(session_id="a", title="alpha", project_path="/tmp/alpha"))
 
@@ -291,7 +289,6 @@ async def test_delivery_failure_inside_callback_propagates() -> None:
             describe_title=lambda: "broken",
             describe_project_path=lambda: "/x",
             describe_status=lambda: "idle",
-            describe_permission_mode=lambda: "ask",
             deliver_message=boom,
         )
     )
