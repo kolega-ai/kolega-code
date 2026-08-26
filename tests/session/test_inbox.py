@@ -9,6 +9,7 @@ cautious recipient are all pinned here.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import subprocess
@@ -335,7 +336,7 @@ def _make_server(
     outcomes: list[str] | None = None,
     *,
     state_root: Path | None = None,
-    session_id: str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    session_id: str = "a" * 32,
 ) -> tuple[PeerSocketServer, list[PeerMessage]]:
     received: list[PeerMessage] = []
 
@@ -361,7 +362,10 @@ def _make_server(
 @pytest.mark.parametrize(
     "name,expected",
     [
-        ("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.4242.sock", ("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", 4242)),
+        # Current layout: base64url of the 16 raw id bytes.
+        (base64.urlsafe_b64encode(bytes.fromhex("a" * 32)).decode().rstrip("=") + ".4242.sock", ("a" * 32, 4242)),
+        # Legacy layout: plain 32-hex, still readable for old files on disk.
+        (("b" * 32) + ".7.sock", ("b" * 32, 7)),
         ("shortid.1.sock", None),
         ("notes.txt", None),
         ("missing-pid.sock", None),
@@ -379,11 +383,11 @@ def test_is_pid_alive() -> None:
 
 def test_sweep_removes_only_dead_pid_sockets(tmp_path: Path) -> None:
     directory = messaging_dir(tmp_path / "state")
-    dead = socket_path_for(directory, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", 2**22 - 1)
+    dead = socket_path_for(directory, "a" * 32, 2**22 - 1)
     foreign = directory / "someone-elses-file.txt"
     dead.write_bytes(b"")
     foreign.write_bytes(b"keep me")
-    live = socket_path_for(directory, "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee", os.getpid())
+    live = socket_path_for(directory, "b" * 32, os.getpid())
     live.write_bytes(b"")
 
     removed = sweep_stale_sockets(directory)
@@ -568,7 +572,7 @@ async def test_start_refuses_to_steal_a_live_owner_socket(short_state_root: Any)
 @pytest.mark.asyncio
 async def test_start_sweeps_a_dead_owner_socket_at_same_path(short_state_root: Any) -> None:
     directory = messaging_dir(short_state_root)
-    stale = socket_path_for(directory, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", 2**22 - 1)
+    stale = socket_path_for(directory, "a" * 32, 2**22 - 1)
     stale.write_bytes(b"")
     server, _received = _make_server(state_root=short_state_root)
     path = await server.start()
@@ -623,7 +627,7 @@ async def test_cross_process_delivery_over_a_real_socket() -> None:
 
     repo = str(Path(__file__).resolve().parents[2])
     state_root = _short_state_root()
-    session_id = "cccccccc-dddd-eeee-ffff-000000000000"
+    session_id = "ccccccccddddeeeeffff000000000000"
 
     program = CHILD_SERVER_PROGRAM.format(repo=repo, state_root=str(state_root), session_id=session_id)
     proc = subprocess.Popen(

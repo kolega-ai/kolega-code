@@ -790,7 +790,7 @@ async def test_tool_discovers_and_delivers_to_socket_only_peers(
     config = build_test_config(project)
     state_root = _short_state_root()
     store = SessionStore(state_root)
-    remote_session_id = "dddddddd-eeee-ffff-0000-111111111111"
+    remote_session_id = "ddddddddeeeeffff0000111111111111"
     # The other process's persisted record: what gives its socket a human name.
     store.create(project, "code", {"model": "test"}, session_id=remote_session_id, title="remote-worker")
     own_session = store.create(project, "code", config_summary(config), title="solo")
@@ -864,7 +864,7 @@ async def test_send_message_to_unreachable_peer_is_an_explicit_error(
     from kolega_code.session.inbox import messaging_dir, socket_path_for
 
     directory = messaging_dir(state_root)
-    ghost = socket_path_for(directory, "eeeeeeee-ffff-0000-1111-222222222222", os.getpid())
+    ghost = socket_path_for(directory, "e" * 32, os.getpid())
     ghost.write_bytes(b"")  # our own live pid, but nothing listens here
 
     async with app.run_test():

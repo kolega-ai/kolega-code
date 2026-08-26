@@ -37,6 +37,7 @@ senders.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import re
@@ -368,9 +369,11 @@ SHARED_INBOX_REGISTRY = InboxRegistry()
 # Same-machine cross-process transport (phase 2).
 #
 # Every live session binds one owner-only Unix socket under the state dir:
-# <state-root>/messaging/<session_id>.<pid>.sock. The pid in the name is the
-# liveness key — a crashed session's socket file is swept once its pid is gone,
-# which is exactly the "orphaned peers listed forever" failure mode to avoid.
+# <state-root>/messaging/<encoded-session-id>.<pid>.sock. The session id is
+# base64url of its 16 raw bytes (22 chars, not 32 hex) because the macOS
+# default state path is ~70 chars by itself and AF_UNIX caps sun_path at 104 —
+# hex names pushed every stock-macOS bind past the limit, silently killing
+# cross-process discovery. The pid remains the liveness key.
 # ---------------------------------------------------------------------------
 
 MESSAGING_DIR_NAME = "messaging"
@@ -390,7 +393,9 @@ SOCKET_IO_TIMEOUT_SECONDS = 10.0
 #: never a mysterious OSError from the platform.
 AF_UNIX_PATH_LIMIT = 104
 
-_SOCKET_NAME_RE = re.compile(r"^(?P<session_id>[0-9a-f-]{8,})\.(?P<pid>\d+)\.sock$")
+#: 22-char urlsafe base64 of the 16 raw id bytes, or (legacy) plain 32-hex.
+_SOCKET_ID_RE = r"(?:[A-Za-z0-9_-]{22}|[0-9a-f]{32})"
+_SOCKET_NAME_RE = re.compile(rf"^(?P<sid>{_SOCKET_ID_RE})\.(?P<pid>\d+)\.sock$")
 _VALID_KINDS = ("message", "status")
 
 
@@ -401,12 +406,27 @@ def messaging_dir(state_root: Path) -> Path:
     return path
 
 
+def _encode_socket_sid(session_id: str) -> str:
+    """Session id as it appears in a socket filename: compact base64url."""
+    return base64.urlsafe_b64encode(bytes.fromhex(session_id)).decode("ascii").rstrip("=")
+
+
+def _decode_socket_sid(raw: str) -> Optional[str]:
+    """Recover the full session id from a filename component, else None."""
+    if re.fullmatch(r"[0-9a-f]{32}", raw):
+        return raw  # legacy layout, still readable
+    try:
+        return base64.urlsafe_b64decode(raw + "==").hex()
+    except ValueError:
+        return None
+
+
 def socket_path_for(directory: Path, session_id: str, pid: int) -> Path:
-    return directory / f"{session_id}.{pid}.sock"
+    return directory / f"{_encode_socket_sid(session_id)}.{pid}.sock"
 
 
 def parse_socket_name(name: str) -> Optional[tuple[str, int]]:
-    """``<session_id>.<pid>.sock`` -> (session_id, pid), else None.
+    """``<encoded-session-id>.<pid>.sock`` -> (full session_id, pid), else None.
 
     Unparsable names are foreign files; discovery skips them and sweeping
     leaves them alone (never delete what we did not name).
@@ -414,7 +434,10 @@ def parse_socket_name(name: str) -> Optional[tuple[str, int]]:
     match = _SOCKET_NAME_RE.match(name)
     if match is None:
         return None
-    return match.group("session_id"), int(match.group("pid"))
+    session_id = _decode_socket_sid(match.group("sid"))
+    if session_id is None:
+        return None
+    return session_id, int(match.group("pid"))
 
 
 def is_pid_alive(pid: int) -> bool:

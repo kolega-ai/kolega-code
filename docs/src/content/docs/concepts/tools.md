@@ -229,9 +229,9 @@ queue: between tool calls while it works, as a fresh turn when it is idle.
 Both tools are top-level Build-mode capabilities; sub-agents never see them.
 
 Every session is reachable at an owner-only Unix socket under its state
-directory (`messaging/<session-id>.<pid>.sock`). Discovery is filesystem
-visibility plus liveness checks — sockets left behind by dead processes are
-swept automatically, so crashed sessions never linger as ghosts.
+directory (`messaging/<encoded-session-id>.<pid>.sock`). Discovery is
+filesystem visibility plus liveness checks — sockets left behind by dead
+processes are swept automatically, so crashed sessions never linger as ghosts.
 
 Every new session gets a random friendly name (`grumpy-wombat-1234`) so live
 sessions stay distinguishable even when several work in one project. Rename
