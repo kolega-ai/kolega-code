@@ -6,6 +6,36 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.33.0 - 2026-08-26
+
+### Added
+
+- **Cross-session messaging.** Running sessions on the same machine can now
+  message each other over local sockets. `/peers` lists reachable sessions,
+  `/rename` and `--name` let you address them by a stable friendly name, and
+  agents get `list_agents` and `send_message` tools (sending is gated behind
+  the message permission). Incoming messages arrive in the recipient like
+  typed input, and sessions started by other processes — including headless
+  `--goal`/`--loop` runs — participate in the same world.
+- New sessions get a generated friendly name instead of the project
+  directory basename, so multiple sessions in one project are easy to tell
+  apart.
+
+### Fixed
+
+- Cross-process discovery on a stock macOS install: socket names exceeded
+  the filesystem's path limit, so every host silently degraded to
+  in-process-only and peer lists always appeared empty.
+- Message-size handling is now consistent end to end: multibyte (for
+  example CJK) text is no longer refused after passing validation, and
+  oversized lines fail cleanly instead of crashing the connection.
+- Stale sockets left behind by recycled process ids no longer show up as
+  permanently unreachable ghosts, and a resumed session gets its address
+  back.
+- Headless `--goal`/`--loop` runs now deliver peer messages that arrived
+  during the final turn instead of discarding them at shutdown.
+- Internal retry notices no longer leak into the session transcript.
+
 ## 0.32.0 - 2026-08-24
 
 ### Added
