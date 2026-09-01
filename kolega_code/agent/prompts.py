@@ -38,6 +38,7 @@ def render_prompt_template(template_name: str, **variables: Any) -> str:
 
 
 COMPRESSION_SUMMARY_SYSTEM_PROMPT = render_prompt_template("auxiliary/compression/summary.system.md")
+HANDOFF_SYSTEM_PROMPT = render_prompt_template("auxiliary/handoff/document.system.md")
 SHELL_SAFETY_SYSTEM_PROMPT = render_prompt_template("auxiliary/terminal/safety.system.md")
 SHELL_COMPRESSION_SYSTEM_PROMPT = render_prompt_template("auxiliary/terminal/output_summary.system.md")
 SHARED_TASK_LIST_PROMPT = render_prompt_template("extensions/cli/shared_task_list.md")
@@ -68,6 +69,14 @@ def build_compression_summary_user_prompt(history: str, previous_summary: Option
         "auxiliary/compression/summary.user.md.j2",
         history=history,
         previous_summary=previous_summary,
+    )
+
+
+def build_handoff_user_prompt(transcript: str, focus: Optional[str] = None) -> str:
+    return render_prompt_template(
+        "auxiliary/handoff/document.user.md.j2",
+        transcript=transcript,
+        focus=focus,
     )
 
 

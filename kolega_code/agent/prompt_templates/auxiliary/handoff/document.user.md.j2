@@ -1,0 +1,11 @@
+Write a handoff document for the following coding session so the work can continue seamlessly in a new session that has no access to this conversation.
+
+<conversation_history>
+{{ transcript }}
+</conversation_history>
+
+Each transcript entry is tagged with its role; tool calls show their JSON arguments and tool results follow raw.
+{% if focus %}
+Additional focus: {{ focus }}
+{% endif %}
+Produce the handoff document exactly as specified in your instructions. Handoff document only — do not call tools.

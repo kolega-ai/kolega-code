@@ -231,6 +231,7 @@ BLOCK_STOP_BEFORE_SKILL = "Stop the current turn before activating a skill."
 BLOCK_STOP_BEFORE_MODEL_SWITCH = "Stop the current turn before switching models."
 BLOCK_STOP_BEFORE_EFFORT_SWITCH = "Stop the current turn before switching thinking effort."
 BLOCK_STOP_BEFORE_UPDATE = "Stop the current turn before updating Kolega Code."
+BLOCK_STOP_BEFORE_HANDOFF = "Stop the current turn before handing off the session."
 BLOCK_PLAN_DECISION = "Choose Implement plan or Discuss further before sending another message."
 BLOCK_PLAN_DECISION_INIT = "Choose Implement plan or Discuss further before running /init."
 BLOCK_PLAN_DECISION_MODE_SWITCH = "Choose Implement plan or Discuss further before switching modes."
@@ -241,6 +242,14 @@ BLOCK_PENDING_APPROVAL = "Choose whether to allow the pending action before cont
 BLOCK_PENDING_APPROVAL_MODE_SWITCH = "Choose whether to allow the pending action before switching permission modes."
 SETTINGS_REQUIRED = "Configure a provider/model and API key before chatting."
 SETTINGS_REQUIRED_SKILL = "Configure a provider/model and API key before activating a skill."
+
+# Handoff
+HANDOFF_NOTHING_TO_SUMMARIZE = "Nothing to hand off (no messages yet)."
+HANDOFF_GENERATING = "Generating handoff… (Esc to cancel)"
+HANDOFF_CANCELLED = "Handoff cancelled."
+HANDOFF_FAILED = "Handoff failed: {error}"
+HANDOFF_SUCCESS = "New session started with handoff context: {title}"
+HANDOFF_OLD_SESSION_NOTICE = "Handed off to new session {title}."
 
 # Settings tab
 SETTINGS_SAVED = "Settings saved."

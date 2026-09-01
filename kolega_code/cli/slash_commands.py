@@ -72,6 +72,11 @@ TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     SlashCommandEntry("prompts", "Dump, list, or validate project prompt override files", CommandScope.TUI),
     SlashCommandEntry("queue-clear", "Clear queued follow-up messages", CommandScope.TUI),
     SlashCommandEntry("rewind", "Rewind files and conversation to before an earlier turn", CommandScope.TUI),
+    SlashCommandEntry(
+        "handoff",
+        "Summarize this session and start a fresh one with the summary as context",
+        CommandScope.TUI,
+    ),
     SlashCommandEntry("theme", "Show or switch the color theme", CommandScope.TUI),
     SlashCommandEntry("share", "Share a live link to this session (/share lan, /share stop)", CommandScope.TUI),
     SlashCommandEntry("copy", "Copy the last response to the clipboard", CommandScope.TUI),
