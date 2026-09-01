@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import signal
 import sys
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +18,14 @@ from filelock import Timeout as FileLockTimeout
 from kolega_code.gateway.access import AccessControlError, GatewayAccessControl
 from kolega_code.gateway.adapters import adapter_names, build_adapter
 from kolega_code.gateway.config import GatewayConfig, load_gateway_config
-from kolega_code.gateway.daemon import GatewayDaemon, GatewayDaemonError, LOCK_FILE_NAME, PID_FILE_NAME
+from kolega_code.gateway.daemon import (
+    GatewayDaemon,
+    GatewayDaemonError,
+    LOCK_FILE_NAME,
+    PID_FILE_NAME,
+    STATUS_FILE_NAME,
+    STATUS_STALE_SECONDS,
+)
 from kolega_code.gateway.handlers import EchoTurnHandler
 
 
@@ -100,6 +109,24 @@ def _gateway_pairing(args: argparse.Namespace, config: GatewayConfig) -> int:
 
 
 def _gateway_status(config: GatewayConfig) -> int:
+    status_path = config.state_dir / STATUS_FILE_NAME
+    payload = _read_status_file(status_path)
+    if payload is not None:
+        adapter_state = payload.get("adapter_state") or {}
+        adapter_state_text = adapter_state.get("state", "unknown")
+        heartbeat_age = _heartbeat_age_seconds(payload)
+        if heartbeat_age is not None and heartbeat_age <= STATUS_STALE_SECONDS:
+            started = str(payload.get("started_at") or "")[:19]
+            print(
+                f"gateway: running (pid {payload.get('pid')})\n"
+                f"  adapter: {payload.get('adapter')} ({adapter_state_text})\n"
+                f"  sessions: {payload.get('active_sessions')}\n"
+                f"  errors: {payload.get('recent_errors')}\n"
+                f"  since: {started} (heartbeat {heartbeat_age:.0f}s ago)"
+            )
+            return 0
+        print(f"gateway: not responding (status file is {heartbeat_age:.0f}s stale)")
+        return 1
     lock = FileLock(str(config.state_dir / LOCK_FILE_NAME))
     try:
         lock.acquire(timeout=0)
@@ -113,6 +140,27 @@ def _gateway_status(config: GatewayConfig) -> int:
     lock.release()
     print(f"gateway: not running (state: {config.state_dir})")
     return 0
+
+
+def _read_status_file(path: Path) -> dict[str, Any] | None:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _heartbeat_age_seconds(payload: dict[str, Any]) -> float | None:
+    raw = payload.get("heartbeat_at")
+    if not isinstance(raw, str):
+        return None
+    try:
+        heartbeat = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if heartbeat.tzinfo is None:
+        heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - heartbeat).total_seconds())
 
 
 def _build_turn_handler(config: GatewayConfig, adapter: Any, args: argparse.Namespace) -> Any:

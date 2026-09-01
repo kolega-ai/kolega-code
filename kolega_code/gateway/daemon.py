@@ -5,18 +5,22 @@ transport and the session host is deliberately small:
 
 - single-instance lock file and pid file,
 - inbound dedup (adapter retries must never double-run a turn),
-- the sender allowlist (a chat app is a control plane; strangers get nothing),
+- the sender allowlist and group policy (a chat app is a control plane;
+  strangers get nothing),
 - dispatch into the turn handler, which owns per-chat session state and
-  ordering.
+  ordering,
+- a heartbeat status file so ``gateway status`` can report on the running
+  daemon without an IPC channel.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Optional, Protocol
 
 from filelock import BaseFileLock, FileLock
@@ -31,6 +35,11 @@ logger = logging.getLogger(__name__)
 
 LOCK_FILE_NAME = "gateway.lock"
 PID_FILE_NAME = "gateway.pid"
+STATUS_FILE_NAME = "gateway.status.json"
+#: Heartbeat cadence for the on-disk status file.
+STATUS_HEARTBEAT_SECONDS = 15.0
+#: A status file older than this is treated as stale by `gateway status`.
+STATUS_STALE_SECONDS = 90.0
 #: Short, secret-free failure notice. The real exception goes to the log only.
 ERROR_REPLY = "⚠️ The gateway hit an error handling that message (see the gateway log)."
 #: Bound on remembered message ids for dedup; adapter retries are near-term.
@@ -79,9 +88,11 @@ class GatewayDaemon:
         self._pid_path = config.state_dir / PID_FILE_NAME
         self._lock: Optional[BaseFileLock] = None
         self._dispatch_task: Optional[asyncio.Task[None]] = None
+        self._heartbeat_task: Optional[asyncio.Task[None]] = None
         self._started_at: Optional[str] = None
         self._recent_errors = 0
         self._seen_message_ids: deque[str] = deque(maxlen=DEDUP_WINDOW)
+        self._status_path = config.state_dir / STATUS_FILE_NAME
         self._access = GatewayAccessControl(
             state_dir=config.state_dir,
             allowed_users=config.allowed_users,
@@ -100,6 +111,8 @@ class GatewayDaemon:
         await self._adapter.start()
         self._started_at = utc_now_iso()
         self._dispatch_task = asyncio.create_task(self._dispatch_loop(), name="gateway-dispatch")
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop(), name="gateway-heartbeat")
+        self._write_status()
 
     async def stop(self) -> None:
         if self._dispatch_task is not None:
@@ -109,8 +122,16 @@ class GatewayDaemon:
             except asyncio.CancelledError:
                 pass
             self._dispatch_task = None
+        if self._heartbeat_task is not None:
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            self._heartbeat_task = None
         await self._turn_handler.shutdown()
         await self._adapter.stop()
+        self._remove_status()
         self._release_lock()
         self._remove_pid()
 
@@ -125,6 +146,33 @@ class GatewayDaemon:
             started_at=self._started_at,
             recent_errors=self._recent_errors,
         )
+
+    # -- Status file -------------------------------------------------------
+
+    def _status_payload(self) -> dict[str, Any]:
+        return {**asdict(self.status()), "heartbeat_at": utc_now_iso()}
+
+    def _write_status(self) -> None:
+        try:
+            temporary = self._status_path.with_name(f"{self._status_path.name}.tmp")
+            temporary.write_text(json.dumps(self._status_payload()), encoding="utf-8")
+            os.replace(temporary, self._status_path)
+        except OSError as exc:
+            logger.warning("gateway: could not write status file (%s)", exc)
+
+    def _remove_status(self) -> None:
+        try:
+            self._status_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    async def _heartbeat_loop(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(STATUS_HEARTBEAT_SECONDS)
+                self._write_status()
+        except asyncio.CancelledError:
+            raise
 
     # -- Dispatch ----------------------------------------------------------
 

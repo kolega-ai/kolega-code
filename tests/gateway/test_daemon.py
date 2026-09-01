@@ -278,3 +278,23 @@ async def test_start_creates_workspace_and_state_dirs(tmp_path: Path) -> None:
     finally:
         await daemon.stop()
     assert not (tmp_path / "state" / "gateway.pid").exists()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_writes_and_removes_the_status_file(tmp_path: Path) -> None:
+    import json
+
+    daemon = GatewayDaemon(make_config(tmp_path), RecordingAdapter(), RecordingHandler())
+    await daemon.start()
+    try:
+        status_path = tmp_path / "state" / "gateway.status.json"
+        assert status_path.exists()
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+        assert payload["running"] is True
+        assert payload["adapter"] == "recording"
+        assert payload["active_sessions"] == 0
+        assert isinstance(payload["heartbeat_at"], str)
+        assert payload["pid"] == daemon.status().pid
+    finally:
+        await daemon.stop()
+    assert not (tmp_path / "state" / "gateway.status.json").exists()

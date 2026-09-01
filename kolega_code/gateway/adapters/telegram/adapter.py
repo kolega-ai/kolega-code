@@ -51,6 +51,10 @@ _POLL_STOP_TIMEOUT_SECONDS = 5.0
 #: Telegram Bot API download cap.
 MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
 OVERSIZE_REPLY = "📎 That file is larger than the 20 MB download limit."
+#: Reconnect backoff when the polling loop dies fatally (aiogram already
+#: retries transient network errors internally).
+_RECONNECT_BACKOFF_INITIAL_SECONDS = 5.0
+_RECONNECT_BACKOFF_MAX_SECONDS = 60.0
 #: BotFather issues tokens as "<bot-id>:<secret>" (digits, colon, 35 chars of
 #: base64url-ish alphabet). Accept a generous window so future token shapes
 #: don't break, but catch obviously wrong values (userbot session strings,
@@ -145,14 +149,26 @@ class TelegramAdapter(GatewayAdapter):
         self._state = "starting"
         # Long-polling must be the only consumer of updates.
         await self._bot.delete_webhook(drop_pending_updates=True)
-        self._poll_task = asyncio.create_task(
-            self._dispatcher.start_polling(self._bot),
-            name="telegram-adapter-polling",
-        )
+        self._poll_task = asyncio.create_task(self._poll_supervisor(), name="telegram-adapter-polling")
         me = await self._bot.me()
         self._bot_id = str(me.id)
         self._bot_username = me.username
         self._state = "running"
+
+    async def _poll_supervisor(self) -> None:
+        """Run the polling loop, reconnecting with backoff on fatal exits."""
+        backoff = _RECONNECT_BACKOFF_INITIAL_SECONDS
+        while self._state != "stopped" and self._dispatcher is not None and self._bot is not None:
+            try:
+                await self._dispatcher.start_polling(self._bot)
+                return  # stop_polling() ended the loop cleanly
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — a fatal polling error must not end the adapter
+                self._state = "error"
+                logger.exception("telegram: polling died; reconnecting in %.0fs", backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, _RECONNECT_BACKOFF_MAX_SECONDS)
 
     async def stop(self) -> None:
         self._state = "stopped"
@@ -165,10 +181,12 @@ class TelegramAdapter(GatewayAdapter):
         if task is not None:
             try:
                 await asyncio.wait_for(task, timeout=_POLL_STOP_TIMEOUT_SECONDS)
-            except asyncio.TimeoutError:
+            except (asyncio.TimeoutError, asyncio.CancelledError):
                 task.cancel()
-            except asyncio.CancelledError:
-                pass
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
             self._poll_task = None
         if self._bot is not None:
             try:

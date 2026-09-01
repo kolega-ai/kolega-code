@@ -49,6 +49,52 @@ def test_status_reports_not_running(capsys: pytest.CaptureFixture[str], tmp_path
     assert "not running" in capsys.readouterr().out
 
 
+def test_status_reads_a_fresh_heartbeat_file(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    import json
+    from datetime import datetime, timezone
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True)
+    payload = {
+        "running": True,
+        "adapter": "telegram",
+        "adapter_state": {"state": "running"},
+        "active_sessions": 3,
+        "pid": 4242,
+        "started_at": "2026-09-01T10:00:00+00:00",
+        "recent_errors": 1,
+        "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+    }
+    (state_dir / "gateway.status.json").write_text(json.dumps(payload), encoding="utf-8")
+    config = GatewayConfig(adapter="echo", project_path=tmp_path / "ws", state_dir=state_dir)
+    assert _gateway_status(config) == 0
+    out = capsys.readouterr().out
+    assert "running (pid 4242)" in out
+    assert "sessions: 3" in out
+    assert "errors: 1" in out
+
+
+def test_status_reports_a_stale_heartbeat_file(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    import json
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True)
+    payload = {
+        "running": True,
+        "adapter": "telegram",
+        "adapter_state": {"state": "running"},
+        "active_sessions": 0,
+        "pid": 4242,
+        "started_at": "2026-09-01T10:00:00+00:00",
+        "recent_errors": 0,
+        "heartbeat_at": "2026-09-01T10:00:00+00:00",
+    }
+    (state_dir / "gateway.status.json").write_text(json.dumps(payload), encoding="utf-8")
+    config = GatewayConfig(adapter="echo", project_path=tmp_path / "ws", state_dir=state_dir)
+    assert _gateway_status(config) == 1
+    assert "not responding" in capsys.readouterr().out
+
+
 def test_pairing_list_and_approve(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     from kolega_code.cli.gateway import _gateway_pairing
     from kolega_code.gateway.access import GatewayAccessControl
