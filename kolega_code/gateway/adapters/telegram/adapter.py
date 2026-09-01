@@ -21,6 +21,7 @@ import asyncio
 import logging
 import re
 import secrets
+from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from aiogram import Bot, Dispatcher
@@ -33,6 +34,7 @@ from aiogram.types import Message as TelegramMessage
 from kolega_code.gateway.adapters.base import (
     STREAMING_EDIT_IN_PLACE,
     AdapterCapabilities,
+    Attachment,
     ButtonOption,
     GatewayAdapter,
     InboundMessage,
@@ -42,10 +44,13 @@ from kolega_code.gateway.adapters.telegram.formatting import telegram_html
 
 logger = logging.getLogger(__name__)
 
-#: Notice for media messages until the media phase lands.
-MEDIA_UNSUPPORTED_REPLY = "📎 Media messages aren't supported yet (coming soon)."
+#: Notice for media messages the gateway does not support yet.
+MEDIA_UNSUPPORTED_REPLY = "📎 That media type isn't supported yet (images, voice notes, and documents are)."
 #: Polling shutdown grace period before the task is cancelled outright.
 _POLL_STOP_TIMEOUT_SECONDS = 5.0
+#: Telegram Bot API download cap.
+MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
+OVERSIZE_REPLY = "📎 That file is larger than the 20 MB download limit."
 #: BotFather issues tokens as "<bot-id>:<secret>" (digits, colon, 35 chars of
 #: base64url-ish alphabet). Accept a generous window so future token shapes
 #: don't break, but catch obviously wrong values (userbot session strings,
@@ -110,10 +115,11 @@ class TelegramAdapter(GatewayAdapter):
         max_media_mb=50.0,
     )
 
-    def __init__(self, token: str, *, proxy: Optional[str] = None) -> None:
+    def __init__(self, token: str, *, proxy: Optional[str] = None, media_dir: Optional[Path] = None) -> None:
         super().__init__()
         self._token = validate_bot_token(token)
         self._proxy = proxy
+        self._media_dir = media_dir
         self._bot: Optional[Bot] = None
         self._dispatcher: Optional[Dispatcher] = None
         self._poll_task: Optional[asyncio.Task[None]] = None
@@ -178,14 +184,87 @@ class TelegramAdapter(GatewayAdapter):
     # -- Inbound -----------------------------------------------------------
 
     async def _handle_message(self, message: TelegramMessage, _bot: Bot) -> None:
-        if message.text is None and message.caption is None:
+        if message.text is None and message.caption is None and not self._media_kinds(message):
             await self._media_notice(message)
             return
-        inbound = self._to_inbound(message)
+        attachments = await self._download_media(message)
+        inbound = self._to_inbound(message, attachments)
         if inbound is not None:
             await self.inbound.put(inbound)
 
-    def _to_inbound(self, message: TelegramMessage) -> Optional[InboundMessage]:
+    def _media_kinds(self, message: TelegramMessage) -> list[str]:
+        """Kinds the gateway can consume for this message: image/voice/document."""
+        kinds: list[str] = []
+        if message.photo:
+            kinds.append("image")
+        if message.voice:
+            kinds.append("voice")
+        if message.document:
+            kinds.append("document")
+        return kinds
+
+    async def _download_media(self, message: TelegramMessage) -> tuple[Attachment, ...]:
+        """Download this message's media into the media dir, as attachments."""
+        attachments: list[Attachment] = []
+        if message.photo:
+            # The last photo is the largest resolution.
+            path = await self._download_file(message.photo[-1].file_id, f"image-{message.message_id}.jpg")
+            if path is not None:
+                attachments.append(
+                    Attachment(kind="image", source=str(path), mime="image/jpeg", caption=message.caption)
+                )
+        elif message.voice:
+            path = await self._download_file(message.voice.file_id, f"voice-{message.message_id}.ogg")
+            if path is not None:
+                attachments.append(Attachment(kind="voice", source=str(path), mime="audio/ogg"))
+        elif message.document:
+            if (message.document.file_size or 0) > MAX_DOWNLOAD_BYTES:
+                await self._oversize_notice(message)
+            else:
+                name = self._safe_file_name(message)
+                path = await self._download_file(message.document.file_id, name)
+                if path is not None:
+                    attachments.append(
+                        Attachment(
+                            kind="document",
+                            source=str(path),
+                            mime=message.document.mime_type,
+                            file_name=message.document.file_name,
+                        )
+                    )
+        return tuple(attachments)
+
+    async def _download_file(self, file_id: str, name: str) -> Optional[Path]:
+        if self._media_dir is None:
+            return None
+        destination = self._media_dir / name
+        try:
+            self._media_dir.mkdir(parents=True, exist_ok=True)
+            await self._require_bot().download(file_id, destination=destination)
+        except Exception:  # noqa: BLE001 — a failed download must not break polling
+            logger.exception("telegram: media download failed (%s)", name)
+            return None
+        return destination
+
+    @staticmethod
+    def _safe_file_name(message: TelegramMessage) -> str:
+        """A filesystem-safe name for a document, or a generated fallback."""
+        raw = (message.document.file_name if message.document else None) or f"document-{message.message_id}"
+        name = Path(raw).name.strip()
+        name = re.sub(r"[^\w.\- ]", "_", name).strip()
+        return name or f"document-{message.message_id}"
+
+    async def _oversize_notice(self, message: TelegramMessage) -> None:
+        try:
+            await message.answer(OVERSIZE_REPLY)
+        except Exception:  # noqa: BLE001
+            logger.debug("telegram: oversize notice failed", exc_info=True)
+
+    def _to_inbound(
+        self,
+        message: TelegramMessage,
+        attachments: tuple[Attachment, ...] = (),
+    ) -> Optional[InboundMessage]:
         sender = message.from_user
         reply_to = None
         if message.reply_to_message is not None:
@@ -205,6 +284,7 @@ class TelegramAdapter(GatewayAdapter):
             sender_name=sender.full_name if sender else "",
             message_id=str(message.message_id),
             text=message.text or message.caption or "",
+            attachments=attachments,
             reply_to=reply_to,
             timestamp=message.date.isoformat() if message.date else None,
             is_group=is_group,

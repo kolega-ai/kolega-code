@@ -2,15 +2,21 @@
 
 import asyncio
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from aiogram.types import Chat, Message, User
+from aiogram.types import Chat, Document, Message, PhotoSize, User, Voice
 from aiogram.enums import ChatType
 
 from kolega_code.gateway.adapters.base import ButtonOption
 from kolega_code.gateway.adapters.telegram import TelegramAdapter
-from kolega_code.gateway.adapters.telegram.adapter import decode_callback, encode_callback, validate_bot_token
+from kolega_code.gateway.adapters.telegram.adapter import (
+    MAX_DOWNLOAD_BYTES,
+    decode_callback,
+    encode_callback,
+    validate_bot_token,
+)
 
 
 def test_validate_bot_token_accepts_botfather_shape() -> None:
@@ -34,6 +40,37 @@ def make_adapter() -> TelegramAdapter:
     adapter = TelegramAdapter(token="123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw")
     adapter._bot_id = "123"  # type: ignore[assignment] — set post-init for offline tests
     return adapter
+
+
+def make_photo_message(message_id: int = 100, caption: str | None = None) -> Message:
+    return Message(
+        message_id=message_id,
+        date=datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc),
+        chat=Chat(id=42, type=ChatType.PRIVATE),
+        from_user=User(id=7, is_bot=False, first_name="Test User"),
+        caption=caption,
+        photo=[PhotoSize(file_id="PHOTO-1", file_unique_id="u1", width=100, height=100)],
+    )
+
+
+def make_voice_message(message_id: int = 100) -> Message:
+    return Message(
+        message_id=message_id,
+        date=datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc),
+        chat=Chat(id=42, type=ChatType.PRIVATE),
+        from_user=User(id=7, is_bot=False, first_name="Test User"),
+        voice=Voice(file_id="VOICE-1", file_unique_id="u1", duration=3),
+    )
+
+
+def make_document_message(message_id: int = 100, *, file_size: int = 1000, file_name: str | None = None) -> Message:
+    return Message(
+        message_id=message_id,
+        date=datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc),
+        chat=Chat(id=42, type=ChatType.PRIVATE),
+        from_user=User(id=7, is_bot=False, first_name="Test User"),
+        document=Document(file_id="DOC-1", file_unique_id="u1", file_size=file_size, file_name=file_name),
+    )
 
 
 def make_message(
@@ -121,6 +158,69 @@ def test_send_buttons_requires_running_bot() -> None:
     adapter = make_adapter()
     with pytest.raises(RuntimeError):
         asyncio.run(adapter.send_buttons("42", "pick", [ButtonOption("a", "A")]))
+
+
+def test_media_kinds_detection() -> None:
+    adapter = make_adapter()
+    assert adapter._media_kinds(make_photo_message()) == ["image"]
+    assert adapter._media_kinds(make_voice_message()) == ["voice"]
+    assert adapter._media_kinds(make_document_message()) == ["document"]
+    assert adapter._media_kinds(make_message("plain text")) == []
+
+
+@pytest.mark.asyncio
+async def test_photo_downloads_as_image_attachment(tmp_path: Path) -> None:
+    adapter = make_adapter()
+    adapter._media_dir = tmp_path
+    adapter._bot = MagicMock()
+    adapter._bot.download = AsyncMock()
+    attachments = await adapter._download_media(make_photo_message(message_id=77, caption="look!"))
+    assert len(attachments) == 1
+    assert attachments[0].kind == "image"
+    assert attachments[0].caption == "look!"
+    assert attachments[0].source.endswith("image-77.jpg")
+    adapter._bot.download.assert_awaited_once_with("PHOTO-1", destination=tmp_path / "image-77.jpg")
+
+
+@pytest.mark.asyncio
+async def test_voice_downloads_as_voice_attachment(tmp_path: Path) -> None:
+    adapter = make_adapter()
+    adapter._media_dir = tmp_path
+    adapter._bot = MagicMock()
+    adapter._bot.download = AsyncMock()
+    attachments = await adapter._download_media(make_voice_message(message_id=3))
+    assert len(attachments) == 1
+    assert attachments[0].kind == "voice"
+    assert attachments[0].source.endswith("voice-3.ogg")
+
+
+@pytest.mark.asyncio
+async def test_document_downloads_with_sanitized_name(tmp_path: Path) -> None:
+    adapter = make_adapter()
+    adapter._media_dir = tmp_path
+    adapter._bot = MagicMock()
+    adapter._bot.download = AsyncMock()
+    attachments = await adapter._download_media(make_document_message(message_id=9, file_name="../../report:final.pdf"))
+    assert len(attachments) == 1
+    assert attachments[0].kind == "document"
+    assert attachments[0].file_name == "../../report:final.pdf"
+    assert attachments[0].source == str(tmp_path / "report_final.pdf")
+
+
+@pytest.mark.asyncio
+async def test_oversized_document_is_not_downloaded(tmp_path: Path) -> None:
+    adapter = make_adapter()
+    adapter._media_dir = tmp_path
+    adapter._bot = MagicMock()
+    adapter._bot.download = AsyncMock()
+    attachments = await adapter._download_media(make_document_message(message_id=5, file_size=MAX_DOWNLOAD_BYTES + 1))
+    assert attachments == ()
+    adapter._bot.download.assert_not_awaited()
+
+
+def test_safe_file_name_falls_back_for_missing_names() -> None:
+    adapter = make_adapter()
+    assert adapter._safe_file_name(make_document_message(message_id=11, file_name=None)) == "document-11"
 
 
 def test_to_inbound_maps_plain_message() -> None:

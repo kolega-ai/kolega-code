@@ -53,7 +53,11 @@ def _adapter_kwargs(config: GatewayConfig, name: str) -> dict[str, Any]:
                 "The telegram adapter requires KOLEGA_GATEWAY_TELEGRAM_TOKEN "
                 "(create a bot with @BotFather and export the token)."
             )
-        return {"token": config.telegram_token, "proxy": config.telegram_proxy}
+        return {
+            "token": config.telegram_token,
+            "proxy": config.telegram_proxy,
+            "media_dir": config.state_dir / "gateway_media",
+        }
     return {}
 
 
