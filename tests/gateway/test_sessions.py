@@ -24,6 +24,8 @@ from kolega_code.gateway.config import GatewayConfig
 from kolega_code.gateway.sessions import AgentTurnHandler
 from kolega_code.llm.models import Message, TextBlock
 from kolega_code.llm.providers.models import TokenCount
+from kolega_code.permissions import PermissionKind, PermissionRequest, allow_rule_options
+from kolega_code.session.runtime import serialize_permission_request
 
 
 class _TextEvent:
@@ -82,12 +84,24 @@ class RecordingAdapter(GatewayAdapter):
 
     def __init__(self) -> None:
         super().__init__()
-        self.capabilities = AdapterCapabilities(supports_edits=True, supports_delete=True, text_chunk_limit=4096)
+        self.capabilities = AdapterCapabilities(
+            supports_edits=True, supports_delete=True, supports_inline_buttons=True, text_chunk_limit=4096
+        )
         self.sent: list[tuple[str, str]] = []
+        self.buttons: list[tuple[str, str, list[Any]]] = []
+        self.tokens: list[str] = []
 
     async def send_text(self, chat_id: str, text: str, *, reply_to_message_id: str | None = None) -> str:
+        await asyncio.sleep(0)
         self.sent.append((chat_id, text))
         return f"m-{len(self.sent)}"
+
+    async def send_buttons(self, chat_id: str, prompt: str, options: list[Any]) -> str:
+        await asyncio.sleep(0)
+        token = f"tok-{len(self.tokens) + 1}"
+        self.tokens.append(token)
+        self.buttons.append((chat_id, prompt, list(options)))
+        return token
 
     async def edit_text(self, chat_id: str, message_id: str, text: str) -> None:
         pass
@@ -327,4 +341,53 @@ async def test_help_command_lists_commands(tmp_path: Path) -> None:
     await handler.handle(chat_ref(), inbound("/help", message_id="m-1"))
     assert await wait_for(lambda: "/new" in all_sent_texts(adapter))
     assert "/status" in all_sent_texts(adapter)
+    await handler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_button_tap_routes_through_the_daemon_path(tmp_path: Path) -> None:
+    """A chat's button tap answers a pending permission prompt end to end."""
+    handler, adapter, _ = make_handler(tmp_path)
+    await handler.handle(chat_ref(), inbound("hello", message_id="m-1"))
+    assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+
+    entry = handler._registry.get(chat_ref())
+    assert entry is not None
+    request = PermissionRequest(
+        kind=PermissionKind.COMMAND,
+        tool_name="bash",
+        inputs={},
+        command="ls -la",
+        path="",
+        mcp_server="",
+        mcp_tool="",
+    )
+    rule_options = [
+        {"label": option.label, "description": option.description, "rule": option.rule.to_dict()}
+        for option in allow_rule_options(request)
+    ]
+    task = asyncio.create_task(
+        entry.payload.runtime.control.request(
+            "permission",
+            {"request": serialize_permission_request(request), "rule_options": rule_options},
+            default={"allowed": False, "reason": "unanswered"},
+        )
+    )
+    assert await wait_for(lambda: bool(adapter.buttons))
+    token = adapter.tokens[0]
+
+    # The tap arrives as an ordinary inbound message, exactly as the daemon delivers it.
+    await handler.handle(
+        chat_ref(),
+        InboundMessage(
+            channel="recording",
+            chat_id="42",
+            sender_id="7",
+            message_id="tap-1",
+            callback_token=token,
+            callback_option="deny",
+        ),
+    )
+    response = await task
+    assert response["allowed"] is False
     await handler.shutdown()

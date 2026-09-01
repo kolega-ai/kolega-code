@@ -21,16 +21,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
-from kolega_code.agent import CoderAgent
+from kolega_code.agent import CoderAgent, PromptExtension
 from kolega_code.agent.prompt_provider import AgentMode
+from kolega_code.agent.prompts import BUILD_QUESTION_PROMPT
 from kolega_code.cli.config import CliConfigOverrides, build_agent_config, config_summary
 from kolega_code.cli.connection import CliConnectionManager
 from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
 from kolega_code.cli.session_store import SessionRecord, SessionStore, SessionStoreError
 from kolega_code.cli.settings import CliSettings, SettingsStore
+from kolega_code.events import AgentEvent, KnownEventType
 from kolega_code.permissions import PermissionMode, normalize_permission_mode
 from kolega_code.session.recording import RecordingConnectionManager
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
+from kolega_code.tools import ToolError
 
 from kolega_code.gateway.adapters.base import ChatRef, GatewayAdapter, InboundMessage
 from kolega_code.gateway.bridge import TurnRenderer
@@ -45,7 +48,10 @@ from kolega_code.gateway.commands import (
     parse_command,
 )
 from kolega_code.gateway.config import GatewayConfig
+from kolega_code.gateway.control_relay import ControlRelay
 from kolega_code.gateway.daemon import ERROR_REPLY
+from kolega_code.gateway.event_router import EventRouter
+from kolega_code.gateway.questions import build_question_extension
 from kolega_code.gateway.redaction import scrub
 from kolega_code.gateway.router import SessionRegistry
 
@@ -68,6 +74,9 @@ class ChatSession:
     runtime: SessionRuntime
     manager: CliConnectionManager
     agent_config: Any
+    router: EventRouter
+    turn_events: asyncio.Queue[AgentEvent]
+    relay: ControlRelay
     turn_task: Optional[asyncio.Task[None]] = None
 
 
@@ -108,6 +117,12 @@ class AgentTurnHandler:
         return {"active_sessions": self._registry.active_count()}
 
     async def handle(self, chat_ref: ChatRef, message: InboundMessage) -> None:
+        if message.callback_token:
+            # A button tap answers a control prompt, never starts a turn.
+            entry = self._registry.get(chat_ref)
+            if entry is not None:
+                await entry.payload.relay.handle_tap(message)
+            return
         command = parse_command(message.text)
         if command is not None:
             await self._run_command(chat_ref, message, command)
@@ -193,8 +208,8 @@ class AgentTurnHandler:
     async def _run_turn(self, entry: ChatSession, chat_ref: ChatRef, message: InboundMessage) -> None:
         # A previous turn may have left unconsumed events (its pump was
         # cancelled); stale tool lines must not leak into this turn's status.
-        while not entry.manager.events.empty():
-            entry.manager.events.get_nowait()
+        while not entry.turn_events.empty():
+            entry.turn_events.get_nowait()
         text = message.text
         if message.reply_to is not None and message.reply_to.text:
             quoted_by = message.reply_to.sender_id or "user"
@@ -202,7 +217,7 @@ class AgentTurnHandler:
         renderer = TurnRenderer(
             self._adapter,
             chat_ref.chat_id,
-            event_queue=entry.manager.events,
+            event_queue=entry.turn_events,
             chunk_limit=self._adapter.capabilities.text_chunk_limit,
             edit_throttle_seconds=self._config.edit_throttle_seconds,
         )
@@ -340,6 +355,12 @@ class AgentTurnHandler:
             thread_id=record.thread_id,
             timeout=self._config.request_timeout_seconds,
         )
+        # One fan-out task owns the session's event queue so the turn renderer
+        # (tool activity) and the relay (control prompts) never steal each
+        # other's events.
+        router = EventRouter(manager.events)
+        turn_events = router.subscribe(KnownEventType.CHAT_MESSAGE)
+        control_events = router.subscribe(KnownEventType.CONTROL_REQUESTED, KnownEventType.CONTROL_RESOLVED)
         builder = self._agent_builder or self._default_agent_builder
 
         async def factory() -> Any:
@@ -352,6 +373,7 @@ class AgentTurnHandler:
                 permission_callback=runtime.permission_callback,
                 permission_mode=PermissionMode.ASK,
                 restore=restore,
+                question_state=question_state,
             )
 
         runtime = SessionRuntime(
@@ -362,6 +384,35 @@ class AgentTurnHandler:
             permission_mode=permission_mode,
             on_notice=lambda notice: logger.info("gateway session %s: %s", record.session_id, notice),
         )
+        relay = ControlRelay(
+            chat_ref=chat_ref,
+            runtime=runtime,
+            adapter=self._adapter,
+            event_queue=control_events,
+            client_id=chat_ref.key,
+            scrub=lambda text: scrub(text, self._secret_values),
+        )
+        question_state: dict[str, Any] = {}
+
+        async def elicit(question: str, labels: list[str], descriptions: list[str]) -> str:
+            # Same wire shape as the TUI's ask_user_choice, so the prompt lands
+            # in the recording and the relay renders it like any other.
+            response = await control.request(
+                "question",
+                {"question": question, "options": list(labels), "descriptions": list(descriptions)},
+                default={"answer": None},
+            )
+            answer = response.get("answer")
+            if not isinstance(answer, str) or not answer.strip():
+                raise ToolError(
+                    "No answer was given for this planning question. "
+                    "Proceed without it, or state the assumption you are making instead."
+                )
+            return answer
+
+        question_state["elicit"] = elicit
+        router.start()
+        relay.start()
         await runtime.start()
         return ChatSession(
             chat_ref=chat_ref,
@@ -370,6 +421,9 @@ class AgentTurnHandler:
             runtime=runtime,
             manager=manager,
             agent_config=agent_config,
+            router=router,
+            turn_events=turn_events,
+            relay=relay,
         )
 
     async def _default_agent_builder(self, record: SessionRecord, agent_config: Any, **kwargs: Any) -> Any:
@@ -378,6 +432,7 @@ class AgentTurnHandler:
         permission_callback = kwargs["permission_callback"]
         permission_mode = kwargs["permission_mode"]
         restore: bool = kwargs["restore"]
+        question_state: dict[str, Any] = kwargs["question_state"]
         agent = CoderAgent(
             project_path=Path(record.project_path),
             workspace_id=record.workspace_id,
@@ -387,6 +442,16 @@ class AgentTurnHandler:
             agent_mode=AgentMode.CLI,
             permission_mode=permission_mode,
             permission_callback=permission_callback,
+            prompt_extensions=[
+                PromptExtension(
+                    id="gateway-questions",
+                    title="Asking the User",
+                    markdown=BUILD_QUESTION_PROMPT,
+                    modes=[AgentMode.CLI],
+                    propagate_to_sub_agents=False,
+                ),
+            ],
+            tool_extensions=[build_question_extension(question_state)],
             # Mirror the ask/ACP path: a resumed session hands the recorder
             # over after restoring history so construction never
             # double-records a resumed turn.
@@ -424,6 +489,11 @@ class AgentTurnHandler:
 
     async def _close_entry(self, chat_session: ChatSession) -> None:
         self._persist(chat_session)
+        try:
+            await chat_session.relay.stop()
+        except Exception:  # noqa: BLE001 — closing must not mask the eviction
+            logger.exception("gateway: relay stop failed (%s)", chat_session.session_id)
+        await chat_session.router.stop()
         try:
             await chat_session.runtime.shutdown()
         except Exception:  # noqa: BLE001 — closing must not mask the eviction
