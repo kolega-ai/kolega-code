@@ -161,6 +161,7 @@ SUBCOMMANDS = {
     "tui",
     "share",
     "acp",
+    "gateway",
 }
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
@@ -206,6 +207,10 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             from .acp import run_acp
 
             return run_acp(args)
+        if args.command == "gateway":
+            from .gateway import run_gateway
+
+            return run_gateway(args)
         if args.command == "update":
             return _run_update()
         if args.command == "tui":
@@ -491,6 +496,10 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     tui = subparsers.add_parser("tui", help="Run the interactive Textual CLI.")
     tui.set_defaults(command="tui")
     _add_tui_args(tui)
+
+    from .gateway import add_gateway_parser
+
+    add_gateway_parser(subparsers)
 
     ask = subparsers.add_parser("ask", help="Run a single prompt and print the answer.")
     ask.add_argument("prompt", nargs="?", default=None, help="Prompt to send to Kolega Code.")
