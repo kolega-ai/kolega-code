@@ -7,10 +7,28 @@ from aiogram.types import Chat, Message, User
 from aiogram.enums import ChatType
 
 from kolega_code.gateway.adapters.telegram import TelegramAdapter
+from kolega_code.gateway.adapters.telegram.adapter import validate_bot_token
+
+
+def test_validate_bot_token_accepts_botfather_shape() -> None:
+    assert validate_bot_token("123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw") == (
+        "123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+    )
+
+
+def test_validate_bot_token_rejects_non_token_values() -> None:
+    for bad in ("", "not-a-token", "123456:", ":AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw", "123456:short"):
+        with pytest.raises(ValueError):
+            validate_bot_token(bad)
+
+
+def test_adapter_constructor_validates_token() -> None:
+    with pytest.raises(ValueError):
+        TelegramAdapter(token="garbage")
 
 
 def make_adapter() -> TelegramAdapter:
-    adapter = TelegramAdapter(token="123:fake")
+    adapter = TelegramAdapter(token="123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw")
     adapter._bot_id = "123"  # type: ignore[assignment] — set post-init for offline tests
     return adapter
 

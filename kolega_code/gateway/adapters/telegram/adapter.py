@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any, Optional
 
 from aiogram import Bot, Dispatcher
@@ -42,6 +43,25 @@ logger = logging.getLogger(__name__)
 MEDIA_UNSUPPORTED_REPLY = "📎 Media messages aren't supported yet (coming soon)."
 #: Polling shutdown grace period before the task is cancelled outright.
 _POLL_STOP_TIMEOUT_SECONDS = 5.0
+#: BotFather issues tokens as "<bot-id>:<secret>" (digits, colon, 35 chars of
+#: base64url-ish alphabet). Accept a generous window so future token shapes
+#: don't break, but catch obviously wrong values (userbot session strings,
+#: pasted commands) before the first poll.
+_BOT_TOKEN_RE = re.compile(r"^\d{1,15}:[A-Za-z0-9_-]{20,64}$")
+
+
+def validate_bot_token(token: str) -> str:
+    """Return the token if it looks like a BotFather bot token, else raise.
+
+    The gateway only talks to bots created with @BotFather on the official
+    Bot API — never to user accounts.
+    """
+    if not _BOT_TOKEN_RE.match(token):
+        raise ValueError(
+            "KOLEGA_GATEWAY_TELEGRAM_TOKEN does not look like a BotFather bot token "
+            "(expected <bot-id>:<secret>). Create a bot with @BotFather and export its token."
+        )
+    return token
 
 
 class TelegramAdapter(GatewayAdapter):
@@ -61,7 +81,7 @@ class TelegramAdapter(GatewayAdapter):
 
     def __init__(self, token: str, *, proxy: Optional[str] = None) -> None:
         super().__init__()
-        self._token = token
+        self._token = validate_bot_token(token)
         self._proxy = proxy
         self._bot: Optional[Bot] = None
         self._dispatcher: Optional[Dispatcher] = None
