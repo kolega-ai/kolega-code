@@ -24,7 +24,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 from kolega_code.agent import CoderAgent, PromptExtension
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.prompts import BUILD_QUESTION_PROMPT
-from kolega_code.cli.config import CliConfigOverrides, build_agent_config, config_summary
+from kolega_code.cli.config import CliConfigError, CliConfigOverrides, build_agent_config, config_summary
 from kolega_code.cli.connection import CliConnectionManager
 from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
 from kolega_code.cli.session_store import SessionRecord, SessionStore, SessionStoreError
@@ -39,6 +39,7 @@ from kolega_code.gateway.adapters.base import ChatRef, GatewayAdapter, InboundMe
 from kolega_code.gateway.bridge import TurnRenderer
 from kolega_code.gateway.commands import (
     COMMAND_HELP,
+    COMMAND_MODEL,
     COMMAND_NEW,
     COMMAND_RESET,
     COMMAND_STATUS,
@@ -77,6 +78,9 @@ class ChatSession:
     router: EventRouter
     turn_events: asyncio.Queue[AgentEvent]
     relay: ControlRelay
+    #: Mutable holder the agent factory reads at every build, so /model can
+    #: swap the config and rebuild the session in place.
+    config_holder: dict[str, Any]
     turn_task: Optional[asyncio.Task[None]] = None
 
 
@@ -235,11 +239,13 @@ class AgentTurnHandler:
     # -- Commands ----------------------------------------------------------
 
     async def _run_command(self, chat_ref: ChatRef, _message: InboundMessage, command: tuple[str, str]) -> None:
-        name, _args = command
+        name, args = command
         if name == COMMAND_HELP or name == "help":
             await self._adapter.send_text(chat_ref.chat_id, HELP_TEXT)
         elif name == COMMAND_STATUS:
             await self._adapter.send_text(chat_ref.chat_id, await self._status_text(chat_ref))
+        elif name == COMMAND_MODEL:
+            await self._model_command(chat_ref, args)
         elif name in (COMMAND_NEW, COMMAND_RESET):
             await self._reset_session(chat_ref)
             await self._adapter.send_text(chat_ref.chat_id, "🆕 New session started.")
@@ -285,6 +291,68 @@ class AgentTurnHandler:
             return False
         entry.payload.turn_task.cancel()
         return True
+
+    async def _model_command(self, chat_ref: ChatRef, args: str) -> None:
+        entry = self._registry.get(chat_ref)
+        if entry is None or entry.payload.runtime.agent is None:
+            await self._adapter.send_text(chat_ref.chat_id, "No active session yet — send a message to start one.")
+            return
+        if not args.strip():
+            primary = entry.payload.runtime.agent.primary_model_config
+            await self._adapter.send_text(
+                chat_ref.chat_id,
+                f"Model: {primary.provider.value}/{primary.model}\n"
+                "Switch with /model <provider>/<model> (or /model <model> to keep the provider).",
+            )
+            return
+        await self._apply_model(chat_ref, entry.payload, args.strip())
+
+    async def _apply_model(self, chat_ref: ChatRef, entry: ChatSession, spec: str) -> None:
+        turn_task = entry.turn_task
+        if turn_task is not None and not turn_task.done():
+            await self._adapter.send_text(chat_ref.chat_id, "A turn is running — /stop it first, then switch models.")
+            return
+        provider, model = self._parse_model_spec(spec, entry)
+        if not provider:
+            await self._adapter.send_text(
+                chat_ref.chat_id,
+                f"Could not switch models: name a provider as <provider>/<model>, got {spec!r}.",
+            )
+            return
+        try:
+            new_config = build_agent_config(
+                Path(entry.record.project_path),
+                overrides=CliConfigOverrides(provider=provider, model=model),
+                settings=self._load_settings(),
+                settings_store=self._settings_store,
+            )
+        except CliConfigError as exc:
+            await self._adapter.send_text(chat_ref.chat_id, f"Could not switch models: {exc}")
+            return
+        # Persist the live conversation before the rebuild loads it back.
+        self._persist(entry)
+        entry.config_holder["config"] = new_config
+        try:
+            await entry.runtime.rebuild()
+        except Exception:  # noqa: BLE001 — a failed switch must not kill the chat
+            logger.exception("gateway: model switch failed for chat %s", chat_ref.key)
+            await self._adapter.send_text(chat_ref.chat_id, ERROR_REPLY)
+            return
+        entry.agent_config = new_config
+        entry.record.config = config_summary(new_config)
+        self._store.save(entry.record)
+        await self._adapter.send_text(chat_ref.chat_id, f"Model: {provider}/{model}")
+
+    @staticmethod
+    def _parse_model_spec(spec: str, entry: ChatSession) -> tuple[str, str]:
+        """Split ``provider/model`` or resolve a bare model against the current provider."""
+        if "/" in spec:
+            provider, model = spec.split("/", 1)
+            return provider, model
+        agent = entry.runtime.agent
+        if agent is None:
+            return "", spec
+        return agent.primary_model_config.provider.value, spec
 
     # -- Session lifecycle -------------------------------------------------
 
@@ -362,19 +430,24 @@ class AgentTurnHandler:
         turn_events = router.subscribe(KnownEventType.CHAT_MESSAGE)
         control_events = router.subscribe(KnownEventType.CONTROL_REQUESTED, KnownEventType.CONTROL_RESOLVED)
         builder = self._agent_builder or self._default_agent_builder
+        config_holder: dict[str, Any] = {"config": agent_config}
+        build_state = {"restore": restore}
 
         async def factory() -> Any:
-            return await builder(
+            built = await builder(
                 record,
-                agent_config,
+                config_holder["config"],
                 manager=manager,
                 recording=recording,
                 recorder=recorder,
                 permission_callback=runtime.permission_callback,
                 permission_mode=PermissionMode.ASK,
-                restore=restore,
+                restore=build_state["restore"],
                 question_state=question_state,
             )
+            # Every build after the first must restore the conversation.
+            build_state["restore"] = True
+            return built
 
         runtime = SessionRuntime(
             session_id=record.session_id,
@@ -424,6 +497,7 @@ class AgentTurnHandler:
             router=router,
             turn_events=turn_events,
             relay=relay,
+            config_holder=config_holder,
         )
 
     async def _default_agent_builder(self, record: SessionRecord, agent_config: Any, **kwargs: Any) -> Any:

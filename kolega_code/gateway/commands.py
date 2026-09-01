@@ -13,11 +13,13 @@ COMMAND_STATUS = "status"
 COMMAND_NEW = "new"
 COMMAND_RESET = "reset"
 COMMAND_STOP = "stop"
+COMMAND_MODEL = "model"
 
 HELP_TEXT = (
     "Commands:\n"
     "/new — start a fresh session\n"
     "/status — show session and model info\n"
+    "/model [model] — show or switch this chat's model\n"
     "/stop — cancel the running turn\n"
     "/help — this list"
 )

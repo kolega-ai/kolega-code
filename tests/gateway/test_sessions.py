@@ -345,6 +345,66 @@ async def test_help_command_lists_commands(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_model_command_reports_the_current_model(tmp_path: Path) -> None:
+    handler, adapter, _ = make_handler(tmp_path)
+    await handler.handle(chat_ref(), inbound("hello", message_id="m-1"))
+    assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+    await handler.handle(chat_ref(), inbound("/model", message_id="m-2"))
+    assert await wait_for(lambda: "anthropic/claude-haiku-4-5-20251001" in all_sent_texts(adapter))
+    await handler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_model_switch_rebuilds_and_keeps_history(tmp_path: Path) -> None:
+    handler, adapter, config = make_handler(tmp_path)
+    await handler.handle(chat_ref(), inbound("first", message_id="m-1"))
+    assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+
+    entry = handler._registry.get(chat_ref())
+    assert entry is not None
+    agent_before = entry.payload.runtime.agent
+    await handler.handle(chat_ref(), inbound("/model anthropic/claude-haiku-4-5-20251001", message_id="m-2"))
+    assert await wait_for(lambda: "Model: anthropic/claude-haiku-4-5-20251001" in all_sent_texts(adapter))
+
+    # The agent was rebuilt and the conversation carried over.
+    assert entry.payload.runtime.agent is not agent_before
+    await handler.handle(chat_ref(), inbound("still here?", message_id="m-3"))
+    assert await wait_for(lambda: all_sent_texts(adapter).count("hello from the scripted model") >= 2)
+    await handler.shutdown()
+
+    session_id = session_map(config.state_dir)[chat_ref().key]
+    record = SessionStore(root=config.state_dir).load(session_id)
+    history_texts = [block.get("text", "") for message in record.history for block in message.get("content", [])]
+    assert "first" in history_texts
+    assert "still here?" in history_texts
+
+
+@pytest.mark.asyncio
+async def test_model_switch_rejects_unknown_models(tmp_path: Path) -> None:
+    handler, adapter, _ = make_handler(tmp_path)
+    await handler.handle(chat_ref(), inbound("hello", message_id="m-1"))
+    assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+    await handler.handle(chat_ref(), inbound("/model anthropic/not-a-real-model", message_id="m-2"))
+    assert await wait_for(lambda: "Could not switch models" in all_sent_texts(adapter))
+    await handler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_model_switch_is_refused_during_a_turn(tmp_path: Path) -> None:
+    blocker = asyncio.Event()
+    handler, adapter, _ = make_handler(
+        tmp_path, llm=ScriptedLLM(text="long answer from the scripted model", block=blocker)
+    )
+    await handler.handle(chat_ref(), inbound("long task", message_id="m-1"))
+    assert await wait_for(lambda: "long answer from the scripted model" in all_sent_texts(adapter))
+    await handler.handle(chat_ref(), inbound("/model anthropic/claude-haiku-4-5-20251001", message_id="m-2"))
+    assert await wait_for(lambda: "A turn is running" in all_sent_texts(adapter))
+    await handler.handle(chat_ref(), inbound("/stop", message_id="m-3"))
+    assert await wait_for(lambda: "Stopping the current turn" in all_sent_texts(adapter))
+    await handler.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_button_tap_routes_through_the_daemon_path(tmp_path: Path) -> None:
     """A chat's button tap answers a pending permission prompt end to end."""
     handler, adapter, _ = make_handler(tmp_path)
