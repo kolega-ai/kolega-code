@@ -1,13 +1,16 @@
 """TelegramAdapter envelope conversion and capability contract (no network)."""
 
+import asyncio
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 from aiogram.types import Chat, Message, User
 from aiogram.enums import ChatType
 
+from kolega_code.gateway.adapters.base import ButtonOption
 from kolega_code.gateway.adapters.telegram import TelegramAdapter
-from kolega_code.gateway.adapters.telegram.adapter import validate_bot_token
+from kolega_code.gateway.adapters.telegram.adapter import decode_callback, encode_callback, validate_bot_token
 
 
 def test_validate_bot_token_accepts_botfather_shape() -> None:
@@ -60,8 +63,63 @@ def test_capabilities() -> None:
     assert adapter.capabilities.supports_edits is True
     assert adapter.capabilities.supports_typing is True
     assert adapter.capabilities.supports_groups is True
+    assert adapter.capabilities.supports_inline_buttons is True
     assert adapter.capabilities.text_chunk_limit == 4000
     assert adapter.capabilities.streaming_mode == "edit_in_place"
+
+
+def test_callback_encode_decode_round_trip() -> None:
+    data = encode_callback("abc123", 4)
+    assert decode_callback(data) == ("abc123", 4)
+    assert len(data) < 64
+
+
+def test_callback_decode_rejects_garbage() -> None:
+    for bad in ("", "no-colon", "tok:", ":1", "tok:abc", "tok:-1", "tok:1:2:3"):
+        assert decode_callback(bad) is None
+
+
+@pytest.mark.asyncio
+async def test_callback_handler_publishes_tap_envelope() -> None:
+    adapter = make_adapter()
+    adapter._pending_buttons["tok"] = {"chat_id": "42", "options": ["allow_once", "deny"]}
+    query = AsyncMock()
+    query.data = "tok:1"
+    query.id = "9000"
+    query.from_user = User(id=7, is_bot=False, first_name="Tapper")
+    query.message = make_message("approve?", message_id=555)
+
+    await adapter._handle_callback(query, None)
+
+    inbound = await adapter.inbound.get()
+    assert inbound.callback_token == "tok"
+    assert inbound.callback_option == "deny"
+    assert inbound.chat_id == "42"
+    assert inbound.sender_id == "7"
+    assert inbound.message_id == "cb-9000"
+    assert inbound.text == ""
+    query.answer.assert_awaited_once()
+    # One-shot: a second tap on the same token is swallowed.
+    assert adapter._pending_buttons == {}
+    await adapter._handle_callback(query, None)
+    assert adapter.inbound.empty()
+
+
+@pytest.mark.asyncio
+async def test_callback_handler_ignores_unknown_tokens() -> None:
+    adapter = make_adapter()
+    query = AsyncMock()
+    query.data = "ghost:0"
+    query.id = "1"
+    await adapter._handle_callback(query, None)
+    query.answer.assert_awaited_once()
+    assert adapter.inbound.empty()
+
+
+def test_send_buttons_requires_running_bot() -> None:
+    adapter = make_adapter()
+    with pytest.raises(RuntimeError):
+        asyncio.run(adapter.send_buttons("42", "pick", [ButtonOption("a", "A")]))
 
 
 def test_to_inbound_maps_plain_message() -> None:

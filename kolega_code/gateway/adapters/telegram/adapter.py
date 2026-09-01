@@ -20,17 +20,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Any, Optional
+import secrets
+from typing import Any, Optional, Sequence
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ChatAction, ParseMode
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types import Message as TelegramMessage
 
 from kolega_code.gateway.adapters.base import (
     STREAMING_EDIT_IN_PLACE,
     AdapterCapabilities,
+    ButtonOption,
     GatewayAdapter,
     InboundMessage,
     ReplyContext,
@@ -48,6 +51,10 @@ _POLL_STOP_TIMEOUT_SECONDS = 5.0
 #: don't break, but catch obviously wrong values (userbot session strings,
 #: pasted commands) before the first poll.
 _BOT_TOKEN_RE = re.compile(r"^\d{1,15}:[A-Za-z0-9_-]{20,64}$")
+#: Cap on remembered button prompts; the oldest unanswered prompt is evicted.
+_MAX_PENDING_BUTTONS = 64
+#: Telegram caps callback_data at 64 bytes; labels are truncated the same way.
+_MAX_BUTTON_LABEL_CHARS = 64
 
 
 def validate_bot_token(token: str) -> str:
@@ -64,6 +71,29 @@ def validate_bot_token(token: str) -> str:
     return token
 
 
+def encode_callback(token: str, index: int) -> str:
+    """Wire format for one inline button's callback_data: ``token:index``.
+
+    Indices, not option ids, so untrusted option ids (which the gateway
+    chooses freely) can never blow the 64-byte callback_data limit.
+    """
+    return f"{token}:{index}"
+
+
+def decode_callback(data: str) -> Optional[tuple[str, int]]:
+    """Parse ``token:index``, returning None for anything malformed."""
+    token, separator, raw_index = data.partition(":")
+    if not separator or not token:
+        return None
+    try:
+        index = int(raw_index)
+    except ValueError:
+        return None
+    if index < 0:
+        return None
+    return token, index
+
+
 class TelegramAdapter(GatewayAdapter):
     """Long-polling Telegram bot exposing the gateway envelope."""
 
@@ -73,6 +103,7 @@ class TelegramAdapter(GatewayAdapter):
         supports_delete=True,
         supports_typing=True,
         supports_groups=True,
+        supports_inline_buttons=True,
         streaming_mode=STREAMING_EDIT_IN_PLACE,
         text_chunk_limit=4000,
         # Inbound download cap; outbound media is capped lower by the bridge.
@@ -88,6 +119,9 @@ class TelegramAdapter(GatewayAdapter):
         self._poll_task: Optional[asyncio.Task[None]] = None
         self._state = "stopped"
         self._bot_id: Optional[str] = None
+        #: callback token -> {"chat_id": str, "options": [option_id, ...]}, for
+        #: resolving taps back to the option the gateway chose.
+        self._pending_buttons: dict[str, dict[str, Any]] = {}
 
     # -- Lifecycle ---------------------------------------------------------
 
@@ -100,6 +134,7 @@ class TelegramAdapter(GatewayAdapter):
         self._bot = Bot(token=self._token, session=session, default=DefaultBotProperties())
         self._dispatcher = Dispatcher()
         self._dispatcher.message.register(self._handle_message)
+        self._dispatcher.callback_query.register(self._handle_callback)
         self._state = "starting"
         # Long-polling must be the only consumer of updates.
         await self._bot.delete_webhook(drop_pending_updates=True)
@@ -177,6 +212,38 @@ class TelegramAdapter(GatewayAdapter):
         except Exception:  # noqa: BLE001 — a failed notice must not break polling
             logger.debug("telegram: media notice failed", exc_info=True)
 
+    async def _handle_callback(self, query: CallbackQuery, _bot: Optional[Bot]) -> None:
+        """Turn an inline-button tap into an inbound envelope with the token."""
+        decoded = decode_callback(query.data or "")
+        token = decoded[0] if decoded else None
+        pending = self._pending_buttons.pop(token, None) if token else None
+        option_id = ""
+        if pending is not None and decoded is not None:
+            options = pending.get("options") or []
+            if decoded[1] < len(options):
+                option_id = str(options[decoded[1]])
+        try:
+            await query.answer()
+        except Exception:  # noqa: BLE001 — acks are cosmetic
+            logger.debug("telegram: callback ack failed", exc_info=True)
+        if pending is None or not option_id or token is None:
+            # Unknown/expired token or stale button: swallow the tap.
+            return
+        message = query.message
+        sender = query.from_user
+        await self.inbound.put(
+            InboundMessage(
+                channel=self.name,
+                account_id=self._bot_id or "",
+                chat_id=str(message.chat.id) if message is not None else str(pending.get("chat_id") or ""),
+                sender_id=str(sender.id) if sender else "unknown",
+                sender_name=sender.full_name if sender else "",
+                message_id=f"cb-{query.id}",
+                callback_token=token,
+                callback_option=option_id,
+            )
+        )
+
     # -- Outbound ----------------------------------------------------------
 
     def _require_bot(self) -> Bot:
@@ -235,3 +302,38 @@ class TelegramAdapter(GatewayAdapter):
             await bot.send_chat_action(chat_id=int(chat_id), action=ChatAction.TYPING)
         except Exception:  # noqa: BLE001 — typing indicators are cosmetic
             logger.debug("telegram: typing indicator failed", exc_info=True)
+
+    async def send_buttons(self, chat_id: str, prompt: str, options: Sequence[ButtonOption]) -> str:
+        """Send a prompt with one row of inline buttons; returns the callback token.
+
+        A tap arrives as an inbound message carrying the token and the tapped
+        option id (resolved from the button index, so option ids never ride in
+        the 64-byte callback_data).
+        """
+        bot = self._require_bot()
+        token = secrets.token_hex(8)
+        buttons = [
+            InlineKeyboardButton(
+                text=option.label[:_MAX_BUTTON_LABEL_CHARS] or "\u00a0",
+                callback_data=encode_callback(token, index),
+            )
+            for index, option in enumerate(options)
+        ]
+        try:
+            await bot.send_message(
+                chat_id=int(chat_id),
+                text=telegram_html(prompt),
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[buttons]),
+            )
+        except TelegramBadRequest:
+            logger.info("telegram: HTML button prompt failed for chat %s; retrying as plain text", chat_id)
+            await bot.send_message(
+                chat_id=int(chat_id),
+                text=prompt,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[buttons]),
+            )
+        if len(self._pending_buttons) >= _MAX_PENDING_BUTTONS:
+            self._pending_buttons.pop(next(iter(self._pending_buttons)))
+        self._pending_buttons[token] = {"chat_id": chat_id, "options": [option.option_id for option in options]}
+        return token
