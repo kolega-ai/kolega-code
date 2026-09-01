@@ -24,5 +24,5 @@ def test_group_chat_botname_suffix_is_stripped() -> None:
 
 
 def test_help_text_lists_every_command() -> None:
-    for name in ("new", "status", "stop", "help"):
+    for name in ("new", "status", "model", "stop", "help"):
         assert f"/{name}" in HELP_TEXT

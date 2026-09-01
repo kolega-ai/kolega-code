@@ -140,6 +140,28 @@ with vision support.
 | `KOLEGA_CODE_SUBAGENTS` | Sub-agent dispatch (`dispatch_agent`) master switch: `on` or `off` (default `on`). Useful for headless or CI runs; the `--subagents` flag takes precedence |
 | `KOLEGA_CODE_SKILLS` | [Agent Skills](../../skills/) master switch: `on` or `off` (default `on`). When `off`, skills are not discovered, the `skill` tool is not exposed, and `/skills` reports that Agent Skills are disabled; the `--skills` flag takes precedence |
 
+## Gateway
+
+The [messaging gateway](../../cli/gateway/) (`kolega-code gateway`) reads its
+own environment:
+
+| Variable | Purpose |
+| --- | --- |
+| `KOLEGA_GATEWAY_TELEGRAM_TOKEN` | The Telegram bot token from [@BotFather](https://t.me/BotFather) (required for the `telegram` adapter). Never stored in `settings.json`. |
+| `KOLEGA_GATEWAY_ALLOWED_USERS` | Comma-separated Telegram user ids allowed to talk to the gateway. Empty means open to anyone. |
+| `KOLEGA_GATEWAY_PAIRING` | `1`/`true` to give unknown senders a one-hour pairing code instead of silence (requires an allowlist). |
+| `KOLEGA_GATEWAY_PAIRING_TTL_SECONDS` | Pairing-code lifetime in seconds (default `3600`). |
+| `KOLEGA_GATEWAY_GROUP_IDS` | Comma-separated group chat ids the gateway may serve (empty: all groups, mention-gated). |
+| `KOLEGA_GATEWAY_PROJECT` | Working directory for gateway sessions (default `~/kolega-code-workspace`). |
+| `KOLEGA_GATEWAY_STATE_DIR` | Override the gateway's state directory (defaults to `KOLEGA_CODE_STATE_DIR`). |
+| `KOLEGA_GATEWAY_PERMISSION_MODE` | Permission mode for gateway sessions: `ask` (default) or `auto`. |
+| `KOLEGA_GATEWAY_REQUEST_TIMEOUT_SECONDS` | How long a permission/question prompt waits for a tap before falling back to its default (default `600`). |
+| `KOLEGA_GATEWAY_MAX_SESSIONS` / `KOLEGA_GATEWAY_SESSION_IDLE_TTL_SECONDS` | Live-session cache size (default `50`) and idle eviction (default `3600`). |
+| `KOLEGA_GATEWAY_EDIT_THROTTLE_SECONDS` | Minimum interval between edit-in-place streaming updates (default `1`). |
+| `KOLEGA_GATEWAY_STT` | `1`/`true` to transcribe voice notes locally (requires the `stt` extra). |
+| `KOLEGA_GATEWAY_STT_MODEL` | faster-whisper model size (default `base`). |
+| `KOLEGA_GATEWAY_TELEGRAM_PROXY` | Optional HTTP proxy for the Telegram connection. |
+
 ## Web search
 
 The `web_search` tool defaults to the keyless DuckDuckGo backend. Set a backend

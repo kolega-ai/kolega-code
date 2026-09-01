@@ -90,6 +90,7 @@ export default defineConfig({
             { label: "sessions", slug: "cli/sessions" },
             { label: "share", slug: "cli/share" },
             { label: "doctor", slug: "cli/doctor" },
+            { label: "gateway", slug: "cli/gateway" },
           ],
         },
         {
