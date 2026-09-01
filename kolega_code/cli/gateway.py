@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import signal
 import sys
 from dataclasses import replace
@@ -27,6 +28,12 @@ from kolega_code.gateway.daemon import (
     STATUS_STALE_SECONDS,
 )
 from kolega_code.gateway.handlers import EchoTurnHandler
+from kolega_code.gateway.service import (
+    LAUNCHD_LABEL,
+    SERVICE_NAME,
+    install_service,
+    uninstall_service,
+)
 
 
 def add_gateway_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -62,6 +69,14 @@ def add_gateway_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
     pairing_approve.add_argument("code", help="The pairing code a new sender was told to relay to you.")
     pairing_approve.add_argument("--state-dir", type=Path, default=None, help="Override the state directory.")
 
+    install = gateway_sub.add_parser("install", help="Install the gateway as a user-level background service.")
+    install.add_argument("--state-dir", type=Path, default=None, help="Override the state directory.")
+    install.add_argument("--project", type=Path, default=None, help="Directory the service's sessions work in.")
+    install.add_argument("--adapter", choices=adapter_names(), default=None, help="Messaging adapter the service runs.")
+
+    uninstall = gateway_sub.add_parser("uninstall", help="Remove the gateway background service.")
+    uninstall.add_argument("--state-dir", type=Path, default=None, help="Override the state directory.")
+
 
 def run_gateway(args: argparse.Namespace) -> int:
     """Dispatch ``kolega-code gateway ...`` (sync entry point for cli/main.py)."""
@@ -80,7 +95,59 @@ async def _run_gateway(args: argparse.Namespace) -> int:
         return _gateway_status(config)
     if args.gateway_command == "pairing":
         return _gateway_pairing(args, config)
+    if args.gateway_command in ("install", "uninstall"):
+        return _gateway_service(args, config)
     return await _gateway_run(config, args)
+
+
+def _gateway_service(args: argparse.Namespace, config: GatewayConfig) -> int:
+    if args.gateway_command == "install":
+        if config.adapter != "telegram":
+            print("gateway: only the telegram adapter can be installed as a service right now.", file=sys.stderr)
+            return 1
+        try:
+            result = install_service(config)
+        except RuntimeError as exc:
+            print(f"gateway: {exc}", file=sys.stderr)
+            return 1
+        for note in result.notes:
+            print(f"gateway: {note}")
+        for note in _activate_service(args.gateway_command, result.unit_path):
+            print(f"gateway: {note}")
+        return 0
+    for note in _activate_service("uninstall", None):
+        print(f"gateway: {note}")
+    for note in uninstall_service(config):
+        print(f"gateway: {note}")
+    return 0
+
+
+def _activate_service(action: str, unit_path: Path | None) -> list[str]:
+    """Best-effort service activation; failures are notes, never fatal."""
+    import platform
+
+    if action == "uninstall":
+        if platform.system() == "Darwin":
+            _run_service_command(["launchctl", "bootout", f"gui/{os.getuid()}", LAUNCHD_LABEL])
+            return ["launchd agent unloaded"]
+        _run_service_command(["systemctl", "--user", "disable", "--now", SERVICE_NAME])
+        return ["systemd unit disabled and stopped"]
+    if platform.system() == "Darwin":
+        _run_service_command(["launchctl", "bootout", f"gui/{os.getuid()}", LAUNCHD_LABEL])
+        _run_service_command(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(unit_path)])
+        return ["launchd agent loaded and started"]
+    _run_service_command(["systemctl", "--user", "daemon-reload"])
+    _run_service_command(["systemctl", "--user", "enable", "--now", SERVICE_NAME])
+    return ["systemd unit enabled and started"]
+
+
+def _run_service_command(argv: list[str]) -> None:
+    import subprocess
+
+    try:
+        subprocess.run(argv, capture_output=True, check=False, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"gateway: warning: {argv[0]} failed: {exc}", file=sys.stderr)
 
 
 def _gateway_pairing(args: argparse.Namespace, config: GatewayConfig) -> int:
