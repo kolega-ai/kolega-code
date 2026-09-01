@@ -8,6 +8,7 @@ import signal
 import sys
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
@@ -37,6 +38,8 @@ def add_gateway_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
         "(default: $KOLEGA_GATEWAY_PROJECT, else ~/kolega-code-workspace).",
     )
     run.add_argument("--state-dir", type=Path, default=None, help="Override the state directory.")
+    run.add_argument("--provider", help="Provider for the gateway's main coding model.")
+    run.add_argument("--model", help="Main coding model for gateway sessions.")
 
     status = gateway_sub.add_parser("status", help="Show whether the gateway daemon is running.")
     status.add_argument("--state-dir", type=Path, default=None, help="Override the state directory.")
@@ -57,7 +60,7 @@ async def _run_gateway(args: argparse.Namespace) -> int:
         config = replace(config, adapter=args.adapter)
     if args.gateway_command == "status":
         return _gateway_status(config)
-    return await _gateway_run(config)
+    return await _gateway_run(config, args)
 
 
 def _gateway_status(config: GatewayConfig) -> int:
@@ -76,11 +79,29 @@ def _gateway_status(config: GatewayConfig) -> int:
     return 0
 
 
-async def _gateway_run(config: GatewayConfig) -> int:
+def _build_turn_handler(config: GatewayConfig, adapter: Any, args: argparse.Namespace) -> Any:
+    """The echo adapter stays the LLM-free transport harness; chat platforms
+    run the real agent session host."""
+    if config.adapter != "telegram":
+        return EchoTurnHandler(adapter)
+    from kolega_code.cli.config import CliConfigOverrides
+    from kolega_code.cli.session_store import SessionStore
+    from kolega_code.cli.settings import SettingsStore
+    from kolega_code.gateway.sessions import AgentTurnHandler
+
+    overrides = CliConfigOverrides(provider=getattr(args, "provider", None), model=getattr(args, "model", None))
+    return AgentTurnHandler(
+        config=config,
+        adapter=adapter,
+        store=SessionStore(root=config.state_dir),
+        settings_store=SettingsStore(root=config.state_dir),
+        overrides=overrides,
+    )
+
+
+async def _gateway_run(config: GatewayConfig, args: argparse.Namespace) -> int:
     adapter = build_adapter(config)
-    # Phase 0 runs the echo turn handler; the agent session host replaces this
-    # once sessions land.
-    turn_handler = EchoTurnHandler(adapter)
+    turn_handler = _build_turn_handler(config, adapter, args)
     daemon = GatewayDaemon(config, adapter, turn_handler=turn_handler)
 
     stop = asyncio.Event()

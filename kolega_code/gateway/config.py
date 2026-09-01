@@ -65,7 +65,8 @@ class GatewayConfig:
     permission_mode: str = PermissionMode.ASK.value
     request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS
     max_sessions: int = DEFAULT_MAX_SESSIONS
-    session_idle_ttl_seconds: float = DEFAULT_SESSION_IDLE_TTL_SECONDS
+    #: None disables idle eviction (useful in tests and short-lived runs).
+    session_idle_ttl_seconds: Optional[float] = DEFAULT_SESSION_IDLE_TTL_SECONDS
     edit_throttle_seconds: float = DEFAULT_EDIT_THROTTLE_SECONDS
     stt_enabled: bool = False
     telegram_token: Optional[str] = None
