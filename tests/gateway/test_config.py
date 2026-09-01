@@ -6,8 +6,12 @@ import pytest
 
 from kolega_code.gateway.config import (
     DEFAULT_EDIT_THROTTLE_SECONDS,
+    DEFAULT_PAIRING_TTL_SECONDS,
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     ENV_ALLOWED_USERS,
+    ENV_GROUP_IDS,
+    ENV_PAIRING,
+    ENV_PAIRING_TTL_SECONDS,
     ENV_PERMISSION_MODE,
     ENV_PROJECT,
     ENV_REQUEST_TIMEOUT_SECONDS,
@@ -108,3 +112,18 @@ def test_telegram_credentials_passthrough() -> None:
     )
     assert config.telegram_token == "123:abc"
     assert config.telegram_proxy == "http://127.0.0.1:3128"
+
+
+def test_pairing_and_group_config() -> None:
+    config = load_gateway_config(env={}, state_dir=Path("/tmp/gw-state"))
+    assert config.pairing_enabled is False
+    assert config.group_ids == ()
+    assert config.pairing_code_ttl_seconds == DEFAULT_PAIRING_TTL_SECONDS
+
+    config = load_gateway_config(
+        env={ENV_PAIRING: "1", ENV_GROUP_IDS: "-1001, -1002 ,", ENV_PAIRING_TTL_SECONDS: "1800"},
+        state_dir=Path("/tmp/gw-state"),
+    )
+    assert config.pairing_enabled is True
+    assert config.group_ids == ("-1001", "-1002")
+    assert config.pairing_code_ttl_seconds == 1800.0

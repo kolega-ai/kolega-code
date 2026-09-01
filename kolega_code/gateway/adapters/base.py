@@ -85,6 +85,11 @@ class InboundMessage:
     #: ``send_buttons`` and the tapped option id.
     callback_token: Optional[str] = None
     callback_option: Optional[str] = None
+    #: Group semantics: whether the message came from a group chat and, when
+    #: it did, whether the bot was addressed (mention or reply-to-bot). The
+    #: gateway's group policy reads these; DMs leave both at their defaults.
+    is_group: bool = False
+    bot_mentioned: bool = False
 
 
 @dataclass(frozen=True)

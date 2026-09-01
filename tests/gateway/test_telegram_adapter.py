@@ -45,11 +45,12 @@ def make_message(
     reply: Message | None = None,
     thread_id: int | None = None,
     caption: str | None = None,
+    chat_type: ChatType = ChatType.PRIVATE,
 ) -> Message:
     return Message(
         message_id=message_id,
         date=datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc),
-        chat=Chat(id=chat_id, type=ChatType.PRIVATE),
+        chat=Chat(id=chat_id, type=chat_type),
         from_user=User(id=user_id, is_bot=False, first_name="Test User"),
         text=text,
         caption=caption,
@@ -173,6 +174,42 @@ def test_media_without_caption_needs_notice() -> None:
 def test_health_reports_stopped_before_start() -> None:
     adapter = make_adapter()
     assert adapter.health()["state"] == "stopped"
+
+
+def test_dms_are_not_groups_and_always_count_as_addressed() -> None:
+    adapter = make_adapter()
+    inbound = adapter._to_inbound(make_message("hi"))
+    assert inbound is not None
+    assert inbound.is_group is False
+    assert inbound.bot_mentioned is True
+
+
+def test_group_message_requires_mention() -> None:
+    adapter = make_adapter()
+    adapter._bot_username = "kolega_bot"
+    # Group chatter without a mention is not addressed.
+    inbound = adapter._to_inbound(make_message("ambient noise", chat_type=ChatType.SUPERGROUP))
+    assert inbound is not None
+    assert inbound.is_group is True
+    assert inbound.bot_mentioned is False
+    # A mention (case-insensitive) counts.
+    inbound = adapter._to_inbound(make_message("hey @KOLEGA_BOT do it", chat_type=ChatType.SUPERGROUP))
+    assert inbound is not None
+    assert inbound.bot_mentioned is True
+
+
+def test_group_reply_to_bot_counts_as_addressed() -> None:
+    adapter = make_adapter()
+    adapter._bot_id = "123"
+    quoted = make_message("bot said this", chat_id=1, user_id=123, message_id=55)
+    inbound = adapter._to_inbound(make_message("ok", reply=quoted, chat_type=ChatType.SUPERGROUP))
+    assert inbound is not None
+    assert inbound.bot_mentioned is True
+    # A reply to someone else's message is not addressed.
+    other = make_message("someone else", chat_id=1, user_id=9, message_id=56)
+    inbound = adapter._to_inbound(make_message("ok", reply=other, chat_type=ChatType.SUPERGROUP))
+    assert inbound is not None
+    assert inbound.bot_mentioned is False
 
 
 @pytest.mark.asyncio

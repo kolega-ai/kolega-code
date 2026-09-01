@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from kolega_code.gateway.access import GatewayAccessControl
 from kolega_code.gateway.adapters.base import ChatRef, GatewayAdapter, InboundMessage
 from kolega_code.gateway.config import GatewayConfig
 from kolega_code.gateway.daemon import ERROR_REPLY, GatewayDaemon, GatewayDaemonError
@@ -65,8 +66,24 @@ def make_config(tmp_path: Path, **overrides: Any) -> GatewayConfig:
     )
 
 
-def inbound(text: str, message_id: str = "m-1", sender_id: str = "123") -> InboundMessage:
-    return InboundMessage(channel="recording", chat_id="chat-1", sender_id=sender_id, message_id=message_id, text=text)
+def inbound(
+    text: str,
+    message_id: str = "m-1",
+    sender_id: str = "123",
+    *,
+    is_group: bool = False,
+    bot_mentioned: bool = False,
+    chat_id: str = "chat-1",
+) -> InboundMessage:
+    return InboundMessage(
+        channel="recording",
+        chat_id=chat_id,
+        sender_id=sender_id,
+        message_id=message_id,
+        text=text,
+        is_group=is_group,
+        bot_mentioned=bot_mentioned,
+    )
 
 
 async def wait_for(predicate, timeout: float = 2.0) -> bool:
@@ -126,6 +143,73 @@ async def test_allowlist_blocks_unknown_senders_silently(tmp_path: Path) -> None
         assert handler.handled[0][1].sender_id == "123"
         # Unauthorized senders get nothing — no reply, no turn.
         assert adapter.sent == []
+    finally:
+        await daemon.stop()
+
+
+@pytest.mark.asyncio
+async def test_pairing_replies_with_a_code_and_admission_works(tmp_path: Path) -> None:
+    adapter = RecordingAdapter()
+    handler = RecordingHandler()
+    config = make_config(tmp_path, allowed_users=("123",), pairing_enabled=True)
+    daemon = GatewayDaemon(config, adapter, turn_handler=handler)
+    await daemon.start()
+    try:
+        await adapter.inbound.put(inbound("hello?", message_id="m-1", sender_id="999"))
+        assert await wait_for(lambda: len(adapter.sent) == 1)
+        reply = adapter.sent[0][1]
+        assert "pairing approve" in reply
+        code = reply.rsplit(" ", 1)[-1]
+
+        # The operator approves the code from another process (the CLI path).
+        access = GatewayAccessControl(
+            state_dir=config.state_dir,
+            allowed_users=config.allowed_users,
+            pairing_enabled=True,
+        )
+        assert access.approve(code) == "999"
+
+        # The daemon re-reads on the next message; the sender is now admitted.
+        await adapter.inbound.put(inbound("hello again", message_id="m-2", sender_id="999"))
+        assert await wait_for(lambda: len(handler.handled) == 1)
+        assert handler.handled[0][1].sender_id == "999"
+    finally:
+        await daemon.stop()
+
+
+@pytest.mark.asyncio
+async def test_group_policy_requires_mention_and_listed_group(tmp_path: Path) -> None:
+    adapter = RecordingAdapter()
+    handler = RecordingHandler()
+    config = make_config(tmp_path, allowed_users=("123",), group_ids=("-100",))
+    daemon = GatewayDaemon(config, adapter, turn_handler=handler)
+    await daemon.start()
+    try:
+        # Unaddressed group chatter is dropped.
+        await adapter.inbound.put(inbound("ambient noise", message_id="m-1", is_group=True, chat_id="-100"))
+        # An unlisted group is dropped even when mentioned.
+        await adapter.inbound.put(
+            inbound("@bot hello", message_id="m-2", is_group=True, bot_mentioned=True, chat_id="-999")
+        )
+        # A mention in a listed group reaches the turn handler.
+        await adapter.inbound.put(
+            inbound("@bot do the thing", message_id="m-3", is_group=True, bot_mentioned=True, chat_id="-100")
+        )
+        assert await wait_for(lambda: len(handler.handled) == 1)
+        assert handler.handled[0][1].text == "@bot do the thing"
+    finally:
+        await daemon.stop()
+
+
+@pytest.mark.asyncio
+async def test_all_groups_allowed_when_no_group_list_configured(tmp_path: Path) -> None:
+    adapter = RecordingAdapter()
+    handler = RecordingHandler()
+    daemon = GatewayDaemon(make_config(tmp_path, allowed_users=("123",)), adapter, turn_handler=handler)
+    await daemon.start()
+    try:
+        await adapter.inbound.put(inbound("hi", message_id="m-1", is_group=True, bot_mentioned=True, chat_id="-42"))
+        assert await wait_for(lambda: len(handler.handled) == 1)
     finally:
         await daemon.stop()
 

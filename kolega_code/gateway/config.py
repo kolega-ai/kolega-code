@@ -21,6 +21,9 @@ ENV_ADAPTER = "KOLEGA_GATEWAY_ADAPTER"
 ENV_PROJECT = "KOLEGA_GATEWAY_PROJECT"
 ENV_STATE_DIR = "KOLEGA_GATEWAY_STATE_DIR"
 ENV_ALLOWED_USERS = "KOLEGA_GATEWAY_ALLOWED_USERS"
+ENV_GROUP_IDS = "KOLEGA_GATEWAY_GROUP_IDS"
+ENV_PAIRING = "KOLEGA_GATEWAY_PAIRING"
+ENV_PAIRING_TTL_SECONDS = "KOLEGA_GATEWAY_PAIRING_TTL_SECONDS"
 ENV_PERMISSION_MODE = "KOLEGA_GATEWAY_PERMISSION_MODE"
 ENV_REQUEST_TIMEOUT_SECONDS = "KOLEGA_GATEWAY_REQUEST_TIMEOUT_SECONDS"
 ENV_MAX_SESSIONS = "KOLEGA_GATEWAY_MAX_SESSIONS"
@@ -41,6 +44,7 @@ DEFAULT_REQUEST_TIMEOUT_SECONDS = 600.0
 DEFAULT_MAX_SESSIONS = 50
 DEFAULT_SESSION_IDLE_TTL_SECONDS = 3600.0
 DEFAULT_EDIT_THROTTLE_SECONDS = 1.0
+DEFAULT_PAIRING_TTL_SECONDS = 3600.0
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
@@ -62,6 +66,13 @@ class GatewayConfig:
     project_path: Path
     state_dir: Path
     allowed_users: tuple[str, ...] = ()
+    #: Group chats allowed to reach the gateway (empty = all groups,
+    #: mention-gated). Group ids are Telegram chat ids.
+    group_ids: tuple[str, ...] = ()
+    #: Whether unknown senders get a pairing code instead of silence. Only
+    #: meaningful when an allowlist is configured.
+    pairing_enabled: bool = False
+    pairing_code_ttl_seconds: float = DEFAULT_PAIRING_TTL_SECONDS
     permission_mode: str = PermissionMode.ASK.value
     request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS
     max_sessions: int = DEFAULT_MAX_SESSIONS
@@ -114,8 +125,9 @@ def _env_bool(env: Mapping[str, str], key: str, default: bool = False) -> bool:
     return raw.lower() in _TRUE_VALUES
 
 
-def _env_users(env: Mapping[str, str]) -> tuple[str, ...]:
-    raw = _env_str(env, ENV_ALLOWED_USERS)
+def _env_id_list(env: Mapping[str, str], key: str) -> tuple[str, ...]:
+    """Parse a comma-separated id list (allowlist or group ids)."""
+    raw = _env_str(env, key)
     if raw is None:
         return ()
     return tuple(part.strip() for part in raw.split(",") if part.strip())
@@ -161,7 +173,10 @@ def load_gateway_config(
         adapter=adapter,
         project_path=_resolve_project(project, loaded_env),
         state_dir=_resolve_state_dir(state_dir, loaded_env),
-        allowed_users=_env_users(loaded_env),
+        allowed_users=_env_id_list(loaded_env, ENV_ALLOWED_USERS),
+        group_ids=_env_id_list(loaded_env, ENV_GROUP_IDS),
+        pairing_enabled=_env_bool(loaded_env, ENV_PAIRING),
+        pairing_code_ttl_seconds=_env_float(loaded_env, ENV_PAIRING_TTL_SECONDS, DEFAULT_PAIRING_TTL_SECONDS),
         permission_mode=permission_mode,
         request_timeout_seconds=_env_float(loaded_env, ENV_REQUEST_TIMEOUT_SECONDS, DEFAULT_REQUEST_TIMEOUT_SECONDS),
         max_sessions=_env_int(loaded_env, ENV_MAX_SESSIONS, DEFAULT_MAX_SESSIONS),

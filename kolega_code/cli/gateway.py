@@ -13,6 +13,7 @@ from typing import Any
 from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
 
+from kolega_code.gateway.access import AccessControlError, GatewayAccessControl
 from kolega_code.gateway.adapters import adapter_names, build_adapter
 from kolega_code.gateway.config import GatewayConfig, load_gateway_config
 from kolega_code.gateway.daemon import GatewayDaemon, GatewayDaemonError, LOCK_FILE_NAME, PID_FILE_NAME
@@ -44,6 +45,14 @@ def add_gateway_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
     status = gateway_sub.add_parser("status", help="Show whether the gateway daemon is running.")
     status.add_argument("--state-dir", type=Path, default=None, help="Override the state directory.")
 
+    pairing = gateway_sub.add_parser("pairing", help="Manage pending sender pairing requests.")
+    pairing_sub = pairing.add_subparsers(dest="pairing_command", required=True)
+    pairing_list = pairing_sub.add_parser("list", help="List pending pairing requests.")
+    pairing_list.add_argument("--state-dir", type=Path, default=None, help="Override the state directory.")
+    pairing_approve = pairing_sub.add_parser("approve", help="Approve a pending pairing code.")
+    pairing_approve.add_argument("code", help="The pairing code a new sender was told to relay to you.")
+    pairing_approve.add_argument("--state-dir", type=Path, default=None, help="Override the state directory.")
+
 
 def run_gateway(args: argparse.Namespace) -> int:
     """Dispatch ``kolega-code gateway ...`` (sync entry point for cli/main.py)."""
@@ -60,7 +69,34 @@ async def _run_gateway(args: argparse.Namespace) -> int:
         config = replace(config, adapter=args.adapter)
     if args.gateway_command == "status":
         return _gateway_status(config)
+    if args.gateway_command == "pairing":
+        return _gateway_pairing(args, config)
     return await _gateway_run(config, args)
+
+
+def _gateway_pairing(args: argparse.Namespace, config: GatewayConfig) -> int:
+    access = GatewayAccessControl(
+        state_dir=config.state_dir,
+        allowed_users=config.allowed_users,
+        pairing_enabled=config.pairing_enabled,
+        code_ttl_seconds=config.pairing_code_ttl_seconds,
+    )
+    if args.pairing_command == "list":
+        pending = access.pending()
+        if not pending:
+            print("gateway: no pending pairing requests")
+            return 0
+        for request in pending:
+            who = request.sender_name or request.sender_id
+            print(f"gateway: {request.code}  {who}  ({request.channel} chat {request.chat_id})")
+        return 0
+    try:
+        sender_id = access.approve(args.code)
+    except AccessControlError as exc:
+        print(f"gateway: {exc}", file=sys.stderr)
+        return 1
+    print(f"gateway: approved sender {sender_id}; their next message will reach the gateway")
+    return 0
 
 
 def _gateway_status(config: GatewayConfig) -> int:

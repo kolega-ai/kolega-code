@@ -23,6 +23,7 @@ from filelock import BaseFileLock, FileLock
 from filelock import Timeout as FileLockTimeout
 
 from kolega_code.events import utc_now_iso
+from kolega_code.gateway.access import GatewayAccessControl
 from kolega_code.gateway.adapters.base import ChatRef, GatewayAdapter, InboundMessage
 from kolega_code.gateway.config import GatewayConfig
 
@@ -81,6 +82,12 @@ class GatewayDaemon:
         self._started_at: Optional[str] = None
         self._recent_errors = 0
         self._seen_message_ids: deque[str] = deque(maxlen=DEDUP_WINDOW)
+        self._access = GatewayAccessControl(
+            state_dir=config.state_dir,
+            allowed_users=config.allowed_users,
+            pairing_enabled=config.pairing_enabled,
+            code_ttl_seconds=config.pairing_code_ttl_seconds,
+        )
 
     # -- Lifecycle ---------------------------------------------------------
 
@@ -131,12 +138,25 @@ class GatewayDaemon:
             logger.info("gateway: dropping duplicate message %s", message.message_id)
             return
         chat_ref = ChatRef.from_message(message)
-        if not self._sender_allowed(message):
+        if message.is_group and not self._group_allowed(message):
+            logger.info(
+                "gateway: dropping unaddressed group message in chat %s from %s",
+                message.chat_id,
+                message.sender_id,
+            )
+            return
+        if not self._access.is_allowed(message.sender_id):
             logger.info(
                 "gateway: dropping message from unauthorized sender %s on %s",
                 message.sender_id,
                 message.channel,
             )
+            pairing_reply = self._access.on_unknown_sender(message)
+            if pairing_reply is not None:
+                try:
+                    await self._adapter.send_text(message.chat_id, pairing_reply)
+                except Exception:  # noqa: BLE001 — the drop is already logged
+                    logger.debug("gateway: pairing reply failed", exc_info=True)
             return
         try:
             await self._turn_handler.handle(chat_ref, message)
@@ -158,10 +178,11 @@ class GatewayDaemon:
         self._seen_message_ids.append(message.message_id)
         return False
 
-    def _sender_allowed(self, message: InboundMessage) -> bool:
-        if not self._config.allowed_users:
-            return True
-        return message.sender_id in self._config.allowed_users
+    def _group_allowed(self, message: InboundMessage) -> bool:
+        """Group policy: the bot must be addressed, and only listed groups pass."""
+        if self._config.group_ids and message.chat_id not in self._config.group_ids:
+            return False
+        return message.bot_mentioned
 
     # -- Lock and pid ------------------------------------------------------
 

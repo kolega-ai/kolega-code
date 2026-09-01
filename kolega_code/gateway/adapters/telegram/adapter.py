@@ -25,7 +25,7 @@ from typing import Any, Optional, Sequence
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ChatAction, ParseMode
+from aiogram.enums import ChatAction, ChatType, ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types import Message as TelegramMessage
@@ -119,6 +119,7 @@ class TelegramAdapter(GatewayAdapter):
         self._poll_task: Optional[asyncio.Task[None]] = None
         self._state = "stopped"
         self._bot_id: Optional[str] = None
+        self._bot_username: Optional[str] = None
         #: callback token -> {"chat_id": str, "options": [option_id, ...]}, for
         #: resolving taps back to the option the gateway chose.
         self._pending_buttons: dict[str, dict[str, Any]] = {}
@@ -144,6 +145,7 @@ class TelegramAdapter(GatewayAdapter):
         )
         me = await self._bot.me()
         self._bot_id = str(me.id)
+        self._bot_username = me.username
         self._state = "running"
 
     async def stop(self) -> None:
@@ -193,6 +195,7 @@ class TelegramAdapter(GatewayAdapter):
                 text=quoted.text or quoted.caption or "",
                 sender_id=str(quoted.from_user.id) if quoted.from_user else "",
             )
+        is_group = message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
         return InboundMessage(
             channel=self.name,
             account_id=self._bot_id or "",
@@ -204,7 +207,28 @@ class TelegramAdapter(GatewayAdapter):
             text=message.text or message.caption or "",
             reply_to=reply_to,
             timestamp=message.date.isoformat() if message.date else None,
+            is_group=is_group,
+            bot_mentioned=self._bot_mentioned(message, is_group),
         )
+
+    def _bot_mentioned(self, message: TelegramMessage, is_group: bool) -> bool:
+        """Whether the bot was addressed, for the gateway's group policy.
+
+        A group message counts when it @mentions the bot or replies to a bot
+        message. DMs always count. Note Telegram privacy mode already filters
+        group messages to mentions for non-admin bots, so this only matters
+        when the bot sees everything.
+        """
+        if not is_group:
+            return True
+        if self._bot_username is not None:
+            mention = f"@{self._bot_username}".lower()
+            if mention in (message.text or "").lower():
+                return True
+        quoted = message.reply_to_message
+        if quoted is not None and quoted.from_user is not None and self._bot_id is not None:
+            return str(quoted.from_user.id) == self._bot_id
+        return False
 
     async def _media_notice(self, message: TelegramMessage) -> None:
         try:
