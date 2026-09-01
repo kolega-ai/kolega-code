@@ -30,6 +30,7 @@ ENV_MAX_SESSIONS = "KOLEGA_GATEWAY_MAX_SESSIONS"
 ENV_SESSION_IDLE_TTL_SECONDS = "KOLEGA_GATEWAY_SESSION_IDLE_TTL_SECONDS"
 ENV_EDIT_THROTTLE_SECONDS = "KOLEGA_GATEWAY_EDIT_THROTTLE_SECONDS"
 ENV_STT = "KOLEGA_GATEWAY_STT"
+ENV_STT_MODEL = "KOLEGA_GATEWAY_STT_MODEL"
 ENV_TELEGRAM_TOKEN = "KOLEGA_GATEWAY_TELEGRAM_TOKEN"
 ENV_TELEGRAM_PROXY = "KOLEGA_GATEWAY_TELEGRAM_PROXY"
 
@@ -80,6 +81,9 @@ class GatewayConfig:
     session_idle_ttl_seconds: Optional[float] = DEFAULT_SESSION_IDLE_TTL_SECONDS
     edit_throttle_seconds: float = DEFAULT_EDIT_THROTTLE_SECONDS
     stt_enabled: bool = False
+    #: faster-whisper model size for voice-note transcription ("tiny", "base",
+    #: "small", "medium", "large-v3", …).
+    stt_model: str = "base"
     telegram_token: Optional[str] = None
     telegram_proxy: Optional[str] = None
 
@@ -183,6 +187,7 @@ def load_gateway_config(
         session_idle_ttl_seconds=_env_float(loaded_env, ENV_SESSION_IDLE_TTL_SECONDS, DEFAULT_SESSION_IDLE_TTL_SECONDS),
         edit_throttle_seconds=_env_float(loaded_env, ENV_EDIT_THROTTLE_SECONDS, DEFAULT_EDIT_THROTTLE_SECONDS),
         stt_enabled=_env_bool(loaded_env, ENV_STT),
+        stt_model=_env_str(loaded_env, ENV_STT_MODEL) or "base",
         telegram_token=_env_str(loaded_env, ENV_TELEGRAM_TOKEN),
         telegram_proxy=_env_str(loaded_env, ENV_TELEGRAM_PROXY),
     )

@@ -35,7 +35,7 @@ from kolega_code.session.recording import RecordingConnectionManager
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
 from kolega_code.tools import ToolError
 
-from kolega_code.gateway.adapters.base import ChatRef, GatewayAdapter, InboundMessage
+from kolega_code.gateway.adapters.base import Attachment, ChatRef, GatewayAdapter, InboundMessage
 from kolega_code.gateway.bridge import TurnRenderer
 from kolega_code.gateway.commands import (
     COMMAND_HELP,
@@ -55,6 +55,8 @@ from kolega_code.gateway.event_router import EventRouter
 from kolega_code.gateway.questions import build_question_extension
 from kolega_code.gateway.redaction import scrub
 from kolega_code.gateway.router import SessionRegistry
+from kolega_code.gateway.stt import Transcriber, WhisperTranscriber
+from kolega_code.utils.images import encode_image_file
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +98,7 @@ class AgentTurnHandler:
         settings_store: SettingsStore,
         overrides: Optional[CliConfigOverrides] = None,
         agent_builder: Optional[AgentBuilder] = None,
+        transcriber: Optional[Transcriber] = None,
     ) -> None:
         self._config = config
         self._adapter = adapter
@@ -104,6 +107,7 @@ class AgentTurnHandler:
         self._settings: Optional[CliSettings] = None
         self._overrides = overrides or CliConfigOverrides()
         self._agent_builder = agent_builder
+        self._transcriber = transcriber
         self._registry = SessionRegistry(
             max_sessions=config.max_sessions,
             idle_ttl_seconds=config.session_idle_ttl_seconds,
@@ -215,9 +219,31 @@ class AgentTurnHandler:
         while not entry.turn_events.empty():
             entry.turn_events.get_nowait()
         text = message.text
+        attachments: list[dict[str, Any]] = []
+        for attachment in message.attachments:
+            if attachment.kind == "voice":
+                text = await self._transcribe(chat_ref, attachment.source)
+            elif attachment.kind == "image":
+                encoded = encode_image_file(attachment.source)
+                if encoded is not None:
+                    attachments.append(encoded)
+                else:
+                    await self._adapter.send_text(
+                        chat_ref.chat_id,
+                        "🖼 That image could not be attached (unsupported format or too large).",
+                    )
+            elif attachment.kind == "document":
+                text = self._document_note(text, attachment)
+            else:
+                logger.debug("gateway: ignoring attachment kind %r", attachment.kind)
         if message.reply_to is not None and message.reply_to.text:
             quoted_by = message.reply_to.sender_id or "user"
-            text = f"[replying to {quoted_by}: {message.reply_to.text}]\n\n{text}"
+            text = f"[replying to {quoted_by}: {message.reply_to.text}]\n\n{text}" if text else ""
+        text = text.strip()
+        if not text and not attachments:
+            return  # nothing the model can act on (e.g. an undecodable voice note)
+        if not text:
+            text = "[attachment]"
         renderer = TurnRenderer(
             self._adapter,
             chat_ref.chat_id,
@@ -225,9 +251,43 @@ class AgentTurnHandler:
             chunk_limit=self._adapter.capabilities.text_chunk_limit,
             edit_throttle_seconds=self._config.edit_throttle_seconds,
         )
-        stream = entry.runtime.send_message(text)
+        stream = entry.runtime.send_message(text, attachments or None)
         await renderer.run(self._scrub_chunks(stream))
         self._persist(entry)
+
+    async def _transcribe(self, chat_ref: ChatRef, source: str) -> str:
+        if not self._config.stt_enabled:
+            await self._adapter.send_text(
+                chat_ref.chat_id,
+                "🎙 Voice transcription is disabled. Set KOLEGA_GATEWAY_STT=1 (and install the stt extra) to enable it.",
+            )
+            return ""
+        transcriber = self._transcriber
+        if transcriber is None:
+            transcriber = WhisperTranscriber(model_size=self._config.stt_model)
+            if not transcriber.available():
+                await self._adapter.send_text(
+                    chat_ref.chat_id,
+                    "🎙 Speech-to-text is not installed. Install the gateway's stt extra (faster-whisper) and restart.",
+                )
+                return ""
+            self._transcriber = transcriber
+        try:
+            transcript = await transcriber.transcribe(Path(source))
+        except Exception:  # noqa: BLE001 — a failed note must not kill the chat
+            logger.exception("gateway: voice transcription failed")
+            await self._adapter.send_text(
+                chat_ref.chat_id, "🎙 Transcription failed; the voice note was not understood."
+            )
+            return ""
+        return transcript.strip()
+
+    @staticmethod
+    def _document_note(text: str, attachment: Attachment) -> str:
+        """Tell the model where a document landed so it can read it with tools."""
+        label = attachment.file_name or "document"
+        note = f"[document: {label} saved at {attachment.source}]"
+        return f"{note}\n\n{text}" if text else note
 
     async def _scrub_chunks(self, stream: Any) -> AsyncIterator[dict[str, Any]]:
         async for chunk in stream:

@@ -127,3 +127,14 @@ def test_pairing_and_group_config() -> None:
     assert config.pairing_enabled is True
     assert config.group_ids == ("-1001", "-1002")
     assert config.pairing_code_ttl_seconds == 1800.0
+
+
+def test_stt_config_defaults_and_override() -> None:
+    config = load_gateway_config(env={}, state_dir=Path("/tmp/gw-state"))
+    assert config.stt_enabled is False
+    assert config.stt_model == "base"
+    config = load_gateway_config(
+        env={"KOLEGA_GATEWAY_STT_MODEL": "small"},
+        state_dir=Path("/tmp/gw-state"),
+    )
+    assert config.stt_model == "small"

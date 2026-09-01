@@ -19,7 +19,7 @@ from kolega_code.agent.baseagent import BaseAgent
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import SettingsStore, CliSettings
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.gateway.adapters.base import AdapterCapabilities, ChatRef, GatewayAdapter, InboundMessage
+from kolega_code.gateway.adapters.base import AdapterCapabilities, Attachment, ChatRef, GatewayAdapter, InboundMessage
 from kolega_code.gateway.config import GatewayConfig
 from kolega_code.gateway.sessions import AgentTurnHandler
 from kolega_code.llm.models import Message, TextBlock
@@ -163,6 +163,8 @@ def make_handler(
     adapter: RecordingAdapter | None = None,
     max_sessions: int = 4,
     store: SessionStore | None = None,
+    transcriber: Any | None = None,
+    stt_enabled: bool = True,
 ) -> tuple[AgentTurnHandler, RecordingAdapter, GatewayConfig]:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -175,6 +177,7 @@ def make_handler(
         edit_throttle_seconds=0.0,
         max_sessions=max_sessions,
         session_idle_ttl_seconds=None,
+        stt_enabled=stt_enabled,
     )
     settings_store = SettingsStore(root=state_dir)
     settings_store.save(
@@ -191,12 +194,38 @@ def make_handler(
         store=store or SessionStore(root=state_dir),
         settings_store=settings_store,
         agent_builder=make_builder(llm or ScriptedLLM(), make_agent_config()),
+        transcriber=transcriber,
     )
     return handler, adapter, config
 
 
 def inbound(text: str, message_id: str = "m-1", chat_id: str = "42") -> InboundMessage:
     return InboundMessage(channel="recording", chat_id=chat_id, sender_id="7", message_id=message_id, text=text)
+
+
+def inbound_with_media(attachments: tuple[Any, ...], message_id: str = "m-media") -> InboundMessage:
+    return InboundMessage(
+        channel="recording", chat_id="42", sender_id="7", message_id=message_id, text="", attachments=attachments
+    )
+
+
+class FakeTranscriber:
+    def __init__(self, transcript: str = "call me back about the deploy") -> None:
+        self.transcript = transcript
+        self.calls: list[str] = []
+
+    async def transcribe(self, path: Path) -> str:
+        self.calls.append(str(path))
+        return self.transcript
+
+
+def history_block_types(record: Any) -> set[str]:
+    return {
+        str(block.get("type", ""))
+        for message in record.history
+        for block in message.get("content", [])
+        if isinstance(block, dict)
+    }
 
 
 def chat_ref(chat_id: str = "42") -> ChatRef:
@@ -377,6 +406,92 @@ async def test_model_switch_rebuilds_and_keeps_history(tmp_path: Path) -> None:
     history_texts = [block.get("text", "") for message in record.history for block in message.get("content", [])]
     assert "first" in history_texts
     assert "still here?" in history_texts
+
+
+@pytest.mark.asyncio
+async def test_voice_note_transcribes_and_runs_the_turn(tmp_path: Path) -> None:
+    transcriber = FakeTranscriber()
+    handler, adapter, config = make_handler(tmp_path, transcriber=transcriber)
+    voice_path = tmp_path / "note.ogg"
+    voice_path.write_bytes(b"not really audio")
+    await handler.handle(
+        chat_ref(),
+        inbound_with_media((Attachment(kind="voice", source=str(voice_path), mime="audio/ogg"),)),
+    )
+    assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+    assert transcriber.calls == [str(voice_path)]
+    await handler.shutdown()
+
+    session_id = session_map(config.state_dir)[chat_ref().key]
+    record = SessionStore(root=config.state_dir).load(session_id)
+    history_texts = [block.get("text", "") for message in record.history for block in message.get("content", [])]
+    assert "call me back about the deploy" in history_texts
+
+
+@pytest.mark.asyncio
+async def test_voice_note_with_stt_disabled_gets_a_notice_and_no_turn(tmp_path: Path) -> None:
+    handler, adapter, _ = make_handler(tmp_path, stt_enabled=False)
+    voice_path = tmp_path / "note.ogg"
+    voice_path.write_bytes(b"audio")
+    await handler.handle(
+        chat_ref(),
+        inbound_with_media((Attachment(kind="voice", source=str(voice_path), mime="audio/ogg"),)),
+    )
+    assert await wait_for(lambda: "transcription is disabled" in all_sent_texts(adapter))
+    assert "hello from the scripted model" not in all_sent_texts(adapter)
+    await handler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_image_attachment_reaches_the_agent(tmp_path: Path) -> None:
+    from PIL import Image
+
+    image_path = tmp_path / "photo.png"
+    Image.new("RGB", (4, 4), "red").save(image_path)
+    handler, adapter, config = make_handler(tmp_path)
+    await handler.handle(
+        chat_ref(),
+        inbound_with_media((Attachment(kind="image", source=str(image_path), mime="image/png"),)),
+    )
+    assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+    await handler.shutdown()
+
+    session_id = session_map(config.state_dir)[chat_ref().key]
+    record = SessionStore(root=config.state_dir).load(session_id)
+    assert "image_url" in history_block_types(record)
+
+
+@pytest.mark.asyncio
+async def test_unreadable_image_gets_a_notice_and_no_turn(tmp_path: Path) -> None:
+    handler, adapter, _ = make_handler(tmp_path)
+    missing = tmp_path / "gone.png"
+    await handler.handle(
+        chat_ref(),
+        inbound_with_media((Attachment(kind="image", source=str(missing), mime="image/png"),)),
+    )
+    assert await wait_for(lambda: "could not be attached" in all_sent_texts(adapter))
+    assert "hello from the scripted model" not in all_sent_texts(adapter)
+    await handler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_document_note_points_the_model_at_the_file(tmp_path: Path) -> None:
+    handler, adapter, config = make_handler(tmp_path)
+    doc_path = tmp_path / "report.pdf"
+    doc_path.write_bytes(b"pdf-ish")
+    await handler.handle(
+        chat_ref(),
+        inbound_with_media(
+            (Attachment(kind="document", source=str(doc_path), mime="application/pdf", file_name="report.pdf"),)
+        ),
+    )
+    assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+    await handler.shutdown()
+
+    session_id = session_map(config.state_dir)[chat_ref().key]
+    record = SessionStore(root=config.state_dir).load(session_id)
+    history_texts = [block.get("text", "") for message in record.history for block in message.get("content", [])]
+    assert any("saved at" in text and str(doc_path) in text for text in history_texts)
 
 
 @pytest.mark.asyncio
