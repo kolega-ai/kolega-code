@@ -231,6 +231,7 @@ def test_pairing_list_via_the_full_cli_path(capsys: pytest.CaptureFixture[str], 
 
 def test_status_reads_a_fresh_heartbeat_file(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     import json
+    import os
     from datetime import datetime, timezone
 
     state_dir = tmp_path / "state"
@@ -240,7 +241,7 @@ def test_status_reads_a_fresh_heartbeat_file(capsys: pytest.CaptureFixture[str],
         "adapter": "telegram",
         "adapter_state": {"state": "running"},
         "active_sessions": 3,
-        "pid": 4242,
+        "pid": os.getpid(),  # the test process itself: definitely alive
         "started_at": "2026-09-01T10:00:00+00:00",
         "recent_errors": 1,
         "heartbeat_at": datetime.now(timezone.utc).isoformat(),
@@ -249,13 +250,14 @@ def test_status_reads_a_fresh_heartbeat_file(capsys: pytest.CaptureFixture[str],
     config = GatewayConfig(adapter="echo", project_path=tmp_path / "ws", state_dir=state_dir)
     assert _gateway_status(config) == 0
     out = capsys.readouterr().out
-    assert "running (pid 4242)" in out
+    assert f"running (pid {os.getpid()})" in out
     assert "sessions: 3" in out
     assert "errors: 1" in out
 
 
 def test_status_reports_a_stale_heartbeat_file(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     import json
+    import os
 
     state_dir = tmp_path / "state"
     state_dir.mkdir(parents=True)
@@ -264,7 +266,7 @@ def test_status_reports_a_stale_heartbeat_file(capsys: pytest.CaptureFixture[str
         "adapter": "telegram",
         "adapter_state": {"state": "running"},
         "active_sessions": 0,
-        "pid": 4242,
+        "pid": os.getpid(),  # alive, so the stale heartbeat means "not responding"
         "started_at": "2026-09-01T10:00:00+00:00",
         "recent_errors": 0,
         "heartbeat_at": "2026-09-01T10:00:00+00:00",
@@ -273,6 +275,32 @@ def test_status_reports_a_stale_heartbeat_file(capsys: pytest.CaptureFixture[str
     config = GatewayConfig(adapter="echo", project_path=tmp_path / "ws", state_dir=state_dir)
     assert _gateway_status(config) == 1
     assert "not responding" in capsys.readouterr().out
+
+
+def test_status_reports_a_dead_pid_as_not_running(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    import json
+    import subprocess
+    from datetime import datetime, timezone
+
+    process = subprocess.Popen(["true"])
+    dead_pid = process.pid
+    process.wait()  # reaped: the pid is guaranteed dead for the check below
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True)
+    payload = {
+        "running": True,
+        "adapter": "telegram",
+        "adapter_state": {"state": "running"},
+        "active_sessions": 0,
+        "pid": dead_pid,
+        "started_at": "2026-09-01T10:00:00+00:00",
+        "recent_errors": 0,
+        "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+    }
+    (state_dir / "gateway.status.json").write_text(json.dumps(payload), encoding="utf-8")
+    config = GatewayConfig(adapter="echo", project_path=tmp_path / "ws", state_dir=state_dir)
+    assert _gateway_status(config) == 0
+    assert f"not running (stale heartbeat from pid {dead_pid})" in capsys.readouterr().out
 
 
 def test_pairing_list_and_approve(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:

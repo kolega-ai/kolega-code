@@ -252,7 +252,7 @@ def _gateway_pairing(args: argparse.Namespace, config: GatewayConfig) -> int:
 def _gateway_status(config: GatewayConfig) -> int:
     status_path = config.state_dir / STATUS_FILE_NAME
     payload = _read_status_file(status_path)
-    if payload is not None:
+    if payload is not None and _pid_alive(payload.get("pid")):
         adapter_state = payload.get("adapter_state") or {}
         adapter_state_text = adapter_state.get("state", "unknown")
         heartbeat_age = _heartbeat_age_seconds(payload)
@@ -268,6 +268,10 @@ def _gateway_status(config: GatewayConfig) -> int:
             return 0
         print(f"gateway: not responding (status file is {heartbeat_age:.0f}s stale)")
         return 1
+    if payload is not None:
+        # A heartbeat from a process that no longer exists (e.g. SIGKILLed).
+        print(f"gateway: not running (stale heartbeat from pid {payload.get('pid')})")
+        return 0
     lock = FileLock(str(config.state_dir / LOCK_FILE_NAME))
     try:
         lock.acquire(timeout=0)
@@ -281,6 +285,19 @@ def _gateway_status(config: GatewayConfig) -> int:
     lock.release()
     print(f"gateway: not running (state: {config.state_dir})")
     return 0
+
+
+def _pid_alive(pid: Any) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    except OSError:
+        # EINVAL etc.: cannot tell; treat as alive rather than lying.
+        return True
+    return True
 
 
 def _read_status_file(path: Path) -> dict[str, Any] | None:
