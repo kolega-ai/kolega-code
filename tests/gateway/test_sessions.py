@@ -428,7 +428,36 @@ async def test_voice_note_transcribes_and_runs_the_turn(tmp_path: Path) -> None:
     session_id = session_map(config.state_dir)[chat_ref().key]
     record = SessionStore(root=config.state_dir).load(session_id)
     history_texts = [block.get("text", "") for message in record.history for block in message.get("content", [])]
-    assert "call me back about the deploy" in history_texts
+    # The model must know the medium: the transcript is labeled, not bare text.
+    assert any("[voice message transcribed]: call me back about the deploy" in t for t in history_texts)
+
+
+@pytest.mark.asyncio
+async def test_voice_note_keeps_the_caption_with_the_transcript(tmp_path: Path) -> None:
+    transcriber = FakeTranscriber()
+    handler, adapter, config = make_handler(tmp_path, transcriber=transcriber)
+    voice_path = tmp_path / "note.ogg"
+    voice_path.write_bytes(b"audio")
+    message = inbound_with_media((Attachment(kind="voice", source=str(voice_path), mime="audio/ogg"),))
+    message = InboundMessage(
+        channel=message.channel,
+        chat_id=message.chat_id,
+        sender_id=message.sender_id,
+        message_id=message.message_id,
+        text="hey listen to this",
+        attachments=message.attachments,
+    )
+    await handler.handle(chat_ref(), message)
+    assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+    await handler.shutdown()
+
+    session_id = session_map(config.state_dir)[chat_ref().key]
+    record = SessionStore(root=config.state_dir).load(session_id)
+    history_texts = [block.get("text", "") for message in record.history for block in message.get("content", [])]
+    assert any(
+        "hey listen to this" in t and "[voice message transcribed]: call me back about the deploy" in t
+        for t in history_texts
+    )
 
 
 @pytest.mark.asyncio

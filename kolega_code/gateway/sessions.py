@@ -228,7 +228,23 @@ class AgentTurnHandler:
         attachments: list[dict[str, Any]] = []
         for attachment in message.attachments:
             if attachment.kind == "voice":
-                text = await self._transcribe(chat_ref, attachment.source)
+                source_path = Path(attachment.source)
+                logger.info(
+                    "gateway: transcribing voice note %s (%s bytes)",
+                    attachment.source,
+                    source_path.stat().st_size if source_path.exists() else "missing",
+                )
+                transcript = await self._transcribe(chat_ref, attachment.source)
+                if transcript is None:
+                    # _transcribe already told the user why there is no turn.
+                    return
+                # The model must know the medium, not just the words: a
+                # transcribed voice note is labeled, and any caption the user
+                # typed rides along.
+                caption = text.strip()
+                text = f"[voice message transcribed]: {transcript}"
+                if caption:
+                    text = f"{caption}\n\n{text}"
             elif attachment.kind == "image":
                 encoded = encode_image_file(attachment.source)
                 if encoded is not None:
@@ -261,13 +277,19 @@ class AgentTurnHandler:
         await renderer.run(self._scrub_chunks(stream))
         self._persist(entry)
 
-    async def _transcribe(self, chat_ref: ChatRef, source: str) -> str:
+    async def _transcribe(self, chat_ref: ChatRef, source: str) -> Optional[str]:
+        """Transcribe a voice note.
+
+        Returns the transcript, or ``None`` when no turn should run because
+        the user has already been told why (every failure path sends its own
+        specific notice).
+        """
         if not self._config.stt_enabled:
             await self._adapter.send_text(
                 chat_ref.chat_id,
                 "🎙 Voice transcription is disabled. Enable it in Settings → Tools → Voice transcription.",
             )
-            return ""
+            return None
         transcriber = self._transcriber
         if transcriber is None:
             try:
@@ -280,13 +302,13 @@ class AgentTurnHandler:
                 # E.g. groq selected but no key stored: the user fixes the
                 # configuration, and the next note rebuilds the provider.
                 await self._adapter.send_text(chat_ref.chat_id, f"🎙 {exc}")
-                return ""
+                return None
             except SttProviderError as exc:
                 await self._adapter.send_text(chat_ref.chat_id, f"🎙 {exc}")
-                return ""
+                return None
             if not transcriber.available():
                 await self._adapter.send_text(chat_ref.chat_id, f"🎙 {transcriber.unavailable_message()}")
-                return ""
+                return None
             self._transcriber = transcriber
         try:
             transcript = await transcriber.transcribe(Path(source))
@@ -295,7 +317,8 @@ class AgentTurnHandler:
             await self._adapter.send_text(
                 chat_ref.chat_id, "🎙 Transcription failed; the voice note was not understood."
             )
-            return ""
+            return None
+        logger.info("gateway: voice transcription succeeded (%d chars)", len(transcript))
         return transcript.strip()
 
     @staticmethod
