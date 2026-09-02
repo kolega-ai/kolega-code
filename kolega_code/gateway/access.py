@@ -1,6 +1,6 @@
 """Sender access control: allowlist plus pairing-code onboarding.
 
-The daemon's allowlist comes from config (``KOLEGA_GATEWAY_ALLOWED_USERS``),
+The daemon's allowlist comes from the stored gateway settings (``settings.json`` → ``gateway.allowed_users``),
 but a running daemon must also learn newly approved senders without a
 restart, and approvals happen from a separate process (``kolega-code gateway
 pairing approve <code>``). Both sides therefore persist to small files under

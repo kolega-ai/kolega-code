@@ -103,6 +103,42 @@ def test_settings_store_round_trips_skills_enabled(tmp_path: Path) -> None:
     assert CliSettings.from_dict(data).skills_enabled is None
 
 
+def test_settings_store_round_trips_telegram_bot_token(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    store.save(CliSettings(telegram_bot_token="123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"))
+
+    loaded = store.load()
+    assert loaded.telegram_bot_token == "123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+    assert loaded.to_dict()["telegram_bot_token"] == "123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+
+    # Absent in older files -> None -> the telegram adapter asks for setup.
+    data = CliSettings().to_dict()
+    del data["telegram_bot_token"]
+    assert CliSettings.from_dict(data).telegram_bot_token is None
+
+
+def test_settings_store_round_trips_gateway_section(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    gateway = {
+        "adapter": "telegram",
+        "allowed_users": ["111"],
+        "max_sessions": 3,
+        "session_idle_ttl_seconds": None,
+    }
+    store.save(CliSettings(gateway=gateway))
+    loaded = store.load()
+    assert loaded.gateway == gateway
+    assert loaded.to_dict()["gateway"] == gateway
+
+    # Absent in older files -> empty mapping -> the gateway's defaults apply.
+    data = CliSettings().to_dict()
+    del data["gateway"]
+    assert CliSettings.from_dict(data).gateway == {}
+
+    # Invalid values are dropped on load, never crash startup.
+    assert CliSettings.from_dict({"schema_version": SETTINGS_SCHEMA_VERSION, "gateway": "not-a-dict"}).gateway == {}
+
+
 def test_settings_store_round_trips_agent_models(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path)
     settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)

@@ -1280,6 +1280,8 @@ def known_secret_values(
     explicitly so the redactor does not have to guess.
     """
     values = [value for value in (settings.api_keys or {}).values() if value]
+    if settings.telegram_bot_token:
+        values.append(settings.telegram_bot_token)
     for token in (settings.oauth_tokens or {}).values():
         if not isinstance(token, dict):
             continue

@@ -1,41 +1,30 @@
-"""Gateway configuration, resolved from ``KOLEGA_GATEWAY_*`` environment variables.
+"""Gateway configuration, resolved from the persisted settings surface.
 
-v1 config is environment-only on purpose: the Telegram bot token and allowlists
-are secrets/access-control that must not land in settings.json, and a daemon
-reads its config once at startup. Provider/model selection is *not* configured
-here — the gateway builds agents with the standard ``build_agent_config`` chain,
-so ``KOLEGA_CODE_PROVIDER``/``KOLEGA_CODE_MODEL``/settings.json apply unchanged.
+Gateway settings live in ``settings.json`` under the ``gateway`` section
+(plus the top-level ``telegram_bot_token``), alongside every other user
+setting. Every key has a built-in default — the stored section only needs
+what the user explicitly configured, which ``kolega-code gateway telegram
+setup`` writes for them. CLI flags (``--adapter``/``--project``) override the
+persisted values; provider/model selection is *not* configured here — the
+gateway builds agents with the standard ``build_agent_config`` chain.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Any, Optional
 
 from kolega_code.cli.session_store import default_state_dir
+from kolega_code.cli.settings import SettingsStore, SettingsStoreError
 from kolega_code.permissions import PermissionMode, normalize_permission_mode
 
-ENV_ADAPTER = "KOLEGA_GATEWAY_ADAPTER"
-ENV_PROJECT = "KOLEGA_GATEWAY_PROJECT"
-ENV_STATE_DIR = "KOLEGA_GATEWAY_STATE_DIR"
-ENV_ALLOWED_USERS = "KOLEGA_GATEWAY_ALLOWED_USERS"
-ENV_GROUP_IDS = "KOLEGA_GATEWAY_GROUP_IDS"
-ENV_PAIRING = "KOLEGA_GATEWAY_PAIRING"
-ENV_PAIRING_TTL_SECONDS = "KOLEGA_GATEWAY_PAIRING_TTL_SECONDS"
-ENV_PERMISSION_MODE = "KOLEGA_GATEWAY_PERMISSION_MODE"
-ENV_REQUEST_TIMEOUT_SECONDS = "KOLEGA_GATEWAY_REQUEST_TIMEOUT_SECONDS"
-ENV_MAX_SESSIONS = "KOLEGA_GATEWAY_MAX_SESSIONS"
-ENV_SESSION_IDLE_TTL_SECONDS = "KOLEGA_GATEWAY_SESSION_IDLE_TTL_SECONDS"
-ENV_EDIT_THROTTLE_SECONDS = "KOLEGA_GATEWAY_EDIT_THROTTLE_SECONDS"
-ENV_STT = "KOLEGA_GATEWAY_STT"
-ENV_STT_MODEL = "KOLEGA_GATEWAY_STT_MODEL"
-ENV_TELEGRAM_TOKEN = "KOLEGA_GATEWAY_TELEGRAM_TOKEN"
-ENV_TELEGRAM_PROXY = "KOLEGA_GATEWAY_TELEGRAM_PROXY"
+logger = logging.getLogger(__name__)
 
 DEFAULT_ADAPTER = "echo"
-#: Where gateway sessions work when no --project/env is given. Never the
+#: Where gateway sessions work when nothing is configured. Never the
 #: daemon's cwd: services start with "/" or a temp dir, and the gateway must
 #: not silently anchor a chat-driven agent there.
 DEFAULT_GATEWAY_WORKSPACE_NAME = "kolega-code-workspace"
@@ -46,8 +35,7 @@ DEFAULT_MAX_SESSIONS = 50
 DEFAULT_SESSION_IDLE_TTL_SECONDS = 3600.0
 DEFAULT_EDIT_THROTTLE_SECONDS = 1.0
 DEFAULT_PAIRING_TTL_SECONDS = 3600.0
-
-_TRUE_VALUES = {"1", "true", "yes", "on"}
+DEFAULT_STT_MODEL = "base"
 
 
 class GatewayConfigError(ValueError):
@@ -83,111 +71,83 @@ class GatewayConfig:
     stt_enabled: bool = False
     #: faster-whisper model size for voice-note transcription ("tiny", "base",
     #: "small", "medium", "large-v3", …).
-    stt_model: str = "base"
+    stt_model: str = DEFAULT_STT_MODEL
     telegram_token: Optional[str] = None
     telegram_proxy: Optional[str] = None
 
 
-def _env_str(env: Mapping[str, str], key: str) -> Optional[str]:
-    value = env.get(key)
-    if value is None:
-        return None
-    value = value.strip()
-    return value or None
+def _gateway_settings(state_dir: Path) -> dict[str, Any]:
+    """The stored gateway section (and token), tolerating hand-edits.
 
-
-def _env_float(env: Mapping[str, str], key: str, default: float) -> float:
-    raw = _env_str(env, key)
-    if raw is None:
-        return default
+    A gateway daemon must not refuse to start because settings.json was
+    touched; missing pieces fall back to defaults and the adapter's own
+    startup error explains what to fix.
+    """
     try:
-        value = float(raw)
-    except ValueError as exc:
-        raise GatewayConfigError(f"{key} must be a number, got {raw!r}.") from exc
-    if value <= 0:
-        raise GatewayConfigError(f"{key} must be positive, got {raw!r}.")
-    return value
+        settings = SettingsStore(root=state_dir).load()
+        return {"_telegram_bot_token": settings.telegram_bot_token, **settings.gateway}
+    except SettingsStoreError as exc:
+        logger.warning("gateway: could not read settings (%s); using defaults", exc)
+        return {}
+    except Exception as exc:  # noqa: BLE001 — config lookup must be best-effort
+        logger.warning("gateway: could not read gateway settings (%s); using defaults", exc)
+        return {}
 
 
-def _env_int(env: Mapping[str, str], key: str, default: int) -> int:
-    raw = _env_str(env, key)
-    if raw is None:
-        return default
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise GatewayConfigError(f"{key} must be an integer, got {raw!r}.") from exc
-    if value <= 0:
-        raise GatewayConfigError(f"{key} must be positive, got {raw!r}.")
-    return value
-
-
-def _env_bool(env: Mapping[str, str], key: str, default: bool = False) -> bool:
-    raw = _env_str(env, key)
-    if raw is None:
-        return default
-    return raw.lower() in _TRUE_VALUES
-
-
-def _env_id_list(env: Mapping[str, str], key: str) -> tuple[str, ...]:
-    """Parse a comma-separated id list (allowlist or group ids)."""
-    raw = _env_str(env, key)
-    if raw is None:
-        return ()
-    return tuple(part.strip() for part in raw.split(",") if part.strip())
-
-
-def _resolve_state_dir(param: Optional[Path], env: Mapping[str, str]) -> Path:
+def _resolve_state_dir(param: Optional[Path]) -> Path:
     if param is not None:
         return param.expanduser().resolve()
-    raw = _env_str(env, ENV_STATE_DIR) or env.get("KOLEGA_CODE_STATE_DIR")
-    if raw:
-        return Path(raw).expanduser().resolve()
-    return default_state_dir(env=dict(env))
+    shared = os.environ.get("KOLEGA_CODE_STATE_DIR")
+    if shared:
+        return Path(shared).expanduser().resolve()
+    return default_state_dir()
 
 
-def _resolve_project(param: Optional[Path], env: Mapping[str, str]) -> Path:
-    """Resolve the working directory for new gateway sessions.
+def _resolve_project(param: Optional[Path], stored: dict[str, Any]) -> Path:
+    """``--project`` beats the stored value beats ``~/kolega-code-workspace``.
 
-    ``--project`` beats the environment variable beats ``~/kolega-code-workspace``.
     The daemon's launch cwd is deliberately never consulted.
     """
     if param is not None:
         return param.expanduser().resolve()
-    raw = _env_str(env, ENV_PROJECT)
-    if raw:
+    raw = stored.get("project")
+    if isinstance(raw, str) and raw.strip():
         return Path(raw).expanduser().resolve()
     return default_gateway_project()
 
 
 def load_gateway_config(
-    env: Optional[Mapping[str, str]] = None,
     *,
     state_dir: Optional[Path] = None,
     project: Optional[Path] = None,
+    adapter: Optional[str] = None,
 ) -> GatewayConfig:
-    """Build the gateway config from the process environment and explicit overrides."""
-    loaded_env = dict(env if env is not None else os.environ)
-    adapter = _env_str(loaded_env, ENV_ADAPTER) or DEFAULT_ADAPTER
-    permission_mode = normalize_permission_mode(
-        _env_str(loaded_env, ENV_PERMISSION_MODE),
-        default=PermissionMode.ASK,
-    ).value
+    """Build the gateway config from settings.json with CLI-flag overrides."""
+    resolved_state_dir = _resolve_state_dir(state_dir)
+    stored = _gateway_settings(resolved_state_dir)
+    adapter = adapter or stored.get("adapter") or DEFAULT_ADAPTER
+    try:
+        permission_mode = normalize_permission_mode(
+            stored.get("permission_mode"),
+            default=PermissionMode.ASK,
+        ).value
+    except ValueError:
+        permission_mode = PermissionMode.ASK.value
     return GatewayConfig(
-        adapter=adapter,
-        project_path=_resolve_project(project, loaded_env),
-        state_dir=_resolve_state_dir(state_dir, loaded_env),
-        allowed_users=_env_id_list(loaded_env, ENV_ALLOWED_USERS),
-        group_ids=_env_id_list(loaded_env, ENV_GROUP_IDS),
-        pairing_enabled=_env_bool(loaded_env, ENV_PAIRING),
-        pairing_code_ttl_seconds=_env_float(loaded_env, ENV_PAIRING_TTL_SECONDS, DEFAULT_PAIRING_TTL_SECONDS),
+        adapter=str(adapter),
+        project_path=_resolve_project(project, stored),
+        state_dir=resolved_state_dir,
+        allowed_users=tuple(str(item) for item in (stored.get("allowed_users") or ())),
+        group_ids=tuple(str(item) for item in (stored.get("group_ids") or ())),
+        pairing_enabled=bool(stored.get("pairing_enabled", False)),
+        pairing_code_ttl_seconds=float(stored.get("pairing_code_ttl_seconds", DEFAULT_PAIRING_TTL_SECONDS)),
         permission_mode=permission_mode,
-        request_timeout_seconds=_env_float(loaded_env, ENV_REQUEST_TIMEOUT_SECONDS, DEFAULT_REQUEST_TIMEOUT_SECONDS),
-        max_sessions=_env_int(loaded_env, ENV_MAX_SESSIONS, DEFAULT_MAX_SESSIONS),
-        session_idle_ttl_seconds=_env_float(loaded_env, ENV_SESSION_IDLE_TTL_SECONDS, DEFAULT_SESSION_IDLE_TTL_SECONDS),
-        edit_throttle_seconds=_env_float(loaded_env, ENV_EDIT_THROTTLE_SECONDS, DEFAULT_EDIT_THROTTLE_SECONDS),
-        stt_enabled=_env_bool(loaded_env, ENV_STT),
-        stt_model=_env_str(loaded_env, ENV_STT_MODEL) or "base",
-        telegram_token=_env_str(loaded_env, ENV_TELEGRAM_TOKEN),
-        telegram_proxy=_env_str(loaded_env, ENV_TELEGRAM_PROXY),
+        request_timeout_seconds=float(stored.get("request_timeout_seconds", DEFAULT_REQUEST_TIMEOUT_SECONDS)),
+        max_sessions=int(stored.get("max_sessions", DEFAULT_MAX_SESSIONS)),
+        session_idle_ttl_seconds=stored.get("session_idle_ttl_seconds", DEFAULT_SESSION_IDLE_TTL_SECONDS),
+        edit_throttle_seconds=float(stored.get("edit_throttle_seconds", DEFAULT_EDIT_THROTTLE_SECONDS)),
+        stt_enabled=bool(stored.get("stt_enabled", False)),
+        stt_model=str(stored.get("stt_model") or DEFAULT_STT_MODEL),
+        telegram_token=stored.get("_telegram_bot_token"),
+        telegram_proxy=stored.get("telegram_proxy"),
     )

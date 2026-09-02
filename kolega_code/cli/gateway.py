@@ -8,7 +8,6 @@ import json
 import os
 import signal
 import sys
-from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -45,14 +44,14 @@ def add_gateway_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
         "--adapter",
         choices=adapter_names(),
         default=None,
-        help="Messaging adapter to run (default: $KOLEGA_GATEWAY_ADAPTER, else echo).",
+        help="Messaging adapter to run (default: the gateway.adapter setting, else echo).",
     )
     run.add_argument(
         "--project",
         type=Path,
         default=None,
         help="Directory the gateway's agent sessions work in "
-        "(default: $KOLEGA_GATEWAY_PROJECT, else ~/kolega-code-workspace).",
+        "(default: the gateway.project setting, else ~/kolega-code-workspace).",
     )
     run.add_argument("--state-dir", type=Path, default=None, help="Override the state directory.")
     run.add_argument("--provider", help="Provider for the gateway's main coding model.")
@@ -77,6 +76,20 @@ def add_gateway_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
     uninstall = gateway_sub.add_parser("uninstall", help="Remove the gateway background service.")
     uninstall.add_argument("--state-dir", type=Path, default=None, help="Override the state directory.")
 
+    telegram = gateway_sub.add_parser("telegram", help="Telegram adapter setup.")
+    telegram_sub = telegram.add_subparsers(dest="telegram_command", required=True)
+    setup = telegram_sub.add_parser("setup", help="Save the @BotFather bot token (stored in settings.json).")
+    setup.add_argument("--token", default=None, help="Provide the token directly instead of prompting.")
+    setup.add_argument(
+        "--allow",
+        default=None,
+        metavar="USER_IDS",
+        help="Comma-separated Telegram user ids for the allowlist (empty allowlist = open to anyone).",
+    )
+    setup.add_argument("--verify", action="store_true", help="Check the token against the Telegram API before saving.")
+    setup.add_argument("--clear", action="store_true", help="Remove the saved token instead.")
+    setup.add_argument("--state-dir", type=Path, default=None, help="Override the state directory.")
+
 
 def run_gateway(args: argparse.Namespace) -> int:
     """Dispatch ``kolega-code gateway ...`` (sync entry point for cli/main.py)."""
@@ -88,16 +101,73 @@ def run_gateway(args: argparse.Namespace) -> int:
 
 
 async def _run_gateway(args: argparse.Namespace) -> int:
-    config = load_gateway_config(state_dir=args.state_dir, project=getattr(args, "project", None))
-    if getattr(args, "adapter", None):
-        config = replace(config, adapter=args.adapter)
+    config = load_gateway_config(
+        state_dir=args.state_dir,
+        project=getattr(args, "project", None),
+        adapter=getattr(args, "adapter", None),
+    )
     if args.gateway_command == "status":
         return _gateway_status(config)
     if args.gateway_command == "pairing":
         return _gateway_pairing(args, config)
+    if args.gateway_command == "telegram":
+        return await _gateway_telegram(args, config)
     if args.gateway_command in ("install", "uninstall"):
         return _gateway_service(args, config)
     return await _gateway_run(config, args)
+
+
+async def _gateway_telegram(args: argparse.Namespace, config: GatewayConfig) -> int:
+    from getpass import getpass
+
+    from kolega_code.cli.settings import SettingsStore
+    from kolega_code.gateway.adapters.telegram.adapter import validate_bot_token
+
+    settings_store = SettingsStore(root=config.state_dir)
+    if args.clear:
+        settings = settings_store.load()
+        settings.telegram_bot_token = None
+        settings.gateway.pop("allowed_users", None)
+        settings_store.save(settings)
+        print("gateway: saved telegram bot token removed")
+        return 0
+    token = (args.token or "").strip()
+    if not token and not sys.stdin.isatty():
+        token = sys.stdin.readline().strip()
+    if not token:
+        token = getpass.getpass("Telegram bot token (from @BotFather): ").strip()
+    if not token:
+        print("gateway: no token provided", file=sys.stderr)
+        return 1
+    try:
+        token = validate_bot_token(token)
+    except ValueError as exc:
+        print(f"gateway: {exc}", file=sys.stderr)
+        return 1
+    if args.verify:
+        try:
+            from aiogram import Bot
+
+            bot = Bot(token=token)
+            try:
+                me = await bot.me()
+            finally:
+                await bot.session.close()
+        except Exception as exc:  # noqa: BLE001 — verification failures must not save a bad token
+            print(f"gateway: could not verify the token against Telegram: {exc}", file=sys.stderr)
+            return 1
+        print(f"gateway: token verified — @{me.username}")
+    allowed = (args.allow or "").strip()
+    if not allowed and sys.stdin.isatty() and not args.token:
+        allowed = input("Your Telegram user id (for the allowlist; empty to skip): ").strip()
+    settings = settings_store.load()
+    settings.telegram_bot_token = token
+    settings.gateway["adapter"] = "telegram"
+    if allowed:
+        settings.gateway["allowed_users"] = [part.strip() for part in allowed.split(",") if part.strip()]
+    settings_store.save(settings)
+    print(f"gateway: telegram bot token saved (state: {config.state_dir})")
+    return 0
 
 
 def _gateway_service(args: argparse.Namespace, config: GatewayConfig) -> int:

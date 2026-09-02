@@ -18,21 +18,24 @@ arrive as inline buttons, and voice notes, images, and documents are handled
 ## Setup
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy its token.
-2. Configure the environment (see
-   [Environment Variables](../configuration/environment-variables.md#gateway)):
+2. Save it (optionally checking it against Telegram and saving your
+   allowlist — it also switches the adapter on):
 
    ```bash
-   export KOLEGA_GATEWAY_TELEGRAM_TOKEN=123456:AAH...
-   export KOLEGA_GATEWAY_ALLOWED_USERS=<your telegram user id>
+   kolega-code gateway telegram setup --verify
    ```
 
+   The command prompts for the token (never echoed) and your Telegram user id
+   (ask [@userinfobot](https://t.me/userinfobot) for it). Everything is
+   stored in `settings.json` like every other key — see
+   [Gateway settings](../configuration/environment-variables.md#gateway).
 3. Run it:
 
    ```bash
-   kolega-code gateway run --adapter telegram --project ~/kolega-code-workspace
+   kolega-code gateway run --project ~/kolega-code-workspace
    ```
 
-Without `--project`/`KOLEGA_GATEWAY_PROJECT`, sessions work in
+Without `--project`/`gateway.project`, sessions work in
 `~/kolega-code-workspace` — never the daemon's launch directory. Message the
 bot from your phone; unknown senders are dropped (or get a pairing code, see
 below).
@@ -43,6 +46,7 @@ below).
 | --- | --- |
 | `run` | Run the gateway in the foreground (graceful stop on Ctrl-C/SIGTERM). |
 | `status` | Show whether the daemon is running, with a heartbeat freshness check. |
+| `telegram setup` | Save the @BotFather token (with optional `--verify`, `--allow <ids>`, `--clear`). |
 | `pairing list` / `pairing approve <code>` | List pending sender pairing requests, or admit a sender. |
 | `install` / `uninstall` | Install or remove the gateway as a user-level background service (systemd user unit / launchd agent — no root needed). |
 
@@ -55,8 +59,9 @@ below).
 
 ## Pairing new senders
 
-With an allowlist configured and `KOLEGA_GATEWAY_PAIRING=1`, an unknown
-sender gets a short code and instructions. The operator runs:
+With an allowlist configured and `gateway.pairing_enabled` set in
+`settings.json`, an unknown sender gets a short code and instructions. The
+operator runs:
 
 ```bash
 kolega-code gateway pairing approve <code>
@@ -66,9 +71,9 @@ and the sender's next message goes through. Codes expire after an hour.
 
 ## Voice transcription
 
-Set `KOLEGA_GATEWAY_STT=1`, install the extra, and voice notes transcribe
-locally with faster-whisper (model size via `KOLEGA_GATEWAY_STT_MODEL`,
-default `base`):
+Set `gateway.stt_enabled` in `settings.json`, install the extra, and voice
+notes transcribe locally with faster-whisper (model size via
+`gateway.stt_model`, default `base`):
 
 ```bash
 uv pip install "kolega-code[stt]"
@@ -77,7 +82,7 @@ uv pip install "kolega-code[stt]"
 ## Notes
 
 - Groups are mention-gated (`@yourbot`) and optionally restricted to
-  `KOLEGA_GATEWAY_GROUP_IDS`.
+  `gateway.group_ids`.
 - The echo adapter (`--adapter echo`) drives the full transport pipeline
   over stdin/stdout without any LLM or Telegram account — handy for testing.
 - The Telegram connection uses the official Bot API with a BotFather token,

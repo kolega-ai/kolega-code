@@ -259,7 +259,7 @@ class AgentTurnHandler:
         if not self._config.stt_enabled:
             await self._adapter.send_text(
                 chat_ref.chat_id,
-                "🎙 Voice transcription is disabled. Set KOLEGA_GATEWAY_STT=1 (and install the stt extra) to enable it.",
+                "🎙 Voice transcription is disabled. Enable it in settings.json (gateway.stt_enabled) and install the stt extra.",
             )
             return ""
         transcriber = self._transcriber

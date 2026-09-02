@@ -50,8 +50,8 @@ def _adapter_kwargs(config: GatewayConfig, name: str) -> dict[str, Any]:
     if name == "telegram":
         if not config.telegram_token:
             raise GatewayConfigError(
-                "The telegram adapter requires KOLEGA_GATEWAY_TELEGRAM_TOKEN "
-                "(create a bot with @BotFather and export the token)."
+                "No Telegram bot token is configured. Create a bot with @BotFather, "
+                "then run `kolega-code gateway telegram setup` to save its token."
             )
         return {
             "token": config.telegram_token,

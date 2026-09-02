@@ -43,6 +43,146 @@ def test_parse_gateway_pairing_subcommands() -> None:
     assert args.code == "ABC123"
 
 
+def test_parse_gateway_telegram_setup() -> None:
+    args = parse_args(["gateway", "telegram", "setup"])
+    assert args.telegram_command == "setup"
+    args = parse_args(["gateway", "telegram", "setup", "--token", "x", "--verify"])
+    assert args.token == "x"
+    assert args.verify is True
+
+
+TEST_BOT_TOKEN = "123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+
+
+def test_telegram_setup_saves_the_token_to_settings(tmp_path: Path) -> None:
+    from kolega_code.cli.gateway import run_gateway
+    from kolega_code.cli.settings import SettingsStore
+
+    state_dir = tmp_path / "state"
+    args = parse_args(
+        [
+            "gateway",
+            "telegram",
+            "setup",
+            "--token",
+            TEST_BOT_TOKEN,
+            "--allow",
+            "111, 222",
+            "--state-dir",
+            str(state_dir),
+        ]
+    )
+    assert run_gateway(args) == 0
+    settings = SettingsStore(root=state_dir).load()
+    assert settings.telegram_bot_token == TEST_BOT_TOKEN
+    # Setup also flips the gateway to the telegram adapter and saves the allowlist.
+    assert settings.gateway["adapter"] == "telegram"
+    assert settings.gateway["allowed_users"] == ["111", "222"]
+
+
+def test_telegram_setup_reads_piped_stdin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import io
+
+    from kolega_code.cli.gateway import run_gateway
+    from kolega_code.cli.settings import SettingsStore
+
+    monkeypatch.setattr("sys.stdin", io.StringIO(f"{TEST_BOT_TOKEN}\n"))
+    state_dir = tmp_path / "state"
+    args = parse_args(["gateway", "telegram", "setup", "--state-dir", str(state_dir)])
+    assert run_gateway(args) == 0
+    assert SettingsStore(root=state_dir).load().telegram_bot_token == TEST_BOT_TOKEN
+
+
+def test_telegram_setup_rejects_malformed_tokens(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    from kolega_code.cli.gateway import run_gateway
+
+    state_dir = tmp_path / "state"
+    args = parse_args(["gateway", "telegram", "setup", "--token", "garbage", "--state-dir", str(state_dir)])
+    assert run_gateway(args) == 1
+    assert "BotFather" in capsys.readouterr().err
+
+
+def test_telegram_setup_clear_removes_the_token(tmp_path: Path) -> None:
+    from kolega_code.cli.gateway import run_gateway
+    from kolega_code.cli.settings import SettingsStore
+
+    state_dir = tmp_path / "state"
+    run_gateway(
+        parse_args(
+            [
+                "gateway",
+                "telegram",
+                "setup",
+                "--token",
+                TEST_BOT_TOKEN,
+                "--allow",
+                "111",
+                "--state-dir",
+                str(state_dir),
+            ]
+        )
+    )
+    assert run_gateway(parse_args(["gateway", "telegram", "setup", "--clear", "--state-dir", str(state_dir)])) == 0
+    settings = SettingsStore(root=state_dir).load()
+    assert settings.telegram_bot_token is None
+    assert "allowed_users" not in settings.gateway
+
+
+def test_telegram_setup_verify_checks_the_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from kolega_code.cli.gateway import run_gateway
+    from kolega_code.cli.settings import SettingsStore
+
+    class FakeMe:
+        username = "test_bot"
+
+    class FakeBot:
+        def __init__(self, token: str) -> None:
+            self.token = token
+            self.session = AsyncMock()
+
+        async def me(self) -> FakeMe:
+            return FakeMe()
+
+    monkeypatch.setattr("aiogram.Bot", FakeBot)
+    state_dir = tmp_path / "state"
+    args = parse_args(
+        ["gateway", "telegram", "setup", "--token", TEST_BOT_TOKEN, "--verify", "--state-dir", str(state_dir)]
+    )
+    assert run_gateway(args) == 0
+    assert "token verified — @test_bot" in capsys.readouterr().out
+    assert SettingsStore(root=state_dir).load().telegram_bot_token == TEST_BOT_TOKEN
+
+
+def test_telegram_setup_verify_failure_does_not_save(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from kolega_code.cli.gateway import run_gateway
+    from kolega_code.cli.settings import SettingsStore
+
+    class FailingBot:
+        def __init__(self, token: str) -> None:
+            self.token = token
+            self.session = AsyncMock()
+
+        async def me(self) -> None:
+            raise RuntimeError("unauthorized")
+
+    monkeypatch.setattr("aiogram.Bot", FailingBot)
+    state_dir = tmp_path / "state"
+    args = parse_args(
+        ["gateway", "telegram", "setup", "--token", TEST_BOT_TOKEN, "--verify", "--state-dir", str(state_dir)]
+    )
+    assert run_gateway(args) == 1
+    assert "could not verify" in capsys.readouterr().err
+    assert SettingsStore(root=state_dir).load().telegram_bot_token is None
+
+
 def test_status_reports_not_running(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     config = GatewayConfig(adapter="echo", project_path=tmp_path / "ws", state_dir=tmp_path / "state")
     assert _gateway_status(config) == 0

@@ -9,8 +9,8 @@ Layout:
 
 - :mod:`kolega_code.gateway.adapters` — the platform-agnostic adapter contract
   (``GatewayAdapter``) and per-platform implementations.
-- :mod:`kolega_code.gateway.config` — ``KOLEGA_GATEWAY_*`` environment-driven
-  configuration.
+- :mod:`kolega_code.gateway.config` — settings.json-driven configuration
+  (the ``gateway`` section plus the saved Telegram token).
 - :mod:`kolega_code.gateway.daemon` — process lifecycle, lock file, inbound
   dispatch, access control.
 - :mod:`kolega_code.gateway.router` — per-chat session registry (LRU + idle TTL).

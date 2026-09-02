@@ -74,8 +74,8 @@ def validate_bot_token(token: str) -> str:
     """
     if not _BOT_TOKEN_RE.match(token):
         raise ValueError(
-            "KOLEGA_GATEWAY_TELEGRAM_TOKEN does not look like a BotFather bot token "
-            "(expected <bot-id>:<secret>). Create a bot with @BotFather and export its token."
+            "This does not look like a BotFather bot token (expected <bot-id>:<secret>). "
+            "Create a bot with @BotFather and save its token with `kolega-code gateway telegram setup`."
         )
     return token
 
