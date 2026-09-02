@@ -169,3 +169,48 @@ async def test_cancellation_keeps_partial_reply_and_cleans_up() -> None:
         await r.run(cancelled_stream())
     assert "partial " in adapter.sent_texts()
     assert adapter.calls[-1] == ("typing", "chat-1", False)
+
+
+@pytest.mark.asyncio
+async def test_segment_uuid_rotation_opens_new_bubbles() -> None:
+    """A tool round rotates the stream uuid: the pre-tool text settles as one
+    bubble and the post-tool text arrives as a new one (the TUI's fold rule)."""
+    adapter = FakeAdapter()
+
+    async def tool_round() -> AsyncIterator[dict[str, Any]]:
+        yield {"type": "response", "content": "before tool", "complete": False, "uuid": "u-1"}
+        yield {"type": "response", "content": "", "complete": True, "uuid": "u-1"}
+        # The agent rotates the uuid after the tool round.
+        yield {"type": "response", "content": "after tool", "complete": True, "uuid": "u-2"}
+
+    text = await renderer(adapter).run(tool_round())
+    assert text == "before toolafter tool"
+    # Two separate bubbles, not one merged/edit-chained message.
+    sends = [call for call in adapter.calls if call[0] == "send"]
+    assert [call[3] for call in sends] == ["before tool", "after tool"]
+    assert not any(call[0] == "edit" and call[3] == "before toolafter tool" for call in adapter.calls)
+
+
+@pytest.mark.asyncio
+async def test_status_message_skips_unchanged_text() -> None:
+    """Repeated identical status lines (line-cap truncation) must not re-edit
+    the same content — Telegram rejects that as 'message is not modified'."""
+    adapter = FakeAdapter()
+    queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
+    r = TurnRenderer(adapter, "chat-1", event_queue=queue, edit_throttle_seconds=0.0)
+    for _ in range(9):
+        await queue.put(tool_event("bash"))
+
+    run_task = asyncio.create_task(r.run(_slow_done_chunks()))
+    await asyncio.sleep(0.1)  # pump drains all nine events (capped at 8 lines)
+    status_id = next(call[2] for call in adapter.calls if call[0] == "send" and call[3].startswith("⏳"))
+    await run_task
+    edits = [call for call in adapter.calls if call[0] == "edit" and call[2] == status_id]
+    # First event sends, events 2-8 grow the text, and the ninth renders the
+    # same capped 8-line text: seven edits, no duplicate-content re-edit.
+    assert len(edits) == 7
+
+
+async def _slow_done_chunks() -> AsyncIterator[dict[str, Any]]:
+    await asyncio.sleep(0.15)
+    yield {"type": "response", "content": "done", "complete": True, "uuid": "u-1"}

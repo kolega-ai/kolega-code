@@ -4,6 +4,7 @@ import asyncio
 import inspect
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -241,6 +242,39 @@ async def test_oversized_document_is_not_downloaded(tmp_path: Path) -> None:
     )
     assert attachments == ()
     adapter._bot.download.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_edit_text_treats_not_modified_as_a_noop() -> None:
+    from aiogram.exceptions import TelegramBadRequest
+
+    adapter = make_adapter()
+    adapter._bot = MagicMock()
+    not_modified = TelegramBadRequest(  # type: ignore[arg-type] — aiogram over-constrains `method`
+        method=cast(Any, "editMessageText"), message="Bad Request: message is not modified"
+    )
+    adapter._bot.edit_message_text = AsyncMock(side_effect=not_modified)
+    # No retry, no raise: editing to the shown content is a semantic no-op.
+    await adapter.edit_text("42", "77", "same text")
+    adapter._bot.edit_message_text.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_edit_text_retries_plain_on_html_failure() -> None:
+    from aiogram.exceptions import TelegramBadRequest
+
+    parse_error = TelegramBadRequest(  # type: ignore[arg-type] — aiogram over-constrains `method`
+        method=cast(Any, "editMessageText"), message="can't parse entities"
+    )
+    adapter = make_adapter()
+    adapter._bot = MagicMock()
+    adapter._bot.edit_message_text = AsyncMock(side_effect=[parse_error, None])
+    await adapter.edit_text("42", "77", "**bold**")
+    assert adapter._bot.edit_message_text.await_count == 2
+    # The retry carries the raw text without the HTML parse mode.
+    second_call = adapter._bot.edit_message_text.await_args
+    assert second_call.kwargs.get("text") == "**bold**"
+    assert "parse_mode" not in second_call.kwargs
 
 
 def test_safe_file_name_falls_back_for_missing_names() -> None:

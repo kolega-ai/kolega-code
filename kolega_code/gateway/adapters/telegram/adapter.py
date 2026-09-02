@@ -418,7 +418,11 @@ class TelegramAdapter(GatewayAdapter):
                 text=telegram_html(text),
                 parse_mode=ParseMode.HTML,
             )
-        except TelegramBadRequest:
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc):
+                # Editing to the content already shown is a semantic no-op,
+                # not a failure — and must not retry the identical payload.
+                return
             logger.info("telegram: HTML edit failed for chat %s; retrying as plain text", chat_id)
             await bot.edit_message_text(chat_id=int(chat_id), message_id=int(message_id), text=text)
 
