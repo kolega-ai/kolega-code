@@ -1,6 +1,7 @@
 """TelegramAdapter envelope conversion and capability contract (no network)."""
 
 import asyncio
+import inspect
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -117,17 +118,36 @@ def test_callback_decode_rejects_garbage() -> None:
         assert decode_callback(bad) is None
 
 
+def make_fake_bot() -> AsyncMock:
+    bot = AsyncMock()
+    bot.download = AsyncMock()
+    bot.send_message = AsyncMock()
+    bot.answer_callback_query = AsyncMock()
+    return bot
+
+
+def test_handler_signatures_inject_the_bot_by_name() -> None:
+    # aiogram injects the Bot instance by parameter NAME ("bot"), not
+    # position — a renamed parameter silently breaks every update.
+    adapter = make_adapter()
+    message_params = inspect.signature(adapter._handle_message).parameters
+    callback_params = inspect.signature(adapter._handle_callback).parameters
+    assert "message" in message_params and "bot" in message_params
+    assert "query" in callback_params and "bot" in callback_params
+
+
 @pytest.mark.asyncio
 async def test_callback_handler_publishes_tap_envelope() -> None:
     adapter = make_adapter()
     adapter._pending_buttons["tok"] = {"chat_id": "42", "options": ["allow_once", "deny"]}
+    bot = make_fake_bot()
     query = AsyncMock()
     query.data = "tok:1"
     query.id = "9000"
     query.from_user = User(id=7, is_bot=False, first_name="Tapper")
     query.message = make_message("approve?", message_id=555)
 
-    await adapter._handle_callback(query, None)
+    await adapter._handle_callback(query, bot)
 
     inbound = await adapter.inbound.get()
     assert inbound.callback_token == "tok"
@@ -136,21 +156,22 @@ async def test_callback_handler_publishes_tap_envelope() -> None:
     assert inbound.sender_id == "7"
     assert inbound.message_id == "cb-9000"
     assert inbound.text == ""
-    query.answer.assert_awaited_once()
+    bot.answer_callback_query.assert_awaited_once_with("9000")
     # One-shot: a second tap on the same token is swallowed.
     assert adapter._pending_buttons == {}
-    await adapter._handle_callback(query, None)
+    await adapter._handle_callback(query, bot)
     assert adapter.inbound.empty()
 
 
 @pytest.mark.asyncio
 async def test_callback_handler_ignores_unknown_tokens() -> None:
     adapter = make_adapter()
+    bot = make_fake_bot()
     query = AsyncMock()
     query.data = "ghost:0"
     query.id = "1"
-    await adapter._handle_callback(query, None)
-    query.answer.assert_awaited_once()
+    await adapter._handle_callback(query, bot)
+    bot.answer_callback_query.assert_awaited_once()
     assert adapter.inbound.empty()
 
 
@@ -174,7 +195,7 @@ async def test_photo_downloads_as_image_attachment(tmp_path: Path) -> None:
     adapter._media_dir = tmp_path
     adapter._bot = MagicMock()
     adapter._bot.download = AsyncMock()
-    attachments = await adapter._download_media(make_photo_message(message_id=77, caption="look!"))
+    attachments = await adapter._download_media(make_photo_message(message_id=77, caption="look!"), make_fake_bot())
     assert len(attachments) == 1
     assert attachments[0].kind == "image"
     assert attachments[0].caption == "look!"
@@ -188,7 +209,7 @@ async def test_voice_downloads_as_voice_attachment(tmp_path: Path) -> None:
     adapter._media_dir = tmp_path
     adapter._bot = MagicMock()
     adapter._bot.download = AsyncMock()
-    attachments = await adapter._download_media(make_voice_message(message_id=3))
+    attachments = await adapter._download_media(make_voice_message(message_id=3), make_fake_bot())
     assert len(attachments) == 1
     assert attachments[0].kind == "voice"
     assert attachments[0].source.endswith("voice-3.ogg")
@@ -200,7 +221,9 @@ async def test_document_downloads_with_sanitized_name(tmp_path: Path) -> None:
     adapter._media_dir = tmp_path
     adapter._bot = MagicMock()
     adapter._bot.download = AsyncMock()
-    attachments = await adapter._download_media(make_document_message(message_id=9, file_name="../../report:final.pdf"))
+    attachments = await adapter._download_media(
+        make_document_message(message_id=9, file_name="../../report:final.pdf"), make_fake_bot()
+    )
     assert len(attachments) == 1
     assert attachments[0].kind == "document"
     assert attachments[0].file_name == "../../report:final.pdf"
@@ -213,7 +236,9 @@ async def test_oversized_document_is_not_downloaded(tmp_path: Path) -> None:
     adapter._media_dir = tmp_path
     adapter._bot = MagicMock()
     adapter._bot.download = AsyncMock()
-    attachments = await adapter._download_media(make_document_message(message_id=5, file_size=MAX_DOWNLOAD_BYTES + 1))
+    attachments = await adapter._download_media(
+        make_document_message(message_id=5, file_size=MAX_DOWNLOAD_BYTES + 1), make_fake_bot()
+    )
     assert attachments == ()
     adapter._bot.download.assert_not_awaited()
 

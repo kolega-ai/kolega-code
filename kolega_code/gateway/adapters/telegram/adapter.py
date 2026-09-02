@@ -201,11 +201,11 @@ class TelegramAdapter(GatewayAdapter):
 
     # -- Inbound -----------------------------------------------------------
 
-    async def _handle_message(self, message: TelegramMessage, _bot: Bot) -> None:
+    async def _handle_message(self, message: TelegramMessage, bot: Bot) -> None:
         if message.text is None and message.caption is None and not self._media_kinds(message):
-            await self._media_notice(message)
+            await self._media_notice(message, bot)
             return
-        attachments = await self._download_media(message)
+        attachments = await self._download_media(message, bot)
         inbound = self._to_inbound(message, attachments)
         if inbound is not None:
             await self.inbound.put(inbound)
@@ -221,7 +221,7 @@ class TelegramAdapter(GatewayAdapter):
             kinds.append("document")
         return kinds
 
-    async def _download_media(self, message: TelegramMessage) -> tuple[Attachment, ...]:
+    async def _download_media(self, message: TelegramMessage, bot: Bot) -> tuple[Attachment, ...]:
         """Download this message's media into the media dir, as attachments."""
         attachments: list[Attachment] = []
         if message.photo:
@@ -237,7 +237,7 @@ class TelegramAdapter(GatewayAdapter):
                 attachments.append(Attachment(kind="voice", source=str(path), mime="audio/ogg"))
         elif message.document:
             if (message.document.file_size or 0) > MAX_DOWNLOAD_BYTES:
-                await self._oversize_notice(message)
+                await self._oversize_notice(message, bot)
             else:
                 name = self._safe_file_name(message)
                 path = await self._download_file(message.document.file_id, name)
@@ -272,9 +272,9 @@ class TelegramAdapter(GatewayAdapter):
         name = re.sub(r"[^\w.\- ]", "_", name).strip()
         return name or f"document-{message.message_id}"
 
-    async def _oversize_notice(self, message: TelegramMessage) -> None:
+    async def _oversize_notice(self, message: TelegramMessage, bot: Bot) -> None:
         try:
-            await message.answer(OVERSIZE_REPLY)
+            await bot.send_message(chat_id=message.chat.id, text=OVERSIZE_REPLY)
         except Exception:  # noqa: BLE001
             logger.debug("telegram: oversize notice failed", exc_info=True)
 
@@ -328,13 +328,13 @@ class TelegramAdapter(GatewayAdapter):
             return str(quoted.from_user.id) == self._bot_id
         return False
 
-    async def _media_notice(self, message: TelegramMessage) -> None:
+    async def _media_notice(self, message: TelegramMessage, bot: Bot) -> None:
         try:
-            await message.answer(MEDIA_UNSUPPORTED_REPLY)
+            await bot.send_message(chat_id=message.chat.id, text=MEDIA_UNSUPPORTED_REPLY)
         except Exception:  # noqa: BLE001 — a failed notice must not break polling
             logger.debug("telegram: media notice failed", exc_info=True)
 
-    async def _handle_callback(self, query: CallbackQuery, _bot: Optional[Bot]) -> None:
+    async def _handle_callback(self, query: CallbackQuery, bot: Bot) -> None:
         """Turn an inline-button tap into an inbound envelope with the token."""
         decoded = decode_callback(query.data or "")
         token = decoded[0] if decoded else None
@@ -345,7 +345,7 @@ class TelegramAdapter(GatewayAdapter):
             if decoded[1] < len(options):
                 option_id = str(options[decoded[1]])
         try:
-            await query.answer()
+            await bot.answer_callback_query(query.id)
         except Exception:  # noqa: BLE001 — acks are cosmetic
             logger.debug("telegram: callback ack failed", exc_info=True)
         if pending is None or not option_id or token is None:
