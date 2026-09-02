@@ -15,6 +15,7 @@ from typing import IO, Any, Optional
 from kolega_code.gateway.adapters.base import (
     STREAMING_EDIT_IN_PLACE,
     AdapterCapabilities,
+    ChatRef,
     GatewayAdapter,
     InboundMessage,
 )
@@ -51,8 +52,6 @@ class EchoAdapter(GatewayAdapter):
         self._running = False
         self._reader_task: Optional[asyncio.Task[None]] = None
 
-    # -- Lifecycle ---------------------------------------------------------
-
     async def start(self) -> None:
         self._running = True
         self._reader_task = asyncio.create_task(self._read_loop(), name="echo-adapter-reader")
@@ -73,8 +72,6 @@ class EchoAdapter(GatewayAdapter):
     async def _read_loop(self) -> None:
         loop = asyncio.get_running_loop()
         while True:
-            # A blocking readline off the event loop; stdin in a dev tool is
-            # fine to occupy one executor thread per line.
             line = await loop.run_in_executor(None, self._stdin.readline)
             if line == "":  # EOF
                 break
@@ -97,8 +94,6 @@ class EchoAdapter(GatewayAdapter):
             )
         )
 
-    # -- Outbound ----------------------------------------------------------
-
     def _emit(self, kind: str, message_id: str, text: str) -> str:
         self._seq += 1
         new_id = message_id or f"echo-{self._seq}"
@@ -114,3 +109,20 @@ class EchoAdapter(GatewayAdapter):
 
     async def delete_message(self, chat_id: str, message_id: str) -> None:
         self._emit("delete", message_id, "")
+
+
+class EchoTurnHandler:
+    """Reply with the text that arrived, exercising the pipeline without an LLM."""
+
+    def __init__(self, adapter: GatewayAdapter) -> None:
+        self._adapter = adapter
+
+    def status(self) -> dict[str, Any]:
+        return {"active_sessions": 0}
+
+    async def handle(self, chat_ref: ChatRef, message: InboundMessage) -> None:
+        if message.text.strip():
+            await self._adapter.send_text(chat_ref.chat_id, f"echo: {message.text}")
+
+    async def shutdown(self) -> None:
+        pass

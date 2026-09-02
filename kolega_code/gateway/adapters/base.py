@@ -35,7 +35,6 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, Optional, Sequence
 
-#: Stream delivery strategy for assistant output on one platform.
 STREAMING_FINAL_ONLY = "final_only"
 STREAMING_EDIT_IN_PLACE = "edit_in_place"
 STREAMING_DRAFT = "draft"
@@ -45,12 +44,8 @@ STREAMING_DRAFT = "draft"
 class Attachment:
     """One media item attached to a message, already downloaded or fetchable."""
 
-    #: "image" | "audio" | "voice" | "document" | "video" | "sticker" | "file"
     kind: str
-    #: Local path or http(s) URL the gateway can read.
     source: str
-    mime: Optional[str] = None
-    caption: Optional[str] = None
     file_name: Optional[str] = None
 
 
@@ -58,7 +53,6 @@ class Attachment:
 class ReplyContext:
     """What the sender quoted, so the model sees the surrounding conversation."""
 
-    message_id: str
     text: str = ""
     sender_id: str = ""
 
@@ -70,24 +64,14 @@ class InboundMessage:
     channel: str
     chat_id: str
     sender_id: str
-    #: Adapter-supplied unique id, used for replay/dedup. Telegram update ids
-    #: and platform message ids both work; it only needs to be stable per
-    #: (adapter, message).
     message_id: str
     text: str = ""
-    account_id: str = "default"
     topic_id: Optional[str] = None
     sender_name: str = ""
     attachments: tuple[Attachment, ...] = ()
     reply_to: Optional[ReplyContext] = None
-    timestamp: Optional[str] = None
-    #: Set when this message is a button tap: the token returned by
-    #: ``send_buttons`` and the tapped option id.
     callback_token: Optional[str] = None
     callback_option: Optional[str] = None
-    #: Group semantics: whether the message came from a group chat and, when
-    #: it did, whether the bot was addressed (mention or reply-to-bot). The
-    #: gateway's group policy reads these; DMs leave both at their defaults.
     is_group: bool = False
     bot_mentioned: bool = False
 
@@ -102,7 +86,6 @@ class ChatRef:
 
     channel: str
     chat_id: str
-    account_id: str = "default"
     topic_id: Optional[str] = None
 
     @property
@@ -117,7 +100,6 @@ class ChatRef:
         return cls(
             channel=message.channel,
             chat_id=message.chat_id,
-            account_id=message.account_id,
             topic_id=message.topic_id,
         )
 
@@ -132,11 +114,8 @@ class AdapterCapabilities:
     supports_typing: bool = False
     supports_groups: bool = False
     supports_voice_notes: bool = False
-    #: Hard cap for one outbound text message; the bridge chunks at this size.
     text_chunk_limit: int = 4096
-    #: Outbound media size cap in megabytes.
     max_media_mb: float = 5.0
-    #: One of the STREAMING_* constants.
     streaming_mode: str = STREAMING_FINAL_ONLY
 
 
@@ -166,8 +145,6 @@ class GatewayAdapter(abc.ABC):
     def __init__(self) -> None:
         self.inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
 
-    # -- Lifecycle ---------------------------------------------------------
-
     async def start(self) -> None:
         """Connect to the platform and begin publishing inbound messages."""
 
@@ -175,11 +152,8 @@ class GatewayAdapter(abc.ABC):
         """Disconnect and stop background tasks. Must be idempotent."""
 
     def health(self) -> dict[str, Any]:
-        """Current connection state: ``state`` ("starting"/"running"/"stopped"/"error")
-        plus adapter-specific detail."""
+        """Current connection state plus adapter-specific detail."""
         return {"state": "stopped"}
-
-    # -- Outbound ----------------------------------------------------------
 
     async def send_text(
         self,

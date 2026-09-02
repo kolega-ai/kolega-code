@@ -197,7 +197,6 @@ async def test_photo_downloads_as_image_attachment(tmp_path: Path) -> None:
     attachments = await adapter._download_media(make_photo_message(message_id=77, caption="look!"), make_fake_bot())
     assert len(attachments) == 1
     assert attachments[0].kind == "image"
-    assert attachments[0].caption == "look!"
     assert attachments[0].source.endswith("image-77.jpg")
     adapter._bot.download.assert_awaited_once_with("PHOTO-1", destination=tmp_path / "image-77.jpg")
 
@@ -327,7 +326,6 @@ def test_to_inbound_maps_plain_message() -> None:
     assert inbound.text == "hi there"
     assert inbound.topic_id is None
     assert inbound.reply_to is None
-    assert inbound.account_id == "123"
 
 
 def test_to_inbound_maps_forum_topic() -> None:
@@ -343,7 +341,6 @@ def test_to_inbound_captures_quoted_reply() -> None:
     inbound = adapter._to_inbound(make_message("see above", reply=quoted))
     assert inbound is not None
     assert inbound.reply_to is not None
-    assert inbound.reply_to.message_id == "55"
     assert inbound.reply_to.text == "original text"
     assert inbound.reply_to.sender_id == "3"
 

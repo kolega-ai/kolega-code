@@ -241,13 +241,11 @@ class TelegramAdapter(GatewayAdapter):
             # The last photo is the largest resolution.
             path = await self._download_file(message.photo[-1].file_id, f"image-{message.message_id}.jpg")
             if path is not None:
-                attachments.append(
-                    Attachment(kind="image", source=str(path), mime="image/jpeg", caption=message.caption)
-                )
+                attachments.append(Attachment(kind="image", source=str(path)))
         elif message.voice:
             path = await self._download_file(message.voice.file_id, f"voice-{message.message_id}.ogg")
             if path is not None:
-                attachments.append(Attachment(kind="voice", source=str(path), mime="audio/ogg"))
+                attachments.append(Attachment(kind="voice", source=str(path)))
         elif message.document:
             if (message.document.file_size or 0) > MAX_DOWNLOAD_BYTES:
                 await self._oversize_notice(message, bot)
@@ -256,12 +254,7 @@ class TelegramAdapter(GatewayAdapter):
                 path = await self._download_file(message.document.file_id, name)
                 if path is not None:
                     attachments.append(
-                        Attachment(
-                            kind="document",
-                            source=str(path),
-                            mime=message.document.mime_type,
-                            file_name=message.document.file_name,
-                        )
+                        Attachment(kind="document", source=str(path), file_name=message.document.file_name)
                     )
         return tuple(attachments)
 
@@ -301,14 +294,12 @@ class TelegramAdapter(GatewayAdapter):
         if message.reply_to_message is not None:
             quoted = message.reply_to_message
             reply_to = ReplyContext(
-                message_id=str(quoted.message_id),
                 text=quoted.text or quoted.caption or "",
                 sender_id=str(quoted.from_user.id) if quoted.from_user else "",
             )
         is_group = message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
         return InboundMessage(
             channel=self.name,
-            account_id=self._bot_id or "",
             chat_id=str(message.chat.id),
             topic_id=str(message.message_thread_id) if message.message_thread_id else None,
             sender_id=str(sender.id) if sender else "unknown",
@@ -317,7 +308,6 @@ class TelegramAdapter(GatewayAdapter):
             text=message.text or message.caption or "",
             attachments=attachments,
             reply_to=reply_to,
-            timestamp=message.date.isoformat() if message.date else None,
             is_group=is_group,
             bot_mentioned=self._bot_mentioned(message, is_group),
         )
@@ -369,7 +359,6 @@ class TelegramAdapter(GatewayAdapter):
         await self.inbound.put(
             InboundMessage(
                 channel=self.name,
-                account_id=self._bot_id or "",
                 chat_id=str(message.chat.id) if message is not None else str(pending.get("chat_id") or ""),
                 sender_id=str(sender.id) if sender else "unknown",
                 sender_name=sender.full_name if sender else "",

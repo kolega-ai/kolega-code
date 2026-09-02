@@ -19,7 +19,7 @@ Layout:
   (``SessionRuntime`` + the ACP-style agent-construction recipe).
 - :mod:`kolega_code.gateway.commands` — slash commands (``/new``, ``/status``, …).
 - :mod:`kolega_code.gateway.control_relay` — permission/question prompts as
-  inline buttons (later phase).
+  inline buttons.
 - :mod:`kolega_code.gateway.redaction` — keep credentials out of chat text.
 """
 

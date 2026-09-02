@@ -419,7 +419,7 @@ async def test_voice_note_transcribes_and_runs_the_turn(tmp_path: Path) -> None:
     voice_path.write_bytes(b"not really audio")
     await handler.handle(
         chat_ref(),
-        inbound_with_media((Attachment(kind="voice", source=str(voice_path), mime="audio/ogg"),)),
+        inbound_with_media((Attachment(kind="voice", source=str(voice_path)),)),
     )
     assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
     assert transcriber.calls == [str(voice_path)]
@@ -438,7 +438,7 @@ async def test_voice_note_keeps_the_caption_with_the_transcript(tmp_path: Path) 
     handler, adapter, config = make_handler(tmp_path, transcriber=transcriber)
     voice_path = tmp_path / "note.ogg"
     voice_path.write_bytes(b"audio")
-    message = inbound_with_media((Attachment(kind="voice", source=str(voice_path), mime="audio/ogg"),))
+    message = inbound_with_media((Attachment(kind="voice", source=str(voice_path)),))
     message = InboundMessage(
         channel=message.channel,
         chat_id=message.chat_id,
@@ -467,7 +467,7 @@ async def test_voice_note_with_stt_disabled_gets_a_notice_and_no_turn(tmp_path: 
     voice_path.write_bytes(b"audio")
     await handler.handle(
         chat_ref(),
-        inbound_with_media((Attachment(kind="voice", source=str(voice_path), mime="audio/ogg"),)),
+        inbound_with_media((Attachment(kind="voice", source=str(voice_path)),)),
     )
     assert await wait_for(lambda: "transcription is disabled" in all_sent_texts(adapter))
     assert "hello from the scripted model" not in all_sent_texts(adapter)
@@ -483,7 +483,7 @@ async def test_image_attachment_reaches_the_agent(tmp_path: Path) -> None:
     handler, adapter, config = make_handler(tmp_path)
     await handler.handle(
         chat_ref(),
-        inbound_with_media((Attachment(kind="image", source=str(image_path), mime="image/png"),)),
+        inbound_with_media((Attachment(kind="image", source=str(image_path)),)),
     )
     assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
     await handler.shutdown()
@@ -499,7 +499,7 @@ async def test_unreadable_image_gets_a_notice_and_no_turn(tmp_path: Path) -> Non
     missing = tmp_path / "gone.png"
     await handler.handle(
         chat_ref(),
-        inbound_with_media((Attachment(kind="image", source=str(missing), mime="image/png"),)),
+        inbound_with_media((Attachment(kind="image", source=str(missing)),)),
     )
     assert await wait_for(lambda: "could not be attached" in all_sent_texts(adapter))
     assert "hello from the scripted model" not in all_sent_texts(adapter)
@@ -513,9 +513,7 @@ async def test_document_note_points_the_model_at_the_file(tmp_path: Path) -> Non
     doc_path.write_bytes(b"pdf-ish")
     await handler.handle(
         chat_ref(),
-        inbound_with_media(
-            (Attachment(kind="document", source=str(doc_path), mime="application/pdf", file_name="report.pdf"),)
-        ),
+        inbound_with_media((Attachment(kind="document", source=str(doc_path), file_name="report.pdf"),)),
     )
     assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
     await handler.shutdown()

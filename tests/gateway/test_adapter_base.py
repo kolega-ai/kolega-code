@@ -23,7 +23,7 @@ class MinimalAdapter(GatewayAdapter):
 
 def test_chat_ref_key_includes_channel_and_topic() -> None:
     assert ChatRef("telegram", "42").key == "telegram:42"
-    assert ChatRef("telegram", "42", account_id="bot2", topic_id="7").key == "telegram:42:7"
+    assert ChatRef("telegram", "42", topic_id="7").key == "telegram:42:7"
     # Same chat id on another channel must never collide.
     assert ChatRef("discord", "42").key != ChatRef("telegram", "42").key
 
@@ -34,7 +34,6 @@ def test_chat_ref_from_message_maps_envelope_fields() -> None:
         chat_id="9",
         sender_id="1",
         message_id="m-1",
-        account_id="bot1",
         topic_id="3",
     )
     ref = ChatRef.from_message(message)
@@ -59,7 +58,7 @@ def test_envelope_records_are_frozen() -> None:
 
 
 def test_reply_context_defaults() -> None:
-    reply = ReplyContext(message_id="m-1")
+    reply = ReplyContext()
     assert reply.text == ""
     assert reply.sender_id == ""
 
@@ -94,7 +93,7 @@ async def test_adapter_inbound_queue_round_trip() -> None:
         sender_id="2",
         message_id="m-1",
         text="hello",
-        attachments=(Attachment(kind="image", source="/tmp/a.png", mime="image/png"),),
+        attachments=(Attachment(kind="image", source="/tmp/a.png"),),
     )
     await adapter.inbound.put(message)
     received = await adapter.inbound.get()

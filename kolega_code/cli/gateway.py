@@ -26,7 +26,7 @@ from kolega_code.gateway.daemon import (
     STATUS_FILE_NAME,
     STATUS_STALE_SECONDS,
 )
-from kolega_code.gateway.handlers import EchoTurnHandler
+from kolega_code.gateway.adapters.echo import EchoTurnHandler
 from kolega_code.gateway.service import (
     LAUNCHD_LABEL,
     SERVICE_NAME,

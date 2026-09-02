@@ -57,9 +57,9 @@ from kolega_code.gateway.questions import build_question_extension
 from kolega_code.gateway.redaction import scrub
 from kolega_code.gateway.router import SessionRegistry
 from kolega_code.gateway.stt import (
+    SttProvider,
     SttProviderError,
     SttProviderNotConfigured,
-    Transcriber,
     build_transcriber,
 )
 from kolega_code.utils.images import encode_image_file
@@ -104,7 +104,7 @@ class AgentTurnHandler:
         settings_store: SettingsStore,
         overrides: Optional[CliConfigOverrides] = None,
         agent_builder: Optional[AgentBuilder] = None,
-        transcriber: Optional[Transcriber] = None,
+        transcriber: Optional[SttProvider] = None,
     ) -> None:
         self._config = config
         self._adapter = adapter
@@ -299,20 +299,15 @@ class AgentTurnHandler:
                     model=self._config.stt_model,
                 )
             except SttProviderNotConfigured as exc:
-                # E.g. groq selected but no key stored: the user fixes the
-                # configuration, and the next note rebuilds the provider.
                 await self._adapter.send_text(chat_ref.chat_id, f"🎙 {exc}")
                 return None
             except SttProviderError as exc:
                 await self._adapter.send_text(chat_ref.chat_id, f"🎙 {exc}")
                 return None
-            if not transcriber.available():
-                await self._adapter.send_text(chat_ref.chat_id, f"🎙 {transcriber.unavailable_message()}")
-                return None
             self._transcriber = transcriber
         try:
             transcript = await transcriber.transcribe(Path(source))
-        except Exception:  # noqa: BLE001 — a failed note must not kill the chat
+        except Exception:  # noqa: BLE001
             logger.exception("gateway: voice transcription failed")
             await self._adapter.send_text(
                 chat_ref.chat_id, "🎙 Transcription failed; the voice note was not understood."

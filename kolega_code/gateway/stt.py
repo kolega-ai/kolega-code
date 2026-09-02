@@ -2,10 +2,9 @@
 
 Remote-only by design: voice notes upload to a hosted transcription API —
 no local model downloads, no heavyweight optional extras. The registry
-mirrors the web-search backend pattern: named provider classes implement the
-:class:`Transcriber` protocol, and the TUI Select options plus gateway config
-derive from the registry, so adding a provider is a class plus a registry
-entry.
+mirrors the web-search backend pattern: named provider classes derive from
+:class:`SttProvider`, and the TUI Select options plus gateway config derive
+from the registry, so adding a provider is a class plus a registry entry.
 
 ``groq`` is the built-in default: Groq's hosted Whisper
 (``whisper-large-v3-turbo`` by default), the same provider/model family
@@ -18,22 +17,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import ClassVar, Dict, List, Optional, Protocol, Tuple, Type
+from typing import ClassVar, Dict, List, Optional, Tuple, Type
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_STT_PROVIDER = "groq"
-#: Groq's OpenAI-compatible audio transcriptions endpoint.
 GROQ_TRANSCRIPTIONS_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
-#: Groq's per-file upload limit for transcription requests.
 GROQ_MAX_AUDIO_BYTES = 25 * 1024 * 1024
-#: Known Groq Whisper models; model names stay free-form but these are the
-#: documented set the API accepts today.
-GROQ_MODELS = {
-    "whisper-large-v3",
-    "whisper-large-v3-turbo",
-    "distil-whisper-large-v3-en",
-}
 
 _AUDIO_CONTENT_TYPES = {
     ".aac": "audio/aac",
@@ -61,35 +51,17 @@ class SttProviderUnavailable(SttProviderError):
     """Raised when a provider request cannot be completed."""
 
 
-class Transcriber(Protocol):
-    """Anything that turns an audio file into text."""
-
-    async def transcribe(self, path: Path) -> str: ...
-
-
 class SttProvider:
     """Base class for pluggable speech-to-text providers."""
 
     name: ClassVar[str]
     label: ClassVar[str]
     default_model: ClassVar[str]
-    #: Environment variable that may supply this provider's API key, when the
-    #: gateway runs outside a shell with the user's profile loaded.
     key_env_var: ClassVar[Optional[str]] = None
 
     def __init__(self, *, model: Optional[str] = None, api_key: Optional[str] = None) -> None:
         self.model = model or self.default_model
         self.api_key = api_key
-
-    @classmethod
-    def available(cls) -> bool:
-        """Whether the provider can run right now (remote providers always can)."""
-        return True
-
-    @classmethod
-    def unavailable_message(cls) -> str:
-        """What the operator should do when :meth:`available` is false."""
-        return "Speech-to-text is not available for this provider. Fix the provider and restart the gateway."
 
     async def transcribe(self, path: Path) -> str:
         raise NotImplementedError
@@ -202,14 +174,12 @@ def build_transcriber(
 
 __all__ = [
     "DEFAULT_STT_PROVIDER",
-    "GROQ_MODELS",
     "GROQ_TRANSCRIPTIONS_URL",
     "GroqWhisperTranscriber",
     "SttProvider",
     "SttProviderError",
     "SttProviderNotConfigured",
     "SttProviderUnavailable",
-    "Transcriber",
     "available_stt_providers",
     "build_transcriber",
     "get_stt_provider_class",
