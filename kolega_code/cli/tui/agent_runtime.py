@@ -1112,6 +1112,11 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 self._write_log(messages.LOG_IGNORED_EVENT.format(event_type=event.event_type), "debug")
 
     def action_cancel_generation(self) -> None:
+        # /handoff generation is a helper request, not an agent turn: Esc aborts
+        # the handoff stream cooperatively and leaves the session untouched.
+        if self._handoff_in_progress and self._handoff_cancel_event is not None:
+            self._handoff_cancel_event.set()
+            return
         if self.agent_worker is not None:
             self._update_progress(messages.STOP_REQUESTED, complete=False, state=tui_state.TurnState.STOPPING)
             self._cancel_pending_question()

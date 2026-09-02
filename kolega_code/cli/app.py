@@ -61,6 +61,7 @@ from kolega_code.agent.prompts import (
     build_implement_plan_prompt,
     build_mode_switch_notice,
 )
+from kolega_code.agent.handoff import build_handoff_context_text
 from kolega_code.hooks import HookDispatcher, HookEvent
 from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.memory import ProjectMemoryManager
@@ -309,6 +310,10 @@ class KolegaCodeApp(
         self._session_diff_timer: Optional[Timer] = None
         self._session_diff_baseline_id: Optional[int] = None
         self._rewind_running = False
+        # /handoff state: the guard flag plus the cancel event the Esc path sets
+        # while the handoff document is generating.
+        self._handoff_in_progress = False
+        self._handoff_cancel_event: Optional[asyncio.Event] = None
         self._workflow_activities: dict[str, tui_state.WorkflowActivity] = {}
         self._render_pending = False
         self._conversation_anchor_pending = False
@@ -966,6 +971,7 @@ class KolegaCodeApp(
             loop=dict(record.loop),
             usage=dict(record.usage),
             active_project_path=record.active_project_path,
+            parent_session_id=record.parent_session_id,
         )
 
     async def _save_session_async(self) -> None:
@@ -2826,6 +2832,140 @@ class KolegaCodeApp(
         self._add_conversation_entry(
             tui_state.ConversationEntry(kind="progress", content=messages.THREAD_RESET_MESSAGE, complete=True)
         )
+
+    async def _handoff_session(self, document: str) -> None:
+        """Switch to a fresh session whose entire context is ``document``.
+
+        The caller has already generated the document and holds no running
+        turn or worker. The old session is flushed and left intact (resumable);
+        the new session records it as ``parent_session_id`` and restores the
+        document as its opening conversation.
+        """
+        # 1) Final durable flush of the old session while its agent/recorder are
+        #    still live and bound to the old session id.
+        await self._save_session_history_async()
+        await self._save_session_async()
+
+        # 2) Create the new session record first so the lineage notice can name it.
+        new_record = self.store.create(
+            self.project_path,
+            self.mode,
+            dict(self.session.config),
+            parent_session_id=self.session.session_id,
+        )
+
+        # 3) Lineage in the old journal: a trailing context message, then an epoch
+        #    boundary so the old session's replay shows where the work moved.
+        self._session_recorder.record_context_message(
+            Message(
+                role="user",
+                content=[TextBlock(text=messages.HANDOFF_OLD_SESSION_NOTICE.format(title=new_record.title))],
+            ),
+            actor="system",
+        )
+        await asyncio.to_thread(self._session_recorder.start_epoch, "handoff")
+
+        # 4) Tear down the old agent generation before any session object rebinds,
+        #    so nothing keeps writing into the old journal through it.
+        await self._cleanup_agent_generation()
+
+        # 5) Stop services bound to the old session.
+        if self._share_server is not None:
+            await self._stop_share_server()
+        if self._usage_sink is not None:
+            await self._usage_sink.aclose()
+            self._usage_sink = None
+        self._unregister_from_inbox()
+        await self._stop_inbox_socket()
+
+        # 6) Rebind the session-bound surface to the new id.
+        self.session = new_record
+        self._session_recorder = self.store.recorder(new_record.session_id)
+        journal = self.store.journal(new_record.session_id)
+        self.recording_connection_manager = RecordingConnectionManager(
+            self.connection_manager,
+            FileSessionEventStore(journal),
+            session_id=new_record.session_id,
+            artifact_store=FileArtifactStore(journal),
+        )
+        self._recording_primed = False
+        self.control_channel = control_channel_for(
+            new_record.session_id,
+            self.recording_connection_manager.broadcast_event,
+            workspace_id=new_record.workspace_id,
+            thread_id=new_record.thread_id,
+        )
+        self.control_channel.acquire(tui_constants.TUI_CLIENT_ID)
+        self.session_runtime = SessionRuntime(
+            session_id=new_record.session_id,
+            project_path=self.project_path,
+            control=self.control_channel,
+            permission_mode=self.permission_mode,
+            on_notice=lambda text: self._notify_user(text, severity="warning"),
+        )
+        self._register_with_inbox()
+        await self._start_inbox_socket()
+
+        # 7) Reset per-thread state (mirrors _reset_current_thread). The agent is
+        #    already torn down, so agent-side resets come from the fresh build.
+        self._close_sub_agent_inspector()
+        self.session.history = []
+        self.session.compaction = {}
+        self.session.task_list_markdown = ""
+        self._session_file_changes = []
+        self._session_diff_dirty = True
+        self._clear_queued_messages()
+        self._latest_plan = None
+        self._plan_pending = False
+        self._plan_reofferable = False
+        self._plan_decision_active = False
+        self._goal = None
+        self.session.goal = {}
+        self._goal_usage_mark = self._usage_ledger.snapshot()
+        self._scheduled_loop = None
+        self.session.loop = {}
+        self._loop_iteration_active = False
+        self._clear_runtime_output()
+        self._set_plan_actions_visible(False)
+        self._cancel_pending_approval()
+
+        # 8) Seed the new session with the handoff document as its only context,
+        #    both in the journal and in the in-memory projection.
+        handoff_message = Message(
+            role="user",
+            content=[TextBlock(text=build_handoff_context_text(document))],
+        )
+        self.session.history = [handoff_message.to_dict()]
+        self._session_recorder.record_context_message(handoff_message, actor="agent")
+
+        # 9) Fresh agent generation bound to the new session: the restore makes
+        #    the handoff document the agent's entire conversation.
+        config = self.config
+        assert config is not None  # an agent existed, so a config was built
+        self._session_started = False
+        await self._build_agent(config, rebuild=True, restore_transcript=True)
+
+        # 10) Usage persistence on the new journal.
+        usage_sink = SessionUsageSink(
+            self.store.journal(new_record.session_id),
+            self._session_recorder,
+            self._usage_ledger,
+            mode="tui",
+        )
+        self._usage_sink = usage_sink
+        self._usage_ledger.observer = usage_sink
+        await usage_sink.start()
+
+        # 11) Persist the new session and announce the switch.
+        await self._save_session_async()
+        self._refresh_status_dashboard()
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(
+                kind="system",
+                content=messages.HANDOFF_SUCCESS.format(title=new_record.title),
+            )
+        )
+        self._log_status(messages.HANDOFF_SUCCESS.format(title=new_record.title), "ok")
 
     def _add_conversation_entry(self, entry: tui_state.ConversationEntry) -> None:
         self.conversation_entries.append(entry)

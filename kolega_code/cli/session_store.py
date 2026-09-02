@@ -164,6 +164,9 @@ class SessionRecord:
     loop: dict[str, Any] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
     active_project_path: Optional[str] = None
+    # The session this one was handed off from, if any. Additive optional —
+    # absent in older files.
+    parent_session_id: Optional[str] = None
 
     @classmethod
     def create(
@@ -173,6 +176,7 @@ class SessionRecord:
         config: dict[str, Any],
         session_id: Optional[str] = None,
         title: Optional[str] = None,
+        parent_session_id: Optional[str] = None,
     ) -> "SessionRecord":
         now = _now()
         resolved_project = str(project_path.resolve())
@@ -189,6 +193,7 @@ class SessionRecord:
             updated_at=now,
             config=config,
             history=[],
+            parent_session_id=parent_session_id,
         )
 
     @classmethod
@@ -222,6 +227,7 @@ class SessionRecord:
             goal=data.get("goal") or {},
             loop=data.get("loop") or {},
             active_project_path=data.get("active_project_path") or None,
+            parent_session_id=data.get("parent_session_id") or None,
         )
 
     def to_metadata_dict(self) -> dict[str, Any]:
@@ -247,6 +253,7 @@ class SessionRecord:
             "goal": self.goal,
             "loop": self.loop,
             "active_project_path": self.active_project_path,
+            "parent_session_id": self.parent_session_id,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -328,8 +335,11 @@ class SessionStore:
         config: dict[str, Any],
         session_id: Optional[str] = None,
         title: Optional[str] = None,
+        parent_session_id: Optional[str] = None,
     ) -> SessionRecord:
-        record = SessionRecord.create(project_path, mode, config, session_id=session_id, title=title)
+        record = SessionRecord.create(
+            project_path, mode, config, session_id=session_id, title=title, parent_session_id=parent_session_id
+        )
         self.ensure_dirs()
         session_dir = self.session_dir_for(record.session_id)
         if session_dir.exists() or self.legacy_path_for(record.session_id).exists():

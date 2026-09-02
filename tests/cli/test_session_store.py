@@ -91,6 +91,33 @@ def test_new_sessions_get_generated_peer_names(tmp_path: Path) -> None:
     assert len(titles) > 1
 
 
+def test_parent_session_id_round_trips_through_store(tmp_path: Path) -> None:
+    """Handoff lineage persists: the child records its parent across save/load."""
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+
+    parent = store.create(project, "code", {})
+    child = store.create(project, "code", {}, parent_session_id=parent.session_id)
+
+    assert child.parent_session_id == parent.session_id
+    assert child.to_dict()["parent_session_id"] == parent.session_id
+    assert child.to_metadata_dict()["parent_session_id"] == parent.session_id
+    assert store.load(child.session_id).parent_session_id == parent.session_id
+    # Unparented sessions round-trip as None.
+    assert store.load(parent.session_id).parent_session_id is None
+
+    # The record-level constructor passes the link through too.
+    direct = SessionRecord.create(project, "code", {}, parent_session_id=parent.session_id)
+    assert direct.parent_session_id == parent.session_id
+
+    # A metadata dict without the key (pre-handoff sessions) loads as None.
+    payload = json.loads(store.path_for(child.session_id).read_text(encoding="utf-8"))
+    payload.pop("parent_session_id")
+    store.path_for(child.session_id).write_text(json.dumps(payload), encoding="utf-8")
+    assert store.load(child.session_id).parent_session_id is None
+
+
 def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()

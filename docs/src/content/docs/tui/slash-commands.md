@@ -53,6 +53,7 @@ These control the app and your session.
 | `/loop` | Run a prompt on a repeating schedule |
 | `/tasks` | Show the shared task list |
 | `/queue-clear` | Clear queued follow-up messages |
+| `/handoff` | Summarize this session and start a fresh one with the summary as context |
 | `/share` | Share a live link to this session (`/share lan`, `/share <port>`, `/share stop`) |
 | `/copy` | Copy the last response to the clipboard |
 | `/diagnostics` | Show version, model/endpoint, and the local diagnostics log path |
@@ -153,6 +154,23 @@ without an API key; `/logout chatgpt` removes the stored credentials. See
 Run `/queue-clear` to discard follow-up prompts that you queued while the current
 turn is running. It removes their `Queued` transcript entries, but it does not
 cancel or otherwise stop the active agent turn.
+
+Run `/handoff` to have the current session summarized into a structured handoff
+document (goal, constraints, progress, key decisions, critical context, and next
+steps) and switch to a brand-new session whose entire context is that document.
+The old session is left intact and resumable; the new one records it as its
+parent. This is the reset of last resort: use it when the conversation itself is
+the problem — accumulated noise, context drift, or patterns baked into the
+history — rather than just its size (which [`/compress`](#agent-built-ins)
+handles in place). Add focus instructions to steer the summary:
+
+```text
+/handoff focus on the failing integration tests
+```
+
+Handoff refuses while a response is streaming, or when the session has fewer than
+two messages. Press `Esc` while the summary is generating to cancel; the session
+is left exactly as it was.
 
 Run `/tasks` to print the shared task list into the transcript. It reads session
 state directly and never starts an agent turn, so it is available in both

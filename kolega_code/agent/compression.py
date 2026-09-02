@@ -33,7 +33,7 @@ class CompactionResult:
     message: str = ""
 
 
-def _render_transcript(messages: List[Message]) -> str:
+def render_transcript(messages: List[Message]) -> str:
     """Role-tagged plain text: JSON only for tool arguments, tool results raw.
 
     JSON-escaping newline-heavy tool output costs ~30% more tokens than
@@ -250,13 +250,13 @@ class HistoryCompressor:
                 omitted = tail_start - head_end
                 if omitted:
                     parts = [
-                        _render_transcript(prefix[:head_end]),
+                        render_transcript(prefix[:head_end]),
                         _omission_notice(omitted),
-                        _render_transcript(prefix[tail_start:]),
+                        render_transcript(prefix[tail_start:]),
                     ]
                     transcript = "\n\n".join(part for part in parts if part)
                 else:
-                    transcript = _render_transcript(prefix)
+                    transcript = render_transcript(prefix)
                 prompt = build_compression_summary_user_prompt(transcript, previous_summary=previous_summary)
                 return MessageHistory([Message(role="user", content=[TextBlock(text=prompt)])])
 

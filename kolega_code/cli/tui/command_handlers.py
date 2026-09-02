@@ -17,6 +17,7 @@ from kolega_code.agent.prompt_dump import (
     validate_prompt_overrides,
 )
 from kolega_code.agent.prompts import build_init_agents_prompt
+from kolega_code.agent.handoff import HandoffCancelledError, generate_handoff_document
 from kolega_code.auth import constants as chatgpt_constants
 from kolega_code.auth.chatgpt_oauth import run_login_flow
 from kolega_code.llm.models import Message, TextBlock
@@ -82,6 +83,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             "/prompts": self._command_prompts,
             "/queue-clear": self._command_queue_clear,
             "/rewind": self._command_rewind,
+            "/handoff": self._command_handoff,
             "/theme": self._command_theme,
             "/share": self._command_share,
             "/copy": self._command_copy,
@@ -1520,6 +1522,64 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         # silently on the session-start baseline.
         baseline = ladder[max(1, len(ladder) - turns_back)]
         self.action_open_changes(baseline_id=baseline)
+
+    async def _command_handoff(self, args: str) -> None:
+        """Summarize this session and switch to a fresh session seeded with it.
+
+        The old session is flushed and left resumable; the new session records
+        it as ``parent_session_id``. Esc during generation aborts cooperatively
+        and leaves everything unchanged.
+        """
+        if self._handoff_in_progress:
+            return
+        if self._turn_active or self.agent_worker is not None:
+            self._show_composer_hint(messages.BLOCK_STOP_BEFORE_HANDOFF)
+            self._notify_user(messages.BLOCK_STOP_BEFORE_HANDOFF, severity="warning")
+            return
+        if self.agent is None:
+            self._notify_user(messages.SETTINGS_REQUIRED, severity="warning")
+            return
+
+        focus = args.strip() or None
+        self._handoff_in_progress = True
+        self._handoff_cancel_event = asyncio.Event()
+        self._set_composer_status(messages.HANDOFF_GENERATING)
+        self._set_chat_enabled(False)
+        try:
+            result = await generate_handoff_document(
+                self.agent.history,
+                llm=self.agent.llm,
+                model=self.agent.primary_model_config.model,
+                temperature=self.agent.model_default_temperature,
+                thinking=self.agent.primary_model_config.thinking_effort,
+                focus=focus,
+                cancel_event=self._handoff_cancel_event,
+            )
+        except HandoffCancelledError:
+            self._restore_composer_placeholder()
+            self._set_chat_enabled(True)
+            self._notify_user(messages.HANDOFF_CANCELLED, severity="warning")
+            return
+        finally:
+            self._handoff_in_progress = False
+            self._handoff_cancel_event = None
+
+        if not result.ok:
+            self._restore_composer_placeholder()
+            self._set_chat_enabled(True)
+            severity = "warning" if result.reason == "too_few" else "error"
+            self._notify_user(result.message, severity=severity)
+            return
+
+        try:
+            await self._handoff_session(result.document)
+        except Exception as exc:  # noqa: BLE001 — surface the failure, never crash the TUI
+            self._restore_composer_placeholder()
+            self._set_chat_enabled(self.agent is not None)
+            self._notify_user(messages.HANDOFF_FAILED.format(error=exc), severity="error")
+            return
+        self._restore_composer_placeholder()
+        self._set_chat_enabled(True)
 
     async def _command_quit(self, args: str) -> None:
         await self.action_quit()
