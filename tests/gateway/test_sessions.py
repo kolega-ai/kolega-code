@@ -505,6 +505,37 @@ async def test_model_switch_rejects_unknown_models(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_permissions_command_reports_and_switches(tmp_path: Path) -> None:
+    handler, adapter, config = make_handler(tmp_path)
+    await handler.handle(chat_ref(), inbound("hello", message_id="m-1"))
+    assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+
+    await handler.handle(chat_ref(), inbound("/permissions", message_id="m-2"))
+    assert await wait_for(lambda: "Permissions: ask" in all_sent_texts(adapter))
+
+    entry = handler._registry.get(chat_ref())
+    assert entry is not None
+    await handler.handle(chat_ref(), inbound("/permissions auto", message_id="m-3"))
+    assert await wait_for(lambda: "Permissions: auto" in all_sent_texts(adapter))
+    assert entry.payload.runtime.permission_mode.value == "auto"
+    # The change persists with the session record.
+    await handler.shutdown()
+    session_id = session_map(config.state_dir)[chat_ref().key]
+    record = SessionStore(root=config.state_dir).load(session_id)
+    assert record.permission_mode == "auto"
+
+
+@pytest.mark.asyncio
+async def test_permissions_command_rejects_unknown_modes(tmp_path: Path) -> None:
+    handler, adapter, _ = make_handler(tmp_path)
+    await handler.handle(chat_ref(), inbound("hello", message_id="m-1"))
+    assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+    await handler.handle(chat_ref(), inbound("/permissions banana", message_id="m-2"))
+    assert await wait_for(lambda: "Unknown permission mode" in all_sent_texts(adapter))
+    await handler.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_model_switch_is_refused_during_a_turn(tmp_path: Path) -> None:
     blocker = asyncio.Event()
     handler, adapter, _ = make_handler(

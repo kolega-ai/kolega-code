@@ -28,7 +28,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ChatAction, ChatType, ParseMode
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import BotCommand, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types import Message as TelegramMessage
 
 from kolega_code.gateway.adapters.base import (
@@ -149,11 +149,23 @@ class TelegramAdapter(GatewayAdapter):
         self._state = "starting"
         # Long-polling must be the only consumer of updates.
         await self._bot.delete_webhook(drop_pending_updates=True)
+        try:
+            # Register the slash-command menu so Telegram shows it while
+            # typing (the commands themselves work either way).
+            await self._bot.set_my_commands(self._bot_commands())
+        except Exception:  # noqa: BLE001 — the menu is cosmetic, polling must proceed
+            logger.debug("telegram: set_my_commands failed", exc_info=True)
         self._poll_task = asyncio.create_task(self._poll_supervisor(), name="telegram-adapter-polling")
         me = await self._bot.me()
         self._bot_id = str(me.id)
         self._bot_username = me.username
         self._state = "running"
+
+    @staticmethod
+    def _bot_commands() -> list[BotCommand]:
+        from kolega_code.gateway.commands import BOT_COMMANDS
+
+        return [BotCommand(command=name, description=description) for name, description in BOT_COMMANDS]
 
     async def _poll_supervisor(self) -> None:
         """Run the polling loop, reconnecting with backoff on fatal exits.

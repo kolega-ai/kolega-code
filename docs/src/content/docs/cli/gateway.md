@@ -55,7 +55,9 @@ below).
 
 ## In-chat commands
 
-`/new`, `/status`, `/model [model]`, `/stop`, `/help`.
+`/new`, `/status`, `/model [model]`, `/permissions [ask|auto]`, `/stop`, `/help`.
+The same commands are registered with Telegram so they appear in the slash
+menu while typing.
 
 ## Pairing new senders
 

@@ -14,12 +14,26 @@ COMMAND_NEW = "new"
 COMMAND_RESET = "reset"
 COMMAND_STOP = "stop"
 COMMAND_MODEL = "model"
+COMMAND_PERMISSIONS = "permissions"
+
+#: Command menu registered with Telegram (setMyCommands), so the slash
+#: menu shows up when typing in the chat. Single source for the adapter and
+#: the help text.
+BOT_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("status", "Show session and model info"),
+    ("new", "Start a fresh session"),
+    ("model", "Show or switch this chat's model"),
+    ("permissions", "Show or change the permission mode"),
+    ("stop", "Cancel the running turn"),
+    ("help", "List commands"),
+)
 
 HELP_TEXT = (
     "Commands:\n"
     "/new — start a fresh session\n"
     "/status — show session and model info\n"
     "/model [model] — show or switch this chat's model\n"
+    "/permissions [ask|auto] — show or change the permission mode\n"
     "/stop — cancel the running turn\n"
     "/help — this list"
 )

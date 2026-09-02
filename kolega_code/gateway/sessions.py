@@ -41,6 +41,7 @@ from kolega_code.gateway.commands import (
     COMMAND_HELP,
     COMMAND_MODEL,
     COMMAND_NEW,
+    COMMAND_PERMISSIONS,
     COMMAND_RESET,
     COMMAND_STATUS,
     COMMAND_STOP,
@@ -306,6 +307,8 @@ class AgentTurnHandler:
             await self._adapter.send_text(chat_ref.chat_id, await self._status_text(chat_ref))
         elif name == COMMAND_MODEL:
             await self._model_command(chat_ref, args)
+        elif name == COMMAND_PERMISSIONS:
+            await self._permissions_command(chat_ref, args)
         elif name in (COMMAND_NEW, COMMAND_RESET):
             await self._reset_session(chat_ref)
             await self._adapter.send_text(chat_ref.chat_id, "🆕 New session started.")
@@ -413,6 +416,33 @@ class AgentTurnHandler:
         if agent is None:
             return "", spec
         return agent.primary_model_config.provider.value, spec
+
+    async def _permissions_command(self, chat_ref: ChatRef, args: str) -> None:
+        entry = self._registry.get(chat_ref)
+        if entry is None or entry.payload.runtime.agent is None:
+            await self._adapter.send_text(chat_ref.chat_id, "No active session yet — send a message to start one.")
+            return
+        payload = entry.payload
+        if not args.strip():
+            await self._adapter.send_text(
+                chat_ref.chat_id,
+                f"Permissions: {payload.runtime.permission_mode.value}\n"
+                "Change with /permissions ask (approve each tool via buttons) or "
+                "/permissions auto (approve everything).",
+            )
+            return
+        try:
+            permission_mode = PermissionMode(args.strip().lower())
+        except ValueError:
+            await self._adapter.send_text(
+                chat_ref.chat_id,
+                f"Unknown permission mode {args.strip()!r}. Valid modes: ask, auto.",
+            )
+            return
+        payload.runtime.set_permission_mode(permission_mode)
+        payload.record.permission_mode = permission_mode.value
+        self._store.save(payload.record)
+        await self._adapter.send_text(chat_ref.chat_id, f"Permissions: {permission_mode.value}")
 
     # -- Session lifecycle -------------------------------------------------
 
