@@ -1,0 +1,408 @@
+"""TelegramAdapter envelope conversion and capability contract (no network)."""
+
+import asyncio
+import inspect
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from aiogram.types import Chat, Document, Message, PhotoSize, User, Voice
+from aiogram.enums import ChatType
+
+from kolega_code.gateway.adapters.base import ButtonOption
+from kolega_code.gateway.adapters.telegram import TelegramAdapter
+from kolega_code.gateway.adapters.telegram.adapter import (
+    MAX_DOWNLOAD_BYTES,
+    decode_callback,
+    encode_callback,
+    validate_bot_token,
+)
+
+
+def test_validate_bot_token_accepts_botfather_shape() -> None:
+    assert validate_bot_token("123456:fake-bot-token-for-tests-only") == ("123456:fake-bot-token-for-tests-only")
+
+
+def test_validate_bot_token_rejects_non_token_values() -> None:
+    for bad in ("", "not-a-token", "123456:", ":fake-bot-token-for-tests-only", "123456:short"):
+        with pytest.raises(ValueError):
+            validate_bot_token(bad)
+
+
+def test_adapter_constructor_validates_token() -> None:
+    with pytest.raises(ValueError):
+        TelegramAdapter(token="garbage")
+
+
+def make_adapter() -> TelegramAdapter:
+    adapter = TelegramAdapter(token="123:fake-bot-token-for-tests-only")
+    adapter._bot_id = "123"  # type: ignore[assignment] — set post-init for offline tests
+    return adapter
+
+
+def make_photo_message(message_id: int = 100, caption: str | None = None) -> Message:
+    return Message(
+        message_id=message_id,
+        date=datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc),
+        chat=Chat(id=42, type=ChatType.PRIVATE),
+        from_user=User(id=7, is_bot=False, first_name="Test User"),
+        caption=caption,
+        photo=[PhotoSize(file_id="PHOTO-1", file_unique_id="u1", width=100, height=100)],
+    )
+
+
+def make_voice_message(message_id: int = 100) -> Message:
+    return Message(
+        message_id=message_id,
+        date=datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc),
+        chat=Chat(id=42, type=ChatType.PRIVATE),
+        from_user=User(id=7, is_bot=False, first_name="Test User"),
+        voice=Voice(file_id="VOICE-1", file_unique_id="u1", duration=3),
+    )
+
+
+def make_document_message(message_id: int = 100, *, file_size: int = 1000, file_name: str | None = None) -> Message:
+    return Message(
+        message_id=message_id,
+        date=datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc),
+        chat=Chat(id=42, type=ChatType.PRIVATE),
+        from_user=User(id=7, is_bot=False, first_name="Test User"),
+        document=Document(file_id="DOC-1", file_unique_id="u1", file_size=file_size, file_name=file_name),
+    )
+
+
+def make_message(
+    text: str | None = "hello",
+    *,
+    chat_id: int = 42,
+    user_id: int = 7,
+    message_id: int = 100,
+    reply: Message | None = None,
+    thread_id: int | None = None,
+    caption: str | None = None,
+    chat_type: ChatType = ChatType.PRIVATE,
+) -> Message:
+    return Message(
+        message_id=message_id,
+        date=datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc),
+        chat=Chat(id=chat_id, type=chat_type),
+        from_user=User(id=user_id, is_bot=False, first_name="Test User"),
+        text=text,
+        caption=caption,
+        message_thread_id=thread_id,
+        reply_to_message=reply,
+    )
+
+
+def test_capabilities() -> None:
+    adapter = make_adapter()
+    assert adapter.capabilities.supports_edits is True
+    assert adapter.capabilities.supports_typing is True
+    assert adapter.capabilities.supports_groups is True
+    assert adapter.capabilities.supports_inline_buttons is True
+    assert adapter.capabilities.text_chunk_limit == 4000
+    assert adapter.capabilities.streaming_mode == "edit_in_place"
+
+
+def test_callback_encode_decode_round_trip() -> None:
+    data = encode_callback("abc123", 4)
+    assert decode_callback(data) == ("abc123", 4)
+    assert len(data) < 64
+
+
+def test_callback_decode_rejects_garbage() -> None:
+    for bad in ("", "no-colon", "tok:", ":1", "tok:abc", "tok:-1", "tok:1:2:3"):
+        assert decode_callback(bad) is None
+
+
+def make_fake_bot() -> AsyncMock:
+    bot = AsyncMock()
+    bot.download = AsyncMock()
+    bot.send_message = AsyncMock()
+    bot.answer_callback_query = AsyncMock()
+    return bot
+
+
+def test_handler_signatures_inject_the_bot_by_name() -> None:
+    # aiogram injects the Bot instance by parameter NAME ("bot"), not
+    # position — a renamed parameter silently breaks every update.
+    adapter = make_adapter()
+    message_params = inspect.signature(adapter._handle_message).parameters
+    callback_params = inspect.signature(adapter._handle_callback).parameters
+    assert "message" in message_params and "bot" in message_params
+    assert "query" in callback_params and "bot" in callback_params
+
+
+@pytest.mark.asyncio
+async def test_callback_handler_publishes_tap_envelope() -> None:
+    adapter = make_adapter()
+    adapter._pending_buttons["tok"] = {"chat_id": "42", "options": ["allow_once", "deny"]}
+    bot = make_fake_bot()
+    query = AsyncMock()
+    query.data = "tok:1"
+    query.id = "9000"
+    query.from_user = User(id=7, is_bot=False, first_name="Tapper")
+    query.message = make_message("approve?", message_id=555)
+
+    await adapter._handle_callback(query, bot)
+
+    inbound = await adapter.inbound.get()
+    assert inbound.callback_token == "tok"
+    assert inbound.callback_option == "deny"
+    assert inbound.chat_id == "42"
+    assert inbound.sender_id == "7"
+    assert inbound.message_id == "cb-9000"
+    assert inbound.text == ""
+    bot.answer_callback_query.assert_awaited_once_with("9000")
+    # One-shot: a second tap on the same token is swallowed.
+    assert adapter._pending_buttons == {}
+    await adapter._handle_callback(query, bot)
+    assert adapter.inbound.empty()
+
+
+@pytest.mark.asyncio
+async def test_callback_handler_ignores_unknown_tokens() -> None:
+    adapter = make_adapter()
+    bot = make_fake_bot()
+    query = AsyncMock()
+    query.data = "ghost:0"
+    query.id = "1"
+    await adapter._handle_callback(query, bot)
+    bot.answer_callback_query.assert_awaited_once()
+    assert adapter.inbound.empty()
+
+
+def test_send_buttons_requires_running_bot() -> None:
+    adapter = make_adapter()
+    with pytest.raises(RuntimeError):
+        asyncio.run(adapter.send_buttons("42", "pick", [ButtonOption("a", "A")]))
+
+
+def test_media_kinds_detection() -> None:
+    adapter = make_adapter()
+    assert adapter._media_kinds(make_photo_message()) == ["image"]
+    assert adapter._media_kinds(make_voice_message()) == ["voice"]
+    assert adapter._media_kinds(make_document_message()) == ["document"]
+    assert adapter._media_kinds(make_message("plain text")) == []
+
+
+@pytest.mark.asyncio
+async def test_photo_downloads_as_image_attachment(tmp_path: Path) -> None:
+    adapter = make_adapter()
+    adapter._media_dir = tmp_path
+    adapter._bot = MagicMock()
+    adapter._bot.download = AsyncMock()
+    attachments = await adapter._download_media(make_photo_message(message_id=77, caption="look!"), make_fake_bot())
+    assert len(attachments) == 1
+    assert attachments[0].kind == "image"
+    assert attachments[0].source.endswith("image-77.jpg")
+    adapter._bot.download.assert_awaited_once_with("PHOTO-1", destination=tmp_path / "image-77.jpg")
+
+
+@pytest.mark.asyncio
+async def test_voice_downloads_as_voice_attachment(tmp_path: Path) -> None:
+    adapter = make_adapter()
+    adapter._media_dir = tmp_path
+    adapter._bot = MagicMock()
+    adapter._bot.download = AsyncMock()
+    attachments = await adapter._download_media(make_voice_message(message_id=3), make_fake_bot())
+    assert len(attachments) == 1
+    assert attachments[0].kind == "voice"
+    assert attachments[0].source.endswith("voice-3.ogg")
+
+
+@pytest.mark.asyncio
+async def test_document_downloads_with_sanitized_name(tmp_path: Path) -> None:
+    adapter = make_adapter()
+    adapter._media_dir = tmp_path
+    adapter._bot = MagicMock()
+    adapter._bot.download = AsyncMock()
+    attachments = await adapter._download_media(
+        make_document_message(message_id=9, file_name="../../report:final.pdf"), make_fake_bot()
+    )
+    assert len(attachments) == 1
+    assert attachments[0].kind == "document"
+    assert attachments[0].file_name == "../../report:final.pdf"
+    assert attachments[0].source == str(tmp_path / "report_final.pdf")
+
+
+@pytest.mark.asyncio
+async def test_oversized_document_is_not_downloaded(tmp_path: Path) -> None:
+    adapter = make_adapter()
+    adapter._media_dir = tmp_path
+    adapter._bot = MagicMock()
+    adapter._bot.download = AsyncMock()
+    attachments = await adapter._download_media(
+        make_document_message(message_id=5, file_size=MAX_DOWNLOAD_BYTES + 1), make_fake_bot()
+    )
+    assert attachments == ()
+    adapter._bot.download.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_edit_text_treats_not_modified_as_a_noop() -> None:
+    from aiogram.exceptions import TelegramBadRequest
+
+    adapter = make_adapter()
+    adapter._bot = MagicMock()
+    not_modified = TelegramBadRequest(  # type: ignore[arg-type] — aiogram over-constrains `method`
+        method=cast(Any, "editMessageText"), message="Bad Request: message is not modified"
+    )
+    adapter._bot.edit_message_text = AsyncMock(side_effect=not_modified)
+    # No retry, no raise: editing to the shown content is a semantic no-op.
+    await adapter.edit_text("42", "77", "same text")
+    adapter._bot.edit_message_text.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_edit_text_retries_plain_on_html_failure() -> None:
+    from aiogram.exceptions import TelegramBadRequest
+
+    parse_error = TelegramBadRequest(  # type: ignore[arg-type] — aiogram over-constrains `method`
+        method=cast(Any, "editMessageText"), message="can't parse entities"
+    )
+    adapter = make_adapter()
+    adapter._bot = MagicMock()
+    adapter._bot.edit_message_text = AsyncMock(side_effect=[parse_error, None])
+    await adapter.edit_text("42", "77", "**bold**")
+    assert adapter._bot.edit_message_text.await_count == 2
+    # The retry carries the raw text without the HTML parse mode.
+    second_call = adapter._bot.edit_message_text.await_args
+    assert second_call.kwargs.get("text") == "**bold**"
+    assert "parse_mode" not in second_call.kwargs
+
+
+def test_safe_file_name_falls_back_for_missing_names() -> None:
+    adapter = make_adapter()
+    assert adapter._safe_file_name(make_document_message(message_id=11, file_name=None)) == "document-11"
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_a_stuck_polling_loop() -> None:
+    """A stalled getUpdates must not wedge Ctrl-C: stop() cancels the polling
+    task instead of awaiting dispatcher.stop_polling() (which waits for the
+    in-flight network request)."""
+    adapter = make_adapter()
+    adapter._state = "running"
+    release = asyncio.Event()
+    start_calls: list[dict] = []
+
+    async def never_returns(*args, **kwargs) -> None:
+        start_calls.append(dict(kwargs))
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            raise
+
+    dispatcher = MagicMock()
+    dispatcher.start_polling = never_returns
+    adapter._dispatcher = dispatcher
+    adapter._bot = MagicMock()
+    adapter._bot.session = AsyncMock()
+    adapter._poll_task = asyncio.create_task(adapter._poll_supervisor())
+    deadline = asyncio.get_running_loop().time() + 2
+    while not start_calls and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(adapter.stop(), timeout=5)
+    assert adapter._poll_task is None
+    assert adapter._bot is None
+    assert adapter._dispatcher is None
+    # The gateway owns signals; aiogram's own handlers stay off.
+    assert start_calls and start_calls[0].get("handle_signals") is False
+
+
+def test_to_inbound_maps_plain_message() -> None:
+    adapter = make_adapter()
+    inbound = adapter._to_inbound(make_message("hi there"))
+    assert inbound is not None
+    assert inbound.channel == "telegram"
+    assert inbound.chat_id == "42"
+    assert inbound.sender_id == "7"
+    assert inbound.sender_name == "Test User"
+    assert inbound.message_id == "100"
+    assert inbound.text == "hi there"
+    assert inbound.topic_id is None
+    assert inbound.reply_to is None
+
+
+def test_to_inbound_maps_forum_topic() -> None:
+    adapter = make_adapter()
+    inbound = adapter._to_inbound(make_message("in thread", thread_id=99))
+    assert inbound is not None
+    assert inbound.topic_id == "99"
+
+
+def test_to_inbound_captures_quoted_reply() -> None:
+    adapter = make_adapter()
+    quoted = make_message("original text", chat_id=42, user_id=3, message_id=55)
+    inbound = adapter._to_inbound(make_message("see above", reply=quoted))
+    assert inbound is not None
+    assert inbound.reply_to is not None
+    assert inbound.reply_to.text == "original text"
+    assert inbound.reply_to.sender_id == "3"
+
+
+def test_to_inbound_uses_caption_when_no_text() -> None:
+    adapter = make_adapter()
+    inbound = adapter._to_inbound(make_message(None, caption="image caption"))
+    assert inbound is not None
+    assert inbound.text == "image caption"
+
+
+def test_media_without_caption_needs_notice() -> None:
+    adapter = make_adapter()
+    assert adapter._handle_message is not None
+    # A media-only message (no text, no caption) must not produce an envelope.
+    message = make_message(None)
+    assert message.text is None and message.caption is None
+
+
+def test_health_reports_stopped_before_start() -> None:
+    adapter = make_adapter()
+    assert adapter.health()["state"] == "stopped"
+
+
+def test_dms_are_not_groups_and_always_count_as_addressed() -> None:
+    adapter = make_adapter()
+    inbound = adapter._to_inbound(make_message("hi"))
+    assert inbound is not None
+    assert inbound.is_group is False
+    assert inbound.bot_mentioned is True
+
+
+def test_group_message_requires_mention() -> None:
+    adapter = make_adapter()
+    adapter._bot_username = "kolega_bot"
+    # Group chatter without a mention is not addressed.
+    inbound = adapter._to_inbound(make_message("ambient noise", chat_type=ChatType.SUPERGROUP))
+    assert inbound is not None
+    assert inbound.is_group is True
+    assert inbound.bot_mentioned is False
+    # A mention (case-insensitive) counts.
+    inbound = adapter._to_inbound(make_message("hey @KOLEGA_BOT do it", chat_type=ChatType.SUPERGROUP))
+    assert inbound is not None
+    assert inbound.bot_mentioned is True
+
+
+def test_group_reply_to_bot_counts_as_addressed() -> None:
+    adapter = make_adapter()
+    adapter._bot_id = "123"
+    quoted = make_message("bot said this", chat_id=1, user_id=123, message_id=55)
+    inbound = adapter._to_inbound(make_message("ok", reply=quoted, chat_type=ChatType.SUPERGROUP))
+    assert inbound is not None
+    assert inbound.bot_mentioned is True
+    # A reply to someone else's message is not addressed.
+    other = make_message("someone else", chat_id=1, user_id=9, message_id=56)
+    inbound = adapter._to_inbound(make_message("ok", reply=other, chat_type=ChatType.SUPERGROUP))
+    assert inbound is not None
+    assert inbound.bot_mentioned is False
+
+
+@pytest.mark.asyncio
+async def test_outbound_requires_running_bot() -> None:
+    adapter = make_adapter()
+    with pytest.raises(RuntimeError):
+        await adapter.send_text("42", "hi")

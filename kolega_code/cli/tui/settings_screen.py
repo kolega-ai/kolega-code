@@ -17,6 +17,7 @@ from kolega_code.agent.tool_backend.search_backends import (
     DEFAULT_BACKEND as DEFAULT_WEB_SEARCH_BACKEND,
     available_backends,
 )
+from kolega_code.gateway.stt import DEFAULT_STT_PROVIDER, available_stt_providers
 
 from .. import messages, theme
 from ..provider_registry import (
@@ -49,6 +50,7 @@ SETTINGS_CATEGORIES = (
     ("MCP Servers", "mcp"),
     ("Memory", "memory"),
     ("Appearance", "appearance"),
+    ("Gateway", "gateway"),
 )
 
 
@@ -156,6 +158,8 @@ class SettingsScreen(ModalScreen[None]):
         # providers be edited before Apply, so staging cannot live in the Input alone —
         # its value follows the highlighted row.
         self.pending_api_keys: dict[str, str] = {}
+        # Whether the Gateway page's "Remove token" was clicked before Apply.
+        self.pending_gateway_token_removal = False
         # Which provider the key Input is currently showing. Staging targets this rather
         # than the highlighted row: it is updated before the Input is rewritten, so the
         # Changed event that rewrite posts can never be filed against the wrong provider.
@@ -179,6 +183,7 @@ class SettingsScreen(ModalScreen[None]):
                 yield from self._compose_mcp_page()
                 yield from self._compose_memory_page()
                 yield from self._compose_appearance_page()
+                yield from self._compose_gateway_page()
         with Horizontal(id="settings_screen_footer"):
             yield Static("", id="settings_status")
             with Horizontal(id="settings_screen_actions"):
@@ -452,6 +457,30 @@ class SettingsScreen(ModalScreen[None]):
                 yield Input(password=True, id="web_search_api_key_input")
                 yield Label("SearXNG base URL", id="web_search_base_url_label")
                 yield Input(id="web_search_base_url_input", placeholder="https://searxng.example.com")
+            with Vertical(classes="settings-section", id="settings_stt") as stt_section:
+                stt_section.border_title = "Voice transcription"
+                yield Static(
+                    "Transcribe gateway voice notes with a remote provider: Groq's hosted "
+                    "whisper-large-v3-turbo, which reuses the Groq API key from the Providers page.",
+                    classes="settings-hint",
+                )
+                yield Label("Speech-to-text")
+                yield Select(
+                    [("Enabled", "true"), ("Disabled", "false")],
+                    id="stt_enabled_select",
+                    allow_blank=False,
+                    value="false",
+                )
+                yield Label("Provider")
+                yield Select(
+                    available_stt_providers(),
+                    id="stt_provider_select",
+                    allow_blank=False,
+                    value=DEFAULT_STT_PROVIDER,
+                )
+                yield Label("Model")
+                yield Input(id="stt_model_input", placeholder="whisper-large-v3-turbo")
+                yield Static("", id="stt_key_status", classes="settings-hint")
             with Vertical(classes="settings-section", id="settings_lsp") as lsp_section:
                 lsp_section.border_title = "Language Servers (LSP)"
                 yield Static(
@@ -586,6 +615,48 @@ class SettingsScreen(ModalScreen[None]):
                     allow_blank=False,
                     value=theme.DEFAULT_THEME_NAME,
                 )
+
+    def _compose_gateway_page(self) -> ComposeResult:
+        with VerticalScroll(id="settings_page_gateway", classes="settings-page"):
+            with Vertical(classes="settings-section", id="settings_gateway_telegram") as telegram_section:
+                telegram_section.border_title = "Telegram"
+                yield Static(
+                    "The messaging gateway's bot token from @BotFather. Applies to gateway runs.",
+                    classes="settings-hint",
+                )
+                yield Static("", id="gateway_token_status")
+                yield Label("Bot token")
+                yield Input(password=True, id="gateway_token_input", placeholder="Saved — type to replace")
+                yield Button("Remove token", id="gateway_token_remove", classes="quiet")
+            with Vertical(classes="settings-section", id="settings_gateway_access") as access_section:
+                access_section.border_title = "Access"
+                yield Label("Allowed users (comma-separated Telegram ids; empty = anyone)")
+                yield Input(id="gateway_allowed_users_input", placeholder="123456789, 987654321")
+                yield Label("Pairing for unknown senders")
+                yield Select(
+                    [("Enabled", "true"), ("Disabled", "false")],
+                    id="gateway_pairing_select",
+                    allow_blank=False,
+                    value="false",
+                )
+                yield Label("Permission mode")
+                yield Select(
+                    [("Ask via buttons", "ask"), ("Auto-approve", "auto")],
+                    id="gateway_permission_select",
+                    allow_blank=False,
+                    value="ask",
+                )
+            with Vertical(classes="settings-section", id="settings_gateway_runtime") as runtime_section:
+                runtime_section.border_title = "Runtime"
+                yield Label("Adapter")
+                yield Select(
+                    [("Telegram", "telegram"), ("Echo (test harness)", "echo")],
+                    id="gateway_adapter_select",
+                    allow_blank=False,
+                    value="echo",
+                )
+                yield Label("Project (workspace directory)")
+                yield Input(id="gateway_project_input", placeholder="~/kolega-code-workspace")
 
     def _compose_memory_page(self) -> ComposeResult:
         backend_options = [(backend_id, backend_id) for backend_id in self.owner.memory_manager.registry.backend_ids]
@@ -759,6 +830,11 @@ class SettingsScreen(ModalScreen[None]):
         elif event.button.id == "memory_settings_inspect":
             event.stop()
             self.owner.action_open_memory(inspect_disabled=True)
+        elif event.button.id == "gateway_token_remove":
+            event.stop()
+            self.pending_gateway_token_removal = True
+            self.query_one("#gateway_token_input", Input).value = ""
+            self.query_one("#gateway_token_status", Static).update("Token removal staged — apply to save")
         elif event.button.id in {"ep_save", "ep_delete"}:
             event.stop()
             self.owner._handle_endpoint_settings_button(event.button.id)

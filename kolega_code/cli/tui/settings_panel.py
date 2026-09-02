@@ -26,6 +26,12 @@ from kolega_code.agent.tool_backend.search_backends import (
     available_backends,
     get_backend_class,
 )
+from kolega_code.gateway.stt import (
+    DEFAULT_STT_PROVIDER,
+    SttProviderError,
+    get_stt_provider_class,
+    stt_provider_names,
+)
 from kolega_code.llm.specs.custom_endpoints import (
     API_STYLES,
     CUSTOM_PROVIDER_PREFIX,
@@ -383,6 +389,14 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._update_search_backend_fields(str(event.value))
             return
 
+        if select_id == "stt_provider_select":
+            if str(event.select.value) != str(event.value):
+                return  # stale: the select moved on since this Changed was posted
+            # Replace the model only when it is blank or some provider's
+            # default; a hand-typed model survives the switch.
+            self._update_stt_provider_fields(str(event.value), reset_model=self._stt_model_is_a_known_default())
+            return
+
         if select_id == "endpoint_select":
             if str(event.select.value) != str(event.value):
                 return
@@ -542,12 +556,76 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         self._update_browser_model_hint()
         self._update_slot_model_hints()
         self._populate_web_search_controls()
+        self._populate_stt_controls()
         self._populate_mcp_controls()
         self._populate_lsp_controls()
         self._populate_subagents_controls()
         self._populate_skills_controls()
         self._populate_compression_controls()
+        self._populate_gateway_controls()
         self._update_settings_status()
+
+    def _populate_gateway_controls(self) -> None:
+        """Seed the Gateway page from saved settings."""
+        try:
+            self._settings_query_one("#gateway_token_input", Input)
+        except NoMatches:
+            return
+        gateway = dict(self.settings.gateway or {})
+        self._settings_query_one("#gateway_token_input", Input).value = ""
+        self._settings_query_one("#gateway_token_status", Static).update(
+            "Token saved."
+            if self.settings.telegram_bot_token
+            else "No token saved yet — paste a @BotFather token here (or run `kolega-code gateway telegram setup`)."
+        )
+        self._settings_query_one("#gateway_allowed_users_input", Input).value = ", ".join(
+            gateway.get("allowed_users") or []
+        )
+        self._settings_query_one("#gateway_pairing_select", Select).value = (
+            "true" if gateway.get("pairing_enabled") else "false"
+        )
+        self._settings_query_one("#gateway_permission_select", Select).value = str(
+            gateway.get("permission_mode") or "ask"
+        )
+        self._settings_query_one("#gateway_adapter_select", Select).value = str(gateway.get("adapter") or "echo")
+        self._settings_query_one("#gateway_project_input", Input).value = str(gateway.get("project") or "")
+
+    def _collect_gateway_from_ui(self) -> None:
+        """Write the Gateway page into the gateway settings section.
+
+        The token Input only replaces the saved token when something was typed
+        (blank = keep); the screen's staged removal wins over a typed value.
+        """
+        try:
+            token_input = self._settings_query_one("#gateway_token_input", Input)
+            allowed_input = self._settings_query_one("#gateway_allowed_users_input", Input)
+            pairing = str(self._settings_query_one("#gateway_pairing_select", Select).value)
+            permission = str(self._settings_query_one("#gateway_permission_select", Select).value)
+            adapter = str(self._settings_query_one("#gateway_adapter_select", Select).value)
+            project = self._settings_query_one("#gateway_project_input", Input).value.strip()
+        except NoMatches:
+            return
+        screen = getattr(self, "_settings_screen", None)
+        if screen is not None and getattr(screen, "pending_gateway_token_removal", False):
+            self.settings.telegram_bot_token = None
+        else:
+            typed_token = token_input.value.strip()
+            if typed_token:
+                self.settings.telegram_bot_token = typed_token
+        gateway = dict(self.settings.gateway or {})
+        allowed = [part.strip() for part in allowed_input.value.split(",") if part.strip()]
+        if allowed:
+            gateway["allowed_users"] = allowed
+        else:
+            gateway.pop("allowed_users", None)
+        gateway["pairing_enabled"] = pairing == "true"
+        gateway["permission_mode"] = permission
+        gateway["adapter"] = adapter
+        if project:
+            gateway["project"] = project
+        else:
+            gateway.pop("project", None)
+        self.settings.gateway = gateway
 
     def _draft_credential_settings(self) -> CliSettings:
         """Saved settings with the Providers page's unapplied edits layered on.
@@ -1232,6 +1310,111 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         if key and backend in WEB_SEARCH_KEY_NAMES:
             self.settings.set_api_key(backend, key)
         self._update_search_backend_fields(backend)
+
+    def _stt_model_is_a_known_default(self) -> bool:
+        """Whether the typed STT model is blank or any provider's default.
+
+        A value that equals *some* provider's default model is assumed to be
+        an inherited placeholder rather than a hand-typed override, so a
+        provider switch may safely replace it with the new provider's default.
+        """
+        try:
+            value = self._settings_query_one("#stt_model_input", Input).value.strip()
+        except NoMatches:
+            return False
+        if not value:
+            return True
+        for name in stt_provider_names():
+            try:
+                default = get_stt_provider_class(name).default_model
+            except SttProviderError:
+                continue
+            if value == default:
+                return True
+        return False
+
+    def _update_stt_provider_fields(self, provider: str, *, reset_model: bool = False) -> None:
+        """Adjust the model placeholder/default and key status for the provider.
+
+        Called from on_select_changed (which can fire its initial Changed on
+        mount, before the section is fully populated) and from populate, so
+        every query_one is guarded against NoMatches."""
+        try:
+            provider_cls = get_stt_provider_class(provider)
+        except SttProviderError:
+            return
+        try:
+            model_input = self._settings_query_one("#stt_model_input", Input)
+            model_input.placeholder = provider_cls.default_model
+            if reset_model:
+                model_input.value = provider_cls.default_model
+        except NoMatches:
+            pass
+        try:
+            status = self._settings_query_one("#stt_key_status", Static)
+            env = provider_cls.key_env_var
+            if not env:
+                status.update("No API key needed for this provider.")
+            elif self.settings.has_api_key(provider):
+                status.update(f"Uses the {env} saved on the Providers page (or the environment).")
+            else:
+                status.update(
+                    f"No {env} saved yet — add it on the Providers page or set it in the gateway environment."
+                )
+        except NoMatches:
+            pass
+
+    def _populate_stt_controls(self) -> None:
+        """Seed the Voice transcription controls from saved settings.
+
+        The legacy ``gateway.stt_enabled``/``stt_model`` keys (written by
+        older TUI versions) seed the controls until the next save migrates
+        them to the top level."""
+        try:
+            self._settings_query_one("#stt_enabled_select", Select)
+        except NoMatches:
+            return
+        legacy = dict(self.settings.gateway or {})
+        enabled = self.settings.stt_enabled
+        if enabled is None:
+            enabled = bool(legacy.get("stt_enabled", False))
+        provider = self.settings.stt_provider
+        if provider not in stt_provider_names():
+            provider = DEFAULT_STT_PROVIDER
+        model = self.settings.stt_model or legacy.get("stt_model") or ""
+        if not model:
+            model = get_stt_provider_class(provider).default_model
+        self._settings_query_one("#stt_enabled_select", Select).value = "true" if enabled else "false"
+        self._settings_query_one("#stt_provider_select", Select).value = provider
+        self._settings_query_one("#stt_model_input", Input).value = str(model)
+        self._update_stt_provider_fields(provider)
+
+    def _collect_stt_from_ui(self) -> None:
+        """Write the Voice transcription controls into top-level settings.
+
+        The model is stored only as an explicit override — a value equal to
+        the provider's default stays unset so provider defaults can evolve.
+        Legacy gateway-section STT keys are dropped on the first save, since
+        the Tools page now owns this configuration."""
+        try:
+            enabled = str(self._settings_query_one("#stt_enabled_select", Select).value)
+            provider = str(self._settings_query_one("#stt_provider_select", Select).value)
+            model_input = self._settings_query_one("#stt_model_input", Input)
+        except NoMatches:
+            return
+        self.settings.stt_enabled = enabled == "true"
+        self.settings.stt_provider = provider or None
+        model = model_input.value.strip()
+        try:
+            provider_default = get_stt_provider_class(provider).default_model
+        except SttProviderError:
+            provider_default = ""
+        self.settings.stt_model = model if model and model != provider_default else None
+        gateway = dict(self.settings.gateway or {})
+        gateway.pop("stt_enabled", None)
+        gateway.pop("stt_model", None)
+        self.settings.gateway = gateway
+        self._update_stt_provider_fields(provider)
 
     def _load_mcp_config_for_ui(self):
         """Load MCP config for the settings panel and attach it to the active AgentConfig."""
@@ -2037,10 +2220,12 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._collect_agent_models_from_ui()
             self._collect_model_slots_from_ui()
             self._collect_web_search_from_ui()
+            self._collect_stt_from_ui()
             self._collect_lsp_from_ui()
             self._collect_subagents_from_ui()
             self._collect_skills_from_ui()
             self._collect_compression_from_ui()
+            self._collect_gateway_from_ui()
         finally:
             self.settings = original
         return candidate, provider, model, effort
@@ -2055,6 +2240,21 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._set_settings_status(browser_message, "error")
             self._notify_user(browser_message, severity="error")
             return
+        # A gateway token is a BotFather credential; catch obviously wrong
+        # values before anything is written.
+        try:
+            typed_token = self._settings_query_one("#gateway_token_input", Input).value.strip()
+        except NoMatches:
+            typed_token = ""
+        if typed_token:
+            from kolega_code.gateway.adapters.telegram.adapter import validate_bot_token
+
+            try:
+                validate_bot_token(typed_token)
+            except ValueError as exc:
+                self._set_settings_status(str(exc), "error")
+                self._notify_user(str(exc), severity="error")
+                return
         # "Other…" entries are UI-only: every typed id must resolve to a
         # catalogued model before anything is written, so an unknown id can
         # never produce a build-time "Configuration incomplete" lockout.

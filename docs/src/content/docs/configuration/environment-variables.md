@@ -140,6 +140,34 @@ with vision support.
 | `KOLEGA_CODE_SUBAGENTS` | Sub-agent dispatch (`dispatch_agent`) master switch: `on` or `off` (default `on`). Useful for headless or CI runs; the `--subagents` flag takes precedence |
 | `KOLEGA_CODE_SKILLS` | [Agent Skills](../../skills/) master switch: `on` or `off` (default `on`). When `off`, skills are not discovered, the `skill` tool is not exposed, and `/skills` reports that Agent Skills are disabled; the `--skills` flag takes precedence |
 
+## Gateway
+
+The [messaging gateway](../../cli/gateway/) (`kolega-code gateway`) is
+configured from `settings.json` like everything else — run
+`kolega-code gateway telegram setup` to save the bot token, your allowlist,
+and switch the adapter on. The stored keys live under the `gateway` section
+(plus the top-level `telegram_bot_token`); every key has a built-in default,
+so only what you change needs to be stored:
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `telegram_bot_token` (top level) | — | The Telegram bot token from [@BotFather](https://t.me/BotFather), saved by `gateway telegram setup`. |
+| `gateway.adapter` | `echo` | Messaging adapter to run (`telegram`). |
+| `gateway.project` | `~/kolega-code-workspace` | Working directory for gateway sessions. |
+| `gateway.allowed_users` | `[]` (open) | Telegram user ids allowed to talk to the gateway. |
+| `gateway.group_ids` | `[]` (all, mention-gated) | Group chat ids the gateway may serve. |
+| `gateway.pairing_enabled` | `false` | Give unknown senders a one-hour pairing code instead of silence. |
+| `gateway.pairing_code_ttl_seconds` | `3600` | Pairing-code lifetime in seconds. |
+| `gateway.permission_mode` | `ask` | Permission mode for gateway sessions: `ask` or `auto`. |
+| `gateway.request_timeout_seconds` | `600` | How long a permission/question prompt waits for a tap. |
+| `gateway.max_sessions` | `50` | Live-session cache size. |
+| `gateway.session_idle_ttl_seconds` | `3600` | Idle session eviction (`null` disables). |
+| `gateway.edit_throttle_seconds` | `1` | Minimum interval between edit-in-place streaming updates. |
+| `gateway.telegram_proxy` | — | Optional HTTP proxy for the Telegram connection. |
+| `stt_enabled` (top level) | `false` | Transcribe gateway voice notes (Tools → Voice transcription). |
+| `stt_provider` (top level) | `groq` | Remote speech-to-text provider (`groq` hosted `whisper-large-v3-turbo`, reusing the Groq API key). |
+| `stt_model` (top level) | provider default | Provider-specific model override (`whisper-large-v3-turbo` by default). |
+
 ## Web search
 
 The `web_search` tool defaults to the keyless DuckDuckGo backend. Set a backend

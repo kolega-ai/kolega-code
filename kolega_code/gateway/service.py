@@ -1,0 +1,137 @@
+"""Install the gateway as a user-level background service.
+
+systemd user units (Linux) and launchd LaunchAgents (macOS) — no root
+needed. ``gateway install`` resolves the current ``kolega-code`` executable
+and writes a unit that runs the gateway against this state dir and project.
+All configuration — the bot token, allowlists, pairing, STT — lives in
+``settings.json`` under the same state dir, so the service needs no captured
+environment. Uninstall unloads and removes everything.
+"""
+
+from __future__ import annotations
+
+import plistlib
+import shlex
+import shutil
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+from kolega_code.gateway.config import GatewayConfig
+
+SERVICE_NAME = "kolega-code-gateway"
+SYSTEMD_UNIT_NAME = f"{SERVICE_NAME}.service"
+LAUNCHD_LABEL = "com.kolega.gateway"
+LAUNCHD_PLIST_NAME = f"{LAUNCHD_LABEL}.plist"
+
+_SYSTEMD_UNIT_TEMPLATE = """[Unit]
+Description=Kolega Code messaging gateway
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart={command}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+"""
+
+
+@dataclass
+class ServiceInstallResult:
+    """Where a service definition landed, for activation and status output."""
+
+    notes: list[str] = field(default_factory=list)
+    unit_path: Optional[Path] = None
+
+
+def service_command(config: GatewayConfig, executable: str) -> list[str]:
+    """The exact argv the service runs."""
+    return [
+        executable,
+        "gateway",
+        "run",
+        "--adapter",
+        config.adapter,
+        "--state-dir",
+        str(config.state_dir),
+        "--project",
+        str(config.project_path),
+    ]
+
+
+def install_service(
+    config: GatewayConfig,
+    *,
+    executable: Optional[str] = None,
+    systemd_dir: Optional[Path] = None,
+    launchd_dir: Optional[Path] = None,
+    platform: Optional[str] = None,
+) -> ServiceInstallResult:
+    """Write the service definition.
+
+    ``systemd_dir``/``launchd_dir`` are the unit destination directories;
+    callers resolve the platform defaults (tests pass temp dirs).
+    """
+    platform = platform if platform is not None else sys.platform
+    executable = executable or shutil.which("kolega-code") or ""
+    if not executable:
+        raise RuntimeError("kolega-code executable not found; is it on PATH?")
+    config.state_dir.mkdir(parents=True, exist_ok=True)
+    result = ServiceInstallResult()
+    if platform == "darwin":
+        launchd_dir = launchd_dir or (Path.home() / "Library" / "LaunchAgents")
+        launchd_dir.mkdir(parents=True, exist_ok=True)
+        plist_path = launchd_dir / LAUNCHD_PLIST_NAME
+        plist: dict[str, object] = {
+            "Label": LAUNCHD_LABEL,
+            "ProgramArguments": service_command(config, executable),
+            "RunAtLoad": True,
+            "KeepAlive": True,
+            "StandardOutPath": str(config.state_dir / "gateway.log"),
+            "StandardErrorPath": str(config.state_dir / "gateway.log"),
+        }
+        plist_path.write_bytes(plistlib.dumps(plist))
+        result.unit_path = plist_path
+        result.notes.append(f"launchd agent written to {plist_path}")
+    else:
+        systemd_dir = systemd_dir or (Path.home() / ".config" / "systemd" / "user")
+        systemd_dir.mkdir(parents=True, exist_ok=True)
+        unit_path = systemd_dir / SYSTEMD_UNIT_NAME
+        command = " ".join(shlex.quote(part) for part in service_command(config, executable))
+        unit_path.write_text(_SYSTEMD_UNIT_TEMPLATE.format(command=command), encoding="utf-8")
+        result.unit_path = unit_path
+        result.notes.append(f"systemd user unit written to {unit_path}")
+    result.notes.append(
+        "the service reads settings.json from the same state dir — make sure your provider "
+        "API keys are saved in Settings (they apply to the gateway too)"
+    )
+    return result
+
+
+def uninstall_service(
+    config: GatewayConfig,
+    *,
+    systemd_dir: Optional[Path] = None,
+    launchd_dir: Optional[Path] = None,
+    platform: Optional[str] = None,
+) -> list[str]:
+    """Remove the service definition."""
+    platform = platform if platform is not None else sys.platform
+    notes: list[str] = []
+    if platform == "darwin":
+        launchd_dir = launchd_dir or (Path.home() / "Library" / "LaunchAgents")
+        plist_path = launchd_dir / LAUNCHD_PLIST_NAME
+        if plist_path.exists():
+            plist_path.unlink()
+            notes.append(f"removed {plist_path}")
+    else:
+        systemd_dir = systemd_dir or (Path.home() / ".config" / "systemd" / "user")
+        unit_path = systemd_dir / SYSTEMD_UNIT_NAME
+        if unit_path.exists():
+            unit_path.unlink()
+            notes.append(f"removed {unit_path}")
+    return notes

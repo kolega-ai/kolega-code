@@ -104,7 +104,7 @@ async def test_settings_screen_is_categorized_and_stages_credentials_atomically(
         assert isinstance(screen, SettingsScreen)
         await pilot.pause()
         assert screen.dirty is False
-        assert screen.query_one("#settings_categories", OptionList).option_count == 8
+        assert screen.query_one("#settings_categories", OptionList).option_count == 9
         assert screen.query_one("#settings_page_model").display is True
         assert screen.query_one("#settings_page_tools").display is False
         apply_button = screen.query_one("#save_settings", Button)
@@ -1498,3 +1498,131 @@ async def test_settings_provider_switch_seeds_custom_endpoint_default_model(
         )
         await pilot.pause()
         assert screen.query_one("#model_custom_input", Input).value == "qwen/qwen3.6-35b-a3b"
+
+
+@pytest.mark.asyncio
+async def test_gateway_settings_page_round_trips(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(80, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen._show_category("gateway")
+        await pilot.pause()
+
+        screen.query_one("#gateway_token_input", Input).value = "123:fake-bot-token-for-tests-only"
+        screen.query_one("#gateway_allowed_users_input", Input).value = "111, 222"
+        screen.query_one("#gateway_pairing_select", Select).value = "true"
+        screen.query_one("#gateway_permission_select", Select).value = "auto"
+        screen.query_one("#gateway_adapter_select", Select).value = "telegram"
+
+        await app._save_settings_from_ui()
+        settings = settings_store.load()
+        assert settings.telegram_bot_token == "123:fake-bot-token-for-tests-only"
+        assert settings.gateway["allowed_users"] == ["111", "222"]
+        assert settings.gateway["pairing_enabled"] is True
+        assert settings.gateway["permission_mode"] == "auto"
+        assert settings.gateway["adapter"] == "telegram"
+
+
+@pytest.mark.asyncio
+async def test_tools_page_stt_settings_round_trip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(80, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen._show_category("tools")
+        await pilot.pause()
+
+        screen.query_one("#stt_enabled_select", Select).value = "true"
+        # The single remote provider is preselected; blanking the model resets
+        # to the provider default on save.
+        assert screen.query_one("#stt_provider_select", Select).value == "groq"
+        screen.query_one("#stt_model_input", Input).value = "whisper-large-v3"
+
+        await app._save_settings_from_ui()
+        settings = settings_store.load()
+        assert settings.stt_enabled is True
+        assert settings.stt_provider == "groq"
+        assert settings.stt_model == "whisper-large-v3"
+
+
+@pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_gateway_settings_page_removes_the_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Button
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+    settings = settings_store.load()
+    settings.telegram_bot_token = "123:fake-bot-token-for-tests-only"
+    settings_store.save(settings)
+    app.settings = settings_store.load()
+
+    async with app.run_test(size=(80, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen._show_category("gateway")
+        await pilot.pause()
+        assert "Token saved." in str(screen.query_one("#gateway_token_status").render())
+
+        screen.query_one("#gateway_token_remove", Button).press()
+        await pilot.pause()
+        await app._save_settings_from_ui()
+        assert settings_store.load().telegram_bot_token is None
+
+
+@pytest.mark.asyncio
+async def test_gateway_settings_page_rejects_a_bad_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(80, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen._show_category("gateway")
+        await pilot.pause()
+        screen.query_one("#gateway_token_input", Input).value = "not-a-botfather-token"
+        await app._save_settings_from_ui()
+        assert settings_store.load().telegram_bot_token is None
