@@ -6,16 +6,52 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.34.0 - 2026-09-02
+
 ### Added
 
+- **Telegram gateway.** The new `kolega-code gateway` daemon drives Kolega Code
+  agents from Telegram: each chat maps to a durable session, and agent turns
+  stream back as edit-in-place chat messages. `kolega-code gateway telegram
+  setup --verify` saves your @BotFather token, `kolega-code gateway run
+  --adapter telegram` starts the daemon (an LLM-free `echo` adapter is
+  included for transport testing), and `gateway install` registers it as a
+  systemd user service or launchd agent — a new Gateway page in Settings
+  covers configuration. Access is by sender allowlist with pairing-code
+  onboarding (`gateway pairing`), group chats stay silent unless the bot is
+  @mentioned or replied to, and each chat gets slash commands (`/model`,
+  `/permissions`, `/status`) as ordinary messages. Permission prompts and
+  agent questions arrive as tappable inline buttons. Voice notes are
+  transcribed, photos attach as vision input, documents are saved where the
+  agent's tools can reach them, sessions survive gateway restarts, and the
+  working directory defaults to `~/kolega-code-workspace` — never the daemon's
+  own. Outbound messages are redacted for known secrets, including the bot
+  token.
+- **`/handoff`.** `/handoff [focus instructions]` summarizes the current
+  session with a one-shot LLM call and switches to a brand-new session whose
+  entire context is that structured document (Goal, Constraints &
+  Preferences, Progress, Key Decisions, Critical Context, Next Steps). The
+  old session stays intact and resumable, recorded as the new session's
+  parent; Esc during generation cancels cooperatively and leaves the session
+  untouched.
 - **Groq as a first-party provider, plus remote voice transcription.** Groq is
   now a catalogued provider — `openai/gpt-oss-120b`, `openai/gpt-oss-20b`,
   `qwen/qwen3-32b`, `qwen/qwen3.6-27b`, and the Llama 4 Scout/Maverick pair,
   all 131K context — with its own entry on the Providers page and the `groq`
   API key. Gateway voice notes transcribe through Groq's hosted
   `whisper-large-v3-turbo` (Settings → Tools → Voice transcription), reusing
-  that same key; the local faster-whisper provider and its `stt` extra were
-  removed — transcription is remote-only.
+  that same key; transcription is remote-only.
+- **GLM-5.3-Flash on Z.AI.** The GLM Coding Plan catalog adds `glm-5.3-flash`
+  — 1M-token context, 128K max output, `high`/`max` reasoning effort
+  (default `max`), and the first GLM-5 model with native vision input.
+
+### Changed
+
+- Provider catalogs refreshed from live endpoints (2026-09-02 snapshots):
+  OpenRouter (274 tool-capable models, 20 featured), Tinker (27 models,
+  +`zai-org/GLM-5.3`), Ollama Cloud (19 models, +`glm-5.3`/`glm-5.3-flash`,
+  deepseek `:preview` tags dropped), and Perplexity Agent (46 models,
+  +`anthropic/claude-fable-5-1`).
 
 ## 0.33.0 - 2026-08-26
 
