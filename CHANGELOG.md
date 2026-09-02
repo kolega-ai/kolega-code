@@ -6,6 +6,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- **Groq as a first-party provider, plus remote voice transcription.** Groq is
+  now a catalogued provider — `openai/gpt-oss-120b`, `openai/gpt-oss-20b`,
+  `qwen/qwen3-32b`, `qwen/qwen3.6-27b`, and the Llama 4 Scout/Maverick pair,
+  all 131K context — with its own entry on the Providers page and the `groq`
+  API key. Gateway voice notes transcribe through Groq's hosted
+  `whisper-large-v3-turbo` (Settings → Tools → Voice transcription), reusing
+  that same key; the local faster-whisper provider and its `stt` extra were
+  removed — transcription is remote-only.
+
 ## 0.33.0 - 2026-08-26
 
 ### Added

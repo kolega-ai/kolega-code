@@ -18,7 +18,12 @@ from pathlib import Path
 from typing import Any, Optional
 
 from kolega_code.cli.session_store import default_state_dir
-from kolega_code.cli.settings import SettingsStore, SettingsStoreError
+from kolega_code.cli.settings import CliSettings, SettingsStore, SettingsStoreError
+from kolega_code.gateway.stt import (
+    DEFAULT_STT_PROVIDER,
+    get_stt_provider_class,
+    stt_provider_names,
+)
 from kolega_code.permissions import PermissionMode, normalize_permission_mode
 
 logger = logging.getLogger(__name__)
@@ -35,7 +40,6 @@ DEFAULT_MAX_SESSIONS = 50
 DEFAULT_SESSION_IDLE_TTL_SECONDS = 3600.0
 DEFAULT_EDIT_THROTTLE_SECONDS = 1.0
 DEFAULT_PAIRING_TTL_SECONDS = 3600.0
-DEFAULT_STT_MODEL = "base"
 
 
 class GatewayConfigError(ValueError):
@@ -69,29 +73,38 @@ class GatewayConfig:
     session_idle_ttl_seconds: Optional[float] = DEFAULT_SESSION_IDLE_TTL_SECONDS
     edit_throttle_seconds: float = DEFAULT_EDIT_THROTTLE_SECONDS
     stt_enabled: bool = False
-    #: faster-whisper model size for voice-note transcription ("tiny", "base",
-    #: "small", "medium", "large-v3", …).
-    stt_model: str = DEFAULT_STT_MODEL
+    #: Pluggable remote speech-to-text provider (currently "groq" hosted
+    #: Whisper). Configured under Tools → Voice transcription, like the
+    #: web-search backend.
+    stt_provider: str = DEFAULT_STT_PROVIDER
+    #: Provider-specific model override; None applies the provider's default
+    #: ("whisper-large-v3-turbo" for groq).
+    stt_model: Optional[str] = None
+    #: API key for the selected STT provider, resolved from the environment
+    #: or the stored provider keys. Only groq needs one today.
+    stt_api_key: Optional[str] = None
     telegram_token: Optional[str] = None
     telegram_proxy: Optional[str] = None
 
 
-def _gateway_settings(state_dir: Path) -> dict[str, Any]:
+def _gateway_settings(state_dir: Path) -> tuple[dict[str, Any], Optional[CliSettings]]:
     """The stored gateway section (and token), tolerating hand-edits.
 
     A gateway daemon must not refuse to start because settings.json was
     touched; missing pieces fall back to defaults and the adapter's own
-    startup error explains what to fix.
+    startup error explains what to fix. The full ``CliSettings`` object rides
+    along because top-level STT settings and provider API keys live outside
+    the gateway section.
     """
     try:
         settings = SettingsStore(root=state_dir).load()
-        return {"_telegram_bot_token": settings.telegram_bot_token, **settings.gateway}
+        return {"_telegram_bot_token": settings.telegram_bot_token, **settings.gateway}, settings
     except SettingsStoreError as exc:
         logger.warning("gateway: could not read settings (%s); using defaults", exc)
-        return {}
+        return {}, None
     except Exception as exc:  # noqa: BLE001 — config lookup must be best-effort
         logger.warning("gateway: could not read gateway settings (%s); using defaults", exc)
-        return {}
+        return {}, None
 
 
 def _resolve_state_dir(param: Optional[Path]) -> Path:
@@ -116,6 +129,27 @@ def _resolve_project(param: Optional[Path], stored: dict[str, Any]) -> Path:
     return default_gateway_project()
 
 
+def _resolve_stt(settings: Optional[CliSettings]) -> tuple[bool, str, Optional[str], Optional[str]]:
+    """Resolve (enabled, provider, model, api_key) for voice transcription.
+
+    All three knobs are top-level settings (Tools → Voice transcription).
+    The API key follows the provider's ``key_env_var`` environment variable
+    first, then the stored provider key (``api_keys``).
+    """
+    stt_enabled = bool(settings.stt_enabled) if settings is not None else False
+    provider = (settings.stt_provider if settings is not None else None) or DEFAULT_STT_PROVIDER
+    if provider not in stt_provider_names():
+        logger.warning("gateway: unknown stt_provider %r; using %r", provider, DEFAULT_STT_PROVIDER)
+        provider = DEFAULT_STT_PROVIDER
+    model = settings.stt_model if settings is not None else None
+    provider_cls = get_stt_provider_class(provider)
+    env_name = provider_cls.key_env_var
+    api_key = (os.environ.get(env_name) if env_name else None) or (
+        settings.api_keys.get(provider) if settings is not None else None
+    )
+    return stt_enabled, provider, model, api_key
+
+
 def load_gateway_config(
     *,
     state_dir: Optional[Path] = None,
@@ -124,7 +158,7 @@ def load_gateway_config(
 ) -> GatewayConfig:
     """Build the gateway config from settings.json with CLI-flag overrides."""
     resolved_state_dir = _resolve_state_dir(state_dir)
-    stored = _gateway_settings(resolved_state_dir)
+    stored, settings = _gateway_settings(resolved_state_dir)
     adapter = adapter or stored.get("adapter") or DEFAULT_ADAPTER
     try:
         permission_mode = normalize_permission_mode(
@@ -133,6 +167,7 @@ def load_gateway_config(
         ).value
     except ValueError:
         permission_mode = PermissionMode.ASK.value
+    stt_enabled, stt_provider, stt_model, stt_api_key = _resolve_stt(settings)
     return GatewayConfig(
         adapter=str(adapter),
         project_path=_resolve_project(project, stored),
@@ -146,8 +181,10 @@ def load_gateway_config(
         max_sessions=int(stored.get("max_sessions", DEFAULT_MAX_SESSIONS)),
         session_idle_ttl_seconds=stored.get("session_idle_ttl_seconds", DEFAULT_SESSION_IDLE_TTL_SECONDS),
         edit_throttle_seconds=float(stored.get("edit_throttle_seconds", DEFAULT_EDIT_THROTTLE_SECONDS)),
-        stt_enabled=bool(stored.get("stt_enabled", False)),
-        stt_model=str(stored.get("stt_model") or DEFAULT_STT_MODEL),
+        stt_enabled=stt_enabled,
+        stt_provider=stt_provider,
+        stt_model=stt_model,
+        stt_api_key=stt_api_key,
         telegram_token=stored.get("_telegram_bot_token"),
         telegram_proxy=stored.get("telegram_proxy"),
     )

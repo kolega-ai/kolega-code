@@ -38,6 +38,7 @@ PROVIDER_LABELS: dict[ModelProvider, str] = {
     ModelProvider.OPENAI_CHATGPT: "OpenAI (ChatGPT subscription)",
     ModelProvider.GOOGLE: "Google",
     ModelProvider.XAI: "xAI",
+    ModelProvider.GROQ: "Groq",
     ModelProvider.FIREWORKS: "Fireworks",
     ModelProvider.TOGETHER: "Together AI",
     ModelProvider.DASHSCOPE: "DashScope / Qwen",
@@ -51,6 +52,13 @@ PROVIDER_LABELS: dict[ModelProvider, str] = {
 # Friendly display names for models. Anything not listed falls back to its raw
 # model ID, so newly added models stay visible with zero extra maintenance.
 MODEL_LABELS: dict[str, str] = {
+    # Groq (open-weight models on Groq's OpenAI-compatible endpoint)
+    "openai/gpt-oss-120b": "GPT-OSS 120B",
+    "openai/gpt-oss-20b": "GPT-OSS 20B",
+    "qwen/qwen3.6-27b": "Qwen 3.6 27B",
+    "qwen/qwen3-32b": "Qwen 3 32B",
+    "meta-llama/llama-4-scout-17b-16e-instruct": "Llama 4 Scout 17B",
+    "meta-llama/llama-4-maverick-17b-128e-instruct": "Llama 4 Maverick 17B",
     # Moonshot
     "kimi-k3": "Kimi K3",
     "kimi-k2.7-code": "Kimi K2.7 Code",

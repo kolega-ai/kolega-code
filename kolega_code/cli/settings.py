@@ -81,6 +81,18 @@ def _coerce_permission_mode(raw: object) -> str:
         return PermissionMode.ASK.value
 
 
+def _coerce_optional_bool(raw: object) -> Optional[bool]:
+    """Normalize an optional stored boolean; anything else becomes None."""
+    return raw if isinstance(raw, bool) else None
+
+
+def _coerce_optional_text(raw: object) -> Optional[str]:
+    """Normalize an optional stored string; blank becomes None."""
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
 def _coerce_custom_endpoints(raw: object) -> dict[str, dict]:
     """Normalize a stored endpoint-id -> endpoint-definition mapping.
 
@@ -165,7 +177,7 @@ def _coerce_gateway(raw: object) -> dict[str, Any]:
         if key in ("allowed_users", "group_ids"):
             if isinstance(value, list) and all(isinstance(item, str) for item in value):
                 result[key] = [str(item) for item in value if str(item)]
-        elif key in ("pairing_enabled", "stt_enabled"):
+        elif key == "pairing_enabled":
             if isinstance(value, bool):
                 result[key] = value
         elif key == "session_idle_ttl_seconds":
@@ -177,7 +189,7 @@ def _coerce_gateway(raw: object) -> dict[str, Any]:
         elif key == "max_sessions":
             if isinstance(value, int) and not isinstance(value, bool) and value > 0:
                 result[key] = value
-        elif key in ("adapter", "project", "permission_mode", "stt_model", "telegram_proxy"):
+        elif key in ("adapter", "project", "permission_mode", "telegram_proxy"):
             if isinstance(value, str) and value.strip():
                 result[key] = value.strip()
     return result
@@ -219,6 +231,15 @@ class CliSettings:
     # field — absent in older files -> empty mapping, no schema bump (same
     # convention as web_search_backend / active_theme).
     oauth_tokens: dict[str, dict] = field(default_factory=dict)
+    # Voice transcription for gateway voice notes. Pluggable provider
+    # Voice transcription for gateway voice notes. Remote-only providers
+    # (currently Groq's hosted Whisper), mirroring the web-search backend
+    # convention: absent in older files -> None -> defaults applied
+    # downstream in kolega_code.gateway.config ("groq", disabled). The
+    # provider reuses the stored groq API key from api_keys.
+    stt_enabled: Optional[bool] = None
+    stt_provider: Optional[str] = None
+    stt_model: Optional[str] = None
     # The messaging gateway's Telegram bot token (BotFather). Saved by
     # `kolega-code gateway telegram setup`. Additive optional field —
     # absent in older files -> None, no schema bump.
@@ -288,6 +309,11 @@ class CliSettings:
             web_search_mode=data.get("web_search_mode"),
             # Additive optional field; absent in older files -> empty mapping.
             oauth_tokens=_coerce_oauth_tokens(data.get("oauth_tokens")),
+            # Additive optional fields; absent in older files -> None -> the
+            # gateway's provider-aware defaults apply.
+            stt_enabled=_coerce_optional_bool(data.get("stt_enabled")),
+            stt_provider=_coerce_optional_text(data.get("stt_provider")),
+            stt_model=_coerce_optional_text(data.get("stt_model")),
             # Additive optional field; absent in older files -> None.
             telegram_bot_token=data.get("telegram_bot_token"),
             # Additive optional section; absent in older files -> empty mapping.
@@ -325,6 +351,9 @@ class CliSettings:
             "web_search_base_url": self.web_search_base_url,
             "web_search_mode": self.web_search_mode,
             "oauth_tokens": self.oauth_tokens,
+            "stt_enabled": self.stt_enabled,
+            "stt_provider": self.stt_provider,
+            "stt_model": self.stt_model,
             "telegram_bot_token": self.telegram_bot_token,
             "gateway": self.gateway,
             "permission_mode": _coerce_permission_mode(self.permission_mode),

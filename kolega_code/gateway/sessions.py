@@ -56,7 +56,12 @@ from kolega_code.gateway.event_router import EventRouter
 from kolega_code.gateway.questions import build_question_extension
 from kolega_code.gateway.redaction import scrub
 from kolega_code.gateway.router import SessionRegistry
-from kolega_code.gateway.stt import Transcriber, WhisperTranscriber
+from kolega_code.gateway.stt import (
+    SttProviderError,
+    SttProviderNotConfigured,
+    Transcriber,
+    build_transcriber,
+)
 from kolega_code.utils.images import encode_image_file
 
 logger = logging.getLogger(__name__)
@@ -260,17 +265,27 @@ class AgentTurnHandler:
         if not self._config.stt_enabled:
             await self._adapter.send_text(
                 chat_ref.chat_id,
-                "🎙 Voice transcription is disabled. Enable it in settings.json (gateway.stt_enabled) and install the stt extra.",
+                "🎙 Voice transcription is disabled. Enable it in Settings → Tools → Voice transcription.",
             )
             return ""
         transcriber = self._transcriber
         if transcriber is None:
-            transcriber = WhisperTranscriber(model_size=self._config.stt_model)
-            if not transcriber.available():
-                await self._adapter.send_text(
-                    chat_ref.chat_id,
-                    "🎙 Speech-to-text is not installed. Install the gateway's stt extra (faster-whisper) and restart.",
+            try:
+                transcriber = build_transcriber(
+                    self._config.stt_provider,
+                    api_key=self._config.stt_api_key,
+                    model=self._config.stt_model,
                 )
+            except SttProviderNotConfigured as exc:
+                # E.g. groq selected but no key stored: the user fixes the
+                # configuration, and the next note rebuilds the provider.
+                await self._adapter.send_text(chat_ref.chat_id, f"🎙 {exc}")
+                return ""
+            except SttProviderError as exc:
+                await self._adapter.send_text(chat_ref.chat_id, f"🎙 {exc}")
+                return ""
+            if not transcriber.available():
+                await self._adapter.send_text(chat_ref.chat_id, f"🎙 {transcriber.unavailable_message()}")
                 return ""
             self._transcriber = transcriber
         try:

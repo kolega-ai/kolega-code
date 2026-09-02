@@ -16,9 +16,19 @@ from kolega_code.gateway.config import (
 TEST_BOT_TOKEN = "123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
 
 
-def save_settings(tmp_path: Path, *, gateway: dict | None = None, token: str | None = None) -> Path:
+def save_settings(
+    tmp_path: Path,
+    *,
+    gateway: dict | None = None,
+    token: str | None = None,
+    stt: dict | None = None,
+) -> Path:
     state_dir = tmp_path / "state"
-    SettingsStore(root=state_dir).save(CliSettings(telegram_bot_token=token, gateway=gateway or {}))
+    settings = CliSettings(telegram_bot_token=token, gateway=gateway or {})
+    if stt:
+        for key, value in stt.items():
+            setattr(settings, key, value)
+    SettingsStore(root=state_dir).save(settings)
     return state_dir
 
 
@@ -38,7 +48,9 @@ def test_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.telegram_token is None
     assert config.telegram_proxy is None
     assert config.stt_enabled is False
-    assert config.stt_model == "base"
+    assert config.stt_provider == "groq"
+    assert config.stt_model is None
+    assert config.stt_api_key is None
     assert config.project_path == Path("/home/tester/kolega-code-workspace")
 
 
@@ -62,8 +74,6 @@ def test_stored_gateway_section_maps_onto_config(tmp_path: Path) -> None:
             "max_sessions": 3,
             "session_idle_ttl_seconds": 90.0,
             "edit_throttle_seconds": 0.5,
-            "stt_enabled": True,
-            "stt_model": "small",
             "telegram_proxy": "http://127.0.0.1:3128",
         },
         token=TEST_BOT_TOKEN,
@@ -80,10 +90,47 @@ def test_stored_gateway_section_maps_onto_config(tmp_path: Path) -> None:
     assert config.max_sessions == 3
     assert config.session_idle_ttl_seconds == 90.0
     assert config.edit_throttle_seconds == 0.5
-    assert config.stt_enabled is True
-    assert config.stt_model == "small"
+    assert config.stt_enabled is False
+    assert config.stt_provider == "groq"
     assert config.telegram_token == TEST_BOT_TOKEN
     assert config.telegram_proxy == "http://127.0.0.1:3128"
+
+
+def test_top_level_stt_settings_apply(tmp_path: Path) -> None:
+    state_dir = save_settings(
+        tmp_path,
+        stt={"stt_enabled": True, "stt_provider": "groq", "stt_model": "whisper-large-v3"},
+    )
+    config = load_gateway_config(state_dir=state_dir)
+    assert config.stt_enabled is True
+    assert config.stt_provider == "groq"
+    assert config.stt_model == "whisper-large-v3"
+
+
+def test_groq_stt_uses_the_stored_groq_api_key(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    settings = CliSettings(stt_enabled=True, stt_provider="groq", api_keys={"groq": "gsk_stored"})
+    SettingsStore(root=state_dir).save(settings)
+    config = load_gateway_config(state_dir=state_dir)
+    assert config.stt_enabled is True
+    assert config.stt_provider == "groq"
+    assert config.stt_model is None  # provider default applies downstream
+    assert config.stt_api_key == "gsk_stored"
+
+
+def test_groq_stt_api_key_env_beats_the_stored_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_env")
+    state_dir = tmp_path / "state"
+    settings = CliSettings(stt_provider="groq", api_keys={"groq": "gsk_stored"})
+    SettingsStore(root=state_dir).save(settings)
+    config = load_gateway_config(state_dir=state_dir)
+    assert config.stt_api_key == "gsk_env"
+
+
+def test_unknown_stt_provider_falls_back_to_groq(tmp_path: Path) -> None:
+    state_dir = save_settings(tmp_path, stt={"stt_provider": "not-a-provider"})
+    config = load_gateway_config(state_dir=state_dir)
+    assert config.stt_provider == "groq"
 
 
 def test_cli_flags_override_stored_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

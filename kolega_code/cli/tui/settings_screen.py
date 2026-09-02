@@ -17,6 +17,7 @@ from kolega_code.agent.tool_backend.search_backends import (
     DEFAULT_BACKEND as DEFAULT_WEB_SEARCH_BACKEND,
     available_backends,
 )
+from kolega_code.gateway.stt import DEFAULT_STT_PROVIDER, available_stt_providers
 
 from .. import messages, theme
 from ..provider_registry import (
@@ -456,6 +457,30 @@ class SettingsScreen(ModalScreen[None]):
                 yield Input(password=True, id="web_search_api_key_input")
                 yield Label("SearXNG base URL", id="web_search_base_url_label")
                 yield Input(id="web_search_base_url_input", placeholder="https://searxng.example.com")
+            with Vertical(classes="settings-section", id="settings_stt") as stt_section:
+                stt_section.border_title = "Voice transcription"
+                yield Static(
+                    "Transcribe gateway voice notes with a remote provider: Groq's hosted "
+                    "whisper-large-v3-turbo, which reuses the Groq API key from the Providers page.",
+                    classes="settings-hint",
+                )
+                yield Label("Speech-to-text")
+                yield Select(
+                    [("Enabled", "true"), ("Disabled", "false")],
+                    id="stt_enabled_select",
+                    allow_blank=False,
+                    value="false",
+                )
+                yield Label("Provider")
+                yield Select(
+                    available_stt_providers(),
+                    id="stt_provider_select",
+                    allow_blank=False,
+                    value=DEFAULT_STT_PROVIDER,
+                )
+                yield Label("Model")
+                yield Input(id="stt_model_input", placeholder="whisper-large-v3-turbo")
+                yield Static("", id="stt_key_status", classes="settings-hint")
             with Vertical(classes="settings-section", id="settings_lsp") as lsp_section:
                 lsp_section.border_title = "Language Servers (LSP)"
                 yield Static(
@@ -632,21 +657,6 @@ class SettingsScreen(ModalScreen[None]):
                 )
                 yield Label("Project (workspace directory)")
                 yield Input(id="gateway_project_input", placeholder="~/kolega-code-workspace")
-            with Vertical(classes="settings-section", id="settings_gateway_stt") as stt_section:
-                stt_section.border_title = "Voice transcription"
-                yield Static(
-                    "Transcribe voice notes locally with faster-whisper (requires the 'stt' extra).",
-                    classes="settings-hint",
-                )
-                yield Label("Speech-to-text")
-                yield Select(
-                    [("Enabled", "true"), ("Disabled", "false")],
-                    id="gateway_stt_select",
-                    allow_blank=False,
-                    value="false",
-                )
-                yield Label("Model size")
-                yield Input(id="gateway_stt_model_input", placeholder="base")
 
     def _compose_memory_page(self) -> ComposeResult:
         backend_options = [(backend_id, backend_id) for backend_id in self.owner.memory_manager.registry.backend_ids]

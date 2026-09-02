@@ -391,6 +391,9 @@ async def test_model_switch_rebuilds_and_keeps_history(tmp_path: Path) -> None:
 
     entry = handler._registry.get(chat_ref())
     assert entry is not None
+    # The reply flushing does not mean the turn task has fully settled; a
+    # /model arriving in that window is (correctly) refused as busy.
+    assert await wait_for(lambda: entry.payload.turn_task is None)
     agent_before = entry.payload.runtime.agent
     await handler.handle(chat_ref(), inbound("/model anthropic/claude-haiku-4-5-20251001", message_id="m-2"))
     assert await wait_for(lambda: "Model: anthropic/claude-haiku-4-5-20251001" in all_sent_texts(adapter))
@@ -499,6 +502,9 @@ async def test_model_switch_rejects_unknown_models(tmp_path: Path) -> None:
     handler, adapter, _ = make_handler(tmp_path)
     await handler.handle(chat_ref(), inbound("hello", message_id="m-1"))
     assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+    entry = handler._registry.get(chat_ref())
+    assert entry is not None
+    assert await wait_for(lambda: entry.payload.turn_task is None)
     await handler.handle(chat_ref(), inbound("/model anthropic/not-a-real-model", message_id="m-2"))
     assert await wait_for(lambda: "Could not switch models" in all_sent_texts(adapter))
     await handler.shutdown()

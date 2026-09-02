@@ -163,9 +163,10 @@ so only what you change needs to be stored:
 | `gateway.max_sessions` | `50` | Live-session cache size. |
 | `gateway.session_idle_ttl_seconds` | `3600` | Idle session eviction (`null` disables). |
 | `gateway.edit_throttle_seconds` | `1` | Minimum interval between edit-in-place streaming updates. |
-| `gateway.stt_enabled` | `false` | Transcribe voice notes locally (requires the `stt` extra). |
-| `gateway.stt_model` | `base` | faster-whisper model size. |
 | `gateway.telegram_proxy` | — | Optional HTTP proxy for the Telegram connection. |
+| `stt_enabled` (top level) | `false` | Transcribe gateway voice notes (Tools → Voice transcription). |
+| `stt_provider` (top level) | `groq` | Remote speech-to-text provider (`groq` hosted `whisper-large-v3-turbo`, reusing the Groq API key). |
+| `stt_model` (top level) | provider default | Provider-specific model override (`whisper-large-v3-turbo` by default). |
 
 ## Web search
 

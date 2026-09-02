@@ -9,6 +9,7 @@ from .openai_chatgpt import OPENAI_CHATGPT_SPECS
 from .together import TOGETHER_SPECS
 from .google import GOOGLE_SPECS
 from .xai import XAI_SPECS
+from .groq import GROQ_SPECS
 from .ollama_cloud import OLLAMA_CLOUD_SPECS
 from .fireworks import FIREWORKS_SPECS
 from .dashscope import DASHSCOPE_SPECS
@@ -38,6 +39,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
     **TOGETHER_SPECS,
     **GOOGLE_SPECS,
     **XAI_SPECS,
+    **GROQ_SPECS,
     **OLLAMA_CLOUD_SPECS,
     **FIREWORKS_SPECS,
     **DASHSCOPE_SPECS,

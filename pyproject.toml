@@ -128,11 +128,6 @@ dev = [
     "ruff==0.15.12",
     "twine==6.2.0",
 ]
-stt = [
-    # Local voice-note transcription for the gateway (ctranslate2-backed;
-    # heavy on purpose, so it stays out of the base install).
-    "faster-whisper==1.2.1",
-]
 
 [project.scripts]
 kolega-code = "kolega_code.cli.main:main"

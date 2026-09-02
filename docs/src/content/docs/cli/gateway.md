@@ -13,7 +13,7 @@ the adapter layer is designed for more platforms later.
 Each chat gets its own durable Kolega session. Turns stream into the chat as
 edit-in-place messages, permission approvals and `ask_user_choice` questions
 arrive as inline buttons, and voice notes, images, and documents are handled
-(voice transcription needs the `stt` extra).
+(the local voice-transcription provider needs the `stt` extra).
 
 ## Setup
 
@@ -25,7 +25,8 @@ arrive as inline buttons, and voice notes, images, and documents are handled
    ```
 
    or from the TUI: **Settings → Gateway** (bot token, allowed users, pairing,
-   permission mode, adapter, project, and voice transcription). Everything is
+   permission mode, adapter, and project; voice transcription lives under
+   **Settings → Tools**). Everything is
    stored in `settings.json` like every other key — see
    [Gateway settings](../configuration/environment-variables.md#gateway).
 3. Run it:
@@ -72,13 +73,13 @@ and the sender's next message goes through. Codes expire after an hour.
 
 ## Voice transcription
 
-Set `gateway.stt_enabled` in `settings.json`, install the extra, and voice
-notes transcribe locally with faster-whisper (model size via
-`gateway.stt_model`, default `base`):
-
-```bash
-uv pip install "kolega-code[stt]"
-```
+Voice notes transcribe remotely through Groq's hosted `whisper-large-v3-turbo`
+(the same provider/model Hermes uses), configured in the settings TUI under
+**Tools → Voice transcription**. `stt_enabled`, `stt_provider`, and `stt_model`
+live at the top level of `settings.json`; the provider reuses the Groq API key
+stored on the Providers page (or `GROQ_API_KEY` in the gateway's environment).
+Audio is uploaded to Groq's transcription endpoint for the request and never
+stored. Transcription is remote-only — there is no local whisper backend.
 
 ## Notes
 
