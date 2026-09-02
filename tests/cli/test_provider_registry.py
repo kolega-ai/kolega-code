@@ -49,6 +49,7 @@ def test_kimi_coding_exposes_plan_specific_k3_models():
 def test_zai_exposes_glm_models_and_defaults_to_glm_53() -> None:
     assert ui_model_options(ModelProvider.ZAI.value) == [
         ("GLM-5.3", "glm-5.3"),
+        ("GLM-5.3 Flash", "glm-5.3-flash"),
         ("GLM-5.2", "glm-5.2"),
         ("GLM-5.1", "glm-5.1"),
     ]

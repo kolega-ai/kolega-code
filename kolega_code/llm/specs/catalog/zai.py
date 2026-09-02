@@ -14,6 +14,20 @@ ZAI_SPECS = {
             mode="zai_effort",
         ),
     },
+    ("zai", "glm-5.3-flash"): {
+        "context_length": 1000000,
+        "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
+        "default_temperature": 0.6,
+        # Native multimodal input (image/video/file); shares GLM-5.3's
+        # forced-reasoning effort vocabulary (high/max).
+        "supports_vision": True,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("high", "max"),
+            default="max",
+            mode="zai_effort",
+        ),
+    },
     ("zai", "glm-5.2"): {
         "context_length": 1000000,
         "max_completion_tokens": 131072,

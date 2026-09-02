@@ -37,6 +37,8 @@ def test_supports_vision_flag_present_on_every_entry():
         ("kimi_coding", "k3-256k", True),
         ("kimi_coding", "kimi-for-coding", True),
         ("kimi_coding", "kimi-for-coding-highspeed", True),
+        # Native multimodal GLM-5 series model (image/video/file input).
+        ("zai", "glm-5.3-flash", True),
         ("xai", "grok-4.6", True),
         ("xai", "grok-4.5", True),
         ("xai", "grok-4.3", True),
