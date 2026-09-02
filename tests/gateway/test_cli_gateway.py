@@ -49,6 +49,23 @@ def test_status_reports_not_running(capsys: pytest.CaptureFixture[str], tmp_path
     assert "not running" in capsys.readouterr().out
 
 
+def test_status_via_the_full_cli_path(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    # Regression: subcommands without --project must not crash on args.project.
+    from kolega_code.cli.gateway import run_gateway
+
+    args = parse_args(["gateway", "status", "--state-dir", str(tmp_path / "state")])
+    assert run_gateway(args) == 0
+    assert "not running" in capsys.readouterr().out
+
+
+def test_pairing_list_via_the_full_cli_path(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    from kolega_code.cli.gateway import run_gateway
+
+    args = parse_args(["gateway", "pairing", "list", "--state-dir", str(tmp_path / "state")])
+    assert run_gateway(args) == 0
+    assert "no pending pairing requests" in capsys.readouterr().out
+
+
 def test_status_reads_a_fresh_heartbeat_file(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     import json
     from datetime import datetime, timezone

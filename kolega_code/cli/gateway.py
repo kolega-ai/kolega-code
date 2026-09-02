@@ -88,8 +88,8 @@ def run_gateway(args: argparse.Namespace) -> int:
 
 
 async def _run_gateway(args: argparse.Namespace) -> int:
-    config = load_gateway_config(state_dir=args.state_dir, project=args.project)
-    if args.adapter:
+    config = load_gateway_config(state_dir=args.state_dir, project=getattr(args, "project", None))
+    if getattr(args, "adapter", None):
         config = replace(config, adapter=args.adapter)
     if args.gateway_command == "status":
         return _gateway_status(config)
