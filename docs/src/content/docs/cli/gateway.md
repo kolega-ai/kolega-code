@@ -18,15 +18,14 @@ arrive as inline buttons, and voice notes, images, and documents are handled
 ## Setup
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy its token.
-2. Save it (optionally checking it against Telegram and saving your
-   allowlist — it also switches the adapter on):
+2. Save it — either from the CLI:
 
    ```bash
    kolega-code gateway telegram setup --verify
    ```
 
-   The command prompts for the token (never echoed) and your Telegram user id
-   (ask [@userinfobot](https://t.me/userinfobot) for it). Everything is
+   or from the TUI: **Settings → Gateway** (bot token, allowed users, pairing,
+   permission mode, adapter, project, and voice transcription). Everything is
    stored in `settings.json` like every other key — see
    [Gateway settings](../configuration/environment-variables.md#gateway).
 3. Run it:

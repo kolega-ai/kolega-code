@@ -547,7 +547,78 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         self._populate_subagents_controls()
         self._populate_skills_controls()
         self._populate_compression_controls()
+        self._populate_gateway_controls()
         self._update_settings_status()
+
+    def _populate_gateway_controls(self) -> None:
+        """Seed the Gateway page from saved settings."""
+        try:
+            self._settings_query_one("#gateway_token_input", Input)
+        except NoMatches:
+            return
+        gateway = dict(self.settings.gateway or {})
+        self._settings_query_one("#gateway_token_input", Input).value = ""
+        self._settings_query_one("#gateway_token_status", Static).update(
+            "Token saved."
+            if self.settings.telegram_bot_token
+            else "No token saved yet — paste a @BotFather token here (or run `kolega-code gateway telegram setup`)."
+        )
+        self._settings_query_one("#gateway_allowed_users_input", Input).value = ", ".join(
+            gateway.get("allowed_users") or []
+        )
+        self._settings_query_one("#gateway_pairing_select", Select).value = (
+            "true" if gateway.get("pairing_enabled") else "false"
+        )
+        self._settings_query_one("#gateway_permission_select", Select).value = str(
+            gateway.get("permission_mode") or "ask"
+        )
+        self._settings_query_one("#gateway_adapter_select", Select).value = str(gateway.get("adapter") or "echo")
+        self._settings_query_one("#gateway_project_input", Input).value = str(gateway.get("project") or "")
+        self._settings_query_one("#gateway_stt_select", Select).value = (
+            "true" if gateway.get("stt_enabled") else "false"
+        )
+        self._settings_query_one("#gateway_stt_model_input", Input).value = str(gateway.get("stt_model") or "base")
+
+    def _collect_gateway_from_ui(self) -> None:
+        """Write the Gateway page into the gateway settings section.
+
+        The token Input only replaces the saved token when something was typed
+        (blank = keep); the screen's staged removal wins over a typed value.
+        """
+        try:
+            token_input = self._settings_query_one("#gateway_token_input", Input)
+            allowed_input = self._settings_query_one("#gateway_allowed_users_input", Input)
+            pairing = str(self._settings_query_one("#gateway_pairing_select", Select).value)
+            permission = str(self._settings_query_one("#gateway_permission_select", Select).value)
+            adapter = str(self._settings_query_one("#gateway_adapter_select", Select).value)
+            project = self._settings_query_one("#gateway_project_input", Input).value.strip()
+            stt = str(self._settings_query_one("#gateway_stt_select", Select).value)
+            stt_model = self._settings_query_one("#gateway_stt_model_input", Input).value.strip()
+        except NoMatches:
+            return
+        screen = getattr(self, "_settings_screen", None)
+        if screen is not None and getattr(screen, "pending_gateway_token_removal", False):
+            self.settings.telegram_bot_token = None
+        else:
+            typed_token = token_input.value.strip()
+            if typed_token:
+                self.settings.telegram_bot_token = typed_token
+        gateway = dict(self.settings.gateway or {})
+        allowed = [part.strip() for part in allowed_input.value.split(",") if part.strip()]
+        if allowed:
+            gateway["allowed_users"] = allowed
+        else:
+            gateway.pop("allowed_users", None)
+        gateway["pairing_enabled"] = pairing == "true"
+        gateway["permission_mode"] = permission
+        gateway["adapter"] = adapter
+        if project:
+            gateway["project"] = project
+        else:
+            gateway.pop("project", None)
+        gateway["stt_enabled"] = stt == "true"
+        gateway["stt_model"] = stt_model or "base"
+        self.settings.gateway = gateway
 
     def _draft_credential_settings(self) -> CliSettings:
         """Saved settings with the Providers page's unapplied edits layered on.
@@ -2041,6 +2112,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._collect_subagents_from_ui()
             self._collect_skills_from_ui()
             self._collect_compression_from_ui()
+            self._collect_gateway_from_ui()
         finally:
             self.settings = original
         return candidate, provider, model, effort
@@ -2055,6 +2127,21 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._set_settings_status(browser_message, "error")
             self._notify_user(browser_message, severity="error")
             return
+        # A gateway token is a BotFather credential; catch obviously wrong
+        # values before anything is written.
+        try:
+            typed_token = self._settings_query_one("#gateway_token_input", Input).value.strip()
+        except NoMatches:
+            typed_token = ""
+        if typed_token:
+            from kolega_code.gateway.adapters.telegram.adapter import validate_bot_token
+
+            try:
+                validate_bot_token(typed_token)
+            except ValueError as exc:
+                self._set_settings_status(str(exc), "error")
+                self._notify_user(str(exc), severity="error")
+                return
         # "Other…" entries are UI-only: every typed id must resolve to a
         # catalogued model before anything is written, so an unknown id can
         # never produce a build-time "Configuration incomplete" lockout.

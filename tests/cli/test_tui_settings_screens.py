@@ -104,7 +104,7 @@ async def test_settings_screen_is_categorized_and_stages_credentials_atomically(
         assert isinstance(screen, SettingsScreen)
         await pilot.pause()
         assert screen.dirty is False
-        assert screen.query_one("#settings_categories", OptionList).option_count == 8
+        assert screen.query_one("#settings_categories", OptionList).option_count == 9
         assert screen.query_one("#settings_page_model").display is True
         assert screen.query_one("#settings_page_tools").display is False
         apply_button = screen.query_one("#save_settings", Button)
@@ -1498,3 +1498,100 @@ async def test_settings_provider_switch_seeds_custom_endpoint_default_model(
         )
         await pilot.pause()
         assert screen.query_one("#model_custom_input", Input).value == "qwen/qwen3.6-35b-a3b"
+
+
+@pytest.mark.asyncio
+async def test_gateway_settings_page_round_trips(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(80, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen._show_category("gateway")
+        await pilot.pause()
+
+        screen.query_one("#gateway_token_input", Input).value = "123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+        screen.query_one("#gateway_allowed_users_input", Input).value = "111, 222"
+        screen.query_one("#gateway_pairing_select", Select).value = "true"
+        screen.query_one("#gateway_permission_select", Select).value = "auto"
+        screen.query_one("#gateway_adapter_select", Select).value = "telegram"
+        screen.query_one("#gateway_stt_select", Select).value = "true"
+        screen.query_one("#gateway_stt_model_input", Input).value = "small"
+
+        await app._save_settings_from_ui()
+        settings = settings_store.load()
+        assert settings.telegram_bot_token == "123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+        assert settings.gateway["allowed_users"] == ["111", "222"]
+        assert settings.gateway["pairing_enabled"] is True
+        assert settings.gateway["permission_mode"] == "auto"
+        assert settings.gateway["adapter"] == "telegram"
+        assert settings.gateway["stt_enabled"] is True
+        assert settings.gateway["stt_model"] == "small"
+
+
+@pytest.mark.asyncio
+async def test_gateway_settings_page_removes_the_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Button
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+    settings = settings_store.load()
+    settings.telegram_bot_token = "123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+    settings_store.save(settings)
+    app.settings = settings_store.load()
+
+    async with app.run_test(size=(80, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen._show_category("gateway")
+        await pilot.pause()
+        assert "Token saved." in str(screen.query_one("#gateway_token_status").render())
+
+        screen.query_one("#gateway_token_remove", Button).press()
+        await pilot.pause()
+        await app._save_settings_from_ui()
+        assert settings_store.load().telegram_bot_token is None
+
+
+@pytest.mark.asyncio
+async def test_gateway_settings_page_rejects_a_bad_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(80, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen._show_category("gateway")
+        await pilot.pause()
+        screen.query_one("#gateway_token_input", Input).value = "not-a-botfather-token"
+        await app._save_settings_from_ui()
+        assert settings_store.load().telegram_bot_token is None
