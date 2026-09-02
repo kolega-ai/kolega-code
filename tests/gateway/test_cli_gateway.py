@@ -1,5 +1,6 @@
 """`kolega-code gateway` CLI: argument parsing and the status command."""
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -91,6 +92,28 @@ def test_telegram_setup_reads_piped_stdin(monkeypatch: pytest.MonkeyPatch, tmp_p
     args = parse_args(["gateway", "telegram", "setup", "--state-dir", str(state_dir)])
     assert run_gateway(args) == 0
     assert SettingsStore(root=state_dir).load().telegram_bot_token == TEST_BOT_TOKEN
+
+
+def test_telegram_setup_prompts_interactively(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Regression: the interactive prompt path (no --token, tty stdin) must
+    # prompt for the token and the allowlist instead of crashing.
+    from kolega_code.cli.gateway import run_gateway
+    from kolega_code.cli.settings import SettingsStore
+
+    monkeypatch.setattr("getpass.getpass", lambda prompt: TEST_BOT_TOKEN)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "111")
+
+    state_dir = tmp_path / "state"
+    args = parse_args(["gateway", "telegram", "setup", "--state-dir", str(state_dir)])
+    assert run_gateway(args) == 0
+    settings = SettingsStore(root=state_dir).load()
+    assert settings.telegram_bot_token == TEST_BOT_TOKEN
+    assert settings.gateway["allowed_users"] == ["111"]
+    out = capsys.readouterr().out
+    assert "token saved" in out
 
 
 def test_telegram_setup_rejects_malformed_tokens(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:

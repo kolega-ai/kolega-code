@@ -118,7 +118,7 @@ async def _run_gateway(args: argparse.Namespace) -> int:
 
 
 async def _gateway_telegram(args: argparse.Namespace, config: GatewayConfig) -> int:
-    from getpass import getpass
+    import getpass
 
     from kolega_code.cli.settings import SettingsStore
     from kolega_code.gateway.adapters.telegram.adapter import validate_bot_token
@@ -135,7 +135,11 @@ async def _gateway_telegram(args: argparse.Namespace, config: GatewayConfig) -> 
     if not token and not sys.stdin.isatty():
         token = sys.stdin.readline().strip()
     if not token:
-        token = getpass.getpass("Telegram bot token (from @BotFather): ").strip()
+        try:
+            token = getpass.getpass("Telegram bot token (from @BotFather): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("gateway: no token provided", file=sys.stderr)
+            return 1
     if not token:
         print("gateway: no token provided", file=sys.stderr)
         return 1
