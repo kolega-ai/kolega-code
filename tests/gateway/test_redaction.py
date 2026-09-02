@@ -27,5 +27,5 @@ def test_every_occurrence_is_replaced() -> None:
 
 
 def test_telegram_token_shaped_secrets() -> None:
-    token = "123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+    token = "123456:fake-bot-token-for-tests-only"
     assert scrub(f"leaked {token}!", [token]) == f"leaked {REDACTED_PLACEHOLDER}!"

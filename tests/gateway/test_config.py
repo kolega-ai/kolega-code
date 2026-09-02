@@ -13,7 +13,7 @@ from kolega_code.gateway.config import (
     load_gateway_config,
 )
 
-TEST_BOT_TOKEN = "123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+TEST_BOT_TOKEN = "123:fake-bot-token-for-tests-only"
 
 
 def save_settings(

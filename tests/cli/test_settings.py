@@ -105,11 +105,11 @@ def test_settings_store_round_trips_skills_enabled(tmp_path: Path) -> None:
 
 def test_settings_store_round_trips_telegram_bot_token(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path)
-    store.save(CliSettings(telegram_bot_token="123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"))
+    store.save(CliSettings(telegram_bot_token="123:fake-bot-token-for-tests-only"))
 
     loaded = store.load()
-    assert loaded.telegram_bot_token == "123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
-    assert loaded.to_dict()["telegram_bot_token"] == "123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+    assert loaded.telegram_bot_token == "123:fake-bot-token-for-tests-only"
+    assert loaded.to_dict()["telegram_bot_token"] == "123:fake-bot-token-for-tests-only"
 
     # Absent in older files -> None -> the telegram adapter asks for setup.
     data = CliSettings().to_dict()

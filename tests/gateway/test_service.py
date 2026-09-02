@@ -19,7 +19,7 @@ def make_config(tmp_path: Path) -> GatewayConfig:
         adapter="telegram",
         project_path=tmp_path / "workspace",
         state_dir=tmp_path / "state",
-        telegram_token="123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw",
+        telegram_token="123:fake-bot-token-for-tests-only",
     )
 
 

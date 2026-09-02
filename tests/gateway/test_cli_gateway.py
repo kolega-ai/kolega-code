@@ -52,7 +52,7 @@ def test_parse_gateway_telegram_setup() -> None:
     assert args.verify is True
 
 
-TEST_BOT_TOKEN = "123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+TEST_BOT_TOKEN = "123:fake-bot-token-for-tests-only"
 
 
 def test_telegram_setup_saves_the_token_to_settings(tmp_path: Path) -> None:

@@ -1521,7 +1521,7 @@ async def test_gateway_settings_page_round_trips(
         screen._show_category("gateway")
         await pilot.pause()
 
-        screen.query_one("#gateway_token_input", Input).value = "123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+        screen.query_one("#gateway_token_input", Input).value = "123:fake-bot-token-for-tests-only"
         screen.query_one("#gateway_allowed_users_input", Input).value = "111, 222"
         screen.query_one("#gateway_pairing_select", Select).value = "true"
         screen.query_one("#gateway_permission_select", Select).value = "auto"
@@ -1529,7 +1529,7 @@ async def test_gateway_settings_page_round_trips(
 
         await app._save_settings_from_ui()
         settings = settings_store.load()
-        assert settings.telegram_bot_token == "123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+        assert settings.telegram_bot_token == "123:fake-bot-token-for-tests-only"
         assert settings.gateway["allowed_users"] == ["111", "222"]
         assert settings.gateway["pairing_enabled"] is True
         assert settings.gateway["permission_mode"] == "auto"
@@ -1584,7 +1584,7 @@ async def test_gateway_settings_page_removes_the_token(
 
     app, settings_store = _configured_app(tmp_path, monkeypatch)
     settings = settings_store.load()
-    settings.telegram_bot_token = "123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+    settings.telegram_bot_token = "123:fake-bot-token-for-tests-only"
     settings_store.save(settings)
     app.settings = settings_store.load()
 

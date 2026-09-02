@@ -2,7 +2,7 @@
 
 Requires a test bot and chat in the repo `.env`:
 
-    KOLEGA_GATEWAY_TEST_TOKEN=123456:AAH...
+    KOLEGA_GATEWAY_TEST_TOKEN=123456:your-bot-token-from-botfather
     KOLEGA_GATEWAY_TEST_CHAT_ID=<your telegram user id>
 
 The test messages itself and waits for the echo to come back through the

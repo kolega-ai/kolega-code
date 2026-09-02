@@ -22,13 +22,11 @@ from kolega_code.gateway.adapters.telegram.adapter import (
 
 
 def test_validate_bot_token_accepts_botfather_shape() -> None:
-    assert validate_bot_token("123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw") == (
-        "123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
-    )
+    assert validate_bot_token("123456:fake-bot-token-for-tests-only") == ("123456:fake-bot-token-for-tests-only")
 
 
 def test_validate_bot_token_rejects_non_token_values() -> None:
-    for bad in ("", "not-a-token", "123456:", ":AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw", "123456:short"):
+    for bad in ("", "not-a-token", "123456:", ":fake-bot-token-for-tests-only", "123456:short"):
         with pytest.raises(ValueError):
             validate_bot_token(bad)
 
@@ -39,7 +37,7 @@ def test_adapter_constructor_validates_token() -> None:
 
 
 def make_adapter() -> TelegramAdapter:
-    adapter = TelegramAdapter(token="123:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw")
+    adapter = TelegramAdapter(token="123:fake-bot-token-for-tests-only")
     adapter._bot_id = "123"  # type: ignore[assignment] — set post-init for offline tests
     return adapter
 
