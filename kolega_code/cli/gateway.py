@@ -343,6 +343,12 @@ async def _gateway_run(config: GatewayConfig, args: argparse.Namespace) -> int:
         print(f"gateway: {config.adapter} adapter running (project: {config.project_path}, state: {config.state_dir})")
         await stop.wait()
     finally:
-        await daemon.stop()
-        print("gateway: stopped")
+        try:
+            # A foreground daemon must always respond to Ctrl-C, even when a
+            # channel teardown stalls; bound the graceful stop and force exit
+            # rather than leaving the user with a wedged process.
+            await asyncio.wait_for(daemon.stop(), timeout=15)
+            print("gateway: stopped")
+        except asyncio.TimeoutError:
+            print("gateway: shutdown timed out; forcing exit", file=sys.stderr)
     return 0

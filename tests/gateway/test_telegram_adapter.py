@@ -248,6 +248,41 @@ def test_safe_file_name_falls_back_for_missing_names() -> None:
     assert adapter._safe_file_name(make_document_message(message_id=11, file_name=None)) == "document-11"
 
 
+@pytest.mark.asyncio
+async def test_stop_cancels_a_stuck_polling_loop() -> None:
+    """A stalled getUpdates must not wedge Ctrl-C: stop() cancels the polling
+    task instead of awaiting dispatcher.stop_polling() (which waits for the
+    in-flight network request)."""
+    adapter = make_adapter()
+    adapter._state = "running"
+    release = asyncio.Event()
+    start_calls: list[dict] = []
+
+    async def never_returns(*args, **kwargs) -> None:
+        start_calls.append(dict(kwargs))
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            raise
+
+    dispatcher = MagicMock()
+    dispatcher.start_polling = never_returns
+    adapter._dispatcher = dispatcher
+    adapter._bot = MagicMock()
+    adapter._bot.session = AsyncMock()
+    adapter._poll_task = asyncio.create_task(adapter._poll_supervisor())
+    deadline = asyncio.get_running_loop().time() + 2
+    while not start_calls and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(adapter.stop(), timeout=5)
+    assert adapter._poll_task is None
+    assert adapter._bot is None
+    assert adapter._dispatcher is None
+    # The gateway owns signals; aiogram's own handlers stay off.
+    assert start_calls and start_calls[0].get("handle_signals") is False
+
+
 def test_to_inbound_maps_plain_message() -> None:
     adapter = make_adapter()
     inbound = adapter._to_inbound(make_message("hi there"))

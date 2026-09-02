@@ -156,11 +156,16 @@ class TelegramAdapter(GatewayAdapter):
         self._state = "running"
 
     async def _poll_supervisor(self) -> None:
-        """Run the polling loop, reconnecting with backoff on fatal exits."""
+        """Run the polling loop, reconnecting with backoff on fatal exits.
+
+        The gateway owns its signal handlers (``stop.set()`` in the CLI), so
+        aiogram's own SIGINT/SIGTERM hooks are disabled — one owner, and
+        Ctrl-C reaches the same graceful path every time.
+        """
         backoff = _RECONNECT_BACKOFF_INITIAL_SECONDS
         while self._state != "stopped" and self._dispatcher is not None and self._bot is not None:
             try:
-                await self._dispatcher.start_polling(self._bot)
+                await self._dispatcher.start_polling(self._bot, handle_signals=False)
                 return  # stop_polling() ended the loop cleanly
             except asyncio.CancelledError:
                 raise
@@ -172,25 +177,21 @@ class TelegramAdapter(GatewayAdapter):
 
     async def stop(self) -> None:
         self._state = "stopped"
-        dispatcher, task = self._dispatcher, self._poll_task
-        if dispatcher is not None:
+        task = self._poll_task
+        if task is not None and not task.done():
+            # Cancel the supervisor directly: cancellation interrupts
+            # aiogram's in-flight getUpdates, whereas awaiting
+            # dispatcher.stop_polling() waits for that network request to
+            # finish — an unbounded hang on a stalled connection.
+            task.cancel()
             try:
-                await dispatcher.stop_polling()
-            except Exception:  # noqa: BLE001 — shutdown is best-effort
-                logger.debug("telegram: stop_polling failed", exc_info=True)
-        if task is not None:
-            try:
-                await asyncio.wait_for(task, timeout=_POLL_STOP_TIMEOUT_SECONDS)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-            self._poll_task = None
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._poll_task = None
         if self._bot is not None:
             try:
-                await self._bot.session.close()
+                await asyncio.wait_for(self._bot.session.close(), timeout=_POLL_STOP_TIMEOUT_SECONDS)
             except Exception:  # noqa: BLE001
                 logger.debug("telegram: bot session close failed", exc_info=True)
         self._bot = None
