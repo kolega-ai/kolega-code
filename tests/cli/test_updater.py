@@ -80,6 +80,8 @@ def test_run_self_update_runs_uv_tool_upgrade(monkeypatch) -> None:
 
     monkeypatch.setattr(updater.shutil, "which", lambda command: "/usr/bin/uv")
     monkeypatch.setattr(updater.subprocess, "run", fake_run)
+    # Run regardless of whether this machine has the gateway service installed.
+    monkeypatch.setattr("kolega_code.gateway.service.is_service_installed", lambda: False)
 
     result = updater.run_self_update(capture_output=True)
 
