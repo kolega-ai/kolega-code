@@ -12,8 +12,10 @@ from kolega_code.gateway.service import (
     SYSTEMD_UNIT_NAME,
     install_service,
     is_service_installed,
+    login_shell,
     restart_service,
     service_command,
+    service_launch_command,
     service_unit_path,
     uninstall_service,
 )
@@ -44,12 +46,34 @@ def test_service_command_argv() -> None:
     ]
 
 
+def test_service_launch_command_wraps_the_daemon_in_a_login_shell() -> None:
+    config = make_config(Path("/tmp/x"))
+    argv = service_launch_command(config, "/usr/local/bin/kolega-code", shell="/bin/zsh")
+    assert argv[:3] == ["/bin/zsh", "-l", "-c"]
+    # `exec` replaces the shell so signals reach the daemon directly.
+    assert argv[3].startswith("exec /usr/local/bin/kolega-code gateway run")
+    assert f"--state-dir {config.state_dir}" in argv[3]
+
+
+def test_service_launch_command_quotes_paths_with_spaces() -> None:
+    config = GatewayConfig(
+        adapter="telegram",
+        project_path=Path("/tmp/my project"),
+        state_dir=Path("/tmp/ Application Support/state"),
+        telegram_token="123:fake-bot-token-for-tests-only",
+    )
+    argv = service_launch_command(config, "/usr/local/bin/kolega-code", shell="/bin/bash")
+    assert "'/tmp/ Application Support/state'" in argv[3]
+    assert "'/tmp/my project'" in argv[3]
+
+
 def test_install_writes_systemd_unit_without_env_file(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     systemd_dir = tmp_path / "systemd-user"
     result = install_service(
         config,
         executable="/usr/local/bin/kolega-code",
+        shell="/bin/bash",
         systemd_dir=systemd_dir,
         launchd_dir=tmp_path / "launchd",
         platform="linux",
@@ -58,7 +82,9 @@ def test_install_writes_systemd_unit_without_env_file(tmp_path: Path) -> None:
     assert result.unit_path == unit_path
     assert unit_path.exists()
     unit_text = unit_path.read_text(encoding="utf-8")
-    assert "ExecStart=/usr/local/bin/kolega-code gateway run" in unit_text
+    # The daemon launches through the login shell so it inherits the user's
+    # normal environment (launchd/systemd alone provide a minimal PATH).
+    assert "ExecStart=/bin/bash -l -c 'exec /usr/local/bin/kolega-code gateway run" in unit_text
     assert f"--state-dir {config.state_dir}" in unit_text
     # Configuration comes from settings.json, so no EnvironmentFile.
     assert "EnvironmentFile" not in unit_text
@@ -71,6 +97,7 @@ def test_install_writes_launchd_plist_without_env_variables(tmp_path: Path) -> N
     result = install_service(
         config,
         executable="/usr/local/bin/kolega-code",
+        shell="/bin/zsh",
         systemd_dir=tmp_path / "systemd-user",
         launchd_dir=launchd_dir,
         platform="darwin",
@@ -79,8 +106,42 @@ def test_install_writes_launchd_plist_without_env_variables(tmp_path: Path) -> N
     assert result.unit_path == plist_path
     plist = plistlib.loads(plist_path.read_bytes())
     assert plist["Label"] == LAUNCHD_LABEL
-    assert plist["ProgramArguments"][:3] == ["/usr/local/bin/kolega-code", "gateway", "run"]
+    argv = plist["ProgramArguments"]
+    assert argv[:3] == ["/bin/zsh", "-l", "-c"]
+    assert argv[3].startswith("exec /usr/local/bin/kolega-code gateway run")
     assert "EnvironmentVariables" not in plist
+    assert any("login shell" in note for note in result.notes)
+
+
+def test_install_uses_shell_env_var_when_set(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("SHELL", "/bin/fish")
+    launchd_dir = tmp_path / "LaunchAgents"
+    install_service(
+        make_config(tmp_path),
+        executable="/usr/local/bin/kolega-code",
+        systemd_dir=tmp_path / "systemd-user",
+        launchd_dir=launchd_dir,
+        platform="darwin",
+    )
+    plist = plistlib.loads((launchd_dir / LAUNCHD_PLIST_NAME).read_bytes())
+    assert plist["ProgramArguments"][0] == "/bin/fish"
+
+
+def test_install_falls_back_to_platform_default_shell(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("SHELL", raising=False)
+    assert login_shell(platform="darwin") == "/bin/zsh"
+    assert login_shell(platform="linux") == "/bin/bash"
+
+    launchd_dir = tmp_path / "LaunchAgents"
+    install_service(
+        make_config(tmp_path),
+        executable="/usr/local/bin/kolega-code",
+        systemd_dir=tmp_path / "systemd-user",
+        launchd_dir=launchd_dir,
+        platform="darwin",
+    )
+    plist = plistlib.loads((launchd_dir / LAUNCHD_PLIST_NAME).read_bytes())
+    assert plist["ProgramArguments"][0] == "/bin/zsh"
 
 
 def test_uninstall_removes_the_unit(tmp_path: Path) -> None:
