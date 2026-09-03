@@ -55,6 +55,12 @@ below).
 
 Running `kolega-code update` automatically restarts the gateway service if it is installed, so the running daemon picks up new versions immediately.
 
+The background service launches through your login shell (`$SHELL`), so the
+daemon sees the same environment as an interactive terminal — service
+managers alone provide a minimal `PATH` that would hide user-installed tools
+from gateway-driven sessions. Restart the service after changing your shell
+profile to pick up the new environment.
+
 ## In-chat commands
 
 `/new`, `/status`, `/model [model]`, `/permissions [ask|auto]`, `/stop`, `/help`.

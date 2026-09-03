@@ -50,6 +50,34 @@ class ServiceInstallResult:
     unit_path: Optional[Path] = None
 
 
+def login_shell(platform: Optional[str] = None) -> str:
+    """The user's login shell: ``$SHELL`` when set, else the platform default.
+
+    launchd and systemd start service programs directly, so the daemon would
+    inherit the service manager's minimal environment (launchd gives agents
+    ``PATH=/usr/bin:/bin:/usr/sbin:/sbin``), which starves gateway-driven
+    agent sessions of Homebrew and other user-installed tools.  The service
+    therefore launches through the user's login shell: ``-l`` runs the shell
+    profile files, so the daemon's environment matches what an interactive
+    terminal sees, and nothing is captured at install time.
+    """
+    platform = platform if platform is not None else sys.platform
+    from_env = os.environ.get("SHELL")
+    if from_env:
+        return from_env
+    return "/bin/zsh" if platform == "darwin" else "/bin/bash"
+
+
+def service_launch_command(config: GatewayConfig, executable: str, *, shell: str) -> list[str]:
+    """The service-level argv: the login shell exec-ing the daemon.
+
+    ``exec`` replaces the shell process, so termination signals reach the
+    daemon directly and launchd/KeepAlive track the real process.
+    """
+    inner = " ".join(shlex.quote(part) for part in service_command(config, executable))
+    return [shell, "-l", "-c", f"exec {inner}"]
+
+
 def service_command(config: GatewayConfig, executable: str) -> list[str]:
     """The exact argv the service runs."""
     return [
@@ -69,6 +97,7 @@ def install_service(
     config: GatewayConfig,
     *,
     executable: Optional[str] = None,
+    shell: Optional[str] = None,
     systemd_dir: Optional[Path] = None,
     launchd_dir: Optional[Path] = None,
     platform: Optional[str] = None,
@@ -76,12 +105,16 @@ def install_service(
     """Write the service definition.
 
     ``systemd_dir``/``launchd_dir`` are the unit destination directories;
-    callers resolve the platform defaults (tests pass temp dirs).
+    callers resolve the platform defaults (tests pass temp dirs).  ``shell``
+    overrides the login shell the service launches through (tests pass one
+    for determinism); by default the user's ``$SHELL`` or the platform
+    default is used.
     """
     platform = platform if platform is not None else sys.platform
     executable = executable or shutil.which("kolega-code") or ""
     if not executable:
         raise RuntimeError("kolega-code executable not found; is it on PATH?")
+    launch_shell = shell or login_shell(platform)
     config.state_dir.mkdir(parents=True, exist_ok=True)
     result = ServiceInstallResult()
     if platform == "darwin":
@@ -90,7 +123,7 @@ def install_service(
         plist_path = launchd_dir / LAUNCHD_PLIST_NAME
         plist: dict[str, object] = {
             "Label": LAUNCHD_LABEL,
-            "ProgramArguments": service_command(config, executable),
+            "ProgramArguments": service_launch_command(config, executable, shell=launch_shell),
             "RunAtLoad": True,
             "KeepAlive": True,
             "StandardOutPath": str(config.state_dir / "gateway.log"),
@@ -103,10 +136,16 @@ def install_service(
         systemd_dir = systemd_dir or (Path.home() / ".config" / "systemd" / "user")
         systemd_dir.mkdir(parents=True, exist_ok=True)
         unit_path = systemd_dir / SYSTEMD_UNIT_NAME
-        command = " ".join(shlex.quote(part) for part in service_command(config, executable))
+        command = " ".join(
+            shlex.quote(part) for part in service_launch_command(config, executable, shell=launch_shell)
+        )
         unit_path.write_text(_SYSTEMD_UNIT_TEMPLATE.format(command=command), encoding="utf-8")
         result.unit_path = unit_path
         result.notes.append(f"systemd user unit written to {unit_path}")
+    result.notes.append(
+        f"the service launches via your login shell ({launch_shell}), so it inherits your "
+        "normal terminal environment; restart it after changing your shell profile"
+    )
     result.notes.append(
         "the service reads settings.json from the same state dir — make sure your provider "
         "API keys are saved in Settings (they apply to the gateway too)"
