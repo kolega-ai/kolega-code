@@ -404,6 +404,23 @@ def test_update_subcommand_runs_self_update(capsys, monkeypatch: pytest.MonkeyPa
     assert "update completed" in capsys.readouterr().out
 
 
+def test_update_subcommand_prints_gateway_restart_notes(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.cli import main as main_module
+
+    monkeypatch.setattr(
+        main_module,
+        "run_self_update",
+        lambda: UpdateRunResult(returncode=0, gateway_restart_notes=("systemd unit restarted",)),
+    )
+
+    exit_code = main_module.main(["update"])
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "update completed" in out
+    assert "gateway: systemd unit restarted" in out
+
+
 def test_update_subcommand_reports_missing_uv(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
     from kolega_code.cli import main as main_module
 

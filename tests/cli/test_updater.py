@@ -91,3 +91,56 @@ def test_run_self_update_runs_uv_tool_upgrade(monkeypatch) -> None:
             {"text": True, "capture_output": True, "check": False},
         )
     ]
+
+
+def test_run_self_update_restarts_gateway_when_installed(monkeypatch) -> None:
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="ok\n", stderr="")
+
+    monkeypatch.setattr(updater.shutil, "which", lambda command: "/usr/bin/uv")
+    monkeypatch.setattr(updater.subprocess, "run", fake_run)
+    monkeypatch.setattr("kolega_code.gateway.service.is_service_installed", lambda: True)
+    monkeypatch.setattr(
+        "kolega_code.gateway.service.restart_service",
+        lambda: (True, ["launchd agent restarted"]),
+    )
+
+    result = updater.run_self_update(capture_output=True)
+
+    assert result.returncode == 0
+    assert result.gateway_restart_notes == ("launchd agent restarted",)
+
+
+def test_run_self_update_skips_gateway_restart_when_not_installed(monkeypatch) -> None:
+    def fake_run(args, **kwargs):
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="ok\n", stderr="")
+
+    monkeypatch.setattr(updater.shutil, "which", lambda command: "/usr/bin/uv")
+    monkeypatch.setattr(updater.subprocess, "run", fake_run)
+    monkeypatch.setattr("kolega_code.gateway.service.is_service_installed", lambda: False)
+
+    result = updater.run_self_update(capture_output=True)
+
+    assert result.returncode == 0
+    assert result.gateway_restart_notes == ()
+
+
+def test_run_self_update_gateway_restart_failure_is_non_fatal(monkeypatch) -> None:
+    def fake_run(args, **kwargs):
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="ok\n", stderr="")
+
+    monkeypatch.setattr(updater.shutil, "which", lambda command: "/usr/bin/uv")
+    monkeypatch.setattr(updater.subprocess, "run", fake_run)
+    monkeypatch.setattr("kolega_code.gateway.service.is_service_installed", lambda: True)
+    monkeypatch.setattr(
+        "kolega_code.gateway.service.restart_service",
+        lambda: (False, ["failed to restart systemd unit"]),
+    )
+
+    result = updater.run_self_update(capture_output=True)
+
+    assert result.returncode == 0
+    assert result.gateway_restart_notes == ("failed to restart systemd unit",)

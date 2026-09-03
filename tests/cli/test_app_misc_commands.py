@@ -115,6 +115,36 @@ async def test_textual_app_update_slash_command_runs_self_update(
 
 
 @pytest.mark.asyncio
+async def test_textual_app_update_slash_command_includes_gateway_restart_notes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui import command_handlers as command_handlers_module
+    from kolega_code.cli.tui.widgets import ChatComposer
+    from kolega_code.cli.updater import UpdateRunResult
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        command_handlers_module,
+        "run_self_update",
+        lambda *, capture_output=False: UpdateRunResult(
+            returncode=0, stdout="installed\n", gateway_restart_notes=("systemd unit restarted",)
+        ),
+    )
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("/update")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        entry = app.conversation_entries[-1]
+        assert entry.kind == "system"
+        assert "Kolega Code update completed" in entry.content
+        assert "Gateway: systemd unit restarted" in entry.content
+
+
+@pytest.mark.asyncio
 async def test_textual_app_startup_update_check_notifies_when_newer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

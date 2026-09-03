@@ -48,10 +48,12 @@ below).
 | `status` | Show whether the daemon is running, with a heartbeat freshness check. |
 | `telegram setup` | Save the @BotFather token (with optional `--verify`, `--allow <ids>`, `--clear`). |
 | `pairing list` / `pairing approve <code>` | List pending sender pairing requests, or admit a sender. |
-| `install` / `uninstall` | Install or remove the gateway as a user-level background service (systemd user unit / launchd agent — no root needed). |
+| `install` / `uninstall` / `restart` | Install, remove, or restart the gateway as a user-level background service (systemd user unit / launchd agent — no root needed). |
 
 `run` options: `--adapter echo|telegram`, `--project`, `--state-dir`,
 `--provider`, `--model`.
+
+Running `kolega-code update` automatically restarts the gateway service if it is installed, so the running daemon picks up new versions immediately.
 
 ## In-chat commands
 

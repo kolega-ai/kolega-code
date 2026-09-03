@@ -1,15 +1,20 @@
 """Service installation: systemd user units and launchd agents, file-level."""
 
 import plistlib
+import subprocess
 from pathlib import Path
 
 from kolega_code.gateway.config import GatewayConfig
 from kolega_code.gateway.service import (
     LAUNCHD_LABEL,
     LAUNCHD_PLIST_NAME,
+    SERVICE_NAME,
     SYSTEMD_UNIT_NAME,
     install_service,
+    is_service_installed,
+    restart_service,
     service_command,
+    service_unit_path,
     uninstall_service,
 )
 
@@ -91,3 +96,103 @@ def test_uninstall_removes_the_unit(tmp_path: Path) -> None:
     notes = uninstall_service(config, systemd_dir=systemd_dir, launchd_dir=tmp_path / "launchd", platform="linux")
     assert not (systemd_dir / SYSTEMD_UNIT_NAME).exists()
     assert notes  # reports what it removed
+
+
+def test_service_unit_path_resolves_platform_defaults(tmp_path: Path) -> None:
+    systemd_dir = tmp_path / "systemd"
+    launchd_dir = tmp_path / "launchd"
+
+    linux_path = service_unit_path(systemd_dir=systemd_dir, launchd_dir=launchd_dir, platform="linux")
+    assert linux_path == systemd_dir / SYSTEMD_UNIT_NAME
+
+    darwin_path = service_unit_path(systemd_dir=systemd_dir, launchd_dir=launchd_dir, platform="darwin")
+    assert darwin_path == launchd_dir / LAUNCHD_PLIST_NAME
+
+
+def test_is_service_installed(tmp_path: Path) -> None:
+    systemd_dir = tmp_path / "systemd"
+    systemd_dir.mkdir(parents=True)
+    assert not is_service_installed(systemd_dir=systemd_dir, platform="linux")
+
+    unit_path = systemd_dir / SYSTEMD_UNIT_NAME
+    unit_path.write_text("[Unit]", encoding="utf-8")
+    assert is_service_installed(systemd_dir=systemd_dir, platform="linux")
+
+
+def test_restart_service_linux_runs_daemon_reload_and_restart(tmp_path: Path, monkeypatch) -> None:
+    systemd_dir = tmp_path / "systemd"
+    systemd_dir.mkdir(parents=True)
+    unit_path = systemd_dir / SYSTEMD_UNIT_NAME
+    unit_path.write_text("[Unit]", encoding="utf-8")
+
+    commands_run = []
+
+    def fake_run(argv, **kwargs):
+        commands_run.append(argv)
+        return subprocess.CompletedProcess(args=argv, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    success, notes = restart_service(systemd_dir=systemd_dir, platform="linux")
+    assert success is True
+    assert "systemd unit restarted" in notes
+    assert commands_run == [
+        ["systemctl", "--user", "daemon-reload"],
+        ["systemctl", "--user", "restart", SERVICE_NAME],
+    ]
+
+
+def test_restart_service_darwin_kickstart(tmp_path: Path, monkeypatch) -> None:
+    launchd_dir = tmp_path / "launchd"
+    launchd_dir.mkdir(parents=True)
+    plist_path = launchd_dir / LAUNCHD_PLIST_NAME
+    plist_path.write_text("<plist></plist>", encoding="utf-8")
+
+    commands_run = []
+
+    def fake_run(argv, **kwargs):
+        commands_run.append(argv)
+        return subprocess.CompletedProcess(args=argv, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    success, notes = restart_service(launchd_dir=launchd_dir, platform="darwin")
+    assert success is True
+    assert "launchd agent restarted" in notes
+    assert len(commands_run) == 1
+    assert commands_run[0][:3] == ["launchctl", "kickstart", "-k"]
+    assert LAUNCHD_LABEL in commands_run[0][3]
+
+
+def test_restart_service_darwin_fallback(tmp_path: Path, monkeypatch) -> None:
+    launchd_dir = tmp_path / "launchd"
+    launchd_dir.mkdir(parents=True)
+    plist_path = launchd_dir / LAUNCHD_PLIST_NAME
+    plist_path.write_text("<plist></plist>", encoding="utf-8")
+
+    commands_run = []
+
+    def fake_run(argv, **kwargs):
+        commands_run.append(argv)
+        # First kickstart fails (e.g. exit code 113)
+        if "kickstart" in argv:
+            return subprocess.CompletedProcess(args=argv, returncode=113, stdout="", stderr="not found")
+        return subprocess.CompletedProcess(args=argv, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    success, notes = restart_service(launchd_dir=launchd_dir, platform="darwin")
+    assert success is True
+    assert "launchd agent restarted" in notes
+    assert len(commands_run) == 3
+    assert commands_run[0][:3] == ["launchctl", "kickstart", "-k"]
+    assert commands_run[1][:2] == ["launchctl", "bootout"]
+    assert commands_run[2][:2] == ["launchctl", "bootstrap"]
+    assert str(plist_path) in commands_run[2]
+
+
+def test_restart_service_not_installed(tmp_path: Path) -> None:
+    systemd_dir = tmp_path / "systemd"
+    success, notes = restart_service(systemd_dir=systemd_dir, platform="linux")
+    assert success is False
+    assert any("not installed" in note for note in notes)

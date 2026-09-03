@@ -36,6 +36,37 @@ def test_parse_gateway_status() -> None:
     assert args.gateway_command == "status"
 
 
+def test_parse_gateway_restart() -> None:
+    args = parse_args(["gateway", "restart"])
+    assert args.gateway_command == "restart"
+
+
+def test_gateway_restart_reports_error_when_not_installed(capsys, monkeypatch) -> None:
+    from kolega_code.cli.gateway import run_gateway
+
+    monkeypatch.setattr("kolega_code.cli.gateway.is_service_installed", lambda: False)
+    args = parse_args(["gateway", "restart"])
+    exit_code = run_gateway(args)
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "not installed" in err
+
+
+def test_gateway_restart_succeeds_when_installed(capsys, monkeypatch) -> None:
+    from kolega_code.cli.gateway import run_gateway
+
+    monkeypatch.setattr("kolega_code.cli.gateway.is_service_installed", lambda: True)
+    monkeypatch.setattr(
+        "kolega_code.cli.gateway.restart_service",
+        lambda: (True, ["launchd agent restarted"]),
+    )
+    args = parse_args(["gateway", "restart"])
+    exit_code = run_gateway(args)
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "launchd agent restarted" in out
+
+
 def test_parse_gateway_pairing_subcommands() -> None:
     args = parse_args(["gateway", "pairing", "list"])
     assert args.pairing_command == "list"

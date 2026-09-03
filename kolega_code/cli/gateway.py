@@ -31,6 +31,8 @@ from kolega_code.gateway.service import (
     LAUNCHD_LABEL,
     SERVICE_NAME,
     install_service,
+    is_service_installed,
+    restart_service,
     uninstall_service,
 )
 
@@ -76,6 +78,9 @@ def add_gateway_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
     uninstall = gateway_sub.add_parser("uninstall", help="Remove the gateway background service.")
     uninstall.add_argument("--state-dir", type=Path, default=None, help="Override the state directory.")
 
+    restart = gateway_sub.add_parser("restart", help="Restart the gateway background service.")
+    restart.add_argument("--state-dir", type=Path, default=None, help="Override the state directory.")
+
     telegram = gateway_sub.add_parser("telegram", help="Telegram adapter setup.")
     telegram_sub = telegram.add_subparsers(dest="telegram_command", required=True)
     setup = telegram_sub.add_parser("setup", help="Save the @BotFather bot token (stored in settings.json).")
@@ -112,7 +117,7 @@ async def _run_gateway(args: argparse.Namespace) -> int:
         return _gateway_pairing(args, config)
     if args.gateway_command == "telegram":
         return await _gateway_telegram(args, config)
-    if args.gateway_command in ("install", "uninstall"):
+    if args.gateway_command in ("install", "uninstall", "restart"):
         return _gateway_service(args, config)
     return await _gateway_run(config, args)
 
@@ -189,6 +194,20 @@ def _gateway_service(args: argparse.Namespace, config: GatewayConfig) -> int:
         for note in _activate_service(args.gateway_command, result.unit_path):
             print(f"gateway: {note}")
         return 0
+    if args.gateway_command == "restart":
+        if not is_service_installed():
+            print(
+                "gateway: background service is not installed (run 'kolega-code gateway install' to set it up)",
+                file=sys.stderr,
+            )
+            return 1
+        success, notes = restart_service()
+        for note in notes:
+            if success:
+                print(f"gateway: {note}")
+            else:
+                print(f"gateway: {note}", file=sys.stderr)
+        return 0 if success else 1
     for note in _activate_service("uninstall", None):
         print(f"gateway: {note}")
     for note in uninstall_service(config):

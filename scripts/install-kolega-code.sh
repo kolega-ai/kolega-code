@@ -137,5 +137,10 @@ fi
 
 ensure_ripgrep || true
 
+# If the gateway background service is installed, restart it so it picks up the update.
+if [ -f "$HOME/.config/systemd/user/kolega-code-gateway.service" ] || [ -f "$HOME/Library/LaunchAgents/com.kolega.gateway.plist" ]; then
+    "$PACKAGE_NAME" gateway restart || true
+fi
+
 "$PACKAGE_NAME" --version
 info "Kolega Code is installed. Run: kolega-code ."

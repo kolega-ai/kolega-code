@@ -1015,6 +1015,8 @@ def _run_update() -> int:
         _print_styled(result.error, style="error", stderr=True)
     if result.returncode == 0:
         print("Kolega Code update completed. Run `kolega-code --version` to confirm.")
+        for note in result.gateway_restart_notes:
+            print(f"gateway: {note}")
     elif not result.error:
         _print_styled("Kolega Code update failed.", style="error", stderr=True)
     return result.returncode

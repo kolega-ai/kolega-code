@@ -35,6 +35,7 @@ class UpdateRunResult:
     stdout: str = ""
     stderr: str = ""
     error: Optional[str] = None
+    gateway_restart_notes: tuple[str, ...] = ()
 
 
 def current_version() -> str:
@@ -75,7 +76,7 @@ def update_status_message(
     return None
 
 
-def run_self_update(*, capture_output: bool = False) -> UpdateRunResult:
+def run_self_update(*, capture_output: bool = False, restart_gateway: bool = True) -> UpdateRunResult:
     if shutil.which(UPDATE_COMMAND[0]) is None:
         return UpdateRunResult(
             returncode=2,
@@ -92,8 +93,20 @@ def run_self_update(*, capture_output: bool = False) -> UpdateRunResult:
     except OSError as exc:
         return UpdateRunResult(returncode=2, error=str(exc))
 
+    gateway_notes: list[str] = []
+    if completed.returncode == 0 and restart_gateway:
+        try:
+            from kolega_code.gateway.service import is_service_installed, restart_service
+
+            if is_service_installed():
+                _, notes = restart_service()
+                gateway_notes.extend(notes)
+        except Exception as exc:  # noqa: BLE001
+            gateway_notes.append(f"could not restart gateway service: {exc}")
+
     return UpdateRunResult(
         returncode=completed.returncode,
         stdout=completed.stdout or "",
         stderr=completed.stderr or "",
+        gateway_restart_notes=tuple(gateway_notes),
     )
