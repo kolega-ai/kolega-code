@@ -136,9 +136,7 @@ def install_service(
         systemd_dir = systemd_dir or (Path.home() / ".config" / "systemd" / "user")
         systemd_dir.mkdir(parents=True, exist_ok=True)
         unit_path = systemd_dir / SYSTEMD_UNIT_NAME
-        command = " ".join(
-            shlex.quote(part) for part in service_launch_command(config, executable, shell=launch_shell)
-        )
+        command = " ".join(shlex.quote(part) for part in service_launch_command(config, executable, shell=launch_shell))
         unit_path.write_text(_SYSTEMD_UNIT_TEMPLATE.format(command=command), encoding="utf-8")
         result.unit_path = unit_path
         result.notes.append(f"systemd user unit written to {unit_path}")
