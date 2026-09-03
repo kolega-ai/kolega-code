@@ -139,9 +139,11 @@ class SessionRecord:
     workspace_id: str
     thread_id: str
     mode: str
-    title: str
     created_at: str
     updated_at: str
+    title: str = ""
+    name: str = ""
+    description: str = ""
     config: dict[str, Any] = field(default_factory=dict)
     history: list[dict[str, Any]] = field(default_factory=list)
     compaction: dict[str, Any] = field(default_factory=dict)
@@ -175,12 +177,16 @@ class SessionRecord:
         mode: str,
         config: dict[str, Any],
         session_id: Optional[str] = None,
+        name: Optional[str] = None,
         title: Optional[str] = None,
+        description: Optional[str] = None,
         parent_session_id: Optional[str] = None,
     ) -> "SessionRecord":
         now = _now()
         resolved_project = str(project_path.resolve())
         session_id = session_id or uuid.uuid4().hex
+        assigned_name = name or (title if title else generate_session_name())
+        assigned_title = title if title else (name if name else assigned_name)
         return cls(
             schema_version=SCHEMA_VERSION,
             session_id=session_id,
@@ -188,7 +194,9 @@ class SessionRecord:
             workspace_id=f"cli-{uuid.uuid4().hex}",
             thread_id=uuid.uuid4().hex,
             mode=mode,
-            title=title or generate_session_name(),
+            name=assigned_name,
+            title=assigned_title,
+            description=description or "",
             created_at=now,
             updated_at=now,
             config=config,
@@ -202,6 +210,14 @@ class SessionRecord:
             raise SessionStoreError(f"Unsupported session schema version: {data.get('schema_version')}")
         latest_plan_markdown = data.get("latest_plan_markdown") or ""
         plan_pending = bool(latest_plan_markdown and data.get("plan_pending", False))
+        raw_name = data.get("name")
+        raw_title = data.get("title") or ""
+        if raw_name:
+            name = raw_name
+            title = raw_title or raw_name
+        else:
+            name = raw_title or generate_session_name()
+            title = raw_title or name
         return cls(
             schema_version=data["schema_version"],
             session_id=data["session_id"],
@@ -209,7 +225,9 @@ class SessionRecord:
             workspace_id=data["workspace_id"],
             thread_id=data["thread_id"],
             mode=data["mode"],
-            title=data.get("title") or "Kolega Code",
+            name=name,
+            title=title,
+            description=data.get("description") or "",
             created_at=data["created_at"],
             updated_at=data["updated_at"],
             config=data.get("config") or {},
@@ -238,7 +256,9 @@ class SessionRecord:
             "workspace_id": self.workspace_id,
             "thread_id": self.thread_id,
             "mode": self.mode,
+            "name": self.name,
             "title": self.title,
+            "description": self.description,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "config": self.config,
@@ -334,11 +354,20 @@ class SessionStore:
         mode: str,
         config: dict[str, Any],
         session_id: Optional[str] = None,
+        name: Optional[str] = None,
         title: Optional[str] = None,
+        description: Optional[str] = None,
         parent_session_id: Optional[str] = None,
     ) -> SessionRecord:
         record = SessionRecord.create(
-            project_path, mode, config, session_id=session_id, title=title, parent_session_id=parent_session_id
+            project_path,
+            mode,
+            config,
+            session_id=session_id,
+            name=name,
+            title=title,
+            description=description,
+            parent_session_id=parent_session_id,
         )
         self.ensure_dirs()
         session_dir = self.session_dir_for(record.session_id)

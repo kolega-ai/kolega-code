@@ -436,6 +436,9 @@ class KolegaCodeApp(
                 with TabbedContent(id="events"):
                     with TabPane("Status", id="status_pane"):
                         with VerticalScroll(id="status_form"):
+                            with Vertical(classes="status-section", id="status_session_section") as session_section:
+                                session_section.border_title = "Session"
+                                yield Static("", id="status_session", markup=True)
                             with Vertical(classes="status-section", id="status_summary_section") as status_section:
                                 status_section.border_title = "Status"
                                 yield Static("", id="status_dashboard", markup=True)
@@ -527,7 +530,7 @@ class KolegaCodeApp(
         self.inbox_registry.register(
             InboxRegistration(
                 session_id=self.session.session_id,
-                describe_title=lambda: self.session.title,
+                describe_title=lambda: self.session.name,
                 describe_project_path=lambda: str(self.active_project_path),
                 describe_status=self._peer_status,
                 deliver_message=self._deliver_peer_message,
@@ -953,7 +956,9 @@ class KolegaCodeApp(
             workspace_id=record.workspace_id,
             thread_id=record.thread_id,
             mode=record.mode,
+            name=record.name,
             title=record.title,
+            description=record.description,
             created_at=record.created_at,
             updated_at=record.updated_at,
             config=dict(record.config),
@@ -2645,8 +2650,16 @@ class KolegaCodeApp(
 
     def _meta_content(self) -> str:
         gigacode = "on" if self._gigacode_enabled else "off"
+        short_id = self.session.session_id[:8]
+        if self.session.title and self.session.title != self.session.name:
+            title = self.session.title
+            if len(title) > 36:
+                title = f"{title[:35]}…"
+            session_segment = f"{title} · {self.session.name} ({short_id})"
+        else:
+            session_segment = f"{self.session.name} ({short_id})"
         return (
-            f"{self.active_project_path} | session {self.session.session_id} | "
+            f"{self.active_project_path} | {session_segment} | "
             f"agent {self.mode} | {self.interaction_mode} | permissions {self.permission_mode.value} | "
             f"gigacode {gigacode}"
         )
@@ -3044,10 +3057,16 @@ class KolegaCodeApp(
         project_lines = [f"Project: {self.active_project_path}"]
         if self.active_project_path != self.project_path:
             project_lines.append(f"Launch project: {self.project_path}")
+        if self.session.title and self.session.title != self.session.name:
+            session_display = f"{session_id} · {self.session.title} ({self.session.name})"
+        elif self.session.name:
+            session_display = f"{session_id} ({self.session.name})"
+        else:
+            session_display = f"{session_id}"
         startup_lines.extend(
             [
                 *project_lines,
-                f"Session: {session_id}",
+                f"Session: {session_display}",
                 f"Mode: {self.mode}",
                 f"Interaction: {self.interaction_mode}",
                 f"Permissions: {self.permission_mode.value}",

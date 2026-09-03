@@ -273,6 +273,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             await self._save_session_history_async()
             await self._capture_completed_plan()
             self._log_status(messages.FINISHED, "ok")
+            self._maybe_trigger_session_metadata()
         except asyncio.CancelledError:
             cancelled_by_user = True
             # When the app is quitting, action_quit already settled open
@@ -312,6 +313,74 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 if cancelled_by_user:
                     self._schedule_primary_focus_restore()
         return cancelled_by_user
+
+    def _maybe_trigger_session_metadata(self) -> None:
+        """Trigger background session title and description generation if turn meets depth."""
+        if self._exit or self.agent is None or not self.agent.history:
+            return
+        if len(self.agent.history) < 2:
+            return
+        self.run_worker(
+            self._update_session_metadata_worker(),
+            name="kolega-session-metadata",
+            group="metadata",
+            exclusive=True,
+        )
+
+    async def _update_session_metadata_worker(self, *, force_notify: bool = False) -> None:
+        """Generate descriptive session title and description in the background."""
+        if self.agent is None or not getattr(self.agent, "llm", None):
+            if force_notify:
+                self._notify_user("Cannot generate metadata: agent not ready.", severity="warning")
+            return
+        messages = list(self.agent.history)
+        if len(messages) < 2:
+            if force_notify:
+                self._notify_user("Not enough conversation history to generate title.", severity="warning")
+            return
+
+        from kolega_code.agent.session_metadata import generate_session_metadata
+        from ..main import known_secret_values
+
+        secret_values: list[str] = []
+        try:
+            secret_values = known_secret_values(self.settings, self.settings_store, project_path=self.project_path)
+        except Exception:
+            pass
+
+        model_cfg = getattr(self.agent, "primary_model_config", None)
+        model = model_cfg.model if model_cfg is not None else "fast"
+        metadata = await generate_session_metadata(
+            messages,
+            llm=self.agent.llm,
+            model=model,
+            secret_values=secret_values,
+        )
+        if metadata is None:
+            if force_notify:
+                self._notify_user("Could not generate session title.", severity="warning")
+            return
+
+        changed = False
+        if metadata.title and self.session.title != metadata.title:
+            self.session.title = metadata.title
+            changed = True
+        if metadata.description and self.session.description != metadata.description:
+            self.session.description = metadata.description
+            changed = True
+
+        if changed:
+            await self._save_session_async()
+            self._update_mode_chrome()
+
+        if force_notify:
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(
+                    kind="system",
+                    content=f"Session retitled: **{self.session.title}**"
+                    + (f"\n{self.session.description}" if self.session.description else ""),
+                )
+            )
 
     async def _process_message(
         self, message: str, attachments: list[dict] | None = None, *, turn_label: str | None = None
@@ -515,7 +584,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
 
             message = PeerMessage.create(
                 sender_session_id=self.session.session_id,
-                sender_title=self.session.title,
+                sender_title=self.session.name,
                 text=cleaned_text,
             )
 

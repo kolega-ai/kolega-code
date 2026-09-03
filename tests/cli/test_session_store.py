@@ -91,6 +91,46 @@ def test_new_sessions_get_generated_peer_names(tmp_path: Path) -> None:
     assert len(titles) > 1
 
 
+def test_session_record_name_and_title_decoupled(tmp_path: Path) -> None:
+    """Peer name (address) and descriptive title are separate fields."""
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+
+    record = store.create(
+        project,
+        "code",
+        {},
+        name="worker-42",
+        title="Fix Concurrency Deadlock",
+        description="Resolved locking contention in connection pool.",
+    )
+    assert record.name == "worker-42"
+    assert record.title == "Fix Concurrency Deadlock"
+    assert record.description == "Resolved locking contention in connection pool."
+
+    # Persists to disk and reloads accurately
+    loaded = store.load(record.session_id)
+    assert loaded.name == "worker-42"
+    assert loaded.title == "Fix Concurrency Deadlock"
+    assert loaded.description == "Resolved locking contention in connection pool."
+
+    # Updating title leaves name unchanged
+    record.title = "Refined Title"
+    store.save(record)
+    reloaded = store.load(record.session_id)
+    assert reloaded.title == "Refined Title"
+    assert reloaded.name == "worker-42"
+
+    # Backward compatibility with legacy session dicts without 'name'
+    meta = record.to_metadata_dict()
+    meta.pop("name", None)
+    meta["title"] = "legacy-slug-1234"
+    legacy_loaded = SessionRecord.from_dict(meta)
+    assert legacy_loaded.name == "legacy-slug-1234"
+    assert legacy_loaded.title == "legacy-slug-1234"
+
+
 def test_parent_session_id_round_trips_through_store(tmp_path: Path) -> None:
     """Handoff lineage persists: the child records its parent across save/load."""
     project = tmp_path / "project"

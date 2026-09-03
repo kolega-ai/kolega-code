@@ -18,6 +18,10 @@ from . import state as tui_state
 
 class StatusDashboardMixin(tui_app_base.KolegaAppBase):
     @property
+    def _status_session(self) -> Static:
+        return self.query_one("#status_session", Static)
+
+    @property
     def _status_dashboard(self) -> Static:
         return self.query_one("#status_dashboard", Static)
 
@@ -40,10 +44,20 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         self._status_state.goal = self._goal_summary()
         self._status_state.loop = self._loop_summary()
         try:
+            self._status_session.update(self._format_session_card())
             self._status_dashboard.update(self._format_status_dashboard())
             self._status_usage.update(self._usage_summary_lines())
         except Exception:
             return
+
+    def _format_session_card(self) -> str:
+        session_name = escape(getattr(self.session, "name", "") or "")
+        session_title = escape(getattr(self.session, "title", "") or "")
+        session_id_short = escape(str(getattr(self.session, "session_id", ""))[:8])
+
+        if session_title and session_title != session_name:
+            return f"[bold]{session_title}[/bold]\n[dim]{session_name} · {session_id_short}[/dim]"
+        return f"[bold]{session_name or session_id_short}[/bold] [dim]({session_id_short})[/dim]"
 
     def _format_status_dashboard(self) -> str:
         state = self._status_state
@@ -97,6 +111,7 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         worktree = self._worktree_summary()
         if worktree:
             worktree_line = f"{label(messages.STATUS_WORKTREE_LABEL)} [bold]{escape(worktree)}[/bold]\n"
+
         return (
             f"{label('Model')}\n[bold]{escape(provider_model)}[/bold]\n\n"
             f"{label('Thinking effort')} [bold]{escape(effort)}[/bold]\n"

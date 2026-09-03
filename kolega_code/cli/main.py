@@ -1492,7 +1492,7 @@ def _apply_launch_name(
     *,
     persistable: bool = True,
 ) -> None:
-    """Apply --name at launch. The persisted title is a peer's address for the
+    """Apply --name at launch. The persisted name is a peer's address for the
     session, so invalid names fail loudly instead of being silently mangled."""
     from .peer_messaging import PEER_NAME_MAX_CHARS
 
@@ -1501,6 +1501,7 @@ def _apply_launch_name(
     name = str(raw_name).strip()
     if not name or len(name) > PEER_NAME_MAX_CHARS:
         raise SystemExit(f"Error: --name must be 1-{PEER_NAME_MAX_CHARS} characters.")
+    session.name = name
     session.title = name
     if persistable:
         store.save(session)
@@ -2377,17 +2378,22 @@ def _run_sessions(args: argparse.Namespace) -> int:
             return 0
         entries = []
         for record in reversed(records):
-            entries.append(
-                "\n".join(
-                    (
-                        f"Updated:   {record.updated_at}",
-                        f"Title:     {record.title}",
-                        f"Mode:      {record.mode}",
-                        f"Project:   {record.project_path}",
-                        f"Resume ID: {record.session_id}",
-                    )
-                )
+            item_lines = [
+                f"Updated:   {record.updated_at}",
+                f"Title:     {record.title or record.name}",
+            ]
+            if record.name and record.name != record.title:
+                item_lines.append(f"Name:      {record.name}")
+            if record.description:
+                item_lines.append(f"Description: {record.description}")
+            item_lines.extend(
+                [
+                    f"Mode:      {record.mode}",
+                    f"Project:   {record.project_path}",
+                    f"Resume ID: {record.session_id}",
+                ]
             )
+            entries.append("\n".join(item_lines))
         print("\n\n".join(entries))
         return 0
     if args.sessions_command == "delete":
