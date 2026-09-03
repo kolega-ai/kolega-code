@@ -6,6 +6,18 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.35.1 - 2026-09-03
+
+### Fixed
+
+- **Gateway (Telegram):** the tool-activity status now re-appears below the
+  newest reply bubble. Previously it stayed stranded in an older message once
+  a reply opened, so later tool calls looked detached from the conversation.
+  Adapters without message-delete support keep the edit-in-place behavior.
+- **Gateway service:** the background daemon now launches through the user's
+  login shell, so gateway-driven agent sessions see user-installed tools such
+  as Homebrew instead of the minimal `PATH` that launchd and systemd provide.
+
 ## 0.35.0 - 2026-09-03
 
 ### Added

@@ -8,7 +8,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kolega-code"
-version = "0.35.0"
+version = "0.35.1"
 description = "Multi-agent coding in the terminal"
 readme = "README.md"
 license = "BUSL-1.1"
