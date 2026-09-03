@@ -253,6 +253,44 @@ def test_sessions_list_shows_resume_ids_oldest_to_newest(
     assert output.rstrip().endswith("Resume ID: newest-session")
 
 
+def test_sessions_list_shows_title_name_and_description(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kolega_code.cli import main as main_module
+
+    project = tmp_path / "project"
+    project.mkdir()
+    records = [
+        SessionRecord(
+            session_id="session-1",
+            thread_id="thread-1",
+            workspace_id="ws-1",
+            project_path=str(project),
+            mode="code",
+            name="crispy-wombat-1234",
+            title="Fix Database Deadlock",
+            description="Investigated connection pool lock contention.",
+            created_at="2026-07-20T12:00:00+00:00",
+            updated_at="2026-07-20T13:00:00+00:00",
+        ),
+    ]
+
+    class FakeStore:
+        def list(self, project_path: Path | None = None) -> list[SessionRecord]:
+            return records
+
+    monkeypatch.setattr(main_module, "_store_from_args", lambda args: FakeStore())
+
+    exit_code = main_module.main(["sessions", "list", "--project", str(project)])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Title:     Fix Database Deadlock" in output
+    assert "Name:      crispy-wombat-1234" in output
+    assert "Description: Investigated connection pool lock contention." in output
+    assert "Resume ID: session-1" in output
+
+
 def test_sessions_list_prints_empty_state(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
     from kolega_code.cli import main as main_module
 

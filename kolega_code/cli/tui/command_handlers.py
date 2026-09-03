@@ -80,6 +80,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             "/tasks": self._command_tasks,
             "/peers": self._command_peers,
             "/rename": self._command_rename,
+            "/retitle": self._command_retitle,
             "/prompts": self._command_prompts,
             "/queue-clear": self._command_queue_clear,
             "/rewind": self._command_rewind,
@@ -597,7 +598,9 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         from kolega_code.cli.peer_messaging import format_peer_table, store_title_lookup
         from kolega_code.session.inbox import discover_peers, messaging_dir
 
-        lines = [f"This session: {self.session.title} ({self.session.session_id[:8]})"]
+        lines = [f"This session: {self.session.name} ({self.session.session_id[:8]})"]
+        if self.session.title and self.session.title != self.session.name:
+            lines[0] += f" — {self.session.title}"
         if self.messaging_socket_path:
             lines.append(f"Address: {self.messaging_socket_path}")
         else:
@@ -616,7 +619,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content="\n".join(lines)))
 
     async def _command_rename(self, args: str) -> None:
-        """Rename this session; the persisted title becomes its peer address."""
+        """Rename this session; the persisted name becomes its peer address."""
         from ..peer_messaging import PEER_NAME_MAX_CHARS
 
         name = args.strip()
@@ -630,21 +633,64 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             )
             return
 
-        previous = self.session.title
-        self.session.title = name
+        previous = self.session.name
+        previous_title = self.session.title
+        self.session.name = name
+        if not self.session.title or self.session.title == previous:
+            self.session.title = name
         try:
             await self._save_session_async()
         except Exception as exc:  # noqa: BLE001 — keep the in-memory rename, report the failure
-            self.session.title = previous
+            self.session.name = previous
+            self.session.title = previous_title
             self._notify_user(f"Rename failed: {exc}", severity="warning")
             return
-        # The inbox registration reads session.title live, so peers see the new
+        self._update_mode_chrome()
+        # The inbox registration reads session.name live, so peers see the new
         # name on their next discovery without re-registration.
         self._add_conversation_entry(
             tui_state.ConversationEntry(
                 kind="system",
                 content=messages.PEER_RENAMED.format(previous=previous, name=name),
             )
+        )
+
+    async def _command_retitle(self, args: str) -> None:
+        """Set or regenerate this session's descriptive title and description."""
+        title = args.strip()
+        if title:
+            previous = self.session.title
+            self.session.title = title
+            try:
+                await self._save_session_async()
+            except Exception as exc:  # noqa: BLE001
+                self.session.title = previous
+                self._notify_user(f"Retitle failed: {exc}", severity="warning")
+                return
+            self._update_mode_chrome()
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(
+                    kind="system",
+                    content=f"Session title updated: **{self.session.title}**",
+                )
+            )
+            return
+
+        if self._turn_active or self.agent_worker is not None:
+            self._notify_user("Cannot retitle while a turn is in progress.", severity="warning")
+            return
+
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(
+                kind="progress",
+                content="Regenerating session title and description…",
+            )
+        )
+        self.run_worker(
+            self._update_session_metadata_worker(force_notify=True),
+            name="kolega-session-metadata",
+            group="metadata",
+            exclusive=True,
         )
 
     async def _command_sidebar(self, args: str) -> None:

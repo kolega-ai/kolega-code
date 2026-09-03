@@ -184,7 +184,7 @@ async def start_headless_peer_inbox(
 
 def store_title_lookup(store: Any) -> Any:
     """A discovery ``title_lookup`` backed by the shared session store."""
-    titles_by_id = {record.session_id: record.title for record in store.list()}
+    titles_by_id = {record.session_id: record.name for record in store.list()}
     return titles_by_id.get
 
 
