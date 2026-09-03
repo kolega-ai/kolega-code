@@ -11,6 +11,7 @@ from kolega_code.llm.specs import (
 @pytest.mark.parametrize(
     "model,thinking_options,default_thinking",
     [
+        ("gemini-3.8-flash", ("low", "medium", "high"), "medium"),
         ("gemini-3.7-flash", ("low", "medium", "high"), "medium"),
         ("gemini-3.6-flash", ("minimal", "low", "medium", "high"), "medium"),
         ("gemini-3.5-flash-lite", ("minimal", "low", "medium", "high"), "minimal"),

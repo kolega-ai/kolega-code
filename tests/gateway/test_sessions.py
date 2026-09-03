@@ -245,6 +245,23 @@ async def wait_for(predicate, timeout: float = 5.0) -> bool:
     return False
 
 
+async def wait_for_turn_done(handler: AgentTurnHandler, chat: ChatRef, timeout: float = 5.0) -> None:
+    """Wait until the chat's turn task has fully settled.
+
+    The reply reaching the adapter is not a completion signal: the final
+    ``complete`` response chunk is yielded before the assistant message is
+    journaled (``record_assistant`` runs after the last streamed chunk), so
+    shutting down in that window cancels the turn and loses history. The
+    worker clears ``turn_task`` only after the stream was fully consumed and
+    the turn persisted. Precondition: the turn has demonstrably started
+    (e.g. its reply already reached the adapter), otherwise the poll would
+    pass before the worker even dequeues the message.
+    """
+    entry = handler._registry.get(chat)
+    assert entry is not None
+    assert await wait_for(lambda: entry.payload.turn_task is None, timeout), "turn never settled"
+
+
 def session_map(state_dir: Path) -> dict[str, str]:
     return json.loads((state_dir / "gateway_sessions.json").read_text(encoding="utf-8"))
 
@@ -254,6 +271,7 @@ async def test_turn_streams_and_persists(tmp_path: Path) -> None:
     handler, adapter, config = make_handler(tmp_path)
     await handler.handle(chat_ref(), inbound("hello", message_id="m-1"))
     assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+    await wait_for_turn_done(handler, chat_ref())
     await handler.shutdown()
 
     # The turn is persisted through the journal and the session record.
@@ -272,6 +290,7 @@ async def test_resumed_session_continues_across_handler_instances(tmp_path: Path
     first, adapter, config = make_handler(tmp_path, store=store)
     await first.handle(chat_ref(), inbound("first", message_id="m-1"))
     assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+    await wait_for_turn_done(first, chat_ref())
     await first.shutdown()
     store.release_session_locks()
 
@@ -279,6 +298,7 @@ async def test_resumed_session_continues_across_handler_instances(tmp_path: Path
     second, adapter2, _ = make_handler(tmp_path, store=store)
     await second.handle(chat_ref(), inbound("second", message_id="m-2"))
     assert await wait_for(lambda: len(adapter2.sent) >= 1)
+    await wait_for_turn_done(second, chat_ref())
     await second.shutdown()
 
     # Same session both times; the second turn appended to its history.
@@ -312,6 +332,7 @@ async def test_new_command_starts_a_fresh_session(tmp_path: Path) -> None:
     await handler.handle(chat_ref(), inbound("fresh", message_id="m-3"))
     # "fresh" is the user message — the turn's arrival shows as a second reply.
     assert await wait_for(lambda: all_sent_texts(adapter).count("hello from the scripted model") >= 2)
+    await wait_for_turn_done(handler, chat_ref())
 
     new_session_id = session_map(config.state_dir)[chat_ref().key]
     assert new_session_id != old_session_id
@@ -402,6 +423,7 @@ async def test_model_switch_rebuilds_and_keeps_history(tmp_path: Path) -> None:
     assert entry.payload.runtime.agent is not agent_before
     await handler.handle(chat_ref(), inbound("still here?", message_id="m-3"))
     assert await wait_for(lambda: all_sent_texts(adapter).count("hello from the scripted model") >= 2)
+    await wait_for_turn_done(handler, chat_ref())
     await handler.shutdown()
 
     session_id = session_map(config.state_dir)[chat_ref().key]
@@ -423,6 +445,7 @@ async def test_voice_note_transcribes_and_runs_the_turn(tmp_path: Path) -> None:
     )
     assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
     assert transcriber.calls == [str(voice_path)]
+    await wait_for_turn_done(handler, chat_ref())
     await handler.shutdown()
 
     session_id = session_map(config.state_dir)[chat_ref().key]
@@ -449,6 +472,7 @@ async def test_voice_note_keeps_the_caption_with_the_transcript(tmp_path: Path) 
     )
     await handler.handle(chat_ref(), message)
     assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+    await wait_for_turn_done(handler, chat_ref())
     await handler.shutdown()
 
     session_id = session_map(config.state_dir)[chat_ref().key]
@@ -486,6 +510,7 @@ async def test_image_attachment_reaches_the_agent(tmp_path: Path) -> None:
         inbound_with_media((Attachment(kind="image", source=str(image_path)),)),
     )
     assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+    await wait_for_turn_done(handler, chat_ref())
     await handler.shutdown()
 
     session_id = session_map(config.state_dir)[chat_ref().key]
@@ -516,6 +541,7 @@ async def test_document_note_points_the_model_at_the_file(tmp_path: Path) -> Non
         inbound_with_media((Attachment(kind="document", source=str(doc_path), file_name="report.pdf"),)),
     )
     assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+    await wait_for_turn_done(handler, chat_ref())
     await handler.shutdown()
 
     session_id = session_map(config.state_dir)[chat_ref().key]

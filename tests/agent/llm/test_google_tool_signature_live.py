@@ -17,7 +17,7 @@ from kolega_code.llm.models import ToolDefinition, ToolParameter
 
 pytestmark = pytest.mark.integration
 
-MODEL = "gemini-3.7-flash"
+MODEL = "gemini-3.8-flash"
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
 
 SYSTEM = Message(role="system", content=[TextBlock(text="You are a helpful coding assistant.")])

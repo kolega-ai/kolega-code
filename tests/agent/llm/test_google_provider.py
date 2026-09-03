@@ -44,6 +44,7 @@ class _FakeGoogleModels:
 @pytest.mark.parametrize(
     "model,thinking,expected_temperature",
     [
+        ("gemini-3.8-flash", "medium", None),
         ("gemini-3.7-flash", "medium", None),
         ("gemini-3.6-flash", "medium", None),
         ("gemini-3.5-flash-lite", "minimal", None),
