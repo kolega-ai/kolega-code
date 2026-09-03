@@ -1528,6 +1528,8 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         severity = "information" if result.returncode == 0 else "error"
         if result.returncode == 0:
             lines = [messages.UPDATE_COMPLETED]
+            for note in result.gateway_restart_notes:
+                lines.append(f"Gateway: {note}")
         else:
             lines = [messages.UPDATE_FAILED.format(code=result.returncode)]
             if result.error:

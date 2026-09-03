@@ -10,9 +10,11 @@ environment. Uninstall unloads and removes everything.
 
 from __future__ import annotations
 
+import os
 import plistlib
 import shlex
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -135,3 +137,87 @@ def uninstall_service(
             unit_path.unlink()
             notes.append(f"removed {unit_path}")
     return notes
+
+
+def service_unit_path(
+    *,
+    systemd_dir: Optional[Path] = None,
+    launchd_dir: Optional[Path] = None,
+    platform: Optional[str] = None,
+) -> Path:
+    """Resolve the destination path for the gateway's background service unit."""
+    platform = platform if platform is not None else sys.platform
+    if platform == "darwin":
+        launchd_dir = launchd_dir or (Path.home() / "Library" / "LaunchAgents")
+        return launchd_dir / LAUNCHD_PLIST_NAME
+    systemd_dir = systemd_dir or (Path.home() / ".config" / "systemd" / "user")
+    return systemd_dir / SYSTEMD_UNIT_NAME
+
+
+def is_service_installed(
+    *,
+    systemd_dir: Optional[Path] = None,
+    launchd_dir: Optional[Path] = None,
+    platform: Optional[str] = None,
+) -> bool:
+    """Return whether the gateway background service definition exists on disk."""
+    return service_unit_path(
+        systemd_dir=systemd_dir,
+        launchd_dir=launchd_dir,
+        platform=platform,
+    ).exists()
+
+
+def run_service_command(argv: list[str]) -> subprocess.CompletedProcess[str] | None:
+    """Run a service command with safe timeouts and error handling."""
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, check=False, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"gateway: warning: {argv[0]} failed: {exc}", file=sys.stderr)
+        return None
+
+
+def restart_service(
+    *,
+    unit_path: Optional[Path] = None,
+    systemd_dir: Optional[Path] = None,
+    launchd_dir: Optional[Path] = None,
+    platform: Optional[str] = None,
+) -> tuple[bool, list[str]]:
+    """Restart the background gateway service if installed.
+
+    Returns ``(success, notes)``.
+    """
+    platform = platform if platform is not None else sys.platform
+    target_unit = unit_path or service_unit_path(
+        systemd_dir=systemd_dir,
+        launchd_dir=launchd_dir,
+        platform=platform,
+    )
+    if not target_unit.exists():
+        return False, ["gateway background service is not installed"]
+
+    notes: list[str] = []
+    if platform == "darwin":
+        uid = os.getuid()
+        proc = run_service_command(["launchctl", "kickstart", "-k", f"gui/{uid}/{LAUNCHD_LABEL}"])
+        if proc is not None and proc.returncode == 0:
+            notes.append("launchd agent restarted")
+            return True, notes
+
+        # Fallback: if kickstart failed (e.g. not loaded yet), bootout then bootstrap
+        run_service_command(["launchctl", "bootout", f"gui/{uid}", LAUNCHD_LABEL])
+        boot_proc = run_service_command(["launchctl", "bootstrap", f"gui/{uid}", str(target_unit)])
+        if boot_proc is not None and boot_proc.returncode == 0:
+            notes.append("launchd agent restarted")
+            return True, notes
+        notes.append("failed to restart launchd agent")
+        return False, notes
+
+    run_service_command(["systemctl", "--user", "daemon-reload"])
+    restart_proc = run_service_command(["systemctl", "--user", "restart", SERVICE_NAME])
+    if restart_proc is not None and restart_proc.returncode == 0:
+        notes.append("systemd unit restarted")
+        return True, notes
+    notes.append("failed to restart systemd unit")
+    return False, notes
