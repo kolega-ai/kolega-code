@@ -12,8 +12,11 @@ turns:
 - a placeholder reply is created on first content and edited in place on a
   throttle until the turn ends (final-only transports get one message at the
   end);
-- tool activity lands in a separate "working…" status message, edited as
-  events arrive and deleted when the turn finishes;
+- each round of tool activity lands in its own "working…" message below the
+  newest reply bubble: a round that starts after text was streamed opens a
+  fresh message (Telegram cannot move messages, so appending to an older one
+  would surface above the latest text), and the messages persist as a trail
+  of what the agent did during the turn;
 - text is chunked at the adapter's limit; the first chunk is the edited
   message and overflow chunks are sent as continuations on finalize.
 
@@ -34,10 +37,10 @@ from kolega_code.gateway.adapters.telegram.formatting import chunk_text
 
 logger = logging.getLogger(__name__)
 
-#: Cap on status-message lines so a chatty turn cannot spam an unbounded edit.
+#: Cap on a round message's lines so a chatty turn cannot spam an unbounded edit.
 MAX_STATUS_LINES = 8
-#: Events the status pump renders; everything else on the stream is ignored.
-STATUS_MESSAGE_TYPES = {"tool_call", "tool_result", "tool_error"}
+#: Rendered status line: (icon, tool description, tool call id).
+StatusLine = tuple[str, str, str]
 
 
 class TurnRenderer:
@@ -69,10 +72,17 @@ class TurnRenderer:
         self._reply_id: Optional[str] = None
         self._edited_text = ""
         self._last_flush = 0.0
+        #: The current tool round's message, one per burst of tool activity.
+        #: Older rounds' messages stay in the chat as a trail of the turn.
         self._status_id: Optional[str] = None
-        self._status_lines: list[str] = []
+        self._status_lines: list[StatusLine] = []
         self._status_sent_text = ""
         self._last_status_flush = 0.0
+        #: Set when a reply message was sent after the current round message:
+        #: the next tool event then opens a fresh round message below the
+        #: newest bubble (Telegram cannot move messages) instead of appending
+        #: to the stale one higher up the chat.
+        self._status_stale = False
 
     async def run(self, chunks: AsyncIterator[dict[str, Any]]) -> str:
         """Consume the turn generator and mirror it into the chat.
@@ -118,7 +128,6 @@ class TurnRenderer:
                 except asyncio.CancelledError:
                     pass
             await self._adapter.set_typing(self._chat_id, False)
-            await self._finalize_status()
 
     # -- Reply messages (one per response segment) -------------------------
 
@@ -144,6 +153,7 @@ class TurnRenderer:
                 return  # final-only transports send once, at the end
             self._reply_id = await self._adapter.send_text(self._chat_id, chunks[0])
             self._edited_text = chunks[0]
+            self._status_stale = True
             return
         if not final:
             if len(chunks) > 1:
@@ -155,6 +165,7 @@ class TurnRenderer:
         await self._edit_reply(chunks[0])
         for extra in chunks[1:]:
             await self._adapter.send_text(self._chat_id, extra)
+            self._status_stale = True
 
     async def _edit_reply(self, text: str) -> None:
         if text == self._edited_text:
@@ -163,39 +174,58 @@ class TurnRenderer:
             await self._adapter.edit_text(self._chat_id, self._reply_id or "", text)
         self._edited_text = text
 
-    # -- Tool status message ----------------------------------------------
+    # -- Tool round messages ----------------------------------------------
 
     async def _event_pump(self) -> None:
         try:
             while True:
                 event = await self._events.get()
-                line = self._status_line_for(event)
-                if line is None:
+                record = self._line_record_for(event)
+                if record is None:
                     continue
-                self._status_lines.append(line)
-                self._status_lines = self._status_lines[-MAX_STATUS_LINES:]
+                if self._status_stale:
+                    # The newest reply bubble was sent after the current round
+                    # message: open a fresh round message below it instead of
+                    # appending to the stale one higher up the chat.
+                    self._status_stale = False
+                    self._status_id = None
+                    self._status_lines = []
+                self._record_line(record)
                 await self._flush_status()
         except asyncio.CancelledError:
             raise
 
     @staticmethod
-    def _status_line_for(event: AgentEvent) -> Optional[str]:
+    def _line_record_for(event: AgentEvent) -> Optional[StatusLine]:
         if event.event_type != "chat_message":
             return None
         message_type = event.content.get("message_type")
+        description = str(event.content.get("tool_description") or "tool")
+        call_id = str(event.content.get("tool_call_id") or "")
         if message_type == "tool_call":
-            description = event.content.get("tool_description") or "tool"
-            return f"⏳ {description}"
+            return ("⏳", description, call_id)
         if message_type == "tool_result":
-            return "✅ tool finished"
+            return ("✅", description, call_id)
         if message_type == "tool_error":
-            return "❌ tool failed"
+            return ("❌", description, call_id)
         return None
+
+    def _record_line(self, record: StatusLine) -> None:
+        icon, _, call_id = record
+        if icon != "⏳" and call_id:
+            # A finished call replaces its pending line so the round message
+            # reads as a settled trail (⏳ bash -> ✅ bash), not an append log.
+            for index, (pending_icon, _, pending_id) in enumerate(self._status_lines):
+                if pending_icon == "⏳" and pending_id == call_id:
+                    self._status_lines[index] = record
+                    return
+        self._status_lines.append(record)
+        self._status_lines = self._status_lines[-MAX_STATUS_LINES:]
 
     async def _flush_status(self) -> None:
         if not self._status_lines:
             return
-        text = "\n".join(self._status_lines)
+        text = "\n".join(f"{icon} {description}" for icon, description, _ in self._status_lines)
         if text == self._status_sent_text:
             # Line-cap truncation can make a new event's rendered text
             # identical to the previous one; re-sending the same content is a
@@ -206,20 +236,10 @@ class TurnRenderer:
             return
         self._last_status_flush = now
         if self._status_id is None:
-            # No status message on transports that cannot edit it away.
+            # No round message on transports that cannot edit it away.
             if not self._adapter.capabilities.supports_edits:
                 return
             self._status_id = await self._adapter.send_text(self._chat_id, text)
         else:
             await self._adapter.edit_text(self._chat_id, self._status_id, text)
         self._status_sent_text = text
-
-    async def _finalize_status(self) -> None:
-        if self._status_id is None:
-            return
-        message_id, self._status_id = self._status_id, None
-        if self._adapter.capabilities.supports_delete:
-            try:
-                await self._adapter.delete_message(self._chat_id, message_id)
-            except Exception:  # noqa: BLE001 — a stuck status message is cosmetic
-                logger.debug("gateway: status delete failed for chat %s", self._chat_id)

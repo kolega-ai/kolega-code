@@ -56,11 +56,24 @@ def renderer(adapter: FakeAdapter, **kwargs: Any) -> TurnRenderer:
     return TurnRenderer(adapter, "chat-1", event_queue=asyncio.Queue(), edit_throttle_seconds=0.0, **kwargs)
 
 
-def tool_event(description: str = "bash") -> AgentEvent:
+def tool_event(description: str = "bash", call_id: str = "t-1") -> AgentEvent:
     return AgentEvent(
         event_type="chat_message",
         sender="system",
-        content={"message_type": "tool_call", "text": "", "tool_description": description, "tool_call_id": "t-1"},
+        content={"message_type": "tool_call", "text": "", "tool_description": description, "tool_call_id": call_id},
+    )
+
+
+def tool_result_event(description: str = "bash", call_id: str = "t-1", *, error: bool = False) -> AgentEvent:
+    return AgentEvent(
+        event_type="chat_message",
+        sender="system",
+        content={
+            "message_type": "tool_error" if error else "tool_result",
+            "text": "",
+            "tool_description": description,
+            "tool_call_id": call_id,
+        },
     )
 
 
@@ -117,31 +130,87 @@ async def test_edit_throttle_skips_intermediate_edits() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_events_render_as_status_message_and_are_deleted() -> None:
+async def test_tool_round_renders_as_persistent_message() -> None:
     adapter = FakeAdapter()
     queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
     r = TurnRenderer(adapter, "chat-1", event_queue=queue, edit_throttle_seconds=0.0)
     await queue.put(tool_event("bash"))
     await queue.put(tool_event("read"))
 
-    # A real turn runs long enough for the pump to drain the queued events;
-    # model that with a gate the pump can pass while the stream is suspended.
-    gate = asyncio.Event()
-
     async def slow_chunks() -> AsyncIterator[dict[str, Any]]:
+        # The pump drains the pre-queued round before the stream starts.
+        await asyncio.sleep(0.1)
         yield {"type": "response", "content": "do", "complete": False, "uuid": "u-1"}
-        await gate.wait()
         yield {"type": "response", "content": "ne", "complete": True, "uuid": "u-1"}
 
-    run_task = asyncio.create_task(r.run(slow_chunks()))
-    await asyncio.sleep(0.05)  # pump drains both tool events
-    gate.set()
-    text = await run_task
+    text = await r.run(slow_chunks())
     assert text == "done"
     status_id = [call[2] for call in adapter.calls if call[0] == "send" and call[3] != "done"][0]
     assert ("send", "chat-1", status_id, "⏳ bash") in adapter.calls
     assert ("edit", "chat-1", status_id, "⏳ bash\n⏳ read") in adapter.calls
-    assert ("delete", "chat-1", status_id) in adapter.calls
+    # The round message persists as the turn's trail: no cleanup at the end.
+    assert not [call for call in adapter.calls if call[0] == "delete"]
+
+
+@pytest.mark.asyncio
+async def test_new_tool_round_opens_message_below_latest_text() -> None:
+    """A tool round that starts after a reply bubble was sent opens its own
+    message below the latest text — it never appends to the previous round's
+    message higher up the chat, and round messages persist as the trail."""
+    adapter = FakeAdapter()
+    queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
+    r = TurnRenderer(adapter, "chat-1", event_queue=queue, edit_throttle_seconds=0.0)
+    await queue.put(tool_event("bash"))
+    gate = asyncio.Event()
+
+    async def tool_rounds() -> AsyncIterator[dict[str, Any]]:
+        yield {"type": "response", "content": "before", "complete": False, "uuid": "u-1"}
+        await gate.wait()
+        yield {"type": "response", "content": "", "complete": True, "uuid": "u-1"}
+        yield {"type": "response", "content": "after", "complete": True, "uuid": "u-2"}
+        await queue.put(tool_event("read"))
+        await asyncio.sleep(0.1)  # pump opens the second round message
+        yield {"type": "response", "content": "", "complete": True, "uuid": "u-2"}
+
+    run_task = asyncio.create_task(r.run(tool_rounds()))
+    await asyncio.sleep(0.05)  # pump creates the first round message
+    gate.set()
+    await run_task
+
+    sends = [call for call in adapter.calls if call[0] == "send"]
+    # Round 1 first, then the reply bubbles, then round 2 as a fresh message
+    # below "after" carrying only its own tool line.
+    assert [call[3] for call in sends] == ["⏳ bash", "before", "after", "⏳ read"]
+    # Nothing is ever deleted: round messages are the turn's persistent trail.
+    assert not [call for call in adapter.calls if call[0] == "delete"]
+
+
+@pytest.mark.asyncio
+async def test_tool_results_replace_pending_lines_in_place() -> None:
+    """A finished call settles its pending line (⏳ bash -> ✅ bash) instead of
+    appending a generic 'tool finished' line, so the round message reads as a
+    settled trail in call order."""
+    adapter = FakeAdapter()
+    queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
+    r = TurnRenderer(adapter, "chat-1", event_queue=queue, edit_throttle_seconds=0.0)
+    await queue.put(tool_event("bash", call_id="t-1"))
+    await queue.put(tool_event("read", call_id="t-2"))
+    await queue.put(tool_result_event("bash", call_id="t-1"))
+    await queue.put(tool_result_event("read", call_id="t-2"))
+
+    async def slow_chunks() -> AsyncIterator[dict[str, Any]]:
+        # The pump drains the pre-queued round before the stream starts.
+        await asyncio.sleep(0.1)
+        yield {"type": "response", "content": "hi!", "complete": True, "uuid": "u-1"}
+
+    text = await r.run(slow_chunks())
+    assert text == "hi!"
+
+    status_id = [call[2] for call in adapter.calls if call[0] == "send" and call[3] != "hi!"][0]
+    assert ("send", "chat-1", status_id, "⏳ bash") in adapter.calls
+    assert ("edit", "chat-1", status_id, "⏳ bash\n⏳ read") in adapter.calls
+    assert ("edit", "chat-1", status_id, "✅ bash\n⏳ read") in adapter.calls
+    assert ("edit", "chat-1", status_id, "✅ bash\n✅ read") in adapter.calls
 
 
 @pytest.mark.asyncio
