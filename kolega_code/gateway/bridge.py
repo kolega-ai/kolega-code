@@ -13,7 +13,9 @@ turns:
   throttle until the turn ends (final-only transports get one message at the
   end);
 - tool activity lands in a separate "working…" status message, edited as
-  events arrive and deleted when the turn finishes;
+  events arrive and deleted when the turn finishes; once reply bubbles have
+  opened above it, the next tool event re-creates it below them (Telegram
+  cannot move messages), so new tool calls always show in the newest message;
 - text is chunked at the adapter's limit; the first chunk is the edited
   message and overflow chunks are sent as continuations on finalize.
 
@@ -73,6 +75,10 @@ class TurnRenderer:
         self._status_lines: list[str] = []
         self._status_sent_text = ""
         self._last_status_flush = 0.0
+        #: A reply send after the status message leaves it stranded above the
+        #: newest bubble; the next tool event then re-creates the status below
+        #: it (Telegram cannot move messages) instead of editing the old one.
+        self._status_stale = False
 
     async def run(self, chunks: AsyncIterator[dict[str, Any]]) -> str:
         """Consume the turn generator and mirror it into the chat.
@@ -144,6 +150,7 @@ class TurnRenderer:
                 return  # final-only transports send once, at the end
             self._reply_id = await self._adapter.send_text(self._chat_id, chunks[0])
             self._edited_text = chunks[0]
+            self._status_stale = True
             return
         if not final:
             if len(chunks) > 1:
@@ -155,6 +162,7 @@ class TurnRenderer:
         await self._edit_reply(chunks[0])
         for extra in chunks[1:]:
             await self._adapter.send_text(self._chat_id, extra)
+            self._status_stale = True
 
     async def _edit_reply(self, text: str) -> None:
         if text == self._edited_text:
@@ -196,15 +204,27 @@ class TurnRenderer:
         if not self._status_lines:
             return
         text = "\n".join(self._status_lines)
-        if text == self._status_sent_text:
+        stale = self._status_stale
+        self._status_stale = False
+        if text == self._status_sent_text and not stale:
             # Line-cap truncation can make a new event's rendered text
             # identical to the previous one; re-sending the same content is a
             # Telegram "message is not modified" error, not progress.
             return
         now = self._monotonic()
-        if self._status_id is not None and now - self._last_status_flush < self._edit_throttle:
+        if self._status_id is not None and not stale and now - self._last_status_flush < self._edit_throttle:
             return
         self._last_status_flush = now
+        if stale and self._status_id is not None:
+            # Telegram messages cannot move: reply bubbles have opened above
+            # the status since it was sent, so re-create it as the newest
+            # message instead of editing the stale one higher up the chat.
+            if self._adapter.capabilities.supports_delete:
+                stale_id, self._status_id = self._status_id, None
+                try:
+                    await self._adapter.delete_message(self._chat_id, stale_id)
+                except Exception:  # noqa: BLE001 — a stuck status message is cosmetic
+                    logger.debug("gateway: status reposition delete failed for chat %s", self._chat_id)
         if self._status_id is None:
             # No status message on transports that cannot edit it away.
             if not self._adapter.capabilities.supports_edits:

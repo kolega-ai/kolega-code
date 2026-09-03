@@ -145,6 +145,46 @@ async def test_tool_events_render_as_status_message_and_are_deleted() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_status_recreates_below_newest_reply_bubble() -> None:
+    """Reply bubbles opened after the status message leave it stranded higher
+    up the conversation; the next tool event must re-create the status below
+    them — as the newest message — instead of editing the stale one."""
+    adapter = FakeAdapter()
+    queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
+    r = TurnRenderer(adapter, "chat-1", event_queue=queue, edit_throttle_seconds=0.0)
+    await queue.put(tool_event("bash"))
+    gate = asyncio.Event()
+
+    async def tool_round() -> AsyncIterator[dict[str, Any]]:
+        yield {"type": "response", "content": "before", "complete": False, "uuid": "u-1"}
+        await gate.wait()
+        yield {"type": "response", "content": "", "complete": True, "uuid": "u-1"}
+        yield {"type": "response", "content": "after", "complete": True, "uuid": "u-2"}
+        await queue.put(tool_event("read"))
+        await asyncio.sleep(0.1)  # pump re-creates the status below "after"
+        yield {"type": "response", "content": "", "complete": True, "uuid": "u-2"}
+
+    run_task = asyncio.create_task(r.run(tool_round()))
+    await asyncio.sleep(0.05)  # pump creates the first status message
+    gate.set()
+    await run_task
+
+    sends = [call for call in adapter.calls if call[0] == "send"]
+    # Status first, then one bubble per segment, then the re-created status —
+    # carrying the earlier line — as the newest message of the conversation.
+    assert [call[3] for call in sends] == ["⏳ bash", "before", "after", "⏳ bash\n⏳ read"]
+    first, recreated = sends[0][2], sends[3][2]
+    # The stale status was deleted before its replacement was sent: a new
+    # message at the bottom, never an edit of the one higher up.
+    assert adapter.calls.index(("delete", "chat-1", first)) < adapter.calls.index(
+        ("send", "chat-1", recreated, "⏳ bash\n⏳ read")
+    )
+    assert not any(call[0] == "edit" and call[2] == first for call in adapter.calls)
+    # The replacement (now the conversation's last message) is cleaned up at finalize.
+    assert ("delete", "chat-1", recreated) in adapter.calls
+
+
+@pytest.mark.asyncio
 async def test_thinking_only_turns_send_nothing() -> None:
     adapter = FakeAdapter()
 
