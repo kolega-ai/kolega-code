@@ -170,12 +170,6 @@ class SessionRecord:
     # absent in older files.
     parent_session_id: Optional[str] = None
 
-    def __post_init__(self) -> None:
-        if not self.name and self.title:
-            self.name = self.title
-        elif not self.title and self.name:
-            self.title = self.name
-
     @classmethod
     def create(
         cls,
