@@ -6,12 +6,33 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.35.0 - 2026-09-03
+
 ### Added
 
 - Added Google Gemini 3.8 Flash (`gemini-3.8-flash`): 1M-token context, 64K
   output, vision and function calling, and `low`/`medium`/`high` thinking
   levels. It omits Google's deprecated temperature parameter and is now the
   default Google model.
+- **Descriptive session titles.** Sessions now get a natural-language title
+  and a short description generated in the background by the active LLM after
+  substantive turns, while the stable session name keeps its role as the
+  peer-addressing handle. `/retitle` regenerates them on demand, a dedicated
+  Session card in the sidebar shows them, and the header, status dashboard,
+  startup banner, and `sessions` CLI output all display the title.
+- **`kolega-code gateway restart` and auto-restart on update.** The new
+  subcommand restarts an installed gateway service in place (systemd user
+  unit on Linux, launchd agent on macOS). `kolega-code update`, the `/update`
+  TUI command, and the shell installer now restart the gateway automatically
+  when the service is installed, so an update picks up the new build without
+  a manual daemon restart.
+
+### Changed
+
+- OpenRouter catalog refreshed from the live endpoint (2026-09-03 snapshot):
+  277 tool-capable models (20 featured), adding `google/gemini-3.8-flash` and
+  the `meta/muse-spark-1.3` pair, with featured order re-ranked by the latest
+  weekly token volume.
 
 ## 0.34.0 - 2026-09-02
 
