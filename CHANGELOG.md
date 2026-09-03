@@ -6,6 +6,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- Added Google Gemini 3.8 Flash (`gemini-3.8-flash`): 1M-token context, 64K
+  output, vision and function calling, and `low`/`medium`/`high` thinking
+  levels. It omits Google's deprecated temperature parameter and is now the
+  default Google model.
+
 ## 0.34.0 - 2026-09-02
 
 ### Added

@@ -23,6 +23,8 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert default_thinking_effort("moonshot", "kimi-k2.6") == "auto"
     assert thinking_effort_options("deepseek", "deepseek-v4-pro") == ("none", "low", "high", "max")
     assert default_thinking_effort("deepseek", "deepseek-v4-pro") == "high"
+    assert thinking_effort_options("google", "gemini-3.8-flash") == ("low", "medium", "high")
+    assert default_thinking_effort("google", "gemini-3.8-flash") == "medium"
     assert thinking_effort_options("google", "gemini-3.7-flash") == ("low", "medium", "high")
     assert default_thinking_effort("google", "gemini-3.7-flash") == "medium"
     assert thinking_effort_options("google", "gemini-3.6-flash") == ("minimal", "low", "medium", "high")
@@ -250,6 +252,9 @@ def test_google_gemini_3_pro_uses_thinking_level() -> None:
 @pytest.mark.parametrize(
     "model,effort",
     [
+        ("gemini-3.8-flash", "low"),
+        ("gemini-3.8-flash", "medium"),
+        ("gemini-3.8-flash", "high"),
         ("gemini-3.7-flash", "low"),
         ("gemini-3.7-flash", "medium"),
         ("gemini-3.7-flash", "high"),
@@ -277,6 +282,8 @@ def test_new_google_models_use_supported_thinking_levels(model: str, effort: str
 @pytest.mark.parametrize(
     "model,effort",
     [
+        ("gemini-3.8-flash", "minimal"),
+        ("gemini-3.8-flash", "xhigh"),
         ("gemini-3.7-flash", "minimal"),
         ("gemini-3.7-flash", "xhigh"),
         ("gemini-3.6-flash", "xhigh"),

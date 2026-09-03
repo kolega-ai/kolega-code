@@ -98,6 +98,7 @@ MODEL_LABELS: dict[str, str] = {
     "gpt-5.4-mini": "GPT-5.4 Mini",
     "gpt-5.3-codex-spark": "GPT-5.3 Codex Spark",
     # Google
+    "gemini-3.8-flash": "Gemini 3.8 Flash",
     "gemini-3.7-flash": "Gemini 3.7 Flash",
     "gemini-3.6-flash": "Gemini 3.6 Flash",
     "gemini-3.5-flash-lite": "Gemini 3.5 Flash-Lite",
@@ -167,7 +168,7 @@ PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     ModelProvider.ANTHROPIC: "claude-opus-5",
     ModelProvider.OPENAI: "gpt-5.6-sol",
     ModelProvider.OPENAI_CHATGPT: "gpt-5.6-sol",
-    ModelProvider.GOOGLE: "gemini-3.7-flash",
+    ModelProvider.GOOGLE: "gemini-3.8-flash",
     ModelProvider.XAI: "grok-4.5",
     ModelProvider.FIREWORKS: "accounts/fireworks/models/glm-5p2",
     ModelProvider.TOGETHER: "moonshotai/Kimi-K2.7-Code",
