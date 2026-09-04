@@ -796,6 +796,14 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     add.add_argument("--env", action="append", default=[], help="Environment variable as NAME=VALUE (repeatable).")
     add.add_argument("--cwd", help="Working directory for stdio command; relative paths resolve under project.")
     add.add_argument("--oauth", action="store_true", help="Enable OAuth for this HTTP MCP server.")
+    add.add_argument("--oauth-client-id", help="Pre-registered OAuth client ID.")
+    add.add_argument("--oauth-client-secret", help="Pre-registered OAuth client secret.")
+    add.add_argument("--oauth-client-secret-env", help="Environment variable name holding the OAuth client secret.")
+    add.add_argument(
+        "--oauth-auth-method",
+        choices=["client_secret_post", "client_secret_basic", "none"],
+        help="Token endpoint authentication method.",
+    )
     add.add_argument("--oauth-scope", help="OAuth scopes to request.")
     add.add_argument("--redirect-uri", help="OAuth redirect URI; defaults to an ephemeral localhost callback.")
     add.add_argument("--disabled", action="store_true", help="Add the server disabled.")
@@ -2697,6 +2705,12 @@ def _mcp_mutation_target(args: argparse.Namespace, project_path: Path, state_dir
 def _server_config_from_add_args(args: argparse.Namespace) -> MCPServerConfig:
     headers = _parse_key_value_options(getattr(args, "header", []) or [], "--header")
     env = _parse_key_value_options(getattr(args, "env", []) or [], "--env")
+    oauth_client_id = getattr(args, "oauth_client_id", None)
+    oauth_client_secret = getattr(args, "oauth_client_secret", None)
+    oauth_client_secret_env = getattr(args, "oauth_client_secret_env", None)
+    oauth_auth_method = getattr(args, "oauth_auth_method", None)
+    oauth_enabled = bool(args.oauth) or bool(oauth_client_id or oauth_client_secret or oauth_client_secret_env)
+
     payload: dict[str, Any] = {
         "id": args.server_id,
         "name": args.name,
@@ -2709,9 +2723,13 @@ def _server_config_from_add_args(args: argparse.Namespace) -> MCPServerConfig:
         "env": env,
         "cwd": args.cwd,
         "oauth": {
-            "enabled": bool(args.oauth),
+            "enabled": oauth_enabled,
             "scope": args.oauth_scope,
             "redirect_uri": args.redirect_uri,
+            "client_id": oauth_client_id,
+            "client_secret": oauth_client_secret,
+            "client_secret_env": oauth_client_secret_env,
+            "token_endpoint_auth_method": oauth_auth_method,
         },
     }
     return MCPServerConfig.model_validate(payload)

@@ -32,6 +32,10 @@ MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION = (
     "OAuth dynamic client registration failed. This server may require a pre-registered OAuth client or "
     "bearer-token header."
 )
+MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION_NON_DCR = (
+    "OAuth dynamic client registration failed. This server does not support dynamic client registration — "
+    "configure a pre-registered OAuth client ID."
+)
 MCP_FAILURE_MESSAGE_OAUTH_UNAUTHORIZED = (
     "MCP OAuth authorization failed. Check the server credentials or bearer-token header."
 )
@@ -52,6 +56,7 @@ _SAFE_FAILED_STATUS_MESSAGES = (
     MCP_FAILURE_MESSAGE_GENERIC,
     MCP_FAILURE_MESSAGE_GITHUB_COPILOT_OAUTH,
     MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION,
+    MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION_NON_DCR,
     MCP_FAILURE_MESSAGE_OAUTH_UNAUTHORIZED,
     MCP_FAILURE_MESSAGE_UNAUTHORIZED,
     MCP_FAILURE_MESSAGE_NOT_FOUND,
@@ -265,6 +270,8 @@ def _safe_mcp_failure_message(server: MCPServerConfig, lower_message: str) -> st
     if server.oauth.enabled and _contains_any(lower_message, ("registration failed", "dynamic client")):
         if _is_github_copilot_api_url(server.url):
             return MCP_FAILURE_MESSAGE_GITHUB_COPILOT_OAUTH
+        if not server.oauth.client_id:
+            return MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION_NON_DCR
         return MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION
     if _contains_any(lower_message, _UNAUTHORIZED_MARKERS):
         return MCP_FAILURE_MESSAGE_OAUTH_UNAUTHORIZED if server.oauth.enabled else MCP_FAILURE_MESSAGE_UNAUTHORIZED

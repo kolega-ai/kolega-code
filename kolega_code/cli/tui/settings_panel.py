@@ -104,6 +104,12 @@ MCP_TRANSPORT_OPTIONS = [
     ("stdio command", "stdio"),
 ]
 MCP_ENABLED_OPTIONS = [("Enabled", "true"), ("Disabled", "false")]
+MCP_OAUTH_AUTH_METHOD_OPTIONS = [
+    ("Auto (POST if secret, none if public)", "auto"),
+    ("client_secret_post", "client_secret_post"),
+    ("client_secret_basic", "client_secret_basic"),
+    ("none (public client / PKCE)", "none"),
+]
 MCP_STATUS_MESSAGE_MAX = 96
 MCP_STATUS_NAME_MAX = 34
 # Compression threshold select: "default" maps to None (the agent's built-in 95%).
@@ -415,6 +421,16 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
 
         if select_id == "mcp_transport_select":
             self._update_mcp_transport_fields(str(event.value))
+            return
+
+        if select_id == "mcp_oauth_select":
+            transport = "streamable_http"
+            try:
+                transport = str(self._settings_query_one("#mcp_transport_select", Select).value)
+            except NoMatches:
+                pass
+            http = transport in {"streamable_http", "sse"}
+            self._update_mcp_oauth_fields(http and str(event.value) == "true")
             return
 
         row = _row_for_widget(select_id)
@@ -1477,6 +1493,12 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             set_input("mcp_url_input", "")
             set_input("mcp_headers_input", "")
             set_select("mcp_oauth_select", "false")
+            set_input("mcp_oauth_client_id_input", "")
+            set_input("mcp_oauth_client_secret_input", "")
+            set_input("mcp_oauth_client_secret_env_input", "")
+            set_input("mcp_oauth_redirect_uri_input", "")
+            set_input("mcp_oauth_scope_input", "")
+            set_select("mcp_oauth_auth_method_select", "auto")
             set_input("mcp_command_input", "")
             set_input("mcp_args_input", "")
             set_input("mcp_env_input", "")
@@ -1491,6 +1513,12 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         set_input("mcp_url_input", server.url or "")
         set_input("mcp_headers_input", json.dumps(server.headers, sort_keys=True) if server.headers else "")
         set_select("mcp_oauth_select", "true" if server.oauth.enabled else "false")
+        set_input("mcp_oauth_client_id_input", server.oauth.client_id or "")
+        set_input("mcp_oauth_client_secret_input", server.oauth.client_secret or "")
+        set_input("mcp_oauth_client_secret_env_input", server.oauth.client_secret_env or "")
+        set_input("mcp_oauth_redirect_uri_input", server.oauth.redirect_uri or "")
+        set_input("mcp_oauth_scope_input", server.oauth.scope or "")
+        set_select("mcp_oauth_auth_method_select", server.oauth.token_endpoint_auth_method or "auto")
         set_input("mcp_command_input", server.command or "")
         set_input("mcp_args_input", " ".join(shlex.quote(arg) for arg in server.args))
         set_input("mcp_env_input", json.dumps(server.env, sort_keys=True) if server.env else "")
@@ -1502,6 +1530,26 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         else:
             self._set_mcp_source_hint("This server is stored in your global MCP config.")
         self._update_mcp_transport_fields(server.transport)
+
+    def _update_mcp_oauth_fields(self, visible: bool) -> None:
+        for widget_id in (
+            "mcp_oauth_client_id_label",
+            "mcp_oauth_client_id_input",
+            "mcp_oauth_client_secret_label",
+            "mcp_oauth_client_secret_input",
+            "mcp_oauth_client_secret_env_label",
+            "mcp_oauth_client_secret_env_input",
+            "mcp_oauth_redirect_uri_label",
+            "mcp_oauth_redirect_uri_input",
+            "mcp_oauth_scope_label",
+            "mcp_oauth_scope_input",
+            "mcp_oauth_auth_method_label",
+            "mcp_oauth_auth_method_select",
+        ):
+            try:
+                self._settings_query_one(f"#{widget_id}").display = visible
+            except NoMatches:
+                pass
 
     def _update_mcp_transport_fields(self, transport: str) -> None:
         http = transport in {"streamable_http", "sse"}
@@ -1525,6 +1573,12 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                 self._settings_query_one(f"#{widget_id}").display = visible
             except NoMatches:
                 pass
+        oauth_enabled = False
+        try:
+            oauth_enabled = http and str(self._settings_query_one("#mcp_oauth_select", Select).value) == "true"
+        except NoMatches:
+            pass
+        self._update_mcp_oauth_fields(oauth_enabled)
         try:
             url_input = self._settings_query_one("#mcp_url_input", Input)
             if transport == "streamable_http":
@@ -1640,6 +1694,77 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             else selected
         )
 
+        oauth_client_id = None
+        oauth_client_secret = None
+        oauth_client_secret_env = None
+        oauth_redirect_uri = None
+        oauth_scope = None
+        oauth_auth_method: Optional[Literal["client_secret_post", "client_secret_basic", "none"]] = None
+
+        if oauth_enabled:
+            try:
+                oauth_client_id = self._settings_query_one("#mcp_oauth_client_id_input", Input).value.strip() or None
+            except NoMatches:
+                pass
+            try:
+                oauth_client_secret = (
+                    self._settings_query_one("#mcp_oauth_client_secret_input", Input).value.strip() or None
+                )
+            except NoMatches:
+                pass
+            try:
+                oauth_client_secret_env = (
+                    self._settings_query_one("#mcp_oauth_client_secret_env_input", Input).value.strip() or None
+                )
+            except NoMatches:
+                pass
+            try:
+                oauth_redirect_uri = (
+                    self._settings_query_one("#mcp_oauth_redirect_uri_input", Input).value.strip() or None
+                )
+            except NoMatches:
+                pass
+            try:
+                oauth_scope = self._settings_query_one("#mcp_oauth_scope_input", Input).value.strip() or None
+            except NoMatches:
+                pass
+            try:
+                method_val = str(self._settings_query_one("#mcp_oauth_auth_method_select", Select).value)
+                if method_val in {"client_secret_post", "client_secret_basic", "none"}:
+                    oauth_auth_method = cast(Literal["client_secret_post", "client_secret_basic", "none"], method_val)
+            except NoMatches:
+                pass
+
+        client_name = "Kolega Code"
+        client_uri = None
+        client_metadata_url = None
+        timeout_seconds = 300.0
+        if selected != MCP_NEW_SERVER_VALUE:
+            try:
+                config = self._load_mcp_config_for_ui()
+                existing = config.servers.get(selected)
+                if existing:
+                    client_name = existing.oauth.client_name
+                    client_uri = existing.oauth.client_uri
+                    client_metadata_url = existing.oauth.client_metadata_url
+                    timeout_seconds = existing.oauth.timeout_seconds
+            except Exception:
+                pass
+
+        oauth = MCPOAuthConfig(
+            enabled=oauth_enabled,
+            client_id=oauth_client_id,
+            client_secret=oauth_client_secret,
+            client_secret_env=oauth_client_secret_env,
+            redirect_uri=oauth_redirect_uri,
+            scope=oauth_scope,
+            token_endpoint_auth_method=oauth_auth_method,
+            client_name=client_name,
+            client_uri=client_uri,
+            client_metadata_url=client_metadata_url,
+            timeout_seconds=timeout_seconds,
+        )
+
         return MCPServerConfig(
             id=server_id,
             name=name,
@@ -1647,7 +1772,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             enabled=enabled,
             url=url,
             headers=headers,
-            oauth=MCPOAuthConfig(enabled=oauth_enabled),
+            oauth=oauth,
             command=command,
             args=args,
             env=env,

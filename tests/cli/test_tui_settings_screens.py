@@ -1626,3 +1626,84 @@ async def test_gateway_settings_page_rejects_a_bad_token(
         screen.query_one("#gateway_token_input", Input).value = "not-a-botfather-token"
         await app._save_settings_from_ui()
         assert settings_store.load().telegram_bot_token is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_settings_page_oauth_controls_and_saving(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+    from kolega_code.mcp.config import load_mcp_config
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen._show_category("mcp")
+        await pilot.pause()
+
+        # Initially, OAuth is Disabled and OAuth detail inputs are hidden
+        assert screen.query_one("#mcp_oauth_select", Select).value == "false"
+        assert screen.query_one("#mcp_oauth_client_id_input", Input).display is False
+        assert screen.query_one("#mcp_oauth_client_secret_input", Input).display is False
+
+        # Toggling OAuth to Enabled shows the OAuth detail inputs
+        screen.query_one("#mcp_oauth_select", Select).value = "true"
+        await pilot.pause()
+        assert screen.query_one("#mcp_oauth_client_id_input", Input).display is True
+        assert screen.query_one("#mcp_oauth_client_secret_input", Input).display is True
+        assert screen.query_one("#mcp_oauth_redirect_uri_input", Input).display is True
+
+        # Switching transport to stdio hides all OAuth controls
+        screen.query_one("#mcp_transport_select", Select).value = "stdio"
+        await pilot.pause()
+        assert screen.query_one("#mcp_oauth_select", Select).display is False
+        assert screen.query_one("#mcp_oauth_client_id_input", Input).display is False
+
+        # Switching back to streamable_http restores OAuth controls
+        screen.query_one("#mcp_transport_select", Select).value = "streamable_http"
+        await pilot.pause()
+        assert screen.query_one("#mcp_oauth_select", Select).display is True
+        assert screen.query_one("#mcp_oauth_client_id_input", Input).display is True
+
+        # Fill in server details with pre-registered OAuth
+        screen.query_one("#mcp_name_input", Input).value = "HubSpot CRM"
+        screen.query_one("#mcp_url_input", Input).value = "https://mcp.hubspot.com"
+        screen.query_one("#mcp_oauth_client_id_input", Input).value = "test-cid-123"
+        screen.query_one("#mcp_oauth_client_secret_input", Input).value = "test-secret-456"
+        screen.query_one("#mcp_oauth_client_secret_env_input", Input).value = "HUBSPOT_CLIENT_SECRET"
+        screen.query_one("#mcp_oauth_redirect_uri_input", Input).value = "http://127.0.0.1:33418/callback"
+        screen.query_one("#mcp_oauth_scope_input", Input).value = "crm.contacts.read"
+        screen.query_one("#mcp_oauth_auth_method_select", Select).value = "client_secret_post"
+
+        await app._handle_mcp_settings_button("mcp_save_server")
+        await pilot.pause()
+
+        # Check that server was saved to global MCP config
+        cfg = load_mcp_config(app.project_path, settings_store.root, project_trusted=False)
+        saved = next(s for s in cfg.servers.values() if s.name == "HubSpot CRM")
+        assert saved.oauth.enabled is True
+        assert saved.oauth.client_id == "test-cid-123"
+        assert saved.oauth.client_secret == "test-secret-456"
+        assert saved.oauth.client_secret_env == "HUBSPOT_CLIENT_SECRET"
+        assert saved.oauth.redirect_uri == "http://127.0.0.1:33418/callback"
+        assert saved.oauth.scope == "crm.contacts.read"
+        assert saved.oauth.token_endpoint_auth_method == "client_secret_post"
+
+        # Verify password mask on client secret input
+        assert screen.query_one("#mcp_oauth_client_secret_input", Input).password is True
+
+        # Test Clear OAuth: clears tokens from token store without erasing configured credentials
+        app._clear_mcp_tokens_from_ui()
+        cfg_after = load_mcp_config(app.project_path, settings_store.root, project_trusted=False)
+        server_after = cfg_after.servers[saved.id]
+        assert server_after.oauth.client_id == "test-cid-123"
+        assert server_after.oauth.client_secret == "test-secret-456"

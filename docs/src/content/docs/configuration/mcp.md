@@ -114,6 +114,51 @@ kolega-code mcp verify oauth-server --project .
 
 Use `--no-browser` to print the authorization URL instead of opening a browser. Tokens and dynamic client registration data are stored locally in `<state_dir>/mcp_oauth_tokens.json`. Kolega Code writes this file with owner-only permissions where the platform supports POSIX modes, redacts those values from diagnostics, and does not encrypt the file beyond the protection provided by the OS and filesystem permissions.
 
+### Pre-registered OAuth servers (HubSpot, Slack, Enterprise IdPs)
+
+Many hosted MCP servers (such as HubSpot at `https://mcp.hubspot.com`, Slack at `https://mcp.slack.com/mcp`, or servers fronted by Entra ID / Azure AD, Okta, and Keycloak) do not implement Dynamic Client Registration (RFC 7591). Instead, you create an application in the provider's developer dashboard to obtain a static `client_id` and `client_secret`.
+
+When registering the app in the provider's dashboard:
+1. Set the redirect URI to a fixed localhost port, for example `http://127.0.0.1:33418/callback`.
+2. Configure the exact same `redirect_uri` in your server entry so the local callback server listens on that port.
+
+Configure the credentials in `.kolega/mcp_servers.json` (or via global config or the TUI):
+
+```json
+{
+  "id": "hubspot",
+  "transport": "streamable_http",
+  "url": "https://mcp.hubspot.com",
+  "oauth": {
+    "enabled": true,
+    "client_id": "your-hubspot-client-id",
+    "client_secret_env": "HUBSPOT_MCP_CLIENT_SECRET",
+    "redirect_uri": "http://127.0.0.1:33418/callback",
+    "token_endpoint_auth_method": "client_secret_post"
+  }
+}
+```
+
+OAuth configuration options:
+
+| Field | Description |
+| --- | --- |
+| `client_id` | Pre-registered OAuth client ID. |
+| `client_secret` | Direct client secret (suitable for global user config). |
+| `client_secret_env` | Environment variable name holding the client secret (recommended for version control). |
+| `redirect_uri` | Callback URI. Must be an `http` URL on `127.0.0.1` or `localhost`. Omitting the port uses an ephemeral port. |
+| `scope` | Space-separated OAuth scopes to request. |
+| `token_endpoint_auth_method` | `client_secret_post`, `client_secret_basic`, or `none` (defaults to `client_secret_post` when a secret is configured). |
+
+### Managing OAuth in the TUI
+
+In the Textual TUI (**Settings** → **MCP Servers**):
+1. Select or create an HTTP MCP server.
+2. Set **OAuth** to **Enabled**.
+3. Fill in **OAuth Client ID**, **OAuth Client Secret** (or **OAuth Client Secret Env Var**), **OAuth Redirect URI**, and optional scopes.
+4. Click **Save Server**, then click **Verify** to authenticate via your browser.
+5. The **Clear OAuth** button clears cached session tokens without erasing your configured client credentials.
+
 ## CLI management
 
 List servers and status:
@@ -129,6 +174,18 @@ kolega-code mcp --project . add docs \
   --transport streamable_http \
   --url https://mcp.example.com/mcp \
   --header 'Authorization=Bearer ...'
+```
+
+Add a remote server with pre-registered OAuth:
+
+```bash
+kolega-code mcp --project . add hubspot \
+  --transport streamable_http \
+  --url https://mcp.hubspot.com \
+  --oauth-client-id "your-client-id" \
+  --oauth-client-secret-env "HUBSPOT_MCP_CLIENT_SECRET" \
+  --redirect-uri "http://127.0.0.1:33418/callback" \
+  --oauth-auth-method "client_secret_post"
 ```
 
 Add a project config server:

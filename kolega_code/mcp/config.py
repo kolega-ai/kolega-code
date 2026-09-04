@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Mapping, Optional
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
@@ -22,6 +24,7 @@ _SERVER_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 # least 25 chars of budget for the tool id after the ``mcp__{server}__`` prefix.
 _SERVER_ID_MAX_LENGTH = 32
 _SERVER_ID_PREFIX_LENGTH = 24
+_ENV_VAR_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def sanitize_mcp_server_id(value: str) -> str:
@@ -53,10 +56,57 @@ class MCPOAuthConfig(BaseModel):
     enabled: bool = False
     redirect_uri: Optional[str] = None
     scope: Optional[str] = None
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+    client_secret_env: Optional[str] = None
+    token_endpoint_auth_method: Optional[Literal["client_secret_post", "client_secret_basic", "none"]] = None
     client_name: str = "Kolega Code"
     client_uri: Optional[str] = None
     client_metadata_url: Optional[str] = None
     timeout_seconds: float = Field(default=300.0, gt=0)
+
+    @field_validator("redirect_uri")
+    @classmethod
+    def _validate_redirect_uri(cls, value: Optional[str]) -> Optional[str]:
+        if not value:
+            return None
+        parsed = urlparse(value)
+        if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost"}:
+            raise ValueError(
+                "MCP OAuth redirect_uri must be a localhost http URL (e.g. http://127.0.0.1:33418/callback)"
+            )
+        return value
+
+    @field_validator("client_secret_env")
+    @classmethod
+    def _validate_client_secret_env(cls, value: Optional[str]) -> Optional[str]:
+        if not value:
+            return None
+        stripped = value.strip()
+        if not _ENV_VAR_RE.match(stripped):
+            raise ValueError("client_secret_env must be a valid environment variable name")
+        return stripped
+
+    @model_validator(mode="after")
+    def _validate_oauth_fields(self) -> "MCPOAuthConfig":
+        if self.client_id or self.client_secret or self.client_secret_env:
+            self.enabled = True
+        return self
+
+    def resolve_client_secret(self, env: Optional[Mapping[str, str]] = None) -> Optional[str]:
+        if self.client_secret:
+            return self.client_secret
+        if self.client_secret_env:
+            source_env = os.environ if env is None else env
+            return source_env.get(self.client_secret_env) or None
+        return None
+
+    def resolve_auth_method(self, env: Optional[Mapping[str, str]] = None) -> str:
+        if self.token_endpoint_auth_method:
+            return self.token_endpoint_auth_method
+        if self.resolve_client_secret(env=env):
+            return "client_secret_post"
+        return "none"
 
 
 class MCPServerConfig(BaseModel):
@@ -130,6 +180,9 @@ class MCPServerConfig(BaseModel):
             payload["headers"] = {key: "‹secret›" for key in payload["headers"]}
         if payload.get("env"):
             payload["env"] = {key: "‹secret›" for key in payload["env"]}
+        if payload.get("oauth") and isinstance(payload["oauth"], dict):
+            if payload["oauth"].get("client_secret"):
+                payload["oauth"]["client_secret"] = "‹secret›"
         return payload
 
 
@@ -349,4 +402,8 @@ def mcp_secret_values(config: LoadedMCPConfig) -> list[str]:
     for server in config.servers.values():
         values.extend(value for value in server.headers.values() if value)
         values.extend(value for value in server.env.values() if value)
+        if server.oauth.enabled:
+            secret = server.oauth.resolve_client_secret()
+            if secret:
+                values.append(secret)
     return values

@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 
 from kolega_code.mcp.config import (
+    LoadedMCPConfig,
     MCPConfigFile,
+    MCPOAuthConfig,
     MCPServerConfig,
     global_mcp_config_path,
     load_mcp_config,
@@ -346,3 +348,100 @@ async def test_verify_server_message_notes_adjusted_tool_names(tmp_path: Path, m
         "1 tool name was adjusted for provider compatibility (mcp__docs__get.file → mcp__docs__get_file)."
         in result.message
     )
+
+
+def test_mcp_oauth_config_defaults_and_validation() -> None:
+    # Defaults
+    oauth = MCPOAuthConfig()
+    assert oauth.enabled is False
+    assert oauth.client_id is None
+    assert oauth.client_secret is None
+    assert oauth.client_secret_env is None
+    assert oauth.redirect_uri is None
+    assert oauth.token_endpoint_auth_method is None
+    assert oauth.resolve_auth_method() == "none"
+
+    # Auto-enabling when credentials are provided
+    oauth_with_id = MCPOAuthConfig(client_id="my-client")
+    assert oauth_with_id.enabled is True
+    assert oauth_with_id.resolve_auth_method() == "none"
+
+    oauth_with_secret = MCPOAuthConfig(client_secret="sec")
+    assert oauth_with_secret.enabled is True
+    assert oauth_with_secret.resolve_auth_method() == "client_secret_post"
+
+    # Explicit auth method
+    oauth_basic = MCPOAuthConfig(client_secret="sec", token_endpoint_auth_method="client_secret_basic")
+    assert oauth_basic.resolve_auth_method() == "client_secret_basic"
+
+    # Valid redirect URI
+    oauth_valid_uri = MCPOAuthConfig(redirect_uri="http://127.0.0.1:33418/callback")
+    assert oauth_valid_uri.redirect_uri == "http://127.0.0.1:33418/callback"
+    oauth_valid_localhost = MCPOAuthConfig(redirect_uri="http://localhost:8080/callback")
+    assert oauth_valid_localhost.redirect_uri == "http://localhost:8080/callback"
+
+    # Invalid redirect URIs
+    with pytest.raises(ValueError, match="localhost http URL"):
+        MCPOAuthConfig(redirect_uri="https://example.com/callback")
+    with pytest.raises(ValueError, match="localhost http URL"):
+        MCPOAuthConfig(redirect_uri="http://example.com:8080/callback")
+
+    # Invalid env var name
+    with pytest.raises(ValueError, match="valid environment variable name"):
+        MCPOAuthConfig(client_secret_env="invalid-name!")
+
+
+def test_mcp_oauth_config_secret_resolution_and_redaction(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_MCP_SECRET_ENV", "env-secret-val-123")
+
+    oauth_direct = MCPOAuthConfig(client_id="cid", client_secret="direct-secret-456")
+    assert oauth_direct.resolve_client_secret() == "direct-secret-456"
+
+    oauth_env = MCPOAuthConfig(client_id="cid", client_secret_env="TEST_MCP_SECRET_ENV")
+    assert oauth_env.resolve_client_secret() == "env-secret-val-123"
+
+    # Server sanitization masks direct secret but shows env var name
+    server = MCPServerConfig(
+        id="hubspot",
+        transport="streamable_http",
+        url="https://mcp.hubspot.com",
+        oauth=MCPOAuthConfig(
+            client_id="cid",
+            client_secret="direct-secret-456",
+            client_secret_env="TEST_MCP_SECRET_ENV",
+            redirect_uri="http://127.0.0.1:33418/callback",
+        ),
+    )
+    sanitized = server.sanitized_for_display()
+    assert sanitized["oauth"]["client_secret"] == "‹secret›"
+    assert sanitized["oauth"]["client_id"] == "cid"
+    assert sanitized["oauth"]["client_secret_env"] == "TEST_MCP_SECRET_ENV"
+
+    # mcp_secret_values collects the resolved secrets for diagnostics redaction
+    config = LoadedMCPConfig(servers={"hubspot": server})
+    secrets = mcp_secret_values(config)
+    assert "direct-secret-456" in secrets
+
+
+def test_server_fingerprint_updates_on_oauth_changes() -> None:
+    server = MCPServerConfig(
+        id="hubspot",
+        transport="streamable_http",
+        url="https://mcp.hubspot.com",
+        oauth=MCPOAuthConfig(enabled=True),
+    )
+    fp_base = server_fingerprint(server)
+
+    server_with_client = server.model_copy(update={"oauth": MCPOAuthConfig(enabled=True, client_id="cid-1")})
+    assert server_fingerprint(server_with_client) != fp_base
+
+    server_with_redirect = server_with_client.model_copy(
+        update={
+            "oauth": MCPOAuthConfig(
+                enabled=True,
+                client_id="cid-1",
+                redirect_uri="http://127.0.0.1:33418/callback",
+            )
+        }
+    )
+    assert server_fingerprint(server_with_redirect) != server_fingerprint(server_with_client)

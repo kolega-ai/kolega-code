@@ -7,7 +7,7 @@ import contextlib
 import sys
 import webbrowser
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional, Union
 from urllib.parse import parse_qs, urlparse
 
 from .config import MCPServerConfig
@@ -21,9 +21,21 @@ class MCPOAuthError(RuntimeError):
 class MCPFileTokenStorage:
     """Adapter from Kolega's token store to the MCP SDK TokenStorage protocol."""
 
-    def __init__(self, server_id: str, token_store: MCPOAuthTokenStore) -> None:
-        self.server_id = server_id
+    def __init__(
+        self,
+        server: Union[MCPServerConfig, str],
+        token_store: MCPOAuthTokenStore,
+        *,
+        redirect_uri: Optional[str] = None,
+    ) -> None:
+        if isinstance(server, MCPServerConfig):
+            self.server: Optional[MCPServerConfig] = server
+            self.server_id: str = server.id
+        else:
+            self.server = None
+            self.server_id = server
         self.token_store = token_store
+        self.redirect_uri = redirect_uri
 
     async def get_tokens(self):
         from mcp.shared.auth import OAuthToken
@@ -42,12 +54,40 @@ class MCPFileTokenStorage:
     async def get_client_info(self):
         from mcp.shared.auth import OAuthClientInformationFull
 
+        if self.server and self.server.oauth.client_id:
+            redirect_uris: list[str] = []
+            if self.redirect_uri:
+                redirect_uris.append(self.redirect_uri)
+            elif self.server.oauth.redirect_uri:
+                redirect_uris.append(self.server.oauth.redirect_uri)
+            else:
+                redirect_uris.append("http://127.0.0.1:1/callback")
+
+            kwargs: dict[str, Any] = {
+                "client_id": self.server.oauth.client_id,
+                "redirect_uris": redirect_uris,
+                "token_endpoint_auth_method": self.server.oauth.resolve_auth_method(),
+            }
+            secret = self.server.oauth.resolve_client_secret()
+            if secret:
+                kwargs["client_secret"] = secret
+            if self.server.oauth.scope:
+                kwargs["scope"] = self.server.oauth.scope
+            if self.server.oauth.client_name:
+                kwargs["client_name"] = self.server.oauth.client_name
+            if self.server.oauth.client_uri:
+                kwargs["client_uri"] = self.server.oauth.client_uri
+
+            return OAuthClientInformationFull.model_validate(kwargs)
+
         raw = self.token_store.get(self.server_id).client_info
         if not raw:
             return None
         return OAuthClientInformationFull.model_validate(raw)
 
     async def set_client_info(self, client_info) -> None:
+        if self.server and self.server.oauth.client_id:
+            return
         if client_info is None:
             self.token_store.set_client_info(self.server_id, None)
             return
@@ -83,13 +123,23 @@ class LocalOAuthCallbackServer:
         host = parsed.hostname or "127.0.0.1"
         port = parsed.port or 0
         self._future = asyncio.get_running_loop().create_future()
-        self._server = await asyncio.start_server(self._handle_client, host=host, port=port)
+        try:
+            self._server = await asyncio.start_server(self._handle_client, host=host, port=port)
+        except OSError as exc:
+            if port != 0:
+                raise MCPOAuthError(
+                    f"Could not bind OAuth callback server to {self._configured_redirect_uri}: {exc}"
+                ) from exc
+            raise
         socket = self._server.sockets[0]
         bound_host, bound_port = socket.getsockname()[:2]
-        # Prefer 127.0.0.1 in metadata even if the OS reports localhost/::1.
-        if bound_host in {"0.0.0.0", "::", "::1"}:
-            bound_host = "127.0.0.1"
-        self.redirect_uri = f"http://{bound_host}:{bound_port}{self._path}"
+        if self._configured_redirect_uri and parsed.port:
+            self.redirect_uri = self._configured_redirect_uri
+        else:
+            # Prefer 127.0.0.1 in metadata even if the OS reports localhost/::1.
+            if bound_host in {"0.0.0.0", "::", "::1"}:
+                bound_host = "127.0.0.1"
+            self.redirect_uri = f"http://{bound_host}:{bound_port}{self._path}"
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -179,6 +229,11 @@ async def build_oauth_provider(
         return None
     if not server.url:
         raise MCPOAuthError(f"MCP server '{server.id}' has OAuth enabled but no URL")
+    if server.oauth.client_secret_env and not server.oauth.resolve_client_secret():
+        raise MCPOAuthError(
+            f"MCP server '{server.id}' requires environment variable '{server.oauth.client_secret_env}' "
+            "for OAuth client secret, but it is not set."
+        )
 
     from mcp.client.auth import OAuthClientProvider
     from mcp.shared.auth import OAuthClientMetadata
@@ -202,7 +257,7 @@ async def build_oauth_provider(
     return OAuthClientProvider(
         server_url=server.url,
         client_metadata=OAuthClientMetadata(**metadata_kwargs),
-        storage=MCPFileTokenStorage(server.id, token_store),
+        storage=MCPFileTokenStorage(server, token_store, redirect_uri=redirect_uri),
         redirect_handler=interaction.redirect_handler if interaction else None,
         callback_handler=interaction.callback_handler if interaction else None,
         timeout=server.oauth.timeout_seconds,
