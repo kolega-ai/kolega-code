@@ -91,6 +91,33 @@ async def test_streams_with_edit_in_place() -> None:
 
 
 @pytest.mark.asyncio
+async def test_typing_is_refreshed_while_the_turn_runs() -> None:
+    """Chat platforms expire the typing action after ~5s: a slow turn must
+    re-send it so the indicator keeps showing through thinking and tool
+    runs, and stops when the turn ends."""
+    adapter = FakeAdapter()
+
+    async def slow_chunks() -> AsyncIterator[dict[str, Any]]:
+        for _ in range(3):
+            await asyncio.sleep(0.05)
+            yield {"type": "response", "content": "x", "complete": False, "uuid": "u-1"}
+        yield {"type": "response", "content": "!", "complete": True, "uuid": "u-1"}
+
+    r = TurnRenderer(
+        adapter,
+        "chat-1",
+        event_queue=asyncio.Queue(),
+        edit_throttle_seconds=0.0,
+        typing_refresh_seconds=0.01,
+    )
+    await r.run(slow_chunks())
+    typing_on = [call for call in adapter.calls if call == ("typing", "chat-1", True)]
+    # The initial action plus refreshes across the turn's quiet stretches.
+    assert len(typing_on) >= 3
+    assert adapter.calls[-1] == ("typing", "chat-1", False)
+
+
+@pytest.mark.asyncio
 async def test_final_only_transport_sends_once() -> None:
     adapter = FakeAdapter(edits=False)
     text = await renderer(adapter).run(chunks("hello", " world"))

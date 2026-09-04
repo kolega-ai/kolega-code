@@ -18,7 +18,10 @@ turns:
   would surface above the latest text), and the messages persist as a trail
   of what the agent did during the turn;
 - text is chunked at the adapter's limit; the first chunk is the edited
-  message and overflow chunks are sent as continuations on finalize.
+  message and overflow chunks are sent as continuations on finalize;
+- a typing action is re-sent every few seconds for the whole turn (chat
+  platforms expire it after ~5s), so thinking and long tool runs keep
+  showing "typing…" until the reply lands.
 
 Chunk content is *incremental*, so the renderer appends and re-renders the
 accumulated text — it never replaces with the last segment.
@@ -39,6 +42,10 @@ logger = logging.getLogger(__name__)
 
 #: Cap on a round message's lines so a chatty turn cannot spam an unbounded edit.
 MAX_STATUS_LINES = 8
+#: Chat platforms expire a typing action after ~5 seconds (Telegram: "status
+#: is set for 5 seconds or less"); refresh slightly faster so the indicator
+#: never lapses while a turn is in progress.
+TYPING_REFRESH_SECONDS = 4.0
 #: Rendered status line: (icon, tool description, tool call id).
 StatusLine = tuple[str, str, str]
 
@@ -54,6 +61,7 @@ class TurnRenderer:
         event_queue: asyncio.Queue[AgentEvent],
         chunk_limit: Optional[int] = None,
         edit_throttle_seconds: float = 1.0,
+        typing_refresh_seconds: float = TYPING_REFRESH_SECONDS,
         monotonic: Any = time.monotonic,
     ) -> None:
         self._adapter = adapter
@@ -61,6 +69,7 @@ class TurnRenderer:
         self._events = event_queue
         self._chunk_limit = chunk_limit or adapter.capabilities.text_chunk_limit
         self._edit_throttle = edit_throttle_seconds
+        self._typing_refresh = typing_refresh_seconds
         self._monotonic = monotonic
         # Per-segment state, mirroring the TUI's stream fold: a segment is one
         # contiguous assistant response identified by its chunk uuid (the
@@ -92,10 +101,12 @@ class TurnRenderer:
         reply stays visible.
         """
         pump: Optional[asyncio.Task[None]] = None
+        typing: Optional[asyncio.Task[None]] = None
         if self._events is not None:
             pump = asyncio.create_task(self._event_pump(), name="gateway-turn-event-pump")
         try:
             await self._adapter.set_typing(self._chat_id, True)
+            typing = asyncio.create_task(self._typing_keepalive(), name="gateway-turn-typing")
             async for chunk in chunks:
                 if chunk.get("type") != "response":
                     # Thinking chunks stay off the wire; they are reasoning, not output.
@@ -121,13 +132,30 @@ class TurnRenderer:
             await self._finalize_segment()
             return self._total_text
         finally:
-            if pump is not None:
-                pump.cancel()
-                try:
-                    await pump
-                except asyncio.CancelledError:
-                    pass
+            for task in (pump, typing):
+                if task is not None:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
             await self._adapter.set_typing(self._chat_id, False)
+
+    async def _typing_keepalive(self) -> None:
+        """Re-send the typing action so the indicator outlives its ~5s expiry.
+
+        Covers the silent stretches of a turn — model thinking before the
+        first chunk and long-running tool calls, where no message is sent or
+        edited. Refresh only (never hides: the ``False`` call is the
+        adapter's business); a failing adapter must not end the loop, since
+        typing is cosmetic.
+        """
+        while True:
+            await asyncio.sleep(self._typing_refresh)
+            try:
+                await self._adapter.set_typing(self._chat_id, True)
+            except Exception:  # noqa: BLE001 — typing indicators are cosmetic
+                logger.debug("gateway: typing refresh failed", exc_info=True)
 
     # -- Reply messages (one per response segment) -------------------------
 
