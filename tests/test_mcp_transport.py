@@ -12,9 +12,16 @@ import pytest
 from mcp.types import CallToolResult, TextContent
 
 from kolega_code.mcp.config import LoadedMCPConfig, MCPOAuthConfig, MCPServerConfig, server_fingerprint
+from kolega_code.mcp.oauth import (
+    MCPFileTokenStorage,
+    MCPOAuthError,
+    build_oauth_provider,
+)
 from kolega_code.mcp.service import (
     MCPService,
     MCP_FAILURE_MESSAGE_GENERIC,
+    MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION_NON_DCR,
+    MCP_FAILURE_MESSAGE_OAUTH_SECRET_ENV,
     MCP_TOOL_FAILURE_MESSAGE_TIMEOUT,
     _is_github_copilot_api_url,
 )
@@ -428,3 +435,126 @@ def test_list_status_rows_replaces_legacy_failed_status_messages(tmp_path: Path)
     assert rows[0]["status"] == "failed"
     assert rows[0]["message"] == MCP_FAILURE_MESSAGE_GENERIC
     assert "legacy-secret" not in rows[0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_file_token_storage_returns_configured_client_info(tmp_path: Path) -> None:
+    token_store = MCPOAuthTokenStore(tmp_path)
+    server = MCPServerConfig(
+        id="hubspot",
+        transport="streamable_http",
+        url="https://mcp.hubspot.com",
+        oauth=MCPOAuthConfig(
+            client_id="hubspot-cid-123",
+            client_secret="hubspot-secret-456",
+            token_endpoint_auth_method="client_secret_post",
+            redirect_uri="http://127.0.0.1:33418/callback",
+            scope="crm.objects.contacts.read",
+        ),
+    )
+    storage = MCPFileTokenStorage(server, token_store)
+    client_info = await storage.get_client_info()
+
+    assert client_info is not None
+    assert client_info.client_id == "hubspot-cid-123"
+    assert client_info.client_secret == "hubspot-secret-456"
+    assert client_info.token_endpoint_auth_method == "client_secret_post"
+    assert client_info.redirect_uris is not None
+    assert str(client_info.redirect_uris[0]) == "http://127.0.0.1:33418/callback"
+    assert client_info.scope == "crm.objects.contacts.read"
+
+
+@pytest.mark.asyncio
+async def test_oauth_provider_uses_configured_client_and_formats_token_auth(tmp_path: Path) -> None:
+    token_store = MCPOAuthTokenStore(tmp_path)
+    server = MCPServerConfig(
+        id="hubspot",
+        transport="streamable_http",
+        url="https://mcp.hubspot.com",
+        oauth=MCPOAuthConfig(
+            client_id="hubspot-cid",
+            client_secret="hubspot-sec",
+            token_endpoint_auth_method="client_secret_post",
+            redirect_uri="http://127.0.0.1:33418/callback",
+        ),
+    )
+    provider = await build_oauth_provider(server, token_store)
+    assert provider is not None
+    await provider._initialize()
+    assert provider.context.client_info is not None
+    assert provider.context.client_info.client_id == "hubspot-cid"
+
+    # client_secret_post includes client_secret in data
+    data, headers = provider.context.prepare_token_auth({"grant_type": "authorization_code"}, {})
+    assert data["client_secret"] == "hubspot-sec"
+    assert "Authorization" not in headers
+
+    # client_secret_basic sets Basic Auth header
+    server_basic = server.model_copy(
+        update={
+            "oauth": MCPOAuthConfig(
+                client_id="hubspot-cid",
+                client_secret="hubspot-sec",
+                token_endpoint_auth_method="client_secret_basic",
+                redirect_uri="http://127.0.0.1:33418/callback",
+            )
+        }
+    )
+    provider_basic = await build_oauth_provider(server_basic, token_store)
+    assert provider_basic is not None
+    await provider_basic._initialize()
+    data_b, headers_b = provider_basic.context.prepare_token_auth({"grant_type": "authorization_code"}, {})
+    assert "client_secret" not in data_b
+    assert "Authorization" in headers_b
+    assert headers_b["Authorization"].startswith("Basic ")
+
+
+@pytest.mark.asyncio
+async def test_build_oauth_provider_checks_missing_secret_env(tmp_path: Path) -> None:
+    token_store = MCPOAuthTokenStore(tmp_path)
+    server = MCPServerConfig(
+        id="hubspot",
+        transport="streamable_http",
+        url="https://mcp.hubspot.com",
+        oauth=MCPOAuthConfig(
+            client_id="hubspot-cid",
+            client_secret_env="NON_EXISTENT_ENV_VAR_12345",
+        ),
+    )
+    with pytest.raises(MCPOAuthError, match="requires environment variable 'NON_EXISTENT_ENV_VAR_12345'"):
+        await build_oauth_provider(server, token_store)
+
+    service = MCPService(LoadedMCPConfig(servers={server.id: server}), state_dir=tmp_path, project_path=tmp_path)
+    result = await service.verify_server(server.id)
+    assert result.message == MCP_FAILURE_MESSAGE_OAUTH_SECRET_ENV
+    assert service.list_status_rows()[0]["message"] == MCP_FAILURE_MESSAGE_OAUTH_SECRET_ENV
+
+
+@pytest.mark.asyncio
+async def test_verify_server_reports_non_dcr_failure_when_no_client_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import kolega_code.mcp.service as service_module
+
+    @asynccontextmanager
+    async def fake_open_mcp_session(*args, **kwargs):
+        raise RuntimeError("Registration failed: 404 Not Found")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(service_module, "open_mcp_session", fake_open_mcp_session)
+    server = MCPServerConfig(
+        id="hubspot",
+        transport="streamable_http",
+        url="https://mcp.hubspot.com",
+        oauth=MCPOAuthConfig(enabled=True),
+    )
+    service = MCPService(
+        LoadedMCPConfig(servers={server.id: server}),
+        state_dir=tmp_path,
+        project_path=tmp_path,
+    )
+
+    result = await service.verify_server(server.id, interactive_oauth=True)
+    assert result.ok is False
+    assert result.message == MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION_NON_DCR

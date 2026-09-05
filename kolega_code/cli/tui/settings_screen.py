@@ -588,6 +588,26 @@ class SettingsScreen(ModalScreen[None]):
                     allow_blank=False,
                     value="false",
                 )
+                yield Label("OAuth Client ID", id="mcp_oauth_client_id_label")
+                yield Input(id="mcp_oauth_client_id_input", placeholder="e.g. client_abc123")
+                yield Label("OAuth Client Secret", id="mcp_oauth_client_secret_label")
+                yield Input(id="mcp_oauth_client_secret_input", placeholder="optional direct secret", password=True)
+                yield Label("OAuth Client Secret Env Var", id="mcp_oauth_client_secret_env_label")
+                yield Input(id="mcp_oauth_client_secret_env_input", placeholder="e.g. HUBSPOT_MCP_CLIENT_SECRET")
+                yield Label("OAuth Redirect URI", id="mcp_oauth_redirect_uri_label")
+                yield Input(
+                    id="mcp_oauth_redirect_uri_input",
+                    placeholder="e.g. http://127.0.0.1:33418/callback (default: ephemeral port)",
+                )
+                yield Label("OAuth Scopes", id="mcp_oauth_scope_label")
+                yield Input(id="mcp_oauth_scope_input", placeholder="e.g. read write")
+                yield Label("OAuth Token Auth Method", id="mcp_oauth_auth_method_label")
+                yield Select(
+                    settings_panel.MCP_OAUTH_AUTH_METHOD_OPTIONS,
+                    id="mcp_oauth_auth_method_select",
+                    allow_blank=False,
+                    value="auto",
+                )
                 yield Label("Command", id="mcp_command_label")
                 yield Input(id="mcp_command_input", placeholder="npx")
                 yield Label("Arguments", id="mcp_args_label")

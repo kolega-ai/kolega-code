@@ -274,3 +274,72 @@ def test_build_agent_config_loads_trusted_project_mcp(tmp_path: Path, monkeypatc
     assert config.mcp_config is not None
     assert set(config.mcp_config.servers) == {"project-docs"}
     assert config.mcp_config.project_trusted is True
+
+
+def test_mcp_add_with_pre_registered_oauth(tmp_path: Path, capsys) -> None:
+    project = tmp_path / "project"
+    state = tmp_path / "state"
+    project.mkdir()
+
+    exit_code = main(
+        [
+            "mcp",
+            "--project",
+            str(project),
+            "--state-dir",
+            str(state),
+            "add",
+            "hubspot",
+            "--transport",
+            "streamable_http",
+            "--url",
+            "https://mcp.hubspot.com",
+            "--oauth-client-id",
+            "hubspot-client-id-123",
+            "--oauth-client-secret-env",
+            "HUBSPOT_MCP_CLIENT_SECRET",
+            "--redirect-uri",
+            "http://127.0.0.1:33418/callback",
+            "--oauth-auth-method",
+            "client_secret_post",
+            "--oauth-scope",
+            "crm.objects.contacts.read",
+        ]
+    )
+    assert exit_code == 0
+    payload = json.loads(global_mcp_config_path(state).read_text(encoding="utf-8"))
+    saved = payload["servers"][0]
+    assert saved["id"] == "hubspot"
+    oauth = saved["oauth"]
+    assert oauth["enabled"] is True
+    assert oauth["client_id"] == "hubspot-client-id-123"
+    assert oauth["client_secret_env"] == "HUBSPOT_MCP_CLIENT_SECRET"
+    assert oauth["redirect_uri"] == "http://127.0.0.1:33418/callback"
+    assert oauth["token_endpoint_auth_method"] == "client_secret_post"
+    assert oauth["scope"] == "crm.objects.contacts.read"
+
+
+def test_mcp_add_rejects_incomplete_oauth_without_exposing_secret(tmp_path: Path, capsys) -> None:
+    state = tmp_path / "state"
+    exit_code = main(
+        [
+            "mcp",
+            "--project",
+            str(tmp_path),
+            "--state-dir",
+            str(state),
+            "add",
+            "example",
+            "--transport",
+            "streamable_http",
+            "--url",
+            "https://mcp.example/mcp",
+            "--oauth-client-secret",
+            "fake-private-secret",
+        ]
+    )
+    assert exit_code == 2
+    output = capsys.readouterr()
+    assert "client_id" in output.err
+    assert "fake-private-secret" not in output.err + output.out
+    assert not global_mcp_config_path(state).exists()
