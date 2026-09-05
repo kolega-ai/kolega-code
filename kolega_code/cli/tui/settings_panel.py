@@ -1675,7 +1675,8 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         enabled = str(self._settings_query_one("#mcp_enabled_select", Select).value) == "true"
         url = self._settings_query_one("#mcp_url_input", Input).value.strip() or None
         headers_text = self._settings_query_one("#mcp_headers_input", Input).value.strip()
-        oauth_enabled = str(self._settings_query_one("#mcp_oauth_select", Select).value) == "true"
+        http = transport in {"streamable_http", "sse"}
+        oauth_enabled = http and str(self._settings_query_one("#mcp_oauth_select", Select).value) == "true"
         command = self._settings_query_one("#mcp_command_input", Input).value.strip() or None
         args_text = self._settings_query_one("#mcp_args_input", Input).value.strip()
         env_text = self._settings_query_one("#mcp_env_input", Input).value.strip()
@@ -1701,7 +1702,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         oauth_scope = None
         oauth_auth_method: Optional[Literal["client_secret_post", "client_secret_basic", "none"]] = None
 
-        if oauth_enabled:
+        if http:
             try:
                 oauth_client_id = self._settings_query_one("#mcp_oauth_client_id_input", Input).value.strip() or None
             except NoMatches:

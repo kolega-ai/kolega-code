@@ -317,3 +317,29 @@ def test_mcp_add_with_pre_registered_oauth(tmp_path: Path, capsys) -> None:
     assert oauth["redirect_uri"] == "http://127.0.0.1:33418/callback"
     assert oauth["token_endpoint_auth_method"] == "client_secret_post"
     assert oauth["scope"] == "crm.objects.contacts.read"
+
+
+def test_mcp_add_rejects_incomplete_oauth_without_exposing_secret(tmp_path: Path, capsys) -> None:
+    state = tmp_path / "state"
+    exit_code = main(
+        [
+            "mcp",
+            "--project",
+            str(tmp_path),
+            "--state-dir",
+            str(state),
+            "add",
+            "example",
+            "--transport",
+            "streamable_http",
+            "--url",
+            "https://mcp.example/mcp",
+            "--oauth-client-secret",
+            "fake-private-secret",
+        ]
+    )
+    assert exit_code == 2
+    output = capsys.readouterr()
+    assert "client_id" in output.err
+    assert "fake-private-secret" not in output.err + output.out
+    assert not global_mcp_config_path(state).exists()

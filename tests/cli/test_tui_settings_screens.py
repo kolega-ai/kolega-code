@@ -1702,8 +1702,33 @@ async def test_mcp_settings_page_oauth_controls_and_saving(
         assert screen.query_one("#mcp_oauth_client_secret_input", Input).password is True
 
         # Test Clear OAuth: clears tokens from token store without erasing configured credentials
+        from kolega_code.mcp.state import MCPOAuthTokenStore
+
+        token_store = MCPOAuthTokenStore(settings_store.root)
+        token_store.set_tokens(saved.id, {"access_token": "fake-access-token", "token_type": "Bearer"})
         app._clear_mcp_tokens_from_ui()
+        assert token_store.get(saved.id).tokens is None
         cfg_after = load_mcp_config(app.project_path, settings_store.root, project_trusted=False)
         server_after = cfg_after.servers[saved.id]
         assert server_after.oauth.client_id == "test-cid-123"
         assert server_after.oauth.client_secret == "test-secret-456"
+
+        # Disable and re-enable OAuth without having to re-enter credentials.
+        screen.query_one("#mcp_oauth_select", Select).value = "false"
+        await app._handle_mcp_settings_button("mcp_save_server")
+        cfg_disabled = load_mcp_config(app.project_path, settings_store.root, project_trusted=False)
+        assert cfg_disabled.servers[saved.id].oauth.enabled is False
+        assert cfg_disabled.servers[saved.id].oauth.client_id == "test-cid-123"
+        assert cfg_disabled.servers[saved.id].oauth.client_secret == "test-secret-456"
+        screen.query_one("#mcp_oauth_select", Select).value = "true"
+        await app._handle_mcp_settings_button("mcp_save_server")
+        cfg_enabled = load_mcp_config(app.project_path, settings_store.root, project_trusted=False)
+        assert cfg_enabled.servers[saved.id].oauth.enabled is True
+
+        # Hidden HTTP OAuth fields cannot prevent saving a stdio transport.
+        screen.query_one("#mcp_transport_select", Select).value = "stdio"
+        screen.query_one("#mcp_command_input", Input).value = "fake-mcp-command"
+        await app._handle_mcp_settings_button("mcp_save_server")
+        cfg_stdio = load_mcp_config(app.project_path, settings_store.root, project_trusted=False)
+        assert cfg_stdio.servers[saved.id].transport == "stdio"
+        assert cfg_stdio.servers[saved.id].oauth.enabled is False

@@ -366,12 +366,14 @@ def test_mcp_oauth_config_defaults_and_validation() -> None:
     assert oauth_with_id.enabled is True
     assert oauth_with_id.resolve_auth_method() == "none"
 
-    oauth_with_secret = MCPOAuthConfig(client_secret="sec")
+    oauth_with_secret = MCPOAuthConfig(client_id="my-client", client_secret="sec")
     assert oauth_with_secret.enabled is True
     assert oauth_with_secret.resolve_auth_method() == "client_secret_post"
 
     # Explicit auth method
-    oauth_basic = MCPOAuthConfig(client_secret="sec", token_endpoint_auth_method="client_secret_basic")
+    oauth_basic = MCPOAuthConfig(
+        client_id="my-client", client_secret="sec", token_endpoint_auth_method="client_secret_basic"
+    )
     assert oauth_basic.resolve_auth_method() == "client_secret_basic"
 
     # Valid redirect URI

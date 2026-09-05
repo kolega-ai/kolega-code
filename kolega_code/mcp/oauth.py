@@ -4,14 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import json
 import sys
 import webbrowser
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Union
 from urllib.parse import parse_qs, urlparse
 
-from .config import MCPServerConfig
+from .config import MCPOAuthConfig, MCPServerConfig
 from .state import MCPOAuthTokenStore
+
+if TYPE_CHECKING:
+    from mcp.client.auth import OAuthClientProvider
+    from mcp.client.auth.oauth2 import OAuthContext
+    from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 
 class MCPOAuthError(RuntimeError):
@@ -36,22 +43,65 @@ class MCPFileTokenStorage:
             self.server_id = server
         self.token_store = token_store
         self.redirect_uri = redirect_uri
+        self.context: Optional[OAuthContext] = None
 
-    async def get_tokens(self):
-        from mcp.shared.auth import OAuthToken
+    def _config_fingerprint(self) -> Optional[str]:
+        if self.server is None:
+            return None
+        oauth = self.server.oauth.model_dump(exclude={"enabled", "timeout_seconds", "client_name", "client_uri"})
+        oauth["client_secret"] = self.server.oauth.resolve_client_secret()
+        payload = json.dumps({"url": self.server.url, "oauth": oauth}, sort_keys=True)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-        raw = self.token_store.get(self.server_id).tokens
+    async def get_tokens(self) -> Optional[OAuthToken]:
+        from mcp.shared.auth import OAuthMetadata, OAuthToken, ProtectedResourceMetadata
+
+        record = self.token_store.get(self.server_id)
+        if self.server and record.config_fingerprint != self._config_fingerprint():
+            # Legacy DCR tokens remain usable. Pre-registered credentials must
+            # never reuse tokens whose client/configuration cannot be established.
+            if record.config_fingerprint or self.server.oauth.client_id:
+                return None
+        raw = record.tokens
         if not raw:
             return None
+        # The SDK does not restore expiry or discovery metadata itself. Each MCP
+        # tool call opens a new provider, so preserve these alongside the token
+        # to refresh expired tokens at the discovered authorization server.
+        if self.context is not None and record.oauth_context:
+            saved = record.oauth_context
+            self.context.token_expiry_time = saved.get("token_expiry_time")
+            if saved.get("oauth_metadata"):
+                self.context.oauth_metadata = OAuthMetadata.model_validate(saved["oauth_metadata"])
+            if saved.get("protected_resource_metadata"):
+                self.context.protected_resource_metadata = ProtectedResourceMetadata.model_validate(
+                    saved["protected_resource_metadata"]
+                )
         return OAuthToken.model_validate(raw)
 
-    async def set_tokens(self, tokens) -> None:
+    async def set_tokens(self, tokens: Optional[OAuthToken]) -> None:
         if tokens is None:
             self.token_store.set_tokens(self.server_id, None)
             return
-        self.token_store.set_tokens(self.server_id, tokens.model_dump(mode="json"))
+        context = None
+        if self.context is not None:
+            context = {
+                "token_expiry_time": self.context.token_expiry_time,
+                "oauth_metadata": self.context.oauth_metadata.model_dump(mode="json")
+                if self.context.oauth_metadata
+                else None,
+                "protected_resource_metadata": self.context.protected_resource_metadata.model_dump(mode="json")
+                if self.context.protected_resource_metadata
+                else None,
+            }
+        self.token_store.set_tokens(
+            self.server_id,
+            tokens.model_dump(mode="json"),
+            config_fingerprint=self._config_fingerprint(),
+            oauth_context=context,
+        )
 
-    async def get_client_info(self):
+    async def get_client_info(self) -> Optional[OAuthClientInformationFull]:
         from mcp.shared.auth import OAuthClientInformationFull
 
         if self.server and self.server.oauth.client_id:
@@ -85,7 +135,7 @@ class MCPFileTokenStorage:
             return None
         return OAuthClientInformationFull.model_validate(raw)
 
-    async def set_client_info(self, client_info) -> None:
+    async def set_client_info(self, client_info: Optional[OAuthClientInformationFull]) -> None:
         if self.server and self.server.oauth.client_id:
             return
         if client_info is None:
@@ -116,12 +166,20 @@ class LocalOAuthCallbackServer:
         self._path = "/callback"
 
     async def __aenter__(self) -> "LocalOAuthCallbackServer":
+        try:
+            MCPOAuthConfig(redirect_uri=self._configured_redirect_uri)
+        except ValueError as exc:
+            raise MCPOAuthError(str(exc)) from exc
         parsed = urlparse(self._configured_redirect_uri or "http://127.0.0.1:0/callback")
         if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost"}:
             raise MCPOAuthError("MCP OAuth redirect_uri must be a localhost http URL")
-        self._path = parsed.path or "/callback"
+        self._path = parsed.path or "/"
         host = parsed.hostname or "127.0.0.1"
         port = parsed.port or 0
+        if port == 0:
+            # localhost can bind IPv4 and IPv6 on different ephemeral ports.
+            # Use the same IPv4 address that the generated callback advertises.
+            host = "127.0.0.1"
         self._future = asyncio.get_running_loop().create_future()
         try:
             self._server = await asyncio.start_server(self._handle_client, host=host, port=port)
@@ -139,7 +197,7 @@ class LocalOAuthCallbackServer:
             # Prefer 127.0.0.1 in metadata even if the OS reports localhost/::1.
             if bound_host in {"0.0.0.0", "::", "::1"}:
                 bound_host = "127.0.0.1"
-            self.redirect_uri = f"http://{bound_host}:{bound_port}{self._path}"
+            self.redirect_uri = parsed._replace(netloc=f"{bound_host}:{bound_port}").geturl()
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -208,14 +266,23 @@ class LocalOAuthCallbackServer:
 
 
 async def default_redirect_handler(url: str, *, open_browser: bool = True, output=None) -> None:
+    from rich.console import Console
+
     stream = output or sys.stderr
-    print("MCP OAuth authorization required:", file=stream)
-    print(url, file=stream)
+
+    def write(message: str) -> None:
+        if isinstance(stream, Console):
+            stream.print(message, markup=False, highlight=False, soft_wrap=True)
+        else:
+            print(message, file=stream)
+
+    write("MCP OAuth authorization required:")
+    write(url)
     if open_browser:
         try:
             await asyncio.to_thread(webbrowser.open, url)
         except Exception:
-            print("Could not open a browser automatically; open the URL above manually.", file=stream)
+            write("Could not open a browser automatically; open the URL above manually.")
 
 
 async def build_oauth_provider(
@@ -223,7 +290,7 @@ async def build_oauth_provider(
     token_store: MCPOAuthTokenStore,
     *,
     interaction: Optional[OAuthInteraction] = None,
-):
+) -> Optional[OAuthClientProvider]:
     """Build an MCP SDK OAuthClientProvider for a server."""
     if not server.oauth.enabled:
         return None
@@ -237,6 +304,14 @@ async def build_oauth_provider(
 
     from mcp.client.auth import OAuthClientProvider
     from mcp.shared.auth import OAuthClientMetadata
+
+    class ConfiguredOAuthClientProvider(OAuthClientProvider):
+        async def _perform_authorization_code_grant(self) -> tuple[str, str]:
+            # SDK discovery replaces client_metadata.scope with server-advertised
+            # scopes. An explicitly configured scope must remain authoritative.
+            if server.oauth.scope:
+                self.context.client_metadata.scope = server.oauth.scope
+            return await super()._perform_authorization_code_grant()
 
     redirect_uri = interaction.redirect_uri if interaction else server.oauth.redirect_uri
     if not redirect_uri:
@@ -253,16 +328,21 @@ async def build_oauth_provider(
         metadata_kwargs["scope"] = server.oauth.scope
     if server.oauth.client_uri:
         metadata_kwargs["client_uri"] = server.oauth.client_uri
+    if server.oauth.token_endpoint_auth_method:
+        metadata_kwargs["token_endpoint_auth_method"] = server.oauth.token_endpoint_auth_method
 
-    return OAuthClientProvider(
+    storage = MCPFileTokenStorage(server, token_store, redirect_uri=redirect_uri)
+    provider = ConfiguredOAuthClientProvider(
         server_url=server.url,
         client_metadata=OAuthClientMetadata(**metadata_kwargs),
-        storage=MCPFileTokenStorage(server, token_store, redirect_uri=redirect_uri),
+        storage=storage,
         redirect_handler=interaction.redirect_handler if interaction else None,
         callback_handler=interaction.callback_handler if interaction else None,
         timeout=server.oauth.timeout_seconds,
         client_metadata_url=server.oauth.client_metadata_url,
     )
+    storage.context = provider.context
+    return provider
 
 
 @contextlib.asynccontextmanager

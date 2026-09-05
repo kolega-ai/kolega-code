@@ -33,8 +33,16 @@ MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION = (
     "bearer-token header."
 )
 MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION_NON_DCR = (
-    "OAuth dynamic client registration failed. This server does not support dynamic client registration — "
-    "configure a pre-registered OAuth client ID."
+    "OAuth dynamic client registration failed. Check the server's registration requirements; "
+    "if it requires pre-registered credentials, configure an OAuth client ID."
+)
+MCP_FAILURE_MESSAGE_OAUTH_SECRET_ENV = (
+    "The OAuth client secret environment variable is missing or empty. "
+    "Set the configured client_secret_env variable and verify again."
+)
+MCP_FAILURE_MESSAGE_OAUTH_CALLBACK = (
+    "Could not listen on the configured OAuth callback address. "
+    "Check that its port is available and the redirect URI matches the registered application."
 )
 MCP_FAILURE_MESSAGE_OAUTH_UNAUTHORIZED = (
     "MCP OAuth authorization failed. Check the server credentials or bearer-token header."
@@ -57,6 +65,8 @@ _SAFE_FAILED_STATUS_MESSAGES = (
     MCP_FAILURE_MESSAGE_GITHUB_COPILOT_OAUTH,
     MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION,
     MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION_NON_DCR,
+    MCP_FAILURE_MESSAGE_OAUTH_SECRET_ENV,
+    MCP_FAILURE_MESSAGE_OAUTH_CALLBACK,
     MCP_FAILURE_MESSAGE_OAUTH_UNAUTHORIZED,
     MCP_FAILURE_MESSAGE_UNAUTHORIZED,
     MCP_FAILURE_MESSAGE_NOT_FOUND,
@@ -267,6 +277,11 @@ def _exception_text_for_matching(exc: BaseException) -> str:
 
 
 def _safe_mcp_failure_message(server: MCPServerConfig, lower_message: str) -> str:
+    if server.oauth.enabled:
+        if "for oauth client secret, but it is not set" in lower_message:
+            return MCP_FAILURE_MESSAGE_OAUTH_SECRET_ENV
+        if "could not bind oauth callback server" in lower_message:
+            return MCP_FAILURE_MESSAGE_OAUTH_CALLBACK
     if server.oauth.enabled and _contains_any(lower_message, ("registration failed", "dynamic client")):
         if _is_github_copilot_api_url(server.url):
             return MCP_FAILURE_MESSAGE_GITHUB_COPILOT_OAUTH

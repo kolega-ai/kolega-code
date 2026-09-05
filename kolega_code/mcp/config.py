@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, Mapping, Optional
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from kolega_code.local_state import write_private_secret_text
 
@@ -53,6 +53,8 @@ class MCPConfigError(ValueError):
 class MCPOAuthConfig(BaseModel):
     """OAuth settings for an HTTP MCP server."""
 
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     enabled: bool = False
     redirect_uri: Optional[str] = None
     scope: Optional[str] = None
@@ -75,6 +77,10 @@ class MCPOAuthConfig(BaseModel):
             raise ValueError(
                 "MCP OAuth redirect_uri must be a localhost http URL (e.g. http://127.0.0.1:33418/callback)"
             )
+        # Accessing port also rejects malformed and out-of-range values.
+        _ = parsed.port
+        if parsed.username is not None or parsed.password is not None or parsed.fragment:
+            raise ValueError("MCP OAuth redirect_uri must not contain credentials or a fragment")
         return value
 
     @field_validator("client_secret_env")
@@ -89,7 +95,12 @@ class MCPOAuthConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_oauth_fields(self) -> "MCPOAuthConfig":
-        if self.client_id or self.client_secret or self.client_secret_env:
+        if (self.client_secret or self.client_secret_env) and not self.client_id:
+            raise ValueError("OAuth client_secret and client_secret_env require a client_id")
+        if self.token_endpoint_auth_method in {"client_secret_post", "client_secret_basic"}:
+            if not self.client_id or not (self.client_secret or self.client_secret_env):
+                raise ValueError("OAuth client secret authentication requires a client_id and client secret")
+        if "enabled" not in self.model_fields_set and self.client_id:
             self.enabled = True
         return self
 
@@ -111,6 +122,8 @@ class MCPOAuthConfig(BaseModel):
 
 class MCPServerConfig(BaseModel):
     """One configured MCP server."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     id: str
     name: Optional[str] = None
@@ -187,6 +200,8 @@ class MCPServerConfig(BaseModel):
 
 
 class MCPConfigFile(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     schema_version: int = MCP_CONFIG_SCHEMA_VERSION
     servers: list[MCPServerConfig] = Field(default_factory=list)
 
@@ -402,8 +417,7 @@ def mcp_secret_values(config: LoadedMCPConfig) -> list[str]:
     for server in config.servers.values():
         values.extend(value for value in server.headers.values() if value)
         values.extend(value for value in server.env.values() if value)
-        if server.oauth.enabled:
-            secret = server.oauth.resolve_client_secret()
-            if secret:
-                values.append(secret)
+        secret = server.oauth.resolve_client_secret()
+        if secret:
+            values.append(secret)
     return values

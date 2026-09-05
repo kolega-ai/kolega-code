@@ -93,6 +93,8 @@ class MCPStatusFile(BaseModel):
 
 class MCPOAuthServerTokens(BaseModel):
     tokens: Optional[dict[str, Any]] = None
+    config_fingerprint: Optional[str] = None
+    oauth_context: Optional[dict[str, Any]] = None
     client_info: Optional[dict[str, Any]] = None
     updated_at: str = Field(default_factory=lambda: _now_iso())
 
@@ -175,10 +177,19 @@ class MCPOAuthTokenStore:
     def get(self, server_id: str) -> MCPOAuthServerTokens:
         return self.load().servers.get(server_id, MCPOAuthServerTokens())
 
-    def set_tokens(self, server_id: str, tokens: Optional[dict[str, Any]]) -> None:
+    def set_tokens(
+        self,
+        server_id: str,
+        tokens: Optional[dict[str, Any]],
+        *,
+        config_fingerprint: Optional[str] = None,
+        oauth_context: Optional[dict[str, Any]] = None,
+    ) -> None:
         data = self.load()
         record = data.servers.get(server_id, MCPOAuthServerTokens())
         record.tokens = dict(tokens) if tokens else None
+        record.config_fingerprint = config_fingerprint
+        record.oauth_context = oauth_context
         record.updated_at = _now_iso()
         data.servers[server_id] = record
         self.save(data)

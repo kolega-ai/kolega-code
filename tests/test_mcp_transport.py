@@ -21,6 +21,7 @@ from kolega_code.mcp.service import (
     MCPService,
     MCP_FAILURE_MESSAGE_GENERIC,
     MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION_NON_DCR,
+    MCP_FAILURE_MESSAGE_OAUTH_SECRET_ENV,
     MCP_TOOL_FAILURE_MESSAGE_TIMEOUT,
     _is_github_copilot_api_url,
 )
@@ -522,6 +523,11 @@ async def test_build_oauth_provider_checks_missing_secret_env(tmp_path: Path) ->
     )
     with pytest.raises(MCPOAuthError, match="requires environment variable 'NON_EXISTENT_ENV_VAR_12345'"):
         await build_oauth_provider(server, token_store)
+
+    service = MCPService(LoadedMCPConfig(servers={server.id: server}), state_dir=tmp_path, project_path=tmp_path)
+    result = await service.verify_server(server.id)
+    assert result.message == MCP_FAILURE_MESSAGE_OAUTH_SECRET_ENV
+    assert service.list_status_rows()[0]["message"] == MCP_FAILURE_MESSAGE_OAUTH_SECRET_ENV
 
 
 @pytest.mark.asyncio

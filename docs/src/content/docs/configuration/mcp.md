@@ -116,9 +116,10 @@ Use `--no-browser` to print the authorization URL instead of opening a browser. 
 
 ### Pre-registered OAuth servers (HubSpot, Slack, Enterprise IdPs)
 
-Many hosted MCP servers (such as HubSpot at `https://mcp.hubspot.com`, Slack at `https://mcp.slack.com/mcp`, or servers fronted by Entra ID / Azure AD, Okta, and Keycloak) do not implement Dynamic Client Registration (RFC 7591). Instead, you create an application in the provider's developer dashboard to obtain a static `client_id` and `client_secret`.
+Some hosted MCP servers require a pre-registered OAuth application instead of Dynamic Client Registration (RFC 7591). For example, [HubSpot's setup guide](https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server) describes creating an MCP auth app, and [Slack's MCP documentation](https://docs.slack.dev/ai/slack-mcp-server/) describes its client registration requirements. Follow your provider's instructions to obtain a `client_id` and, for confidential clients, a `client_secret`. Public clients use a client ID with PKCE and no secret.
 
 When registering the app in the provider's dashboard:
+
 1. Set the redirect URI to a fixed localhost port, for example `http://127.0.0.1:33418/callback`.
 2. Configure the exact same `redirect_uri` in your server entry so the local callback server listens on that port.
 
@@ -147,17 +148,24 @@ OAuth configuration options:
 | `client_secret` | Direct client secret (suitable for global user config). |
 | `client_secret_env` | Environment variable name holding the client secret (recommended for version control). |
 | `redirect_uri` | Callback URI. Must be an `http` URL on `127.0.0.1` or `localhost`. Omitting the port uses an ephemeral port. |
-| `scope` | Space-separated OAuth scopes to request. |
+| `scope` | Space-separated OAuth scopes to request. When set, these override the server-advertised defaults. |
 | `token_endpoint_auth_method` | `client_secret_post`, `client_secret_basic`, or `none` (defaults to `client_secret_post` when a secret is configured). |
+
+Providing a client ID enables OAuth unless `enabled` is explicitly `false`. A secret or secret environment variable requires a client ID; `client_secret_post` and `client_secret_basic` also require a secret. When both secret fields are set, the direct secret takes precedence. Callback URIs cannot contain embedded credentials or fragments.
+
+Cached tokens are tied to the server URL and OAuth configuration. Changing credentials, scopes, or the configured redirect URI requires verification again. Tokens saved before this binding was introduced require one new authorization for pre-registered clients. Expiry and authorization-server metadata are saved with new tokens so token refresh works across connections.
 
 ### Managing OAuth in the TUI
 
 In the Textual TUI (**Settings** → **MCP Servers**):
+
 1. Select or create an HTTP MCP server.
 2. Set **OAuth** to **Enabled**.
 3. Fill in **OAuth Client ID**, **OAuth Client Secret** (or **OAuth Client Secret Env Var**), **OAuth Redirect URI**, and optional scopes.
 4. Click **Save Server**, then click **Verify** to authenticate via your browser.
 5. The **Clear OAuth** button clears cached session tokens without erasing your configured client credentials.
+
+Setting **OAuth** to **Disabled** also preserves your credentials so you can enable it again later.
 
 ## CLI management
 
