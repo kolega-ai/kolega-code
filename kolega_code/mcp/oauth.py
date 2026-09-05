@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import hmac
 import json
+import secrets
 import sys
 import webbrowser
 from dataclasses import dataclass
@@ -19,6 +21,9 @@ if TYPE_CHECKING:
     from mcp.client.auth import OAuthClientProvider
     from mcp.client.auth.oauth2 import OAuthContext
     from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
+
+_FINGERPRINT_ITERATIONS = 600_000
+_FINGERPRINT_SALT_BYTES = 16
 
 
 class MCPOAuthError(RuntimeError):
@@ -45,26 +50,48 @@ class MCPFileTokenStorage:
         self.redirect_uri = redirect_uri
         self.context: Optional[OAuthContext] = None
 
-    def _config_fingerprint(self) -> Optional[str]:
+    async def _config_fingerprint(self, stored: Optional[str] = None) -> Optional[str]:
         if self.server is None:
             return None
+        if stored is not None:
+            parts = stored.split("$")
+            if len(parts) != 4 or parts[:2] != ["pbkdf2-sha256", str(_FINGERPRINT_ITERATIONS)]:
+                return None
+            try:
+                salt = bytes.fromhex(parts[2])
+                digest = bytes.fromhex(parts[3])
+            except ValueError:
+                return None
+            if len(salt) != _FINGERPRINT_SALT_BYTES or len(digest) != 32:
+                return None
+        else:
+            salt = secrets.token_bytes(_FINGERPRINT_SALT_BYTES)
         oauth = self.server.oauth.model_dump(exclude={"enabled", "timeout_seconds", "client_name", "client_uri"})
         oauth["client_secret"] = self.server.oauth.resolve_client_secret()
         payload = json.dumps({"url": self.server.url, "oauth": oauth}, sort_keys=True)
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        # The fingerprint includes a client secret: use a salted password KDF,
+        # and keep its CPU work off the event loop used by the TUI and agents.
+        derived = await asyncio.to_thread(
+            hashlib.pbkdf2_hmac, "sha256", payload.encode("utf-8"), salt, _FINGERPRINT_ITERATIONS
+        )
+        return f"pbkdf2-sha256${_FINGERPRINT_ITERATIONS}${salt.hex()}${derived.hex()}"
 
     async def get_tokens(self) -> Optional[OAuthToken]:
         from mcp.shared.auth import OAuthMetadata, OAuthToken, ProtectedResourceMetadata
 
         record = self.token_store.get(self.server_id)
-        if self.server and record.config_fingerprint != self._config_fingerprint():
-            # Legacy DCR tokens remain usable. Pre-registered credentials must
-            # never reuse tokens whose client/configuration cannot be established.
-            if record.config_fingerprint or self.server.oauth.client_id:
-                return None
         raw = record.tokens
         if not raw:
             return None
+        if self.server:
+            if record.config_fingerprint:
+                fingerprint = await self._config_fingerprint(record.config_fingerprint)
+                if fingerprint is None or not hmac.compare_digest(record.config_fingerprint, fingerprint):
+                    return None
+            elif self.server.oauth.client_id:
+                # Legacy DCR tokens remain usable. Pre-registered credentials
+                # require tokens bound to their configuration.
+                return None
         # The SDK does not restore expiry or discovery metadata itself. Each MCP
         # tool call opens a new provider, so preserve these alongside the token
         # to refresh expired tokens at the discovered authorization server.
@@ -97,7 +124,7 @@ class MCPFileTokenStorage:
         self.token_store.set_tokens(
             self.server_id,
             tokens.model_dump(mode="json"),
-            config_fingerprint=self._config_fingerprint(),
+            config_fingerprint=await self._config_fingerprint(),
             oauth_context=context,
         )
 

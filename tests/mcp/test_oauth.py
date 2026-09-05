@@ -5,6 +5,7 @@ import base64
 import hashlib
 import io
 import json
+import threading
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qs, urlparse
@@ -138,6 +139,58 @@ async def test_cached_tokens_follow_oauth_configuration(
     persisted = store.path.read_text()
     assert "fake-old-secret" not in persisted
     assert "fake-new-secret" not in persisted
+
+
+@pytest.mark.asyncio
+async def test_cached_token_fingerprints_are_salted_and_derived_off_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = _server(client_secret="fake-client-secret")
+    store = MCPOAuthTokenStore(tmp_path)
+    storage = MCPFileTokenStorage(server, store)
+    tokens = OAuthToken(access_token="fake-access-token", token_type="Bearer")
+    event_loop_thread = threading.get_ident()
+    derivation_threads: list[int] = []
+    pbkdf2_hmac = hashlib.pbkdf2_hmac
+
+    def tracked_pbkdf2(algorithm: str, data: bytes, salt: bytes, iterations: int) -> bytes:
+        derivation_threads.append(threading.get_ident())
+        return pbkdf2_hmac(algorithm, data, salt, iterations)
+
+    monkeypatch.setattr(hashlib, "pbkdf2_hmac", tracked_pbkdf2)
+    await storage.set_tokens(tokens)
+    first = store.get(server.id).config_fingerprint
+    assert first is not None
+    assert first.startswith("pbkdf2-sha256$600000$")
+    assert await MCPFileTokenStorage(server, store).get_tokens() == tokens
+
+    await storage.set_tokens(tokens)
+    second = store.get(server.id).config_fingerprint
+    assert second is not None
+    assert first.split("$")[2] != second.split("$")[2]
+    assert await MCPFileTokenStorage(server, store).get_tokens() == tokens
+    assert derivation_threads and event_loop_thread not in derivation_threads
+    assert "fake-client-secret" not in store.path.read_text()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fingerprint",
+    [
+        "a" * 64,
+        "pbkdf2-sha256$1$" + "aa" * 16 + "$" + "bb" * 32,
+        "pbkdf2-sha256$600000$not-hex$" + "bb" * 32,
+        "pbkdf2-sha256$600000$aa$" + "bb" * 32,
+    ],
+)
+async def test_legacy_or_invalid_fingerprints_require_new_authorization(tmp_path: Path, fingerprint: str) -> None:
+    store = MCPOAuthTokenStore(tmp_path)
+    store.set_tokens(
+        "example",
+        {"access_token": "fake-access-token", "token_type": "Bearer"},
+        config_fingerprint=fingerprint,
+    )
+    assert await MCPFileTokenStorage(_server(), store).get_tokens() is None
 
 
 @pytest.mark.asyncio

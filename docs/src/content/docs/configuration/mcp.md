@@ -153,7 +153,7 @@ OAuth configuration options:
 
 Providing a client ID enables OAuth unless `enabled` is explicitly `false`. A secret or secret environment variable requires a client ID; `client_secret_post` and `client_secret_basic` also require a secret. When both secret fields are set, the direct secret takes precedence. Callback URIs cannot contain embedded credentials or fragments.
 
-Cached tokens are tied to the server URL and OAuth configuration. Changing credentials, scopes, or the configured redirect URI requires verification again. Tokens saved before this binding was introduced require one new authorization for pre-registered clients. Expiry and authorization-server metadata are saved with new tokens so token refresh works across connections.
+Cached tokens are tied to the server URL and OAuth configuration using a salted PBKDF2 fingerprint. Changing credentials, scopes, or the configured redirect URI requires verification again. Pre-registered tokens without this binding, and tokens using the earlier SHA-256 fingerprint format, require one new authorization. Expiry and authorization-server metadata are saved with new tokens so token refresh works across connections.
 
 ### Managing OAuth in the TUI
 
