@@ -13,6 +13,23 @@ from kolega_code.llm.specs.types import ThinkingEffortSpec
 # GPT-5.5, despite the API models exposing a larger window. Keep the
 # subscription-specific values here so compression runs before backend limits.
 OPENAI_CHATGPT_SPECS = {
+    ("openai_chatgpt", "gpt-6-astra"): {
+        # Retain the conservative subscription budget used by GPT-5.6 until
+        # Astra's larger input window is verified on the Codex backend.
+        "context_length": 400000,
+        "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "supports_hosted_web_search": True,
+        "preferred_edit_protocol": "codex_apply_patch",
+        "thinking_effort": ThinkingEffortSpec(
+            options=("low", "medium", "high", "xhigh", "max"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
     ("openai_chatgpt", "gpt-5.6-sol"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,

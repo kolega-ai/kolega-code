@@ -90,6 +90,7 @@ MODEL_LABELS: dict[str, str] = {
     "claude-opus-4-5-20251101": "Claude Opus 4.5",
     "claude-haiku-4-5-20251001": "Claude Haiku 4.5",
     # OpenAI (shared labels across the API and ChatGPT-subscription providers)
+    "gpt-6-astra": "GPT-6 Astra",
     "gpt-5.6-sol": "GPT-5.6 Sol",
     "gpt-5.6-terra": "GPT-5.6 Terra",
     "gpt-5.6-luna": "GPT-5.6 Luna",

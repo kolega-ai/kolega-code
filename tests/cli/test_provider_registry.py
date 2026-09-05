@@ -57,16 +57,24 @@ def test_zai_exposes_glm_models_and_defaults_to_glm_53() -> None:
     assert ui_thinking_effort_options("zai", "glm-5.3") == [("High", "high"), ("Max", "max")]
 
 
-def test_gpt56_models_are_first_and_sol_is_default_for_openai_providers():
+def test_astra_is_first_and_sol_is_default_for_openai_providers() -> None:
     expected = [
+        ("GPT-6 Astra", "gpt-6-astra"),
         ("GPT-5.6 Sol", "gpt-5.6-sol"),
         ("GPT-5.6 Terra", "gpt-5.6-terra"),
         ("GPT-5.6 Luna", "gpt-5.6-luna"),
     ]
 
     for provider in (ModelProvider.OPENAI, ModelProvider.OPENAI_CHATGPT):
-        assert ui_model_options(provider.value)[:3] == expected
+        assert ui_model_options(provider.value)[:4] == expected
         assert default_model_for_provider(provider) == "gpt-5.6-sol"
+        assert ui_thinking_effort_options(provider.value, "gpt-6-astra") == [
+            ("Low", "low"),
+            ("Medium", "medium"),
+            ("High", "high"),
+            ("Extra high", "xhigh"),
+            ("Max", "max"),
+        ]
 
     assert ui_thinking_effort_options("openai", "gpt-5.6-sol") == [
         ("None", "none"),

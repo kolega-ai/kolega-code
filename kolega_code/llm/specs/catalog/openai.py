@@ -11,6 +11,21 @@ from kolega_code.llm.specs.types import ThinkingEffortSpec
 # The ChatGPT-subscription backend (openai_chatgpt) carries the flag too,
 # verified through its own OAuth transport the same day.
 OPENAI_SPECS = {
+    ("openai", "gpt-6-astra"): {
+        "context_length": 1050000,
+        "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "supports_hosted_web_search": True,
+        "preferred_edit_protocol": "codex_apply_patch",
+        "thinking_effort": ThinkingEffortSpec(
+            options=("low", "medium", "high", "xhigh", "max"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
     ("openai", "gpt-5.6-sol"): {
         "context_length": 1050000,
         "max_completion_tokens": 128000,
