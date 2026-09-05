@@ -35,6 +35,29 @@ def test_new_google_model_specs(
     assert specs["thinking_effort"].mode == "google_thinking_level"
 
 
+@pytest.mark.parametrize("provider,context_length", [("openai", 1050000), ("openai_chatgpt", 400000)])
+def test_gpt6_astra_model_specs(provider: str, context_length: int) -> None:
+    specs = get_model_specs(provider, "gpt-6-astra")
+
+    assert specs["context_length"] == context_length
+    assert specs["max_completion_tokens"] == 128000
+    assert resolve_max_input_tokens(specs) == context_length - 128000
+    assert specs["supports_temperature"] is False
+    assert specs["supports_vision"] is True
+    assert specs["supports_hosted_web_search"] is True
+    assert specs["preferred_edit_protocol"] == "codex_apply_patch"
+    assert specs["thinking_effort"].options == ("low", "medium", "high", "xhigh", "max")
+    assert specs["thinking_effort"].default == "medium"
+    assert specs["thinking_effort"].mode == "openai_responses_reasoning"
+
+
+@pytest.mark.parametrize("provider", ["openai", "openai_chatgpt"])
+@pytest.mark.parametrize("effort", ["none", "minimal", "ultra"])
+def test_gpt6_astra_rejects_unsupported_efforts(provider: str, effort: str) -> None:
+    with pytest.raises(ValueError, match="Unsupported thinking effort"):
+        build_thinking_request_params(provider, "gpt-6-astra", effort)
+
+
 @pytest.mark.parametrize("model", ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])
 @pytest.mark.parametrize("provider,context_length", [("openai", 1050000), ("openai_chatgpt", 400000)])
 def test_gpt56_model_specs(provider, context_length, model):

@@ -40,6 +40,15 @@ Anthropic-compatible):
 | Perplexity Agent API | `perplexity_agent` | `PERPLEXITY_API_KEY` |
 | Llama (local) | `llama` | _none — local model_ |
 
+**GPT-6 Astra** (`gpt-6-astra`) is available in the model picker for both `openai`
+and `openai_chatgpt`. It supports image input, hosted web search, and reasoning
+efforts from `low` through `max`, with `medium` as the Kolega Code default.
+Reasoning cannot be disabled for Astra. The API provider uses its
+[1,050,000-token context window](https://developers.openai.com/api/docs/models/gpt-6-astra)
+with 128,000 tokens reserved for output. The ChatGPT provider keeps a conservative
+400,000-token budget (272,000 input tokens), matching the existing subscription
+models. Subscription availability depends on your account and OpenAI's rollout.
+
 <Aside type="tip">
 **Z.AI GLM Coding Plan.** The `zai` provider targets Z.AI's Anthropic-compatible
 endpoint (`https://api.z.ai/api/anthropic`) and exposes **GLM-5.3** (default),
@@ -363,6 +372,7 @@ models in the TUI.
 | Google `gemini-3.5-flash-lite` | `minimal`, `low`, `medium`, `high` | `minimal` |
 | Google `gemini-3.5-flash` | `minimal`, `low`, `medium`, `high` | `medium` |
 | Google `gemini-3.1-pro-preview` | `low`, `medium`, `high` | `high` |
+| OpenAI / ChatGPT `gpt-6-astra` | `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | OpenAI `gpt-5.6-*` | `none`, `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | OpenAI `gpt-5.5` | `minimal`, `low`, `medium`, `high`, `xhigh` | `medium` |
 | OpenAI `gpt-5.4*` | `minimal`, `low`, `medium`, `high` | `medium` |

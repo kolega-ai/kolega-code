@@ -71,7 +71,13 @@ class _FakeResponses:
 
 
 @pytest.mark.asyncio
-async def test_provider_generate_builds_codex_shaped_request(monkeypatch):
+@pytest.mark.parametrize(
+    "model,effort",
+    [("gpt-5.5", "high"), *[("gpt-6-astra", effort) for effort in ("low", "medium", "high", "xhigh", "max")]],
+)
+async def test_provider_generate_builds_codex_shaped_request(
+    monkeypatch: pytest.MonkeyPatch, model: str, effort: str
+) -> None:
     provider = ChatGPTOAuthProvider(token_manager=ChatGPTTokenManager(_tokens()))
     completed = _ns(
         output=[_ns(type="message", content=[_ns(type="output_text", text="hi")])],
@@ -82,25 +88,25 @@ async def test_provider_generate_builds_codex_shaped_request(monkeypatch):
     fake = _FakeResponses(_FakeStream([_ns(type="response.completed", response=completed)]))
     monkeypatch.setattr(provider, "async_client", _ns(responses=fake))
 
-    params = GenerationParams(max_completion_tokens=256, thinking="high")
+    params = GenerationParams(max_completion_tokens=256, thinking=effort, temperature=0.5)
     message = await provider.generate(
         MessageHistory([Message(role="user", content=[TextBlock(text="hello")])]),
         system=Message(role="system", content=[TextBlock(text="sys")]),
         params=params,
-        model="gpt-5.5",
+        model=model,
     )
 
     assert message.get_text_content() == "hi"
     assert message.usage_metadata["provider"] == "openai_chatgpt"
     kwargs = fake.last_kwargs
     assert kwargs is not None
-    assert kwargs["model"] == "gpt-5.5"
+    assert kwargs["model"] == model
     assert kwargs["store"] is False
     assert kwargs["stream"] is True  # backend is SSE-only; generate streams too
     assert kwargs["instructions"] == "sys"
     # summary="auto" so the backend streams a reasoning summary for the thinking
     # display; this is independent of continuity, which rides on `include` below.
-    assert kwargs["reasoning"] == {"effort": "high", "summary": "auto"}
+    assert kwargs["reasoning"] == {"effort": effort, "summary": "auto"}
     # Reasoning continuity: ask the backend for the encrypted reasoning blob so it
     # can be resent next turn (matches Codex; the cause of the long-thinking gap).
     assert kwargs["include"] == ["reasoning.encrypted_content"]
@@ -109,6 +115,7 @@ async def test_provider_generate_builds_codex_shaped_request(monkeypatch):
     assert "prompt_cache_key" in kwargs
     # Codex never sends max_output_tokens; sending it triggers a 400.
     assert "max_output_tokens" not in kwargs
+    assert "temperature" not in kwargs
     assert kwargs["input"] == [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}]
 
 

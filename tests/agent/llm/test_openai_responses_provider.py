@@ -151,28 +151,32 @@ def test_llmclient_routes_compatible_provider_to_chat_completions():
 # --- request building (no network) ----------------------------------------------
 
 
-def test_build_request_is_responses_shaped_with_reasoning():
+@pytest.mark.parametrize(
+    "model,effort",
+    [("gpt-5.5", "high"), *[("gpt-6-astra", effort) for effort in ("low", "medium", "high", "xhigh", "max")]],
+)
+def test_build_request_is_responses_shaped_with_reasoning(model: str, effort: str) -> None:
     provider = OpenAIResponsesProvider(api_key="sk-test")
     tool = ToolDefinition(
         name="read_file",
         description="Read a file",
         parameters=[ToolParameter(name="path", type="string", description="path", required=True)],
     )
-    params = GenerationParams(tools=[tool], thinking="high", max_completion_tokens=256, temperature=0.5)
+    params = GenerationParams(tools=[tool], thinking=effort, max_completion_tokens=256, temperature=0.5)
     request = provider._build_request(
         MessageHistory([Message(role="user", content=[TextBlock(text="hello")])]),
         Message(role="system", content=[TextBlock(text="sys")]),
         params,
-        {"model": "gpt-5.5"},
+        {"model": model},
     )
 
-    assert request["model"] == "gpt-5.5"
+    assert request["model"] == model
     assert request["stream"] is True
     assert request["store"] is False
     assert request["tool_choice"] == "auto"
     assert request["parallel_tool_calls"] is True
     assert request["instructions"] == "sys"
-    assert request["reasoning"] == {"effort": "high", "summary": "auto"}
+    assert request["reasoning"] == {"effort": effort, "summary": "auto"}
     assert request["include"] == ["reasoning.encrypted_content"]
     assert request["tools"][0]["type"] == "function"
     assert request["tools"][0]["name"] == "read_file"
