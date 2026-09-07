@@ -6,6 +6,33 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.36.0 - 2026-09-07
+
+### Added
+
+- **GPT-6 Astra.** OpenAI's new flagship model is available on both the API
+  and ChatGPT-subscription providers: 1M-token context with 128K output,
+  vision, hosted web search, `codex_apply_patch` editing, and
+  `low`–`max` reasoning effort levels (default `medium`). The
+  ChatGPT-subscription route keeps the conservative 400K input budget until
+  Astra's larger window is verified on the Codex backend.
+- **Pre-registered OAuth credentials for remote MCP servers.** Servers that
+  don't implement Dynamic Client Registration (HubSpot, Slack, GitHub
+  Copilot, enterprise IdPs) can now be connected with a pre-registered
+  client: new `--oauth-client-id`, `--oauth-client-secret`,
+  `--oauth-client-secret-env`, and `--oauth-auth-method` flags on
+  `kolega-code mcp add`, matching OAuth controls on the MCP page in TUI
+  settings, preserved explicit redirect ports/hosts, actionable diagnostics
+  when registration fails, and PBKDF2-salted OAuth cache fingerprints with
+  refresh tokens preserved across reconnects.
+
+### Fixed
+
+- **Gateway (Telegram):** the typing indicator now stays alive for the whole
+  turn. Telegram expires typing actions after ~5 seconds, so it previously
+  vanished during exactly the stretches where feedback matters — model
+  thinking before the first chunk and long-running tool calls.
+
 ## 0.35.1 - 2026-09-03
 
 ### Fixed
