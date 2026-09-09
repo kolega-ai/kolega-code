@@ -28,8 +28,15 @@ PROJECT_PATH = LOCK_PATH.with_name("pyproject.toml")
 # Interpreters uv realistically selects for `uv tool install kolega-code`.
 # 3.14 is excluded: onnxruntime publishes no sdist and no Intel-mac wheels for
 # it, so that combination fails resolution outright and predates this guard.
-PYTHONS = [(3, 11), (3, 12), (3, 13)]
-MACOS_VERSIONS = [(12, 0), (15, 0)]
+# ONNX 1.19.2 supports Monterey only through Python 3.12. Python 3.13
+# uses newer ONNX wheels requiring macOS 13+, so it is covered on macOS 15.
+INTEL_MAC_TARGETS = [
+    pytest.param((3, 11), (12, 0), id="macos12.0-cp311"),
+    pytest.param((3, 12), (12, 0), id="macos12.0-cp312"),
+    pytest.param((3, 11), (15, 0), id="macos15.0-cp311"),
+    pytest.param((3, 12), (15, 0), id="macos15.0-cp312"),
+    pytest.param((3, 13), (15, 0), id="macos15.0-cp313"),
+]
 
 
 def _intel_mac_env(python: tuple[int, int], macos: tuple[int, int]) -> dict[str, str]:
@@ -104,8 +111,7 @@ def _has_installable_wheel(entry: dict[str, Any], supported: set[Tag]) -> bool:
     return False
 
 
-@pytest.mark.parametrize("python", PYTHONS, ids=lambda p: f"cp{p[0]}{p[1]}")
-@pytest.mark.parametrize("macos", MACOS_VERSIONS, ids=lambda m: f"macos{m[0]}.{m[1]}")
+@pytest.mark.parametrize("python,macos", INTEL_MAC_TARGETS)
 def test_runtime_dependencies_have_intel_mac_wheels(python: tuple[int, int], macos: tuple[int, int]) -> None:
     env = _intel_mac_env(python, macos)
     supported = _intel_mac_tags(python, macos)
@@ -150,3 +156,33 @@ def test_pdfium_pin_is_published_and_locked() -> None:
 def test_monterey_wheel_baseline(minimum_macos: int, expected: bool) -> None:
     entry = {"wheels": [{"url": f"example-1.0-py3-none-macosx_{minimum_macos}_0_x86_64.whl"}]}
     assert _has_installable_wheel(entry, _intel_mac_tags((3, 11), (12, 0))) is expected
+
+
+@pytest.mark.parametrize(
+    "python,system,machine,expected",
+    [
+        ((3, 11), "darwin", "x86_64", True),
+        ((3, 12), "darwin", "x86_64", True),
+        ((3, 13), "darwin", "x86_64", False),
+        ((3, 14), "darwin", "x86_64", False),
+        ((3, 11), "darwin", "arm64", False),
+        ((3, 12), "linux", "x86_64", False),
+        ((3, 12), "win32", "AMD64", False),
+    ],
+)
+def test_legacy_onnx_pin_scope(python: tuple[int, int], system: str, machine: str, expected: bool) -> None:
+    with PROJECT_PATH.open("rb") as fh:
+        project = tomllib.load(fh)
+    requirements = [Requirement(value) for value in project["project"]["dependencies"]]
+    legacy = [req for req in requirements if req.name == "onnxruntime" and str(req.specifier) == "==1.19.2"]
+    assert len(legacy) == 1
+    assert legacy[0].marker is not None
+    env = _intel_mac_env(python, (12, 0))
+    env.update(sys_platform=system, platform_machine=machine)
+    assert legacy[0].marker.evaluate(env) is expected
+
+
+@pytest.mark.parametrize("python", [(3, 11), (3, 12)])
+def test_monterey_locks_compatible_onnx(python: tuple[int, int]) -> None:
+    entries = _reachable_runtime_entries(_intel_mac_env(python, (12, 0)))
+    assert [entry["version"] for entry in entries if entry["name"] == "onnxruntime"] == ["1.19.2"]
