@@ -1849,6 +1849,7 @@ dependencies = [
     { name = "markitdown", extra = ["docx", "pdf", "pptx", "xls", "xlsx"] },
     { name = "mcp" },
     { name = "nest-asyncio" },
+    { name = "onnxruntime", version = "1.19.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'darwin'" },
     { name = "onnxruntime", version = "1.27.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and sys_platform != 'win32'" },
     { name = "openai" },
     { name = "packaging" },
@@ -1858,6 +1859,7 @@ dependencies = [
     { name = "psutil" },
     { name = "pydantic" },
     { name = "pygments" },
+    { name = "pypdfium2" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "readability-lxml" },
@@ -1917,6 +1919,7 @@ requires-dist = [
     { name = "markitdown", extras = ["docx", "pdf", "pptx", "xls", "xlsx"], specifier = "==0.1.6" },
     { name = "mcp", specifier = "==1.28.1" },
     { name = "nest-asyncio", specifier = "==1.6.0" },
+    { name = "onnxruntime", marker = "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'darwin'", specifier = "==1.19.2" },
     { name = "onnxruntime", marker = "python_full_version >= '3.14' and sys_platform != 'win32'", specifier = "==1.27.0" },
     { name = "openai", specifier = "==2.46.0" },
     { name = "packaging", specifier = "==25.0" },
@@ -1927,6 +1930,7 @@ requires-dist = [
     { name = "psutil", specifier = "==7.2.2" },
     { name = "pydantic", specifier = "==2.13.4" },
     { name = "pygments", specifier = "==2.20.0" },
+    { name = "pypdfium2", specifier = "==5.11.0" },
     { name = "pyright", marker = "extra == 'dev'", specifier = "==1.1.411" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.0.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = "==1.3.0" },
@@ -2122,7 +2126,8 @@ dependencies = [
     { name = "click" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "onnxruntime", version = "1.20.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or sys_platform == 'win32'" },
+    { name = "onnxruntime", version = "1.19.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "onnxruntime", version = "1.20.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.14' and platform_machine != 'x86_64') or (python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'darwin') or (python_full_version < '3.14' and sys_platform != 'darwin') or sys_platform == 'win32'" },
     { name = "onnxruntime", version = "1.27.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and sys_platform != 'win32'" },
     { name = "python-dotenv" },
 ]
@@ -2850,6 +2855,28 @@ wheels = [
 
 [[package]]
 name = "onnxruntime"
+version = "1.19.2"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
+    "python_full_version < '3.12' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
+]
+dependencies = [
+    { name = "coloredlogs" },
+    { name = "flatbuffers" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version != '3.12.*'" },
+    { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.12.*'" },
+    { name = "packaging" },
+    { name = "protobuf" },
+    { name = "sympy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f0/ff/77bee5df55f034ee81d2e1bc58b2b8511b9c54f06ce6566cb562c5d95aa5/onnxruntime-1.19.2-cp311-cp311-macosx_11_0_universal2.whl", hash = "sha256:d863e8acdc7232d705d49e41087e10b274c42f09e259016a46f32c34e06dc4fd", size = 16779187, upload-time = "2024-09-04T06:37:18.245Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/a5/2a02687a88fc8a2507bef65876c90e96b9f8de5ba1f810acbf67c140fc67/onnxruntime-1.19.2-cp312-cp312-macosx_11_0_universal2.whl", hash = "sha256:68e7051bef9cfefcbb858d2d2646536829894d72a4130c24019219442b1dd2ed", size = 16790434, upload-time = "2024-09-04T06:37:32.77Z" },
+]
+
+[[package]]
+name = "onnxruntime"
 version = "1.20.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
@@ -2859,16 +2886,14 @@ resolution-markers = [
     "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
     "python_full_version == '3.12.*' and sys_platform == 'win32'",
     "(python_full_version == '3.12.*' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'win32')",
-    "python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
     "python_full_version < '3.12' and sys_platform == 'win32'",
     "(python_full_version < '3.12' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version < '3.12' and sys_platform != 'darwin' and sys_platform != 'win32')",
-    "python_full_version < '3.12' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
 ]
 dependencies = [
     { name = "coloredlogs" },
     { name = "flatbuffers" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and python_full_version < '3.14') or (python_full_version >= '3.12' and sys_platform == 'win32')" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and platform_machine != 'x86_64') or (python_full_version >= '3.14' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version < '3.12' and sys_platform != 'darwin') or (python_full_version < '3.12' and sys_platform == 'win32') or (python_full_version >= '3.14' and sys_platform != 'darwin' and sys_platform != 'win32')" },
+    { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and python_full_version < '3.14' and platform_machine != 'x86_64') or (python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform != 'darwin') or (python_full_version >= '3.12' and sys_platform == 'win32') or (platform_machine == 'x86_64' and sys_platform == 'darwin')" },
     { name = "packaging" },
     { name = "protobuf" },
     { name = "sympy" },

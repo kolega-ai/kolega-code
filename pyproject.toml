@@ -69,6 +69,9 @@ dependencies = [
     "markitdown[docx,pdf,pptx,xls,xlsx]==0.1.6",
     "mcp==1.28.1",
     "nest-asyncio==1.6.0",
+    # Magika: 1.19.2 has Monterey-compatible Intel wheels for Python 3.11/3.12.
+    # It has no Python 3.13 wheels; that interpreter requires newer macOS.
+    "onnxruntime==1.19.2; sys_platform == 'darwin' and platform_machine == 'x86_64' and python_version < '3.13'",
     # Magika's cross-platform resolution selects onnxruntime 1.20.1, which has no CPython 3.14 wheels.
     "onnxruntime==1.27.0; python_version >= '3.14' and sys_platform != 'win32'",
     "openai==2.46.0",
@@ -78,6 +81,9 @@ dependencies = [
     "playwright==1.59.0",
     "psutil==7.2.2",
     "pydantic==2.13.4",
+    # MarkItDown/pdfplumber: newer PDFium wheels require macOS 13.
+    # Preserve Intel macOS 12 installs; bumps must pass the Monterey wheel guard.
+    "pypdfium2==5.11.0",
     "python-dotenv==1.2.2",
     # Load-bearing for the web UI: code highlighting is generated with the same
     # Pygments styles the TUI renders with, so both stay identical.

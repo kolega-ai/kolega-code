@@ -6,6 +6,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Pin PDFium and the Intel Python 3.11/3.12 ONNX Runtime dependency to restore
+  compatible wheel selection on macOS Monterey for both the installer and direct
+  package installs. Intel Monterey requires Python 3.11 or 3.12.
+
 ## 0.36.0 - 2026-09-07
 
 ### Added

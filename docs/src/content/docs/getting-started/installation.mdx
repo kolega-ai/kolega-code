@@ -10,6 +10,14 @@ import { Aside, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 - **Python 3.11 or newer**
 - An API key for at least one [supported provider](../../configuration/providers-and-models/)
 
+On **Intel macOS 12 Monterey**, use **Python 3.11 or 3.12**. The document
+conversion dependency's Python 3.13 wheels require newer macOS. To select a
+compatible interpreter explicitly:
+
+```bash
+uv tool install --python 3.12 kolega-code
+```
+
 ## Install
 
 <Tabs>
