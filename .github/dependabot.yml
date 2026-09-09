@@ -10,3 +10,61 @@ updates:
     # Eval pins mirror shared project dependencies and must be updated together.
     # This disables version-update PRs without affecting security-update PRs.
     open-pull-requests-limit: 0
+
+  # Benchmark edit snapshots are byte-pinned copies of upstream repositories at
+  # immutable commits; tests/benchmarks/test_edit_benchmark_corpus.py verifies
+  # every file hash against its manifest. Nothing inside a snapshot may be
+  # bumped, so ignore all dependencies in these trees for both version and
+  # security updates. Add an entry when a snapshot gains a manifest in an
+  # ecosystem the dependency graph tracks.
+  - package-ecosystem: npm
+    directories:
+      - /benchmarks/edit_tools/fixtures/snapshots/express-ae6dd37680e3/tree
+      - /benchmarks/edit_tools/fixtures/snapshots/zod-912f0f51b0ce/tree/packages/zod
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+  - package-ecosystem: gomod
+    directory: /benchmarks/edit_tools/fixtures/snapshots/bubbletea-fc707bb7ea01/tree
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+  - package-ecosystem: cargo
+    directory: /benchmarks/edit_tools/fixtures/snapshots/clap-4a35e3bcabf7/tree/clap_builder
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+  - package-ecosystem: pip
+    directory: /benchmarks/edit_tools/fixtures/snapshots/click-b67832c2167e/tree
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+  - package-ecosystem: maven
+    directory: /benchmarks/edit_tools/fixtures/snapshots/gson-c9f3fd55854a/tree/gson
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+  - package-ecosystem: nuget
+    directory: /benchmarks/edit_tools/fixtures/snapshots/spectre-console-3ba102309539/tree/src/Spectre.Console
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+  - package-ecosystem: composer
+    directory: /benchmarks/edit_tools/fixtures/snapshots/symfony-console-9df1ce79867b/tree
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
