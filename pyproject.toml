@@ -78,6 +78,9 @@ dependencies = [
     "playwright==1.59.0",
     "psutil==7.2.2",
     "pydantic==2.13.4",
+    # MarkItDown/pdfplumber: newer PDFium wheels require macOS 13.
+    # Preserve Intel macOS 12 installs; bumps must pass the Monterey wheel guard.
+    "pypdfium2==5.11.0",
     "python-dotenv==1.2.2",
     # Load-bearing for the web UI: code highlighting is generated with the same
     # Pygments styles the TUI renders with, so both stay identical.

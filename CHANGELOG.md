@@ -6,6 +6,11 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Pin the PDF rendering dependency to restore compatible wheel selection on
+  Intel macOS Monterey for both the installer and direct package installs.
+
 ## 0.36.0 - 2026-09-07
 
 ### Added
