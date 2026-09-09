@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import plistlib
+import re
 import shlex
 import shutil
 import subprocess
@@ -212,6 +213,41 @@ def run_service_command(argv: list[str]) -> subprocess.CompletedProcess[str] | N
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"gateway: warning: {argv[0]} failed: {exc}", file=sys.stderr)
         return None
+
+
+def service_state_summary(
+    *,
+    systemd_dir: Optional[Path] = None,
+    launchd_dir: Optional[Path] = None,
+    platform: Optional[str] = None,
+) -> Optional[str]:
+    """One line of service-manager state for an installed gateway, else None.
+
+    ``gateway status`` uses this to explain a service that is installed but not
+    running, which the daemon's own status file cannot show.
+    """
+    platform = platform if platform is not None else sys.platform
+    if not is_service_installed(systemd_dir=systemd_dir, launchd_dir=launchd_dir, platform=platform):
+        return None
+    if platform == "darwin":
+        proc = run_service_command(["launchctl", "print", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"])
+        if proc is None or proc.returncode != 0:
+            return "launchd agent installed but not loaded"
+        output = proc.stdout or ""
+        parts: list[str] = []
+        state = re.search(r"^\s*state = (.+)$", output, re.MULTILINE)
+        if state:
+            parts.append(f"state {state.group(1).strip()}")
+        runs = re.search(r"^\s*runs = (\d+)$", output, re.MULTILINE)
+        if runs:
+            parts.append(f"{runs.group(1)} starts")
+        last_exit = re.search(r"^\s*last exit code = (\d+)$", output, re.MULTILINE)
+        if last_exit:
+            parts.append(f"last exit code {last_exit.group(1)}")
+        return "launchd agent " + (", ".join(parts) if parts else "loaded")
+    proc = run_service_command(["systemctl", "--user", "is-active", SERVICE_NAME])
+    state_text = (proc.stdout or "").strip() if proc is not None else ""
+    return f"systemd unit {state_text or 'unknown'}"
 
 
 def restart_service(

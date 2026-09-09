@@ -33,6 +33,7 @@ from kolega_code.gateway.service import (
     install_service,
     is_service_installed,
     restart_service,
+    service_state_summary,
     uninstall_service,
 )
 
@@ -290,6 +291,7 @@ def _gateway_status(config: GatewayConfig) -> int:
     if payload is not None:
         # A heartbeat from a process that no longer exists (e.g. SIGKILLed).
         print(f"gateway: not running (stale heartbeat from pid {payload.get('pid')})")
+        _print_service_state(config)
         return 0
     lock = FileLock(str(config.state_dir / LOCK_FILE_NAME))
     try:
@@ -303,7 +305,18 @@ def _gateway_status(config: GatewayConfig) -> int:
         return 0
     lock.release()
     print(f"gateway: not running (state: {config.state_dir})")
+    _print_service_state(config)
     return 0
+
+
+def _print_service_state(config: GatewayConfig) -> None:
+    summary = service_state_summary()
+    if summary is None:
+        return
+    print(f"  service: {summary}")
+    log_path = config.state_dir / "gateway.log"
+    if log_path.exists():
+        print(f"  log: {log_path}")
 
 
 def _pid_alive(pid: Any) -> bool:

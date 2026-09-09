@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
+
+from filelock import FileLock
+from filelock import Timeout as FileLockTimeout
 
 from kolega_code.local_state import write_private_text
 from kolega_code.llm.specs.custom_endpoints import (
@@ -31,6 +35,41 @@ WEB_SEARCH_KEY_NAMES = ("firecrawl", "tavily")
 
 class SettingsStoreError(RuntimeError):
     """Raised when CLI settings cannot be loaded or saved."""
+
+
+SETTINGS_LOCK_TIMEOUT_SECONDS = 10.0
+
+
+def _merge_settings_documents(
+    base: dict[str, Any],
+    current: dict[str, Any],
+    on_disk: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply one writer's changes on top of the current document.
+
+    ``base`` is the state the writer loaded, so keys it did not touch keep the
+    on-disk value and a stale writer cannot revert another process's change.
+    Nested dicts merge key by key, and keys the writer never saw survive.
+    """
+    merged: dict[str, Any] = {}
+    for key in set(base) | set(current) | set(on_disk):
+        if key not in current:
+            if key in base:
+                continue
+            if key in on_disk:
+                merged[key] = on_disk[key]
+            continue
+        if key in base and base[key] == current[key]:
+            merged[key] = on_disk[key] if key in on_disk else current[key]
+            continue
+        if key not in base and current[key] is None and key in on_disk:
+            merged[key] = on_disk[key]
+            continue
+        if isinstance(base.get(key), dict) and isinstance(current[key], dict) and isinstance(on_disk.get(key), dict):
+            merged[key] = _merge_settings_documents(base[key], current[key], on_disk[key])
+            continue
+        merged[key] = current[key]
+    return merged
 
 
 def _coerce_model_entries(raw: object) -> dict[str, dict]:
@@ -272,6 +311,9 @@ class CliSettings:
     # Additive optional field — absent in older files -> empty mapping.
     custom_endpoints: dict[str, dict] = field(default_factory=dict)
     schema_version: int = SETTINGS_SCHEMA_VERSION
+    # The document this instance was loaded from, used as the merge base by
+    # SettingsStore.save(). Never serialized.
+    _merge_base: Optional[dict[str, Any]] = field(default=None, repr=False, compare=False)
 
     @classmethod
     def from_dict(cls, data: dict) -> "CliSettings":
@@ -452,12 +494,47 @@ class SettingsStore:
 
     def load(self) -> CliSettings:
         if not self.path.exists():
-            return CliSettings()
+            settings = CliSettings()
+            settings._merge_base = copy.deepcopy(settings.to_dict())
+            return settings
         try:
-            return CliSettings.from_dict(json.loads(self.path.read_text(encoding="utf-8")))
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            settings = CliSettings.from_dict(data)
         except json.JSONDecodeError as exc:
             raise SettingsStoreError(f"Settings file is not valid JSON: {self.path}") from exc
+        # The merge base is what this process understood, not the raw file:
+        # a key it never saw (newer schema, hand-edit) must survive its save.
+        settings._merge_base = copy.deepcopy(settings.to_dict())
+        if isinstance(data, dict) and "schema_version" in data:
+            settings._merge_base["schema_version"] = data["schema_version"]
+        return settings
 
     def save(self, settings: CliSettings) -> None:
-        payload = json.dumps(settings.to_dict(), indent=2, sort_keys=True)
-        write_private_text(self.path, payload + "\n")
+        """Write this instance's changes, keeping concurrent writers' fields."""
+        lock = FileLock(f"{self.path}.lock")
+        try:
+            lock.acquire(timeout=SETTINGS_LOCK_TIMEOUT_SECONDS)
+        except FileLockTimeout as exc:
+            raise SettingsStoreError(f"Timed out locking the settings file: {self.path}") from exc
+        try:
+            merged = self._merged_document(settings)
+            payload = json.dumps(merged, indent=2, sort_keys=True)
+            write_private_text(self.path, payload + "\n")
+        finally:
+            lock.release()
+        settings._merge_base = copy.deepcopy(merged)
+
+    def _merged_document(self, settings: CliSettings) -> dict[str, Any]:
+        current = settings.to_dict()
+        if settings._merge_base is None:
+            return current
+        return _merge_settings_documents(settings._merge_base, current, self._read_document())
+
+    def _read_document(self) -> dict[str, Any]:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (json.JSONDecodeError, OSError) as exc:
+            raise SettingsStoreError(f"Settings file is not valid JSON: {self.path}") from exc
+        return raw if isinstance(raw, dict) else {}

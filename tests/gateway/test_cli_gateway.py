@@ -237,16 +237,33 @@ def test_telegram_setup_verify_failure_does_not_save(
     assert SettingsStore(root=state_dir).load().telegram_bot_token is None
 
 
-def test_status_reports_not_running(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+def test_status_reports_not_running(capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("kolega_code.cli.gateway.service_state_summary", lambda: None)
     config = GatewayConfig(adapter="echo", project_path=tmp_path / "ws", state_dir=tmp_path / "state")
     assert _gateway_status(config) == 0
     assert "not running" in capsys.readouterr().out
 
 
-def test_status_via_the_full_cli_path(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+def test_status_reports_an_installed_service_that_is_failing(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "kolega_code.cli.gateway.service_state_summary",
+        lambda: "launchd agent state spawn scheduled, 34318 starts, last exit code 2",
+    )
+    config = GatewayConfig(adapter="echo", project_path=tmp_path / "ws", state_dir=tmp_path / "state")
+    assert _gateway_status(config) == 0
+    out = capsys.readouterr().out
+    assert "not running" in out
+    assert "34318 starts" in out
+    assert "last exit code 2" in out
+
+
+def test_status_via_the_full_cli_path(capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch) -> None:
     # Regression: subcommands without --project must not crash on args.project.
     from kolega_code.cli.gateway import run_gateway
 
+    monkeypatch.setattr("kolega_code.cli.gateway.service_state_summary", lambda: None)
     args = parse_args(["gateway", "status", "--state-dir", str(tmp_path / "state")])
     assert run_gateway(args) == 0
     assert "not running" in capsys.readouterr().out
