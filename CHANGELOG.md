@@ -6,6 +6,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.37.0 - 2026-09-09
+
+### Added
+
+- **DeepSeek V4.1 Flash (preview).** DeepSeek's temporary
+  `deepseek-v4.1-flash-expires-on-0910` model is available under **DeepSeek V4.1
+  Flash (Preview, expires Sep 10)** in the model picker, with vision, hosted web
+  search, and `none`/`low`/`high`/`max` reasoning effort (default `high`). It is
+  not the default and is not aliased to a stable model; the ID expires on
+  September 10, 2026, after which an available stable model must be selected.
+
 ### Fixed
 
 - Pin PDFium and the Intel Python 3.11/3.12 ONNX Runtime dependency to restore
