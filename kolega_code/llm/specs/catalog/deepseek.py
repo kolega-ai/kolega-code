@@ -20,6 +20,26 @@ from kolega_code.llm.specs.types import ThinkingEffortSpec
 # before the server ceiling and truncation is reported honestly. flash passes
 # through.
 DEEPSEEK_SPECS = {
+    # Unlisted preview, verified on /responses on 2026-09-09. The ID advertises
+    # expiry on September 10; do not alias it to a stable model or make it default.
+    # Vision, hosted search, tools, and all four exposed efforts work live.
+    # Retain the Flash-family 1M context budget provisionally (not independently
+    # measured for this preview). The API accepts 384000 output tokens and reports
+    # a maximum of 393216; keep the existing conservative Flash output budget.
+    ("deepseek", "deepseek-v4.1-flash-expires-on-0910"): {
+        "context_length": 1000000,
+        "max_completion_tokens": 384000,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_vision": True,
+        "supports_hosted_web_search": True,
+        "preferred_edit_protocol": "claude_code",
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "high", "max"),
+            default="high",
+            mode="openai_responses_reasoning",
+        ),
+    },
     ("deepseek", "deepseek-v4-pro"): {
         "context_length": 1000000,
         "max_completion_tokens": 65536,

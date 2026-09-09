@@ -153,8 +153,16 @@ def test_vision_only_model_options_follow_catalog_capabilities():
         "MiniMax M3": "accounts/fireworks/models/minimax-m3",
     }
     assert dict(ui_model_options("deepseek", vision_only=True)) == {
-        "DeepSeek V4 Flash Vision (Exp)": "deepseek-v4-flash-vision-exp"
+        "DeepSeek V4 Flash Vision (Exp)": "deepseek-v4-flash-vision-exp",
+        "DeepSeek V4.1 Flash (Preview, expires Sep 10)": "deepseek-v4.1-flash-expires-on-0910",
     }
+
+
+def test_deepseek_preview_is_selectable_without_changing_default() -> None:
+    assert dict(ui_model_options("deepseek"))["DeepSeek V4.1 Flash (Preview, expires Sep 10)"] == (
+        "deepseek-v4.1-flash-expires-on-0910"
+    )
+    assert default_model_for_provider(ModelProvider.DEEPSEEK) == "deepseek-v4-pro"
 
 
 def test_ollama_cloud_smoke_model_is_available_without_live_call():
