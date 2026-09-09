@@ -159,6 +159,8 @@ def test_vision_only_model_options_follow_catalog_capabilities():
 
 
 def test_deepseek_preview_is_selectable_without_changing_default() -> None:
+    # Settings falls back to the first option when switching providers.
+    assert ui_model_options("deepseek")[0] == ("DeepSeek V4 Pro", "deepseek-v4-pro")
     assert dict(ui_model_options("deepseek"))["DeepSeek V4.1 Flash (Preview, expires Sep 10)"] == (
         "deepseek-v4.1-flash-expires-on-0910"
     )
