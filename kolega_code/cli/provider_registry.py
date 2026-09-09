@@ -70,6 +70,7 @@ MODEL_LABELS: dict[str, str] = {
     "kimi-for-coding": "Kimi for Coding",
     "kimi-for-coding-highspeed": "Kimi for Coding (HighSpeed)",
     # DeepSeek
+    "deepseek-v4.1-flash-expires-on-0910": "DeepSeek V4.1 Flash (Preview, expires Sep 10)",
     "deepseek-v4-pro": "DeepSeek V4 Pro",
     "deepseek-v4-flash": "DeepSeek V4 Flash",
     "deepseek-v4-flash-vision-exp": "DeepSeek V4 Flash Vision (Exp)",

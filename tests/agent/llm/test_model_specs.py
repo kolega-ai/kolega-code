@@ -188,6 +188,7 @@ def test_kimi_coding_highspeed_model_specs():
         ("deepseek-v4-pro", 65536),
         # flash: no such cut; measured running to 112990 in one call.
         ("deepseek-v4-flash", 384000),
+        ("deepseek-v4.1-flash-expires-on-0910", 384000),
     ],
 )
 def test_deepseek_model_specs(model: str, max_completion_tokens: int):

@@ -344,6 +344,27 @@ call still takes precedence over these per-role defaults.)
 
 ## Thinking effort
 
+### DeepSeek V4.1 Flash preview
+
+The temporary model `deepseek-v4.1-flash-expires-on-0910` is available under
+**DeepSeek V4.1 Flash (Preview, expires Sep 10)** in the model picker. Its ID
+advertises expiration on **September 10, 2026**; the exact cutoff time is unknown.
+It is not the default and is not aliased to a stable model.
+
+```bash
+kolega-code --provider deepseek --model deepseek-v4.1-flash-expires-on-0910
+```
+
+Live API checks on September 9, 2026 confirmed Responses API access, image input,
+function calls, hosted web search, and `none`/`low`/`high`/`max` reasoning effort
+(default: `high`). This unlisted preview may not appear in DeepSeek's `/models`
+response. Kolega provisionally uses the existing Flash-family 1,000,000-token
+context budget; the preview's context limit has not been independently verified.
+The configured 384,000-token output budget is accepted by the API, not a measured
+generation length. After the preview expires, select an available stable model.
+
+### Supported effort values
+
 Thinking effort is model-specific. Kolega Code validates the selected value
 against the active model and resets it to the new model's default when you switch
 models in the TUI.
@@ -354,6 +375,7 @@ models in the TUI.
 | Anthropic `claude-opus-5` | `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | Anthropic `claude-sonnet-5` | `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | DeepSeek `deepseek-v4-pro`, `deepseek-v4-flash`, `deepseek-v4-flash-vision-exp` | `none`, `low`, `high`, `max` | `high` |
+| DeepSeek `deepseek-v4.1-flash-expires-on-0910` (temporary preview) | `none`, `low`, `high`, `max` | `high` |
 | Moonshot `kimi-k3` | `max` | `max` |
 | Moonshot `kimi-k2.7-code` | `auto` | `auto` |
 | Moonshot `kimi-k2.6` | `auto`, `none` | `auto` |

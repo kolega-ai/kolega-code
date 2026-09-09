@@ -201,8 +201,12 @@ def preferred_edit_protocol(provider: str, model_name: str) -> Optional[str]:
 # takes its catalog value instead.
 DEEPSEEK_WIRE_OUTPUT_CAP = 64000
 
-# Routes whose catalog max_completion_tokens is itself the real ceiling.
-_UNCLAMPED_DEEPSEEK_ROUTES = {("deepseek", "deepseek-v4-flash"), ("deepseek", "deepseek-v4-flash-vision-exp")}
+# Routes that use the catalog output budget without the legacy Pro/chat clamp.
+_UNCLAMPED_DEEPSEEK_ROUTES = {
+    ("deepseek", "deepseek-v4-flash"),
+    ("deepseek", "deepseek-v4-flash-vision-exp"),
+    ("deepseek", "deepseek-v4.1-flash-expires-on-0910"),
+}
 
 
 def is_deepseek_model(model_name: str) -> bool:
