@@ -139,6 +139,49 @@ def test_settings_store_round_trips_gateway_section(tmp_path: Path) -> None:
     assert CliSettings.from_dict({"schema_version": SETTINGS_SCHEMA_VERSION, "gateway": "not-a-dict"}).gateway == {}
 
 
+def test_settings_save_keeps_fields_another_writer_changed(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    store.save(CliSettings())
+    stale = store.load()
+    other = store.load()
+    other.telegram_bot_token = "123:fake-bot-token-for-tests-only"
+    store.save(other)
+
+    stale.active_theme = "Kolega Dark"
+    store.save(stale)
+
+    loaded = store.load()
+    assert loaded.active_theme == "Kolega Dark"
+    assert loaded.telegram_bot_token == "123:fake-bot-token-for-tests-only"
+
+
+def test_settings_save_applies_an_intentional_clear(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    store.save(CliSettings(telegram_bot_token="123:fake-bot-token-for-tests-only"))
+
+    settings = store.load()
+    settings.telegram_bot_token = None
+    store.save(settings)
+
+    assert store.load().telegram_bot_token is None
+
+
+def test_settings_save_merges_nested_mappings(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    store.save(CliSettings())
+    first = store.load()
+    first.api_keys["openai"] = "sk-openai"
+    store.save(first)
+    second = store.load()
+    second.api_keys["anthropic"] = "sk-anthropic"
+    store.save(second)
+
+    first.api_keys["openai"] = "sk-openai-updated"
+    store.save(first)
+
+    assert store.load().api_keys == {"openai": "sk-openai-updated", "anthropic": "sk-anthropic"}
+
+
 def test_settings_store_round_trips_agent_models(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path)
     settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)

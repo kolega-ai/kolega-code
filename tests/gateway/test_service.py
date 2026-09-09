@@ -16,6 +16,7 @@ from kolega_code.gateway.service import (
     restart_service,
     service_command,
     service_launch_command,
+    service_state_summary,
     service_unit_path,
     uninstall_service,
 )
@@ -178,6 +179,51 @@ def test_is_service_installed(tmp_path: Path) -> None:
     unit_path = systemd_dir / SYSTEMD_UNIT_NAME
     unit_path.write_text("[Unit]", encoding="utf-8")
     assert is_service_installed(systemd_dir=systemd_dir, platform="linux")
+
+
+def test_service_state_summary_is_none_without_an_installed_service(tmp_path: Path) -> None:
+    assert service_state_summary(systemd_dir=tmp_path / "systemd", platform="linux") is None
+
+
+def test_service_state_summary_parses_launchd_agent_state(tmp_path: Path, monkeypatch) -> None:
+    launchd_dir = tmp_path / "launchd"
+    launchd_dir.mkdir(parents=True)
+    (launchd_dir / LAUNCHD_PLIST_NAME).write_text("<plist/>", encoding="utf-8")
+    output = "\tstate = spawn scheduled\n\truns = 34318\n\tlast exit code = 2\n"
+
+    def fake_run(argv, **kwargs):
+        return subprocess.CompletedProcess(args=argv, returncode=0, stdout=output, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    summary = service_state_summary(launchd_dir=launchd_dir, platform="darwin")
+    assert summary == "launchd agent state spawn scheduled, 34318 starts, last exit code 2"
+
+
+def test_service_state_summary_reports_an_unloaded_launchd_agent(tmp_path: Path, monkeypatch) -> None:
+    launchd_dir = tmp_path / "launchd"
+    launchd_dir.mkdir(parents=True)
+    (launchd_dir / LAUNCHD_PLIST_NAME).write_text("<plist/>", encoding="utf-8")
+
+    def fake_run(argv, **kwargs):
+        return subprocess.CompletedProcess(args=argv, returncode=113, stdout="", stderr="Could not find service")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert service_state_summary(launchd_dir=launchd_dir, platform="darwin") == "launchd agent installed but not loaded"
+
+
+def test_service_state_summary_reports_the_systemd_unit_state(tmp_path: Path, monkeypatch) -> None:
+    systemd_dir = tmp_path / "systemd"
+    systemd_dir.mkdir(parents=True)
+    (systemd_dir / SYSTEMD_UNIT_NAME).write_text("[Unit]", encoding="utf-8")
+
+    def fake_run(argv, **kwargs):
+        return subprocess.CompletedProcess(args=argv, returncode=3, stdout="failed\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert service_state_summary(systemd_dir=systemd_dir, platform="linux") == "systemd unit failed"
 
 
 def test_restart_service_linux_runs_daemon_reload_and_restart(tmp_path: Path, monkeypatch) -> None:

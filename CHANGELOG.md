@@ -11,6 +11,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 - Pin PDFium and the Intel Python 3.11/3.12 ONNX Runtime dependency to restore
   compatible wheel selection on macOS Monterey for both the installer and direct
   package installs. Intel Monterey requires Python 3.11 or 3.12.
+- Settings saves are merged with concurrent writers instead of replacing the whole
+  file, so a long-running instance can no longer drop a gateway token or API key
+  another process saved after it started.
+- `kolega-code gateway status` now reports an installed background service that
+  is failing to start (service state, start count, last exit code, log path)
+  instead of only printing "not running".
 
 ## 0.36.0 - 2026-09-07
 
