@@ -498,7 +498,7 @@ def _config_with_investigation_override() -> AgentConfig:
         anthropic_api_key="anthropic-key",
         deepseek_api_key="deepseek-key",
         agent_models={
-            "investigation": ModelConfig(provider=ModelProvider.DEEPSEEK, model="deepseek-v4-flash"),
+            "investigation": ModelConfig(provider=ModelProvider.DEEPSEEK, model="deepseek-flash"),
         },
     )
 
@@ -586,10 +586,10 @@ async def test_no_override_passes_through_role_configuration(tmp_path, connectio
     assert captured[0][0] is None
     assert captured[0][1]["effective_routing"] == {
         "provider": "deepseek",
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-flash",
         "effort": None,
     }
-    assert config.model_config_for_agent("investigation-agent").model == "deepseek-v4-flash"
+    assert config.model_config_for_agent("investigation-agent").model == "deepseek-flash"
 
 
 @pytest.mark.asyncio
@@ -622,7 +622,8 @@ async def test_browser_override_requires_vision_after_actual_class_selection(wor
     script = (
         'meta = {"name": "browser-route", "description": "d"}\n'
         'return await agent("browse", agent_type="browser", model_override={'
-        '"provider": "deepseek", "model": "deepseek-v4-flash", "effort": "high"})\n'
+        # Non-vision on purpose: V4.1 Flash has vision, so the gate needs a blind model.
+        '"provider": "deepseek", "model": "deepseek-v4-pro", "effort": "high"})\n'
     )
 
     summary = await tool.run_workflow(script=script)
@@ -660,7 +661,7 @@ async def test_plan_mode_resolves_override_for_forced_investigation_agent(workfl
     script = (
         'meta = {"name": "plan-route", "description": "d"}\n'
         'return await agent("route", agent_type="browser", model_override={'
-        '"provider": "deepseek", "model": "deepseek-v4-flash", "effort": "high"})\n'
+        '"provider": "deepseek", "model": "deepseek-flash", "effort": "high"})\n'
     )
     summary = await tool.run_workflow(script=script)
 
@@ -678,7 +679,7 @@ async def test_plan_mode_resolves_override_for_forced_investigation_agent(workfl
     assert journal_entry["effective_routing"]["provider"] == "deepseek"
     transcript = (run_dir / "transcript.md").read_text()
     assert "InvestigationAgent" in transcript
-    assert "deepseek-v4-flash" in transcript
+    assert "deepseek-flash" in transcript
 
 
 @pytest.mark.asyncio

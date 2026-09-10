@@ -30,7 +30,7 @@ SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
 PROVIDERS = [
     ("openai", "gpt-5.6-sol", "medium"),
     ("openai_chatgpt", chatgpt_constants.DEFAULT_MODEL, "medium"),
-    ("deepseek", "deepseek-v4-flash", "high"),
+    ("deepseek", "deepseek-flash", "high"),
 ]
 
 TOOLS = [

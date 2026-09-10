@@ -207,12 +207,12 @@ async def test_settings_screen_retains_active_model_and_effort(
         # A genuine provider change still cascades: model falls back to the new
         # provider's first model, then a manual model pick is retained.
         provider.value = "deepseek"
+        await _wait_for_select_values(pilot, screen, {"model_select": "deepseek-flash"})
+        assert str(model.value) == "deepseek-flash"
+
+        model.value = "deepseek-v4-pro"
         await _wait_for_select_values(pilot, screen, {"model_select": "deepseek-v4-pro"})
         assert str(model.value) == "deepseek-v4-pro"
-
-        model.value = "deepseek-v4-flash"
-        await _wait_for_select_values(pilot, screen, {"model_select": "deepseek-v4-flash"})
-        assert str(model.value) == "deepseek-v4-flash"
 
 
 @pytest.mark.asyncio
@@ -858,22 +858,22 @@ async def test_model_slot_row_pins_a_model_on_another_provider(
         screen = app.screen
         screen.query_one("#slot_provider_fast", Select).value = "deepseek"
         await _wait_for_select_values(pilot, screen, {"slot_provider_fast": "deepseek"})
-        screen.query_one("#slot_model_fast", Select).value = "deepseek-v4-flash"
-        await _wait_for_select_values(pilot, screen, {"slot_model_fast": "deepseek-v4-flash"})
+        screen.query_one("#slot_model_fast", Select).value = "deepseek-flash"
+        await _wait_for_select_values(pilot, screen, {"slot_model_fast": "deepseek-flash"})
 
         hint = str(screen.query_one("#slot_hint_fast", Static).render())
-        assert "deepseek/deepseek-v4-flash" in hint
+        assert "deepseek/deepseek-flash" in hint
         assert "inherited" not in hint
 
         await app._save_settings_from_ui()
 
         assert settings_store.load().get_model_slot("fast") == {
             "provider": "deepseek",
-            "model": "deepseek-v4-flash",
+            "model": "deepseek-flash",
         }
         # The fast slot now diverges from the main model it used to shadow.
         assert app.config is not None
-        assert app.config.fast_config.model == "deepseek-v4-flash"
+        assert app.config.fast_config.model == "deepseek-flash"
         assert app.config.long_context_config.model == UI_DEFAULT_MODEL
 
 
@@ -891,7 +891,7 @@ async def test_model_slot_row_returning_to_inherit_clears_the_override(
     app, settings_store = _configured_app(
         tmp_path,
         monkeypatch,
-        model_slots={"fast": {"provider": "deepseek", "model": "deepseek-v4-flash"}},
+        model_slots={"fast": {"provider": "deepseek", "model": "deepseek-flash"}},
         extra_key_providers=("deepseek",),
     )
 
@@ -901,7 +901,7 @@ async def test_model_slot_row_returning_to_inherit_clears_the_override(
         screen = app.screen
         # A saved slot is restored into its row.
         await _wait_for_select_values(
-            pilot, screen, {"slot_provider_fast": "deepseek", "slot_model_fast": "deepseek-v4-flash"}
+            pilot, screen, {"slot_provider_fast": "deepseek", "slot_model_fast": "deepseek-flash"}
         )
 
         screen.query_one("#slot_provider_fast", Select).value = INHERIT_SENTINEL

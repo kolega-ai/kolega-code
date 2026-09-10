@@ -53,7 +53,7 @@ def _role_config():
         fast_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="claude-haiku-4-5-20251001"),
         agent_models={
             "investigation": ModelConfig(
-                provider=ModelProvider.DEEPSEEK, model="deepseek-v4-flash", thinking_effort="high"
+                provider=ModelProvider.DEEPSEEK, model="deepseek-flash", thinking_effort="high"
             )
         },
     )
@@ -69,7 +69,7 @@ def test_agent_uses_role_override_for_primary_model(tmp_path, mock_connection_ma
     )
 
     assert agent.primary_model_config.provider == ModelProvider.DEEPSEEK
-    assert agent.primary_model_config.model == "deepseek-v4-flash"
+    assert agent.primary_model_config.model == "deepseek-flash"
     assert agent.primary_model_config.thinking_effort == "high"
     # Model specs and the LLM client both follow the resolved role model.
     assert agent.model_context_length == 1_000_000

@@ -329,7 +329,7 @@ Or use environment variables, named `KOLEGA_CODE_<ROLE>_PROVIDER` / `_MODEL` / `
 ```bash
 # Use a fast model for investigation; everything else uses the active model.
 export KOLEGA_CODE_INVESTIGATION_PROVIDER=deepseek
-export KOLEGA_CODE_INVESTIGATION_MODEL=deepseek-v4-flash
+export KOLEGA_CODE_INVESTIGATION_MODEL=deepseek-flash
 export KOLEGA_CODE_INVESTIGATION_EFFORT=high
 
 # Browser overrides must name a vision-capable model.
@@ -344,24 +344,45 @@ call still takes precedence over these per-role defaults.)
 
 ## Thinking effort
 
-### DeepSeek V4.1 Flash preview
+### DeepSeek V4.1 Flash
 
-The temporary model `deepseek-v4.1-flash-expires-on-0910` is available under
-**DeepSeek V4.1 Flash (Preview, expires Sep 10)** in the model picker. Its ID
-advertises expiration on **September 10, 2026**; the exact cutoff time is unknown.
-It is not the default and is not aliased to a stable model.
+The released model is served under DeepSeek's canonical `deepseek-flash` id,
+appears as **DeepSeek V4.1 Flash** in the model picker, and is DeepSeek's default
+model in Kolega. DeepSeek says V4.1 Flash surpasses V4 Pro on performance, cost,
+speed, and total time, and routes every other first-party id to it — including
+`deepseek-v4-pro` from 12:00 Beijing Time on September 14, 2026.
 
 ```bash
-kolega-code --provider deepseek --model deepseek-v4.1-flash-expires-on-0910
+kolega-code --provider deepseek --model deepseek-flash
 ```
 
-Live API checks on September 9, 2026 confirmed Responses API access, image input,
-function calls, hosted web search, and `none`/`low`/`high`/`max` reasoning effort
-(default: `high`). This unlisted preview may not appear in DeepSeek's `/models`
-response. Kolega provisionally uses the existing Flash-family 1,000,000-token
-context budget; the preview's context limit has not been independently verified.
-The configured 384,000-token output budget is accepted by the API, not a measured
-generation length. After the preview expires, select an available stable model.
+`deepseek-v4.1-flash` is not an accepted id: DeepSeek's `/models` lists exactly
+`deepseek-flash` and `deepseek-v4-pro`, which are the two models Kolega offers for
+this provider. DeepSeek still accepts the retired `deepseek-v4-flash`,
+`deepseek-v4-flash-vision-exp`, and `deepseek-v4.1-flash-expires-on-0910` ids, but
+they name nothing distinct (every one of them is served by V4.1 Flash), so Kolega no
+longer lists them; settings or sessions still naming one fall back to the DeepSeek
+default (`deepseek-flash`), and passing one explicitly fails with a "not available
+for" error.
+
+Live API checks on September 10, 2026 confirmed Responses API access, image input,
+function calls, and `none`/`low`/`high`/`max` reasoning effort (default: `high`).
+The measured context limit is 1,048,576 tokens; Kolega applies the Flash-family
+1,000,000-token budget so the input budget retains margin under that hard ceiling.
+The API rejects `max_output_tokens` above 393,216, so Kolega keeps the conservative
+384,000-token output budget.
+
+Hosted web search is **not** available on this route. DeepSeek removed it silently
+with the V4.1 release: on September 9, 2026 their Responses guide still listed
+`web_search` as *"Supported, executed on the server side"* and accepted it under
+`tool_choice`; on September 10 both entries read *Ignored*. Nothing in DeepSeek's
+release notes, news page, or FAQ mentions the change. Live probes return no
+`web_search_call` items — the model answers that it has no search tool even when
+the tool is declared. Kolega therefore does not offer the `/web` toggle for
+`deepseek-flash` or the retired flash ids. Results from searches made by older
+models still replay into context. `deepseek-v4-pro` still executes hosted search
+today, and keeps the toggle until DeepSeek routes it to V4.1 Flash on
+September 14 — expect to revisit it then.
 
 ### Supported effort values
 
@@ -374,8 +395,7 @@ models in the TUI.
 | Anthropic `claude-fable-5` | `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | Anthropic `claude-opus-5` | `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | Anthropic `claude-sonnet-5` | `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
-| DeepSeek `deepseek-v4-pro`, `deepseek-v4-flash`, `deepseek-v4-flash-vision-exp` | `none`, `low`, `high`, `max` | `high` |
-| DeepSeek `deepseek-v4.1-flash-expires-on-0910` (temporary preview) | `none`, `low`, `high`, `max` | `high` |
+| DeepSeek `deepseek-flash`, `deepseek-v4-pro` | `none`, `low`, `high`, `max` | `high` |
 | Moonshot `kimi-k3` | `max` | `max` |
 | Moonshot `kimi-k2.7-code` | `auto` | `auto` |
 | Moonshot `kimi-k2.6` | `auto`, `none` | `auto` |

@@ -186,9 +186,9 @@ def test_kimi_coding_highspeed_model_specs():
     [
         # pro: the MEASURED chat ceiling — the server cuts at exactly 65536.
         ("deepseek-v4-pro", 65536),
-        # flash: no such cut; measured running to 112990 in one call.
-        ("deepseek-v4-flash", 384000),
-        ("deepseek-v4.1-flash-expires-on-0910", 384000),
+        # flash: no such cut (measured running to 112990 in one call); the released
+        # V4.1 model rejects max_output_tokens above 393216.
+        ("deepseek-flash", 384000),
     ],
 )
 def test_deepseek_model_specs(model: str, max_completion_tokens: int):

@@ -6,6 +6,46 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Changed
+
+- **DeepSeek now defaults to V4.1 Flash.** `deepseek-flash` is the default model
+  (and first entry in the picker) for the DeepSeek provider, matching DeepSeek's
+  own guidance that V4.1 Flash supersedes V4 Pro on performance, cost, speed, and
+  total time. `deepseek-v4-pro` remains selectable; DeepSeek routes it to V4.1
+  Flash from September 14, 2026.
+
+### Added
+
+- **DeepSeek V4.1 Flash (released).** The finished model is served under
+  DeepSeek's canonical `deepseek-flash` id and is available as **DeepSeek V4.1
+  Flash** in the model picker, with vision and `none`/`low`/`high`/`max`
+  reasoning effort (default `high`). Verified live: 1,048,576-token context and a
+  393,216-token API output ceiling. DeepSeek's Responses API ignores the built-in
+  `web_search` tool, so this model does not advertise hosted web search.
+
+### Fixed
+
+- **Hosted web search no longer offered where DeepSeek stopped serving it.**
+  DeepSeek silently removed server-side `web_search` with the V4.1 release, so the
+  flash models' `/web` toggle was advertising a capability that no longer exists.
+  `deepseek-v4-pro` still executes hosted search and keeps it.
+
+### Removed
+
+- **Retired DeepSeek flash ids.** DeepSeek only serves two models now — V4.1 Flash
+  and V4 Pro — so Kolega's DeepSeek catalog lists exactly those two. The retired
+  `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` entries are gone (they
+  named nothing distinct: DeepSeek routes both to V4.1 Flash). Settings, sessions,
+  and per-role overrides that still name one of them fall back to the DeepSeek
+  default (`deepseek-flash`); naming one explicitly (`--model`,
+  `KOLEGA_CODE_MODEL`) fails with a "not available for" error.
+- **DeepSeek V4.1 Flash preview id.** The expired temporary
+  `deepseek-v4.1-flash-expires-on-0910` id is no longer selectable. Settings and
+  per-role overrides that still name it fall back to the DeepSeek default
+  (`deepseek-flash`); naming it explicitly (`--model`, `KOLEGA_CODE_MODEL`) fails
+  with a "not available for" error. Switch to `deepseek-flash`, which DeepSeek
+  serves the same model under.
+
 ## 0.37.0 - 2026-09-09
 
 ### Added

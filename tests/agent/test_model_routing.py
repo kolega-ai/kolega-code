@@ -34,13 +34,13 @@ def test_complete_override_replaces_only_target_role() -> None:
     resolved = resolve_subagent_model(
         config,
         "investigation-agent",
-        {"provider": "deepseek", "model": "deepseek-v4-flash", "thinking_effort": "HIGH"},
+        {"provider": "deepseek", "model": "deepseek-flash", "thinking_effort": "HIGH"},
         effort_key="thinking_effort",
     )
 
     selected = resolved.config.model_config_for_agent("investigation-agent")
     assert selected.provider == ModelProvider.DEEPSEEK
-    assert selected.model == "deepseek-v4-flash"
+    assert selected.model == "deepseek-flash"
     assert selected.thinking_effort == "high"
     assert resolved.config.model_config_for_agent("general-agent") == config.long_context_config
     assert config.agent_models == {}
@@ -178,7 +178,7 @@ def test_routing_fingerprint_changes_without_including_secrets() -> None:
             "agent_models": {
                 "general": ModelConfig(
                     provider=ModelProvider.DEEPSEEK,
-                    model="deepseek-v4-flash",
+                    model="deepseek-flash",
                     thinking_effort="high",
                 )
             }

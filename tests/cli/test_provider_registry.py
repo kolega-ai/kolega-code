@@ -1,4 +1,5 @@
 from kolega_code.cli.provider_registry import (
+    DEEPSEEK_DEFAULT_MODEL,
     UI_DEFAULT_MODEL,
     UI_DEFAULT_PROVIDER,
     default_model_for_provider,
@@ -153,18 +154,17 @@ def test_vision_only_model_options_follow_catalog_capabilities():
         "MiniMax M3": "accounts/fireworks/models/minimax-m3",
     }
     assert dict(ui_model_options("deepseek", vision_only=True)) == {
-        "DeepSeek V4 Flash Vision (Exp)": "deepseek-v4-flash-vision-exp",
-        "DeepSeek V4.1 Flash (Preview, expires Sep 10)": "deepseek-v4.1-flash-expires-on-0910",
+        "DeepSeek V4.1 Flash": "deepseek-flash",
     }
 
 
-def test_deepseek_preview_is_selectable_without_changing_default() -> None:
-    # Settings falls back to the first option when switching providers.
-    assert ui_model_options("deepseek")[0] == ("DeepSeek V4 Pro", "deepseek-v4-pro")
-    assert dict(ui_model_options("deepseek"))["DeepSeek V4.1 Flash (Preview, expires Sep 10)"] == (
-        "deepseek-v4.1-flash-expires-on-0910"
-    )
-    assert default_model_for_provider(ModelProvider.DEEPSEEK) == "deepseek-v4-pro"
+def test_deepseek_v41_flash_is_the_default() -> None:
+    # The released V4.1 Flash is the provider default now that DeepSeek routes every
+    # other first-party id to it. Settings falls back to the first option when
+    # switching providers, so catalog order and PROVIDER_DEFAULT_MODEL must agree.
+    assert ui_model_options("deepseek")[0] == ("DeepSeek V4.1 Flash", "deepseek-flash")
+    assert default_model_for_provider(ModelProvider.DEEPSEEK) == DEEPSEEK_DEFAULT_MODEL == "deepseek-flash"
+    assert dict(ui_model_options("deepseek"))["DeepSeek V4 Pro"] == "deepseek-v4-pro"
 
 
 def test_ollama_cloud_smoke_model_is_available_without_live_call():

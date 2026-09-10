@@ -5,12 +5,12 @@
 # Authoring prompt (verbatim; this was the COMPLETE prompt):
 #
 #     write a gigacode workflow for parallel code review of this repo and
-#     execute it. Use deepseek-v4-flash for all the workflow sub-agents
+#     execute it. Use deepseek-flash for all the workflow sub-agents
 #     (deepseek provider, via model_override).
 #
 # Date:            2026-07-31
 # Authoring model: openai_chatgpt/gpt-5.6-sol (thinking effort "medium")
-# Sub-agents:      deepseek/deepseek-v4-flash (effort "high"), pinned by the
+# Sub-agents:      deepseek/deepseek-flash (effort "high"), pinned by the
 #                  script itself via a complete atomic model_override on every
 #                  agent() call
 # Harness:         kolega-code
@@ -27,13 +27,13 @@
 # executed it via run_workflow(script_path=..., args={repository, head,
 # boundary}) with NO token budget — following the harness's sizing guidance
 # ("when unsure, omit it") — and verified afterwards that every workflow call
-# ran on deepseek-v4-flash.
+# ran on deepseek-flash.
 #
 # Execution record of THESE EXACT BYTES (hash-verified identical to the
 # persisted run script):
 #   run 9773faa8 — status COMPLETED. 18 agent calls, all completed: 6 parallel
 #   discovery specialists, 11 adversarial challengers (one per candidate
-#   finding), 1 synthesis gate. Every call ran on deepseek/deepseek-v4-flash
+#   finding), 1 synthesis gate. Every call ran on deepseek/deepseek-flash
 #   (effort high) as instructed; all workers were read-only investigation
 #   agents. 267,421 output tokens; 645 s workflow duration inside a 14m22s
 #   turn including authoring. Zero script-exception drops, zero duplicate
@@ -57,7 +57,7 @@ meta = {
 
 MODEL = {
     "provider": "deepseek",
-    "model": "deepseek-v4-flash",
+    "model": "deepseek-flash",
     "effort": "high",
 }
 

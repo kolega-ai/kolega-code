@@ -538,13 +538,13 @@ def _anthropic_settings_with_deepseek_key() -> CliSettings:
 
 def test_build_agent_config_applies_settings_agent_model_override(tmp_path: Path) -> None:
     settings = _anthropic_settings_with_deepseek_key()
-    settings.set_agent_model("investigation", "deepseek", "deepseek-v4-flash", "high")
+    settings.set_agent_model("investigation", "deepseek", "deepseek-flash", "high")
 
     config = build_agent_config(tmp_path, settings=settings, env={})
 
     investigation = config.model_config_for_agent("investigation-agent")
     assert investigation.provider == ModelProvider.DEEPSEEK
-    assert investigation.model == "deepseek-v4-flash"
+    assert investigation.model == "deepseek-flash"
     assert investigation.thinking_effort == "high"
     # Roles with no override inherit the active (long-context) model.
     assert config.model_config_for_agent("coder").model == ANTHROPIC_DEFAULT_MODEL
@@ -552,7 +552,7 @@ def test_build_agent_config_applies_settings_agent_model_override(tmp_path: Path
 
 def test_env_overrides_settings_agent_model(tmp_path: Path) -> None:
     settings = CliSettings(active_provider="anthropic", active_model=ANTHROPIC_DEFAULT_MODEL)
-    settings.set_agent_model("investigation", "deepseek", "deepseek-v4-flash")
+    settings.set_agent_model("investigation", "deepseek", "deepseek-flash")
 
     config = build_agent_config(
         tmp_path,
@@ -576,19 +576,19 @@ def test_env_only_agent_model_override(tmp_path: Path) -> None:
             "KOLEGA_CODE_PROVIDER": "anthropic",
             "KOLEGA_CODE_MODEL": "claude-opus-5",
             "KOLEGA_CODE_INVESTIGATION_PROVIDER": "deepseek",
-            "KOLEGA_CODE_INVESTIGATION_MODEL": "deepseek-v4-flash",
+            "KOLEGA_CODE_INVESTIGATION_MODEL": "deepseek-flash",
         },
     )
 
     assert config.model_config_for_agent("investigation-agent").provider == ModelProvider.DEEPSEEK
-    assert config.model_config_for_agent("investigation-agent").model == "deepseek-v4-flash"
+    assert config.model_config_for_agent("investigation-agent").model == "deepseek-flash"
     assert config.model_config_for_agent("coder").model == ANTHROPIC_DEFAULT_MODEL
 
 
 def test_agent_model_override_requires_api_key(tmp_path: Path) -> None:
     settings = CliSettings(active_provider="anthropic", active_model=ANTHROPIC_DEFAULT_MODEL)
     settings.set_api_key("anthropic", "anthropic-key")
-    settings.set_agent_model("investigation", "deepseek", "deepseek-v4-flash")
+    settings.set_agent_model("investigation", "deepseek", "deepseek-flash")
 
     with pytest.raises(CliConfigError, match="DEEPSEEK_API_KEY"):
         build_agent_config(tmp_path, settings=settings, env={})
@@ -596,11 +596,11 @@ def test_agent_model_override_requires_api_key(tmp_path: Path) -> None:
 
 def test_config_summary_includes_agent_models(tmp_path: Path) -> None:
     settings = _anthropic_settings_with_deepseek_key()
-    settings.set_agent_model("investigation", "deepseek", "deepseek-v4-flash")
+    settings.set_agent_model("investigation", "deepseek", "deepseek-flash")
 
     summary = config_summary(build_agent_config(tmp_path, settings=settings, env={}))
 
-    assert summary["agent_models"] == {"investigation": "deepseek/deepseek-v4-flash"}
+    assert summary["agent_models"] == {"investigation": "deepseek/deepseek-flash"}
 
 
 def test_build_agent_config_no_agent_model_overrides_by_default(tmp_path: Path) -> None:
@@ -768,12 +768,12 @@ def test_openrouter_edit_protocol_defaults_to_claude_code_except_openai_models(t
 
 def test_build_agent_config_applies_saved_model_slots(tmp_path: Path) -> None:
     settings = _anthropic_settings_with_deepseek_key()
-    settings.set_model_slot("fast", "deepseek", "deepseek-v4-flash")
+    settings.set_model_slot("fast", "deepseek", "deepseek-flash")
 
     config = build_agent_config(tmp_path, settings=settings, env={})
 
     assert config.fast_config.provider == ModelProvider.DEEPSEEK
-    assert config.fast_config.model == "deepseek-v4-flash"
+    assert config.fast_config.model == "deepseek-flash"
     # The main model is untouched by a slot override.
     assert config.long_context_config.provider == ModelProvider.ANTHROPIC
     assert config.long_context_config.model == ANTHROPIC_DEFAULT_MODEL
@@ -790,7 +790,7 @@ def test_model_slots_inherit_the_active_model_when_unset(tmp_path: Path) -> None
 
 def test_env_fast_model_beats_a_saved_model_slot(tmp_path: Path) -> None:
     settings = _anthropic_settings_with_deepseek_key()
-    settings.set_model_slot("fast", "deepseek", "deepseek-v4-flash")
+    settings.set_model_slot("fast", "deepseek", "deepseek-flash")
 
     config = build_agent_config(
         tmp_path,
@@ -804,7 +804,7 @@ def test_env_fast_model_beats_a_saved_model_slot(tmp_path: Path) -> None:
 
 def test_fast_model_flag_beats_env_and_saved_model_slot(tmp_path: Path) -> None:
     settings = _anthropic_settings_with_deepseek_key()
-    settings.set_model_slot("fast", "deepseek", "deepseek-v4-flash")
+    settings.set_model_slot("fast", "deepseek", "deepseek-flash")
 
     config = build_agent_config(
         tmp_path,
@@ -831,7 +831,7 @@ def test_saved_model_slot_with_an_uncatalogued_model_falls_back_to_the_provider_
 def test_model_slot_override_requires_the_slot_providers_api_key(tmp_path: Path) -> None:
     settings = CliSettings(active_provider="anthropic", active_model=ANTHROPIC_DEFAULT_MODEL)
     settings.set_api_key("anthropic", "anthropic-key")
-    settings.set_model_slot("fast", "deepseek", "deepseek-v4-flash")
+    settings.set_model_slot("fast", "deepseek", "deepseek-flash")
 
     with pytest.raises(CliConfigError, match="DEEPSEEK_API_KEY"):
         build_agent_config(tmp_path, settings=settings, env={})

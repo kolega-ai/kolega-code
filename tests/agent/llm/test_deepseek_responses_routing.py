@@ -1,8 +1,8 @@
 # ruff: noqa: E402
 """Provider-level API routing for DeepSeek.
 
-The whole ``deepseek`` provider (``deepseek-v4-pro``, ``deepseek-v4-flash``, and
-``deepseek-v4-flash-vision-exp``) speaks the Responses API via
+The whole ``deepseek`` provider (``deepseek-flash`` and ``deepseek-v4-pro``) speaks the
+Responses API via
 :class:`DeepSeekResponsesProvider`. DeepSeek models hosted on other providers
 (Fireworks/OpenRouter/Ollama-Cloud) still use Chat Completions. See
 ``LLMClient._provider_class``.
@@ -16,19 +16,13 @@ from kolega_code.llm.specs.thinking import build_thinking_request_params, reason
 
 class TestDeepSeekModelRouting:
     def test_flash_routes_to_responses_provider(self):
-        provider = LLMClient(provider="deepseek", api_key="sk-test", model="deepseek-v4-flash").provider
+        provider = LLMClient(provider="deepseek", api_key="sk-test", model="deepseek-flash").provider
         assert isinstance(provider, DeepSeekResponsesProvider)
         assert provider.base_url == "https://api.deepseek.com"
         assert provider.provider_name == "deepseek"
 
     def test_pro_routes_to_responses_provider(self):
         provider = LLMClient(provider="deepseek", api_key="sk-test", model="deepseek-v4-pro").provider
-        assert isinstance(provider, DeepSeekResponsesProvider)
-        assert provider.base_url == "https://api.deepseek.com"
-        assert provider.provider_name == "deepseek"
-
-    def test_flash_vision_routes_to_responses_provider(self):
-        provider = LLMClient(provider="deepseek", api_key="sk-test", model="deepseek-v4-flash-vision-exp").provider
         assert isinstance(provider, DeepSeekResponsesProvider)
         assert provider.base_url == "https://api.deepseek.com"
         assert provider.provider_name == "deepseek"
@@ -46,7 +40,7 @@ class TestDeepSeekModelRouting:
 class TestDeepSeekReasoningShape:
     def test_flash_emits_responses_reasoning_block(self):
         for effort in ("none", "low", "high", "max"):
-            params = build_thinking_request_params("deepseek", "deepseek-v4-flash", effort)
+            params = build_thinking_request_params("deepseek", "deepseek-flash", effort)
             assert params == {"reasoning": {"effort": effort, "summary": "auto"}}
 
     def test_pro_emits_responses_reasoning_block(self):
@@ -56,13 +50,5 @@ class TestDeepSeekReasoningShape:
 
     def test_flash_and_pro_excluded_from_flat_replay(self):
         # Both carry reasoning as Responses reasoning ITEMS, not a flat field.
-        assert reasoning_replay_field("deepseek", "deepseek-v4-flash") is None
+        assert reasoning_replay_field("deepseek", "deepseek-flash") is None
         assert reasoning_replay_field("deepseek", "deepseek-v4-pro") is None
-
-    def test_flash_vision_emits_responses_reasoning_block(self):
-        for effort in ("none", "low", "high", "max"):
-            params = build_thinking_request_params("deepseek", "deepseek-v4-flash-vision-exp", effort)
-            assert params == {"reasoning": {"effort": effort, "summary": "auto"}}
-
-    def test_flash_vision_excluded_from_flat_replay(self):
-        assert reasoning_replay_field("deepseek", "deepseek-v4-flash-vision-exp") is None

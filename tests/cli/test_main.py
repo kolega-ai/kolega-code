@@ -620,7 +620,7 @@ def test_ask_plain_handles_billing_error_without_traceback(
     captured = capsys.readouterr()
     assert exit_code == 1
     assert captured.out == ""
-    assert "DeepSeek/deepseek-v4-pro could not run this request" in captured.err
+    assert f"DeepSeek/{DEEPSEEK_DEFAULT_MODEL} could not run this request" in captured.err
     assert "Add credits to your DeepSeek account" in captured.err
     assert FakeCoderAgent.instances[0].cleaned is True
 

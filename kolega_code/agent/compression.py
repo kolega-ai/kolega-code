@@ -157,7 +157,7 @@ class HistoryCompressor:
     # Don't bother summarizing a trivially short prefix.
     MIN_PREFIX_TO_SUMMARIZE = 3
     # Cap the summary length. The prompt targets ~600 words, but reasoning
-    # models (deepseek-v4-flash Responses, etc.) can consume the entire budget
+    # models (DeepSeek Responses models, etc.) can consume the entire budget
     # on chain-of-thought and leave no room for text output, producing an empty
     # summary. A generous ceiling gives reasoning headroom while still staying
     # well under the model's full completion budget.
