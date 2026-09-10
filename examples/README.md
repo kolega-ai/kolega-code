@@ -8,7 +8,7 @@ bytes so you can verify nothing below the delimiter was touched.
 ## parallel-code-review.py
 
 The script was authored by `gpt-5.6-sol` from a two-sentence prompt. Every
-sub-agent is pinned to `deepseek-v4-flash` by the script's own `model_override`.
+sub-agent is pinned to `deepseek-flash` by the script's own `model_override`.
 This is a two-model workflow: one model wrote the orchestration, and a cheaper
 one staffed it. The workflow uses six parallel discovery specialists (API contracts,
 auth/security, Zapier actions/dataflow, SDK/runtime, tests/release, plus an

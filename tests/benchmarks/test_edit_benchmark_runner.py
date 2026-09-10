@@ -76,7 +76,7 @@ def test_plan_uses_catalog_defaults_and_stable_trial_ids() -> None:
 
 
 def test_client_routes_deepseek_flash_from_benchmark_config() -> None:
-    model = ModelConfig(provider=ModelProvider.DEEPSEEK, model="deepseek-v4-flash")
+    model = ModelConfig(provider=ModelProvider.DEEPSEEK, model="deepseek-flash")
     config = AgentConfig(
         deepseek_api_key="test",
         long_context_config=model,

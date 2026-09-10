@@ -84,8 +84,6 @@ def test_direct_deepseek_models_prefer_claude_code() -> None:
     }
 
     assert deepseek_models == {
+        ("deepseek", "deepseek-flash"): EditProtocol.CLAUDE_CODE.value,
         ("deepseek", "deepseek-v4-pro"): EditProtocol.CLAUDE_CODE.value,
-        ("deepseek", "deepseek-v4-flash"): EditProtocol.CLAUDE_CODE.value,
-        ("deepseek", "deepseek-v4-flash-vision-exp"): EditProtocol.CLAUDE_CODE.value,
-        ("deepseek", "deepseek-v4.1-flash-expires-on-0910"): EditProtocol.CLAUDE_CODE.value,
     }

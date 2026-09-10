@@ -596,7 +596,7 @@ async def test_textual_app_saves_deepseek_settings_and_builds_agent(
         screen = await open_settings_screen(app, pilot)
         screen.query_one("#provider_select", Select).value = ModelProvider.DEEPSEEK.value
         model_select = screen.query_one("#model_select", Select)
-        model_select.set_options([("DeepSeek V4 Pro", DEEPSEEK_DEFAULT_MODEL)])
+        model_select.set_options([("DeepSeek V4.1 Flash", DEEPSEEK_DEFAULT_MODEL)])
         model_select.value = DEEPSEEK_DEFAULT_MODEL
         await stage_provider_api_key(screen, pilot, ModelProvider.DEEPSEEK.value, "deepseek-key")
         await app._save_settings_from_ui()
@@ -808,7 +808,10 @@ async def test_browser_model_settings_preserve_and_reject_nonvision_override(
     settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
     settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")
     settings.set_api_key(ModelProvider.DEEPSEEK.value, "deepseek-key")
-    settings.set_agent_model("browser", ModelProvider.DEEPSEEK.value, DEEPSEEK_DEFAULT_MODEL)
+    # A saved non-vision browser override: the DeepSeek default (V4.1 Flash) has vision
+    # now, so pin a non-vision id to exercise the "does not support vision" path.
+    non_vision_model = "deepseek-v4-pro"
+    settings.set_agent_model("browser", ModelProvider.DEEPSEEK.value, non_vision_model)
     settings_store.save(settings)
     session = store.create(project, "code", {})
     app = KolegaCodeApp(
@@ -822,7 +825,7 @@ async def test_browser_model_settings_preserve_and_reject_nonvision_override(
     async with app.run_test() as pilot:
         screen = await open_settings_screen(app, pilot, "agents")
         assert screen.query_one("#am_provider_browser", Select).value == ModelProvider.DEEPSEEK.value
-        assert screen.query_one("#am_model_browser", Select).value == DEEPSEEK_DEFAULT_MODEL
+        assert screen.query_one("#am_model_browser", Select).value == non_vision_model
         assert "does not support vision" in str(screen.query_one("#am_status_browser", Static).render())
 
         await app._save_settings_from_ui()
@@ -830,7 +833,7 @@ async def test_browser_model_settings_preserve_and_reject_nonvision_override(
         saved = settings_store.load().get_agent_model("browser")
         assert saved is not None
         assert saved["provider"] == ModelProvider.DEEPSEEK.value
-        assert saved["model"] == DEEPSEEK_DEFAULT_MODEL
+        assert saved["model"] == non_vision_model
         assert "does not support vision" in str(screen.query_one("#settings_status", Static).render())
 
 
@@ -854,7 +857,10 @@ async def test_browser_model_settings_allow_nonvision_inheritance_with_warning(
     settings_store = SettingsStore(state_dir)
     settings = CliSettings(
         active_provider=ModelProvider.DEEPSEEK.value,
-        active_model=DEEPSEEK_DEFAULT_MODEL,
+        # The DeepSeek default (V4.1 Flash) is vision-capable, so the browser role would
+        # inherit a capable model and show the positive hint. Pin a non-vision DeepSeek
+        # model here to keep exercising the inheritance warning this test is about.
+        active_model="deepseek-v4-pro",
     )
     settings.set_api_key(ModelProvider.DEEPSEEK.value, "deepseek-key")
     settings_store.save(settings)

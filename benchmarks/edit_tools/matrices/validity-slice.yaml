@@ -23,7 +23,7 @@ models:
     thinking_effort: high
     max_output_tokens: 16384
   - provider: deepseek
-    model: deepseek-v4-flash
+    model: deepseek-flash
     protocols: [search_replace, codex_apply_patch, claude_code, hashline_v2]
     temperature: 1.0
     thinking_effort: high

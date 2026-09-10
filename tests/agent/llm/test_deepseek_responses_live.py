@@ -1,7 +1,7 @@
 """Credential-gated live smoke for DeepSeek over the **Responses API**.
 
-The first-party ``deepseek`` provider (``deepseek-v4-flash``, ``deepseek-v4-pro``,
-and ``deepseek-v4-flash-vision-exp``) routes to the Responses API (see
+The first-party ``deepseek`` provider (``deepseek-flash`` and ``deepseek-v4-pro``,
+the only two models DeepSeek still lists) routes to the Responses API (see
 DeepSeekResponsesProvider); DeepSeek models on other providers stay on Chat
 Completions. These tests hit the real ``https://api.deepseek.com`` Responses
 endpoint, so they are marked ``slow``/``integration`` and skip when
@@ -29,8 +29,11 @@ from kolega_code.llm.providers.deepseek_responses import DeepSeekResponsesProvid
 
 pytestmark = [pytest.mark.slow, pytest.mark.integration]
 
-_MODEL = "deepseek-v4-flash"
-_VISION_MODEL = "deepseek-v4-flash-vision-exp"
+_MODEL = "deepseek-flash"
+# The released V4.1 Flash is multimodal, so the image-path tests use the same id;
+# kept as a named constant to make those sections' intent explicit.
+_VISION_MODEL = _MODEL
+_PRO_MODEL = "deepseek-v4-pro"
 
 # 64x64 solid red PNG (generated with PIL, base64-encoded).
 _RED_PNG_B64 = (
@@ -118,7 +121,7 @@ async def test_tool_call_over_responses_api(deepseek_flash_client):
     assert response.stop_reason == "tool_use"
 
 
-# --- deepseek-v4-flash-vision-exp (first multimodal DeepSeek model) ----------------
+# --- deepseek-flash (first multimodal DeepSeek model) ----------------
 
 
 @pytest.fixture
@@ -178,19 +181,43 @@ async def test_vision_image_input_identifies_color(deepseek_vision_client):
     assert "red" in response.get_text_content().strip().lower()
 
 
-@pytest.mark.asyncio
-async def test_vision_hosted_web_search(deepseek_vision_client):
-    # The /responses server-side web_search tool (bare {"type": "web_search"})
-    # must be captured as WebSearchCallBlock items on the vision model too.
-    messages = MessageHistory([Message("user", [TextBlock("What is the newest DeepSeek model? One sentence.")])])
+@pytest.fixture
+def deepseek_pro_client() -> LLMClient:
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    if not api_key:
+        pytest.skip("DEEPSEEK_API_KEY not set")
+    return LLMClient(provider="deepseek", api_key=api_key, model=_PRO_MODEL)
 
-    response = await deepseek_vision_client.generate(
+
+@pytest.mark.asyncio
+async def test_pro_hosted_web_search(deepseek_pro_client):
+    # Hosted search is gone from the flash architecture (V4.1 removed it silently: the
+    # docs' tool table moved web_search to "Ignored"), but the V4 Pro model still
+    # executes it, so this is the live coverage of the server-side path. NOTE: DeepSeek
+    # routes deepseek-v4-pro to V4.1 Flash from 12:00 Beijing Time 2026-09-14 — re-check
+    # this test and supports_hosted_web_search for pro after that date.
+    # Forcing a page open, rather than asking a question the model could answer from
+    # memory, is what makes the assertion test the tool instead of the model's recall.
+    messages = MessageHistory(
+        [
+            Message(
+                "user",
+                [
+                    TextBlock(
+                        "Use the web search tool to open https://blog.rust-lang.org/releases/ and reply with "
+                        "just the newest release version listed there."
+                    )
+                ],
+            )
+        ]
+    )
+
+    response = await deepseek_pro_client.generate(
         messages=messages,
         system=None,
-        model=_VISION_MODEL,
+        model=_PRO_MODEL,
         thinking="none",
-        temperature=0.0,
-        max_completion_tokens=512,
+        max_completion_tokens=2048,
         hosted_web_search=True,
     )
 

@@ -203,9 +203,7 @@ DEEPSEEK_WIRE_OUTPUT_CAP = 64000
 
 # Routes that use the catalog output budget without the legacy Pro/chat clamp.
 _UNCLAMPED_DEEPSEEK_ROUTES = {
-    ("deepseek", "deepseek-v4-flash"),
-    ("deepseek", "deepseek-v4-flash-vision-exp"),
-    ("deepseek", "deepseek-v4.1-flash-expires-on-0910"),
+    ("deepseek", "deepseek-flash"),
 }
 
 

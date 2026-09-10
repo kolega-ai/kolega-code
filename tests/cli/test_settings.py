@@ -185,7 +185,7 @@ def test_settings_save_merges_nested_mappings(tmp_path: Path) -> None:
 def test_settings_store_round_trips_agent_models(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path)
     settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
-    settings.set_agent_model("investigation", "deepseek", "deepseek-v4-flash", "high")
+    settings.set_agent_model("investigation", "deepseek", "deepseek-flash", "high")
     settings.set_agent_model("building", "anthropic", "claude-opus-4-8")
 
     store.save(settings)
@@ -193,7 +193,7 @@ def test_settings_store_round_trips_agent_models(tmp_path: Path) -> None:
 
     assert loaded.get_agent_model("investigation") == {
         "provider": "deepseek",
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-flash",
         "thinking_effort": "high",
     }
     assert loaded.get_agent_model("building") == {"provider": "anthropic", "model": "claude-opus-4-8"}
@@ -201,7 +201,7 @@ def test_settings_store_round_trips_agent_models(tmp_path: Path) -> None:
 
 def test_clear_agent_model_makes_role_inherit() -> None:
     settings = CliSettings()
-    settings.set_agent_model("investigation", "deepseek", "deepseek-v4-flash")
+    settings.set_agent_model("investigation", "deepseek", "deepseek-flash")
     settings.clear_agent_model("investigation")
 
     assert settings.get_agent_model("investigation") is None
@@ -212,7 +212,7 @@ def test_from_dict_drops_incomplete_agent_model_entries() -> None:
     data = {
         "schema_version": SETTINGS_SCHEMA_VERSION,
         "agent_models": {
-            "investigation": {"provider": "deepseek", "model": "deepseek-v4-flash"},
+            "investigation": {"provider": "deepseek", "model": "deepseek-flash"},
             "building": {"provider": "anthropic"},  # missing model -> dropped
             "general": "not-a-dict",  # malformed -> dropped
         },
@@ -226,17 +226,17 @@ def test_from_dict_drops_incomplete_agent_model_entries() -> None:
 def test_settings_store_round_trips_model_slots(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path)
     settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
-    settings.set_model_slot("fast", "deepseek", "deepseek-v4-flash")
+    settings.set_model_slot("fast", "deepseek", "deepseek-flash")
 
     store.save(settings)
     loaded = store.load()
 
-    assert loaded.get_model_slot("fast") == {"provider": "deepseek", "model": "deepseek-v4-flash"}
+    assert loaded.get_model_slot("fast") == {"provider": "deepseek", "model": "deepseek-flash"}
 
 
 def test_clear_model_slot_makes_slot_inherit() -> None:
     settings = CliSettings()
-    settings.set_model_slot("fast", "deepseek", "deepseek-v4-flash")
+    settings.set_model_slot("fast", "deepseek", "deepseek-flash")
     settings.clear_model_slot("fast")
 
     assert settings.get_model_slot("fast") is None
@@ -247,7 +247,7 @@ def test_from_dict_drops_incomplete_model_slot_entries() -> None:
     data = {
         "schema_version": SETTINGS_SCHEMA_VERSION,
         "model_slots": {
-            "fast": {"provider": "deepseek", "model": "deepseek-v4-flash"},
+            "fast": {"provider": "deepseek", "model": "deepseek-flash"},
             "fast2": {"provider": "anthropic"},  # missing model -> dropped
         },
     }
@@ -262,7 +262,7 @@ def test_from_dict_drops_legacy_thinking_slot() -> None:
     data = {
         "schema_version": SETTINGS_SCHEMA_VERSION,
         "model_slots": {
-            "fast": {"provider": "deepseek", "model": "deepseek-v4-flash"},
+            "fast": {"provider": "deepseek", "model": "deepseek-flash"},
             "thinking": {"provider": "anthropic", "model": "claude-opus-4-8"},
         },
     }

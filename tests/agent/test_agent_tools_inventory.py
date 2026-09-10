@@ -312,7 +312,7 @@ def test_browser_agent_type_gated_on_browser_agent_model_vision(project_path, mo
     main = agent_config.long_context_config  # claude-sonnet — vision-capable
 
     vision_browser = Mock(provider="anthropic", model="claude-sonnet-4-5-20250929")
-    blind_browser = Mock(provider="deepseek", model="deepseek-v4-flash")
+    blind_browser = Mock(provider="deepseek", model="deepseek-v4-pro")
 
     def agent_types_with_browser_model(browser_model):
         agent_config.model_config_for_agent.side_effect = lambda name: (

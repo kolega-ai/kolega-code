@@ -102,7 +102,8 @@ class TestBaseAgent:
     ):
         deepseek_model = ModelConfig(
             provider=ModelProvider.DEEPSEEK,
-            model="deepseek-v4-flash",
+            # A non-vision DeepSeek model: V4.1 Flash (the current flash id) has vision.
+            model="deepseek-v4-pro",
             rate_limits=RateLimitConfig(),
         )
         config = agent_config.model_copy(
@@ -121,7 +122,7 @@ class TestBaseAgent:
 
         context = agent.build_prompt_context()
 
-        assert context.model_name == "deepseek-v4-flash"
+        assert context.model_name == "deepseek-v4-pro"
         assert context.model_supports_vision is False
 
     def test_build_prompt_context_ignores_removed_agent_memory_file(self, base_agent, tmp_path):

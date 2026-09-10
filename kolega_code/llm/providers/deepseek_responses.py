@@ -1,6 +1,6 @@
 """DeepSeek provider that speaks the **Responses API** (``/responses``).
 
-The whole DeepSeek catalog (``deepseek-v4-pro`` and ``deepseek-v4-flash``) speaks
+The whole DeepSeek catalog (``deepseek-flash`` and ``deepseek-v4-pro``) speaks
 the Responses API, so the ``deepseek`` provider routes here wholesale from
 ``LLMClient._provider_class`` (no model-name branching). DeepSeek models hosted on
 other providers (Fireworks/OpenRouter/Ollama-Cloud) still use Chat Completions via
@@ -49,7 +49,7 @@ from .models import GenerationParams
 from .responses_common import ResponsesProviderBase
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
-DEFAULT_MODEL = "deepseek-v4-flash"
+DEFAULT_MODEL = "deepseek-flash"
 
 
 class DeepSeekResponsesProvider(ResponsesProviderBase):

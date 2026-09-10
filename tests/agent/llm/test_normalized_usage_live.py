@@ -66,9 +66,9 @@ def _provider_models() -> list[tuple[str, str]]:
         else:
             model = default_model_for_provider(ModelProvider(provider_value))
         pairs.append((provider_value, model))
-    # The one model-level dispatch split: deepseek-v4-flash speaks the Responses
+    # The one model-level dispatch split: deepseek-flash speaks the Responses
     # API while the rest of the deepseek catalog stays on Chat Completions.
-    pairs.append((ModelProvider.DEEPSEEK.value, "deepseek-v4-flash"))
+    pairs.append((ModelProvider.DEEPSEEK.value, "deepseek-flash"))
     return pairs
 
 

@@ -70,10 +70,8 @@ MODEL_LABELS: dict[str, str] = {
     "kimi-for-coding": "Kimi for Coding",
     "kimi-for-coding-highspeed": "Kimi for Coding (HighSpeed)",
     # DeepSeek
-    "deepseek-v4.1-flash-expires-on-0910": "DeepSeek V4.1 Flash (Preview, expires Sep 10)",
+    "deepseek-flash": "DeepSeek V4.1 Flash",
     "deepseek-v4-pro": "DeepSeek V4 Pro",
-    "deepseek-v4-flash": "DeepSeek V4 Flash",
-    "deepseek-v4-flash-vision-exp": "DeepSeek V4 Flash Vision (Exp)",
     # Z.AI (GLM Coding Plan)
     "glm-5.3": "GLM-5.3",
     "glm-5.3-flash": "GLM-5.3 Flash",
@@ -164,7 +162,7 @@ MODEL_LABELS: dict[str, str] = {
 # "available set is everything, default pick is curated" split.
 PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     ModelProvider.MOONSHOT: "kimi-k3",
-    ModelProvider.DEEPSEEK: "deepseek-v4-pro",
+    ModelProvider.DEEPSEEK: "deepseek-flash",
     ModelProvider.ZAI: "glm-5.3",
     ModelProvider.KIMI_CODING: "kimi-for-coding",
     ModelProvider.ANTHROPIC: "claude-opus-5",
@@ -189,7 +187,7 @@ PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
 UI_DEFAULT_PROVIDER = ModelProvider.MOONSHOT.value
 UI_DEFAULT_MODEL = "kimi-k3"
 MOONSHOT_K26_MODEL = "kimi-k2.6"
-DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-pro"
+DEEPSEEK_DEFAULT_MODEL = "deepseek-flash"
 
 
 @dataclass(frozen=True)

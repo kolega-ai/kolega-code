@@ -116,7 +116,7 @@ async def test_textual_app_cancellation_is_visible_in_chat(tmp_path: Path, monke
             ),
             ModelProvider.DEEPSEEK,
             DEEPSEEK_DEFAULT_MODEL,
-            "DeepSeek/deepseek-v4-pro could not run this request",
+            f"DeepSeek/{DEEPSEEK_DEFAULT_MODEL} could not run this request",
             id="billing",
         ),
         pytest.param(
