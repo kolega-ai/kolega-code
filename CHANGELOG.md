@@ -6,13 +6,7 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
-### Changed
-
-- **DeepSeek now defaults to V4.1 Flash.** `deepseek-flash` is the default model
-  (and first entry in the picker) for the DeepSeek provider, matching DeepSeek's
-  own guidance that V4.1 Flash supersedes V4 Pro on performance, cost, speed, and
-  total time. `deepseek-v4-pro` remains selectable; DeepSeek routes it to V4.1
-  Flash from September 14, 2026.
+## 0.38.0 - 2026-09-11
 
 ### Added
 
@@ -23,12 +17,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   393,216-token API output ceiling. DeepSeek's Responses API ignores the built-in
   `web_search` tool, so this model does not advertise hosted web search.
 
-### Fixed
+### Changed
 
-- **Hosted web search no longer offered where DeepSeek stopped serving it.**
-  DeepSeek silently removed server-side `web_search` with the V4.1 release, so the
-  flash models' `/web` toggle was advertising a capability that no longer exists.
-  `deepseek-v4-pro` still executes hosted search and keeps it.
+- **DeepSeek now defaults to V4.1 Flash.** `deepseek-flash` is the default model
+  (and first entry in the picker) for the DeepSeek provider, matching DeepSeek's
+  own guidance that V4.1 Flash supersedes V4 Pro on performance, cost, speed, and
+  total time. `deepseek-v4-pro` remains selectable; DeepSeek routes it to V4.1
+  Flash from September 14, 2026.
 
 ### Removed
 
@@ -45,6 +40,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   (`deepseek-flash`); naming it explicitly (`--model`, `KOLEGA_CODE_MODEL`) fails
   with a "not available for" error. Switch to `deepseek-flash`, which DeepSeek
   serves the same model under.
+
+### Fixed
+
+- **Hosted web search no longer offered where DeepSeek stopped serving it.**
+  DeepSeek silently removed server-side `web_search` with the V4.1 release, so the
+  flash models' `/web` toggle was advertising a capability that no longer exists.
+  `deepseek-v4-pro` still executes hosted search and keeps it.
 
 ## 0.37.0 - 2026-09-09
 
