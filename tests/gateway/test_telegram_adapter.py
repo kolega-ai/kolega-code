@@ -8,13 +8,14 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from aiogram.types import Chat, Document, Message, PhotoSize, User, Voice
+from aiogram.types import Chat, Document, InaccessibleMessage, Message, PhotoSize, User, Voice
 from aiogram.enums import ChatType
 
-from kolega_code.gateway.adapters.base import ButtonOption
+from kolega_code.gateway.adapters.base import ButtonOption, InboundMessage
 from kolega_code.gateway.adapters.telegram import TelegramAdapter
 from kolega_code.gateway.adapters.telegram.adapter import (
     MAX_DOWNLOAD_BYTES,
+    MEDIA_UNSUPPORTED_REPLY,
     decode_callback,
     encode_callback,
     validate_bot_token,
@@ -38,6 +39,7 @@ def test_adapter_constructor_validates_token() -> None:
 
 def make_adapter() -> TelegramAdapter:
     adapter = TelegramAdapter(token="123:fake-bot-token-for-tests-only")
+    adapter.set_inbound_authorizer(lambda message: message.sender_id == "7")
     adapter._bot_id = "123"  # type: ignore[assignment] — set post-init for offline tests
     return adapter
 
@@ -125,6 +127,131 @@ def make_fake_bot() -> AsyncMock:
     return bot
 
 
+@pytest.mark.asyncio
+async def test_start_requires_authorizer_before_creating_bot(monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = TelegramAdapter(token="123:fake-bot-token-for-tests-only")
+    bot_constructor = MagicMock(side_effect=AssertionError("must not create a Telegram client"))
+    monkeypatch.setattr("kolega_code.gateway.adapters.telegram.adapter.Bot", bot_constructor)
+
+    with pytest.raises(RuntimeError, match="inbound authorizer"):
+        await adapter.start()
+
+    bot_constructor.assert_not_called()
+    assert adapter.health()["state"] == "stopped"
+    assert adapter._bot is None
+    assert adapter._dispatcher is None
+    assert adapter._poll_task is None
+
+
+@pytest.mark.asyncio
+async def test_start_with_explicit_policy_uses_only_fake_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = make_adapter()
+    bot = make_fake_bot()
+    bot.me.return_value = User(id=123, is_bot=True, first_name="Test Bot", username="test_bot")
+    monkeypatch.setattr("kolega_code.gateway.adapters.telegram.adapter.Bot", MagicMock(return_value=bot))
+    monkeypatch.setattr("kolega_code.gateway.adapters.telegram.adapter.Dispatcher", MagicMock())
+    supervisor = AsyncMock()
+    monkeypatch.setattr(adapter, "_poll_supervisor", supervisor)
+
+    await adapter.start()
+    try:
+        assert adapter.health() == {"state": "running", "bot_id": "123"}
+        bot.delete_webhook.assert_awaited_once_with(drop_pending_updates=True)
+    finally:
+        await adapter.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("media_kind", ["photo", "voice", "document", "oversize", "unsupported", "text"])
+@pytest.mark.parametrize("rejection", ["sender", "group", "missing_hook"])
+async def test_rejected_messages_queue_only_metadata_without_media_side_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, media_kind: str, rejection: str
+) -> None:
+    adapter = TelegramAdapter(token="123:fake-bot-token-for-tests-only", media_dir=tmp_path / "media")
+    adapter._bot_username = "test_bot"
+    if rejection == "sender":
+        adapter.set_inbound_authorizer(lambda message: message.sender_id == "8")
+    elif rejection == "group":
+        adapter.set_inbound_authorizer(lambda message: message.sender_id == "7" and not message.is_group)
+    messages = {
+        "photo": make_photo_message(caption="@test_bot private caption"),
+        "voice": make_voice_message(),
+        "document": make_document_message(file_name="private.txt"),
+        "oversize": make_document_message(file_size=MAX_DOWNLOAD_BYTES + 1),
+        "unsupported": make_message(None),
+        "text": make_message("/permissions auto"),
+    }
+    message = messages[media_kind].model_copy(
+        update={
+            "chat": Chat(id=-42, type=ChatType.SUPERGROUP),
+            "message_thread_id": 99,
+            "reply_to_message": make_message("private quote", user_id=123),
+        }
+    )
+    bot = make_fake_bot()
+    adapter._bot = bot
+    download_media = AsyncMock(side_effect=AssertionError("unauthorized media processing"))
+    monkeypatch.setattr(adapter, "_download_media", download_media)
+
+    await adapter._handle_message(message, bot)
+
+    inbound = adapter.inbound.get_nowait()
+    assert inbound.channel == "telegram"
+    assert inbound.sender_id == "7"
+    assert inbound.sender_name == "Test User"
+    assert inbound.chat_id == "-42"
+    assert inbound.message_id == "100"
+    assert inbound.is_group is True
+    assert inbound.topic_id == "99"
+    assert inbound.text == ""
+    assert inbound.reply_to is None
+    assert inbound.attachments == ()
+    download_media.assert_not_awaited()
+    bot.download.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+    assert not (tmp_path / "media").exists()
+
+
+@pytest.mark.asyncio
+async def test_missing_message_sender_is_not_a_synthetic_identity() -> None:
+    adapter = make_adapter()
+    message = make_photo_message().model_copy(update={"from_user": None})
+    bot = make_fake_bot()
+
+    await adapter._handle_message(message, bot)
+
+    inbound = adapter.inbound.get_nowait()
+    assert inbound.sender_id == ""
+    assert inbound.attachments == ()
+    bot.download.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_authorized_message_downloads_after_metadata_admission(tmp_path: Path) -> None:
+    adapter = make_adapter()
+    adapter._media_dir = tmp_path
+    bot = make_fake_bot()
+    adapter._bot = bot
+    checked: list[InboundMessage] = []
+
+    def authorize(message: InboundMessage) -> bool:
+        bot.download.assert_not_awaited()
+        assert message.attachments == ()
+        checked.append(message)
+        return message.sender_id == "7"
+
+    adapter.set_inbound_authorizer(authorize)
+    await adapter._handle_message(make_photo_message(caption="look"), bot)
+
+    inbound = adapter.inbound.get_nowait()
+    assert len(checked) == 1
+    assert inbound.text == "look"
+    assert len(inbound.attachments) == 1
+    assert inbound.attachments[0].kind == "image"
+    bot.download.assert_awaited_once()
+
+
 def test_handler_signatures_inject_the_bot_by_name() -> None:
     # aiogram injects the Bot instance by parameter NAME ("bot"), not
     # position — a renamed parameter silently breaks every update.
@@ -172,6 +299,127 @@ async def test_callback_handler_ignores_unknown_tokens() -> None:
     await adapter._handle_callback(query, bot)
     bot.answer_callback_query.assert_awaited_once()
     assert adapter.inbound.empty()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rejection",
+    [
+        "sender",
+        "wrong_chat",
+        "invalid_option",
+        "negative_option",
+        "malformed",
+        "missing_sender",
+        "missing_context",
+        "inaccessible_context",
+        "group",
+        "missing_hook",
+    ],
+)
+async def test_rejected_callback_preserves_prompt_for_authorized_tap(rejection: str) -> None:
+    adapter = TelegramAdapter(token="123:fake-bot-token-for-tests-only")
+    if rejection != "missing_hook":
+        adapter.set_inbound_authorizer(lambda message: message.sender_id == "7" and not message.is_group)
+    pending = {"chat_id": "42", "options": ["allow_once", "deny"]}
+    adapter._pending_buttons["tok"] = pending
+    bot = make_fake_bot()
+    query = AsyncMock()
+    query.data = "tok:0"
+    query.id = "9000"
+    query.from_user = User(id=7, is_bot=False, first_name="Tapper")
+    query.message = make_message("approve?", message_id=555)
+    if rejection == "sender":
+        query.from_user = User(id=8, is_bot=False, first_name="Outsider")
+    elif rejection == "wrong_chat":
+        query.message = make_message("approve?", chat_id=43)
+    elif rejection == "invalid_option":
+        query.data = "tok:2"
+    elif rejection == "negative_option":
+        query.data = "tok:-1"
+    elif rejection == "malformed":
+        query.data = "tok:not-an-index"
+    elif rejection == "missing_sender":
+        query.from_user = None
+    elif rejection == "missing_context":
+        query.message = None
+    elif rejection == "inaccessible_context":
+        query.message = InaccessibleMessage(chat=Chat(id=42, type=ChatType.PRIVATE), message_id=555, date=0)
+    elif rejection == "group":
+        query.message = make_message("approve?", chat_type=ChatType.SUPERGROUP)
+
+    await adapter._handle_callback(query, bot)
+
+    bot.answer_callback_query.assert_awaited_once()
+    bot.send_message.assert_not_awaited()
+    assert adapter.inbound.empty()
+    assert adapter._pending_buttons["tok"] is pending
+
+    adapter.set_inbound_authorizer(lambda message: message.sender_id == "7" and not message.is_group)
+    query.data = "tok:0"
+    query.from_user = User(id=7, is_bot=False, first_name="Tapper")
+    query.message = make_message("approve?", message_id=555)
+    await adapter._handle_callback(query, bot)
+    assert adapter.inbound.get_nowait().callback_option == "allow_once"
+    assert adapter._pending_buttons == {}
+
+
+@pytest.mark.asyncio
+async def test_group_callback_retains_topic_and_must_pass_sender_and_group_policy() -> None:
+    adapter = make_adapter()
+    allowed_groups: set[str] = set()
+    adapter.set_inbound_authorizer(
+        lambda message: (
+            message.sender_id == "7"
+            and message.is_group
+            and message.chat_id in allowed_groups
+            and message.bot_mentioned
+        )
+    )
+    adapter._pending_buttons["tok"] = {"chat_id": "-42", "options": ["allow_once"]}
+    bot = make_fake_bot()
+    query = AsyncMock()
+    query.data = "tok:0"
+    query.id = "9000"
+    query.from_user = User(id=7, is_bot=False, first_name="Tapper")
+    query.message = make_message("approve?", chat_id=-42, thread_id=99, chat_type=ChatType.SUPERGROUP)
+
+    await adapter._handle_callback(query, bot)
+    assert adapter.inbound.empty()
+    assert "tok" in adapter._pending_buttons
+    allowed_groups.add("-42")
+    query.from_user = User(id=8, is_bot=False, first_name="Outsider")
+    await adapter._handle_callback(query, bot)
+    assert adapter.inbound.empty()
+    assert "tok" in adapter._pending_buttons
+    query.from_user = User(id=7, is_bot=False, first_name="Tapper")
+    await adapter._handle_callback(query, bot)
+
+    inbound = adapter.inbound.get_nowait()
+    assert inbound.chat_id == "-42"
+    assert inbound.topic_id == "99"
+    assert inbound.is_group is True
+    assert inbound.bot_mentioned is True
+    assert inbound.sender_id == "7"
+    assert inbound.callback_option == "allow_once"
+    assert adapter._pending_buttons == {}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_authorized_callbacks_only_publish_once() -> None:
+    adapter = make_adapter()
+    adapter._pending_buttons["tok"] = {"chat_id": "42", "options": ["allow_once"]}
+    bot = make_fake_bot()
+    query = AsyncMock()
+    query.data = "tok:0"
+    query.id = "9000"
+    query.from_user = User(id=7, is_bot=False, first_name="Tapper")
+    query.message = make_message("approve?")
+
+    await asyncio.gather(adapter._handle_callback(query, bot), adapter._handle_callback(query, bot))
+
+    assert adapter.inbound.qsize() == 1
+    assert adapter._pending_buttons == {}
 
 
 def test_send_buttons_requires_running_bot() -> None:
@@ -352,12 +600,15 @@ def test_to_inbound_uses_caption_when_no_text() -> None:
     assert inbound.text == "image caption"
 
 
-def test_media_without_caption_needs_notice() -> None:
+@pytest.mark.asyncio
+async def test_authorized_unsupported_media_without_caption_gets_notice() -> None:
     adapter = make_adapter()
-    assert adapter._handle_message is not None
-    # A media-only message (no text, no caption) must not produce an envelope.
-    message = make_message(None)
-    assert message.text is None and message.caption is None
+    bot = make_fake_bot()
+
+    await adapter._handle_message(make_message(None), bot)
+
+    bot.send_message.assert_awaited_once_with(chat_id=42, text=MEDIA_UNSUPPORTED_REPLY)
+    assert adapter.inbound.empty()
 
 
 def test_health_reports_stopped_before_start() -> None:

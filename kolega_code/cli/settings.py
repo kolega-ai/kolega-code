@@ -203,22 +203,21 @@ def _coerce_compression_threshold(raw: object) -> Optional[float]:
 def _coerce_gateway(raw: object) -> dict[str, Any]:
     """Normalize the stored ``gateway`` settings section.
 
-    Tolerant of partial/legacy data: unknown keys are dropped and invalid
-    values are discarded so a malformed section can never crash startup. The
-    gateway config loader applies built-in defaults for anything absent, so
-    this keeps only what was explicitly stored.
+    Access restrictions are validated before any tolerant coercion. Other
+    invalid/unknown knobs may still fall back to the gateway's defaults.
     """
-    if not isinstance(raw, dict):
-        return {}
+    # Local import avoids gateway.__init__ -> config -> settings at import time.
+    from kolega_code.gateway.access_settings import AccessSettingsError, validate_access_settings
+
+    try:
+        raw = validate_access_settings(raw)
+    except AccessSettingsError as exc:
+        raise SettingsStoreError(str(exc)) from exc
     result: dict[str, Any] = {}
     for key, value in raw.items():
         key = str(key)
-        if key in ("allowed_users", "group_ids"):
-            if isinstance(value, list) and all(isinstance(item, str) for item in value):
-                result[key] = [str(item) for item in value if str(item)]
-        elif key == "pairing_enabled":
-            if isinstance(value, bool):
-                result[key] = value
+        if key in ("allowed_users", "group_ids", "pairing_enabled"):
+            result[key] = value  # Already validated; never discard a restriction.
         elif key == "session_idle_ttl_seconds":
             if value is None or (isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0):
                 result[key] = value
@@ -359,7 +358,7 @@ class CliSettings:
             # Additive optional field; absent in older files -> None.
             telegram_bot_token=data.get("telegram_bot_token"),
             # Additive optional section; absent in older files -> empty mapping.
-            gateway=_coerce_gateway(data.get("gateway")),
+            gateway=_coerce_gateway(data.get("gateway", {})),
             # Additive optional field; absent in older files -> ask.
             permission_mode=_coerce_permission_mode(data.get("permission_mode")),
             # Additive optional field; absent in older files -> None (use default).
@@ -518,6 +517,12 @@ class SettingsStore:
             raise SettingsStoreError(f"Timed out locking the settings file: {self.path}") from exc
         try:
             merged = self._merged_document(settings)
+            # Concurrent, individually valid edits can combine an adapter change
+            # with identities valid only for the old adapter. Check the merged
+            # restrictions under the lock, before writing any fields or tokens.
+            # Do not replace the document with the coerced result: unknown
+            # fields from newer writers must continue to survive the merge.
+            _coerce_gateway(merged.get("gateway", {}))
             payload = json.dumps(merged, indent=2, sort_keys=True)
             write_private_text(self.path, payload + "\n")
         finally:

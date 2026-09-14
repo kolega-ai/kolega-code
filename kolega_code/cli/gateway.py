@@ -15,9 +15,11 @@ from typing import Any
 from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
 
+from kolega_code.cli.settings import SettingsStoreError
 from kolega_code.gateway.access import AccessControlError, GatewayAccessControl
+from kolega_code.gateway.access_settings import AccessSettingsError, parse_allowed_users, validate_access_settings
 from kolega_code.gateway.adapters import adapter_names, build_adapter
-from kolega_code.gateway.config import GatewayConfig, load_gateway_config
+from kolega_code.gateway.config import GatewayConfig, GatewayConfigError, load_gateway_config
 from kolega_code.gateway.daemon import (
     GatewayDaemon,
     GatewayDaemonError,
@@ -90,7 +92,8 @@ def add_gateway_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
         "--allow",
         default=None,
         metavar="USER_IDS",
-        help="Comma-separated Telegram user ids for the allowlist (empty allowlist = open to anyone).",
+        help="Comma-separated numeric Telegram user IDs. Omit to preserve configured IDs; "
+        'use --allow "" to clear them (paired approvals remain). No authorized users = locked unless pairing is enabled.',
     )
     setup.add_argument("--verify", action="store_true", help="Check the token against the Telegram API before saving.")
     setup.add_argument("--clear", action="store_true", help="Remove the saved token instead.")
@@ -101,7 +104,7 @@ def run_gateway(args: argparse.Namespace) -> int:
     """Dispatch ``kolega-code gateway ...`` (sync entry point for cli/main.py)."""
     try:
         return asyncio.run(_run_gateway(args))
-    except GatewayDaemonError as exc:
+    except (GatewayDaemonError, GatewayConfigError, SettingsStoreError, AccessSettingsError) as exc:
         print(f"gateway: {exc}", file=sys.stderr)
         return 1
 
@@ -133,7 +136,6 @@ async def _gateway_telegram(args: argparse.Namespace, config: GatewayConfig) -> 
     if args.clear:
         settings = settings_store.load()
         settings.telegram_bot_token = None
-        settings.gateway.pop("allowed_users", None)
         settings_store.save(settings)
         print("gateway: saved telegram bot token removed")
         return 0
@@ -154,6 +156,18 @@ async def _gateway_telegram(args: argparse.Namespace, config: GatewayConfig) -> 
     except ValueError as exc:
         print(f"gateway: {exc}", file=sys.stderr)
         return 1
+    allowed = args.allow
+    if allowed is None and sys.stdin.isatty() and not args.token:
+        allowed = (
+            input("Your numeric Telegram user ID (blank keeps existing IDs; none configured/paired = locked): ").strip()
+            or None
+        )
+    settings = settings_store.load()
+    candidate = {**settings.gateway, "adapter": "telegram"}
+    if allowed is not None:
+        candidate["allowed_users"] = parse_allowed_users(allowed)
+    # Validate all candidate restrictions before verification or token mutation.
+    candidate = validate_access_settings(candidate, adapter="telegram")
     if args.verify:
         try:
             from aiogram import Bot
@@ -163,20 +177,36 @@ async def _gateway_telegram(args: argparse.Namespace, config: GatewayConfig) -> 
                 me = await bot.me()
             finally:
                 await bot.session.close()
-        except Exception as exc:  # noqa: BLE001 — verification failures must not save a bad token
-            print(f"gateway: could not verify the token against Telegram: {exc}", file=sys.stderr)
+        except Exception:  # noqa: BLE001 — transport errors can contain the token-bearing URL
+            print(
+                "gateway: could not verify the token against Telegram; check the BotFather token and connection.",
+                file=sys.stderr,
+            )
             return 1
         print(f"gateway: token verified — @{me.username}")
-    allowed = (args.allow or "").strip()
-    if not allowed and sys.stdin.isatty() and not args.token:
-        allowed = input("Your Telegram user id (for the allowlist; empty to skip): ").strip()
-    settings = settings_store.load()
     settings.telegram_bot_token = token
-    settings.gateway["adapter"] = "telegram"
-    if allowed:
-        settings.gateway["allowed_users"] = [part.strip() for part in allowed.split(",") if part.strip()]
+    settings.gateway = candidate
     settings_store.save(settings)
     print(f"gateway: telegram bot token saved (state: {config.state_dir})")
+    if allowed is not None and not candidate["allowed_users"]:
+        print("gateway: configured user IDs cleared; persisted pairing approvals were not revoked.")
+    access = GatewayAccessControl(
+        state_dir=config.state_dir,
+        allowed_users=tuple(candidate.get("allowed_users", [])),
+        pairing_enabled=candidate.get("pairing_enabled", False),
+    ).summary()
+    if not access["configured_users"] and not access["paired_users"]:
+        state = "pairing-only (local approval required)" if access["pairing_enabled"] else "locked"
+        print(
+            f"gateway: WARNING: no operators are authorized; saved access policy is {state}. "
+            'Configure --allow "123456789" or enable pairing in Settings → Gateway, '
+            "then review and approve the intended user's code locally.",
+            file=sys.stderr,
+        )
+    print(
+        "gateway: restart the gateway to apply configured access changes. Authorized users are trusted operators; "
+        "'ask' confirmations go to their chat, not a separate owner."
+    )
     return 0
 
 
@@ -258,7 +288,13 @@ def _gateway_pairing(args: argparse.Namespace, config: GatewayConfig) -> int:
             return 0
         for request in pending:
             who = request.sender_name or request.sender_id
-            print(f"gateway: {request.code}  {who}  ({request.channel} chat {request.chat_id})")
+            print(
+                f"gateway: {request.code}  {who}  "
+                f"(sender ID {request.sender_id}; {request.channel} chat {request.chat_id})"
+            )
+        print(
+            "gateway: approve only a code confirmed with the intended person; display names are not proof of identity."
+        )
         return 0
     try:
         sender_id = access.approve(args.code)
@@ -285,8 +321,11 @@ def _gateway_status(config: GatewayConfig) -> int:
                 f"  errors: {payload.get('recent_errors')}\n"
                 f"  since: {started} (heartbeat {heartbeat_age:.0f}s ago)"
             )
+            _print_access_summary(payload.get("access"))
             return 0
-        print(f"gateway: not responding (status file is {heartbeat_age:.0f}s stale)")
+        age_text = f"{heartbeat_age:.0f}s stale" if heartbeat_age is not None else "missing a valid heartbeat time"
+        print(f"gateway: not responding (status file is {age_text})")
+        _print_access_summary(None)
         return 1
     if payload is not None:
         # A heartbeat from a process that no longer exists (e.g. SIGKILLed).
@@ -302,11 +341,32 @@ def _gateway_status(config: GatewayConfig) -> int:
         if pid_path.exists():
             pid = f" (pid {pid_path.read_text(encoding='utf-8').strip()})"
         print(f"gateway: running{pid} (state: {config.state_dir})")
+        _print_access_summary(None)
         return 0
     lock.release()
     print(f"gateway: not running (state: {config.state_dir})")
     _print_service_state(config)
     return 0
+
+
+def _print_access_summary(access: object) -> None:
+    """Display only a complete enforced-policy snapshot, never current settings."""
+    if (
+        not isinstance(access, dict)
+        or access.get("policy") not in ("locked", "pairing-only", "restricted", "local-echo")
+        or type(access.get("configured_users")) is not int
+        or access["configured_users"] < 0
+        or type(access.get("paired_users")) is not int
+        or access["paired_users"] < 0
+        or not isinstance(access.get("pairing_enabled"), bool)
+    ):
+        print("  access policy unknown; restart/update to verify")
+        return
+    pairing = "enabled" if access["pairing_enabled"] else "disabled"
+    print(
+        f"  access: {access['policy']} "
+        f"(configured users: {access['configured_users']}, paired users: {access['paired_users']}, pairing: {pairing})"
+    )
 
 
 def _print_service_state(config: GatewayConfig) -> None:
@@ -390,6 +450,7 @@ async def _gateway_run(config: GatewayConfig, args: argparse.Namespace) -> int:
     try:
         await daemon.start()
         print(f"gateway: {config.adapter} adapter running (project: {config.project_path}, state: {config.state_dir})")
+        _print_access_summary(daemon.status().access)
         await stop.wait()
     finally:
         try:

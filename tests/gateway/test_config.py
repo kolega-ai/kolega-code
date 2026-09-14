@@ -1,5 +1,6 @@
 """GatewayConfig resolution: settings.json storage, defaults, and precedence."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from kolega_code.gateway.config import (
     DEFAULT_EDIT_THROTTLE_SECONDS,
     DEFAULT_PAIRING_TTL_SECONDS,
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    GatewayConfigError,
     default_gateway_project,
     load_gateway_config,
 )
@@ -158,13 +160,12 @@ def test_state_dir_precedence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert load_gateway_config(state_dir=Path("/param/state")).state_dir == Path("/param/state").resolve()
 
 
-def test_corrupt_settings_fall_back_to_defaults(tmp_path: Path) -> None:
+def test_corrupt_settings_raise_instead_of_falling_back(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir(parents=True)
     (state_dir / "settings.json").write_text("{not valid json", encoding="utf-8")
-    config = load_gateway_config(state_dir=state_dir)
-    assert config.adapter == "echo"
-    assert config.telegram_token is None
+    with pytest.raises(GatewayConfigError, match="not valid JSON"):
+        load_gateway_config(state_dir=state_dir)
 
 
 def test_invalid_stored_values_are_dropped(tmp_path: Path) -> None:
@@ -174,8 +175,6 @@ def test_invalid_stored_values_are_dropped(tmp_path: Path) -> None:
             "adapter": "telegram",
             "permission_mode": "bogus",
             "max_sessions": -5,
-            "pairing_enabled": "not-a-bool",
-            "allowed_users": ["111", 222],  # non-string entry invalidates the list
             "unknown_key": "dropped",
         },
     )
@@ -185,6 +184,35 @@ def test_invalid_stored_values_are_dropped(tmp_path: Path) -> None:
     assert config.max_sessions == 50
     assert config.pairing_enabled is False
     assert config.allowed_users == ()
+
+
+@pytest.mark.parametrize(
+    ("gateway", "key"),
+    [
+        (None, "gateway"),
+        ([], "gateway"),
+        ("bad", "gateway"),
+        ({"allowed_users": ["111", 222]}, "gateway.allowed_users"),
+        ({"allowed_users": "111"}, "gateway.allowed_users"),
+        ({"allowed_users": [" "]}, "gateway.allowed_users"),
+        ({"pairing_enabled": "false"}, "gateway.pairing_enabled"),
+        ({"group_ids": [123]}, "gateway.group_ids"),
+        ({"adapter": "telegram", "allowed_users": ["@owner"]}, "gateway.allowed_users"),
+    ],
+)
+def test_malformed_access_configuration_never_falls_back(tmp_path: Path, gateway: object, key: str) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "settings.json").write_text(json.dumps({"schema_version": 3, "gateway": gateway}), encoding="utf-8")
+    with pytest.raises(GatewayConfigError, match=key):
+        load_gateway_config(state_dir=state_dir)
+
+
+def test_telegram_adapter_override_validates_generic_stored_ids(tmp_path: Path) -> None:
+    state_dir = save_settings(tmp_path, gateway={"adapter": "echo", "allowed_users": ["owner"]})
+    assert load_gateway_config(state_dir=state_dir).allowed_users == ("owner",)
+    with pytest.raises(GatewayConfigError, match="gateway.allowed_users"):
+        load_gateway_config(state_dir=state_dir, adapter="telegram")
 
 
 def test_idle_ttl_can_be_disabled_with_null(tmp_path: Path) -> None:

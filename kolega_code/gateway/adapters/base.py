@@ -33,7 +33,7 @@ from __future__ import annotations
 import abc
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 STREAMING_FINAL_ONLY = "final_only"
 STREAMING_EDIT_IN_PLACE = "edit_in_place"
@@ -144,6 +144,15 @@ class GatewayAdapter(abc.ABC):
 
     def __init__(self) -> None:
         self.inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
+        self._inbound_authorizer: Optional[Callable[[InboundMessage], bool]] = None
+
+    def set_inbound_authorizer(self, authorizer: Callable[[InboundMessage], bool]) -> None:
+        """Install the gateway's admission policy before starting the adapter."""
+        self._inbound_authorizer = authorizer
+
+    def is_inbound_allowed(self, message: InboundMessage) -> bool:
+        """Check admission before inbound side effects; absent policy denies."""
+        return self._inbound_authorizer is not None and self._inbound_authorizer(message)
 
     async def start(self) -> None:
         """Connect to the platform and begin publishing inbound messages."""

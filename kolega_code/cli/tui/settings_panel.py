@@ -32,6 +32,7 @@ from kolega_code.gateway.stt import (
     get_stt_provider_class,
     stt_provider_names,
 )
+from kolega_code.gateway.access_settings import AccessSettingsError, parse_allowed_users, validate_access_settings
 from kolega_code.llm.specs.custom_endpoints import (
     API_STYLES,
     CUSTOM_PROVIDER_PREFIX,
@@ -621,15 +622,8 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             project = self._settings_query_one("#gateway_project_input", Input).value.strip()
         except NoMatches:
             return
-        screen = getattr(self, "_settings_screen", None)
-        if screen is not None and getattr(screen, "pending_gateway_token_removal", False):
-            self.settings.telegram_bot_token = None
-        else:
-            typed_token = token_input.value.strip()
-            if typed_token:
-                self.settings.telegram_bot_token = typed_token
         gateway = dict(self.settings.gateway or {})
-        allowed = [part.strip() for part in allowed_input.value.split(",") if part.strip()]
+        allowed = parse_allowed_users(allowed_input.value)
         if allowed:
             gateway["allowed_users"] = allowed
         else:
@@ -641,6 +635,15 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             gateway["project"] = project
         else:
             gateway.pop("project", None)
+        gateway = validate_access_settings(gateway, adapter=adapter)
+        # Invalid access settings must not even mutate the candidate's token.
+        screen = getattr(self, "_settings_screen", None)
+        if screen is not None and getattr(screen, "pending_gateway_token_removal", False):
+            self.settings.telegram_bot_token = None
+        else:
+            typed_token = token_input.value.strip()
+            if typed_token:
+                self.settings.telegram_bot_token = typed_token
         self.settings.gateway = gateway
 
     def _draft_credential_settings(self) -> CliSettings:
@@ -2404,7 +2407,12 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._set_settings_status(error, "error")
             self._notify_user(error, severity="error")
             return
-        candidate, provider, _model, _effort = self._settings_candidate_from_ui()
+        try:
+            candidate, provider, _model, _effort = self._settings_candidate_from_ui()
+        except AccessSettingsError as exc:
+            self._set_settings_status(str(exc), "error")
+            self._notify_user(str(exc), severity="error")
+            return
 
         ok, error = await self._apply_settings_candidate(candidate, rebuild=True)
         if not ok:
