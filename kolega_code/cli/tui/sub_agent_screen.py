@@ -409,6 +409,8 @@ class SubAgentInspectorScreen(ModalScreen):
             if step.kind == "sub_agent_task":
                 continue
             label = step.tool_name or step.kind
+            if step.tool_subject:
+                label += f" {theme.g(Glyph.BULLET_SEP)} {step.tool_subject}"
             lines.append(f"[{step.kind}] {label}")
             # Fold any deferred stream deltas so a copy mid-stream isn't missing the tail.
             step.materialize()

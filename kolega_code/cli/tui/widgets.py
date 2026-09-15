@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Optional
 
+from rich.cells import cell_len
 from rich.markdown import Markdown as RichMarkdown
 from rich.segment import Segment
 from rich.style import Style
@@ -71,6 +72,7 @@ class ConversationEntryWidget(Static):
             len(self.entry.content),
             self.entry.complete,
             self.entry.tool_name,
+            self.entry.tool_subject,
             self.entry.tone,
             len(self.entry.full_content),
             repr(self.entry.edit_preview),
@@ -292,6 +294,8 @@ class ToolEntryWidget(Vertical):
         entry: ConversationEntry,
         title_factory: Callable[[ConversationEntry], str],
         preview_factory: Optional[Callable[[ConversationEntry], Any]] = None,
+        *,
+        title_for_width: Optional[Callable[[ConversationEntry, int], str]] = None,
     ) -> None:
         if entry.kind in {"tool_call", "tool_result", "tool_error"}:
             classes: Optional[str] = "agent-activity"
@@ -302,6 +306,7 @@ class ToolEntryWidget(Vertical):
         super().__init__(classes=classes)
         self.entry = entry
         self._title_factory = title_factory
+        self._title_for_width = title_for_width
         self._preview_factory = preview_factory
         self._collapsible: Optional[Collapsible] = None
         self._body: Optional[Static] = None
@@ -330,6 +335,31 @@ class ToolEntryWidget(Vertical):
     def on_mount(self) -> None:
         self.refresh_content()
 
+    def on_resize(self, event: events.Resize) -> None:
+        self._refresh_title()
+
+    def _refresh_title(self) -> None:
+        if self._collapsible is None:
+            return
+        if self._title_for_width is not None and self.content_size.width:
+            title_widget = self._collapsible.query_one(CollapsibleTitle)
+            # Use the parent's available width, not the auto-sized title's current
+            # width: the latter would prevent a shortened title growing on resize.
+            symbols = max(cell_len(title_widget.collapsed_symbol), cell_len(title_widget.expanded_symbol)) + 1
+            width = max(
+                0,
+                self.content_size.width
+                - self._collapsible.styles.gutter.width
+                - title_widget.styles.gutter.width
+                - symbols,
+            )
+            title = self._title_for_width(self.entry, width)
+        else:
+            title = self._title_factory(self.entry)
+        if title != self._title:
+            self._collapsible.title = title
+            self._title = title
+
     def on_collapsible_expanded(self, event: Collapsible.Expanded) -> None:
         # Thinking bodies are not updated while collapsed; sync on open.
         self.refresh_content()
@@ -342,10 +372,7 @@ class ToolEntryWidget(Vertical):
         # content once per flush (no-op for tool entries, which never stream here).
         self.entry.materialize()
 
-        title = self._title_factory(self.entry)
-        if title != self._title:
-            self._collapsible.title = title
-            self._title = title
+        self._refresh_title()
 
         body_content = self.entry.full_content or self.entry.content
         if self.entry.kind == "thinking":

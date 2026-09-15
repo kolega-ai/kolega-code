@@ -306,3 +306,146 @@ def test_javascript_fold_rejects_out_of_order_events(tmp_path: Path) -> None:
     payload.write_text(json.dumps(events), encoding="utf-8")
     result = subprocess.run(["node", str(harness), str(payload)], capture_output=True, text=True, timeout=60)
     assert result.stdout == "raised", "the JS fold must refuse a shuffled log like the Python one"
+
+
+def test_tool_subject_parity_at_every_prefix(tmp_path: Path) -> None:
+    events = [
+        _event(KnownEventType.CHAT_MESSAGE, 1, message_type="tool_call", tool_call_id="a", tool_subject="a.py"),
+        _event(KnownEventType.CHAT_MESSAGE, 2, message_type="tool_call", tool_call_id="b"),
+        _sub_agent(
+            _event(KnownEventType.CHAT_MESSAGE, 3, message_type="tool_call", tool_call_id="a", tool_subject="sub.py"),
+            dispatch_id="d1",
+        ),
+        _event(KnownEventType.TOOL_STREAMING_UPDATE, 4, tool_call_id="a", text="one", stream_mode="append"),
+        _event(
+            KnownEventType.TOOL_STREAMING_UPDATE,
+            5,
+            tool_call_id="b",
+            text="two",
+            stream_mode="replace",
+            tool_subject="b.py",
+        ),
+        _event(KnownEventType.CHAT_MESSAGE, 6, message_type="tool_call", tool_call_id="a", tool_subject="updated.py"),
+        _sub_agent(
+            _event(KnownEventType.TOOL_STREAMING_UPDATE, 7, tool_call_id="a", text="sub", tool_subject=""),
+            dispatch_id="d1",
+        ),
+        _event(KnownEventType.TOOL_STREAMING_UPDATE, 8, tool_call_id="a", tool_subject=None, is_complete=True),
+        _event(KnownEventType.CHAT_MESSAGE, 9, message_type="tool_result", tool_call_id="a"),
+        _event(
+            KnownEventType.CHAT_MESSAGE,
+            10,
+            message_type="tool_error",
+            tool_call_id="b",
+            tool_subject='<img src=x onerror="alert(1)">',
+        ),
+        _sub_agent(
+            _event(
+                KnownEventType.CHAT_MESSAGE, 11, message_type="tool_result", tool_call_id="a", tool_subject="done.py"
+            ),
+            dispatch_id="d1",
+        ),
+        _event(KnownEventType.CHAT_MESSAGE, 12, message_type="tool_result", tool_subject="standalone.py"),
+        _event(KnownEventType.CHAT_MESSAGE, 13, message_type="tool_error", tool_subject="failed.py"),
+        _event(KnownEventType.TOOL_STREAMING_UPDATE, 14, tool_call_id="stream", tool_subject="stream.py"),
+        _event(KnownEventType.TOOL_STREAMING_UPDATE, 15, tool_call_id="stream", tool_subject={"path": "invalid"}),
+        _event(KnownEventType.CHAT_MESSAGE, 16, message_type="tool_error", tool_call_id="stream"),
+        _event(KnownEventType.CHAT_MESSAGE, 17, message_type="tool_call", tool_call_id="legacy"),
+        _event(KnownEventType.CHAT_MESSAGE, 18, message_type="tool_result", tool_call_id="legacy"),
+    ]
+    for subject in (None, "", 42, False, [], {"path": "invalid"}):
+        events.append(
+            _event(KnownEventType.CHAT_MESSAGE, len(events) + 1, message_type="tool_call", tool_subject=subject)
+        )
+    serialized = [event.model_dump(mode="json") for event in events]
+    for cut in range(1, len(events) + 1):
+        assert _run_js_fold(serialized[:cut], tmp_path) == replay(events[:cut]).to_dict(), (
+            f"tool subject folds diverged after {cut} events"
+        )
+
+
+def test_player_tool_subject_is_literal_and_metadata_changes_repaint(tmp_path: Path) -> None:
+    """Exercise shipped renderer functions in Node; no browser or DOM package required."""
+    harness = tmp_path / "player-subject.mjs"
+    harness.write_text(
+        f"""
+import assert from "node:assert/strict";
+import {{ readFileSync }} from "node:fs";
+import {{ runInNewContext }} from "node:vm";
+import {{ emptyState, fold }} from {json.dumps(str(ASSET_DIR / "fold.js"))};
+
+// A minimal DOM surface for tool rows. Any HTML write is a test failure.
+class Element {{
+  constructor(tag) {{
+    this.tagName = tag;
+    this.children = [];
+    this.dataset = {{}};
+    this.attributes = {{}};
+    this.textContent = "";
+  }}
+  set innerHTML(value) {{ throw new Error("HTML writes are forbidden"); }}
+  insertAdjacentHTML() {{ throw new Error("HTML writes are forbidden"); }}
+  append(...nodes) {{ this.children.push(...nodes); }}
+  prepend(...nodes) {{ this.children.unshift(...nodes); }}
+  setAttribute(name, value) {{ this.attributes[name] = value; }}
+}}
+const document = {{
+  createElement: (tag) => new Element(tag),
+  createDocumentFragment: () => new Element("#fragment"),
+}};
+const original = readFileSync({json.dumps(str(ASSET_DIR / "player.js"))}, "utf8");
+assert.match(original, /^import .* from "\\.\\/fold\\.js";$/m);
+assert.match(original, /\\nmain\\(\\);\\s*$/);
+// Load the actual functions, but do not bootstrap network/UI event listeners.
+const source = original.replace(/^import .* from "\\.\\/fold\\.js";$/m, "")
+  .replace(/\\nmain\\(\\);\\s*$/, "");
+runInNewContext(source + `
+  const subjects = [
+    '<img src=x onerror="globalThis.compromised=true">',
+    '<a href="javascript:alert(1)">click</a>',
+    'https://example.test/path',
+  ];
+  for (const field of ["toolSubject", "tool_subject"]) {{
+    for (const subject of subjects) {{
+      for (const agent of [null, {{ key: "d1", name: "delegate" }}]) {{
+        const item = {{ kind: "tool", toolName: "read", status: "running", complete: true, text: "" }};
+        const row = {{ item, agent }};
+        const before = entrySnapshot(row);
+        assert.equal(entryChanged(before, row), false);
+        item[field] = subject;
+        assert.equal(entryChanged(before, row), true, "metadata alone must repaint");
+        const rendered = renderEntry(row);
+        const head = rendered.children[1].children[0].children[0];
+        assert.equal(head.children[0].textContent, "read");
+        assert.equal(head.children[1].tagName, "span");
+        assert.equal(head.children[1].className, "kc-tool-subject");
+        assert.equal(head.children[1].textContent, subject);
+        assert.equal(head.children[1].children.length, 0);
+        assert.equal(head.children[2].textContent, "running");
+        assert.equal(head.children[3].className, "kc-spinner");
+        assert.equal(entryChanged(entrySnapshot(row), row), false);
+        const snapshot = entrySnapshot(row);
+        item[field] = "updated.py";
+        assert.equal(entryChanged(snapshot, row), true);
+        assert.equal(renderToolBody(item).children[0].children[1].textContent, "updated.py");
+      }}
+    }}
+  }}
+  for (const status of ["running", "done", "failed"]) {{
+    const item = {{ kind: "tool", tool_name: "read", tool_subject: "app.py", status, text: "output" }};
+    const head = renderToolBody(item).children[0];
+    assert.equal(head.children[0].tagName, "button");
+    assert.equal(head.children[0].attributes["aria-expanded"], "false");
+    assert.equal(head.children[2].dataset.status, status);
+    assert.equal(head.children.length, status === "running" ? 4 : 3);
+  }}
+  const legacyHead = renderToolBody({{ toolName: "read", status: "done" }}).children[0];
+  assert.equal(legacyHead.children.length, 2);
+  assert.equal(legacyHead.children[1].className, "kc-tool-status");
+  assert.equal(globalThis.compromised, undefined);
+`, {{ document, emptyState, fold, assert }});
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(["node", str(harness)], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, f"player subject regression: {result.stderr}"

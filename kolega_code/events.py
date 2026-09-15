@@ -19,6 +19,8 @@ from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field
 
+from kolega_code.tool_subjects import sanitize_tool_subject
+
 #: Version of the AgentEvent wire format. Bumped when the envelope changes
 #: shape; consumers should treat unknown-but-newer envelopes as forward
 #: compatible so long as the fields they read are present.
@@ -256,6 +258,7 @@ class AgentEventEmitter:
         tool_description: Optional[str] = None,
         tool_call_id: Optional[str] = None,
         images: Optional[Sequence[Tuple[str, str]]] = None,
+        tool_subject: Optional[str] = None,
     ) -> None:
         """Send a chat_message event (responses, tool calls/results/errors).
 
@@ -274,6 +277,13 @@ class AgentEventEmitter:
         }
         if images:
             payload["images"] = [{"media_type": media_type, "data": data} for media_type, data in images]
+        # Display metadata is optional and must never prevent the original event.
+        try:
+            subject = sanitize_tool_subject(tool_subject)
+        except Exception:
+            subject = ""
+        if subject:
+            payload["tool_subject"] = subject
 
         await self.emit(
             AgentEvent(

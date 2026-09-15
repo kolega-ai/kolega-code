@@ -56,7 +56,14 @@ choice; the full editor remains available for every advanced setting.
   as `Queued` transcript entries. When the active turn finishes, they are sent
   automatically in FIFO order and become normal user messages.
 - **Tool results** — shown as collapsible blocks with a state indicator
-  (running / done / failed). Expand to see the full result.
+  (running / done / failed). A short file path, command, search query, or URL
+  identifies the subject: for example, `read · src/app.py · done`. Subjects
+  shorten to fit one line while keeping the state visible, including in the
+  sub-agent inspector and restored conversations. If no safe subject is
+  available, the row keeps its tool name and state. Expand to see the full result.
+  Subject text is plain, not a hyperlink; known credentials are redacted, and
+  URL credentials, query strings, and fragments are omitted. This sanitizes the
+  subject only, not the tool's full output.
 - **Sub-agents** — when the main agent dispatches a sub-agent, a live card tracks
   it inline: the agent name, elapsed time, tool count, token usage, what it's doing
   right now, and a tail of its latest output. Press `Ctrl+G` (or click the card) to

@@ -75,6 +75,7 @@ from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
 from .tools import ToolCollection, ToolExtension  # noqa: F401 - ToolCollection kept for downstream monkeypatching
 from kolega_code.tools import ToolError
+from kolega_code.tool_subjects import build_tool_subject, configured_tool_subject_secrets
 from .utils.commands import CommandProcessor
 
 if TYPE_CHECKING:
@@ -829,12 +830,14 @@ class BaseAgent(LogMixin):
             payload=delta.get("payload"),
         )
         tool_call_id = block.item_id or str(uuid.uuid4())
+        tool_subject = self._build_tool_subject(block.tool_label, block.action)
         await self.send_chat_message(
             message_type="tool_call",
             content=f"Calling {block.tool_label}: {block.label()}",
             is_streaming=False,
             tool_description=block.tool_label,
             tool_call_id=tool_call_id,
+            tool_subject=tool_subject,
         )
         await self.send_chat_message(
             message_type="tool_result",
@@ -842,6 +845,7 @@ class BaseAgent(LogMixin):
             is_streaming=False,
             tool_description=block.tool_label,
             tool_call_id=tool_call_id,
+            tool_subject=tool_subject,
         )
 
     def apply_goal(self, condition: Optional[str], prompt_extension: Optional["PromptExtension"] = None) -> None:
@@ -1396,9 +1400,24 @@ class BaseAgent(LogMixin):
     def current_provider_tool_call_id(self, value):
         self._current_provider_tool_call_id_var.set(value)
 
+    def _build_tool_subject(self, tool_name: str, tool_input: object) -> str:
+        """Best-effort display metadata, using only this agent's available credentials."""
+        try:
+            return build_tool_subject(
+                tool_name,
+                tool_input,
+                project_path=self.project_path,
+                secret_values=configured_tool_subject_secrets(self.config),
+            )
+        except Exception:
+            # No input/config/formatter failure should change tool execution.
+            # Deliberately do not log the exception: it could contain credentials.
+            return ""
+
     async def execute_single_tool(self, tool_use_block: ToolCall) -> ToolResult:
         """Execute a single tool and return its result with metadata"""
         tool_name = tool_use_block.name
+        tool_subject = self._build_tool_subject(tool_name, tool_use_block.input)
         inputs = (
             {"input": tool_use_block.input}
             if tool_use_block.input_kind == "freeform" and isinstance(tool_use_block.input, str)
@@ -1429,6 +1448,7 @@ class BaseAgent(LogMixin):
                     is_streaming=False,
                     tool_description=tool_name,
                     tool_call_id=tool_execution_id,
+                    tool_subject=tool_subject,
                 )
                 return ToolResult(
                     tool_use_id=provider_tool_call_id,
@@ -1465,6 +1485,7 @@ class BaseAgent(LogMixin):
                         is_streaming=False,
                         tool_description=tool_name,
                         tool_call_id=tool_execution_id,
+                        tool_subject=tool_subject,
                     )
                     return ToolResult(
                         tool_use_id=provider_tool_call_id,
@@ -1484,6 +1505,7 @@ class BaseAgent(LogMixin):
                         is_streaming=False,
                         tool_description=tool_name,
                         tool_call_id=tool_execution_id,
+                        tool_subject=tool_subject,
                     )
                     return ToolResult(
                         tool_use_id=provider_tool_call_id,
@@ -1501,9 +1523,12 @@ class BaseAgent(LogMixin):
                 target=tool_name,
             )
             if pre.blocked:
-                return await self._blocked_tool_result(tool_name, provider_tool_call_id, tool_execution_id, pre.reason)
+                return await self._blocked_tool_result(
+                    tool_name, provider_tool_call_id, tool_execution_id, pre.reason, tool_subject=tool_subject
+                )
             if pre.updated_input is not None:
                 inputs = pre.updated_input
+                tool_subject = self._build_tool_subject(tool_name, inputs)
 
             # Send tool_call message to indicate we're starting execution
             if not all(
@@ -1518,6 +1543,7 @@ class BaseAgent(LogMixin):
                     is_streaming=False,
                     tool_description=tool_name,
                     tool_call_id=tool_execution_id,
+                    tool_subject=tool_subject,
                 )
 
             output = await registry.call(tool_name, **inputs)
@@ -1550,6 +1576,7 @@ class BaseAgent(LogMixin):
                 tool_description=tool_name,
                 tool_call_id=tool_execution_id,
                 images=images,
+                tool_subject=tool_subject,
             )
 
             return ToolResult(
@@ -1572,6 +1599,7 @@ class BaseAgent(LogMixin):
                 is_streaming=False,
                 tool_description=tool_name,
                 tool_call_id=tool_execution_id,
+                tool_subject=tool_subject,
             )
 
             return ToolResult(
@@ -1593,6 +1621,7 @@ class BaseAgent(LogMixin):
                 is_streaming=False,
                 tool_description=tool_name,
                 tool_call_id=tool_execution_id,
+                tool_subject=tool_subject,
             )
 
             return ToolResult(
@@ -1641,6 +1670,7 @@ class BaseAgent(LogMixin):
                         is_streaming=False,
                         tool_description=block.name,
                         tool_call_id=execution_id,
+                        tool_subject=self._build_tool_subject(block.name, block.input),
                     )
                     results.append(
                         ToolResult(
@@ -1862,7 +1892,13 @@ class BaseAgent(LogMixin):
         return output if isinstance(output, str) else str(output)
 
     async def _blocked_tool_result(
-        self, tool_name: str, provider_tool_call_id: str, tool_execution_id: str, reason: str
+        self,
+        tool_name: str,
+        provider_tool_call_id: str,
+        tool_execution_id: str,
+        reason: str,
+        *,
+        tool_subject: Optional[str] = None,
     ) -> ToolResult:
         """Build the is_error ToolResult a blocked tool produces — identical to the
         permission-deny path so the model and UI handle a hook block the same way."""
@@ -1876,6 +1912,7 @@ class BaseAgent(LogMixin):
             is_streaming=False,
             tool_description=tool_name,
             tool_call_id=tool_execution_id,
+            tool_subject=tool_subject,
         )
         return ToolResult(
             tool_use_id=provider_tool_call_id,
@@ -1935,6 +1972,8 @@ class BaseAgent(LogMixin):
         tool_description=None,
         tool_call_id=None,
         images: Optional[Sequence[Tuple[str, str]]] = None,
+        *,
+        tool_subject: Optional[str] = None,
     ) -> None:
         """
         Send a message to the chat interface.
@@ -1945,6 +1984,8 @@ class BaseAgent(LogMixin):
             images: ``(media_type, base64_data)`` pairs a tool produced, so a
                 frontend can show the picture rather than a description of one
         """
+        # Preserve the old emitter call shape for callers without metadata.
+        subject_kwargs = {"tool_subject": tool_subject} if tool_subject else {}
         await self.emitter.chat(
             message_type,
             content,
@@ -1952,6 +1993,7 @@ class BaseAgent(LogMixin):
             tool_description=tool_description,
             tool_call_id=tool_call_id,
             images=images,
+            **subject_kwargs,
         )
 
     @staticmethod
@@ -2109,6 +2151,7 @@ class BaseAgent(LogMixin):
                 is_streaming=False,
                 tool_description=tool_name,
                 tool_call_id=tool_execution_id,
+                tool_subject=self._build_tool_subject(tool_name, tool_call_delta.get("input")),
             )
 
     def should_stop_after_tools(self) -> bool:

@@ -675,6 +675,7 @@ function entrySnapshot(row) {
     complete: item.complete,
     status: item.status,
     toolName: item.tool_name || item.toolName,
+    toolSubject: item.tool_subject || item.toolSubject,
     artifacts: item.artifacts,
     preview: item.editPreview || item.edit_preview,
   };
@@ -698,6 +699,7 @@ function entryChanged(previous, row) {
     previous.complete !== item.complete ||
     previous.status !== item.status ||
     previous.toolName !== (item.tool_name || item.toolName) ||
+    previous.toolSubject !== (item.tool_subject || item.toolSubject) ||
     previous.artifacts !== item.artifacts ||
     previous.preview !== (item.editPreview || item.edit_preview)
   );
@@ -947,6 +949,15 @@ function renderToolBody(item) {
     toggle.prepend(caret);
   }
   head.append(toggle);
+
+  const toolSubject = item.tool_subject || item.toolSubject;
+  if (typeof toolSubject === "string" && toolSubject) {
+    head.className += " has-subject";
+    const subject = document.createElement("span");
+    subject.className = "kc-tool-subject";
+    subject.textContent = toolSubject;
+    head.append(subject);
+  }
 
   const status = document.createElement("span");
   status.className = "kc-tool-status";

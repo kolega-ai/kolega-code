@@ -132,6 +132,102 @@ def test_tool_error_marks_failure() -> None:
     assert tool.status == "failed" and tool.text == "boom"
 
 
+@pytest.mark.parametrize("delegated", [False, True])
+@pytest.mark.parametrize("message_type,status", [("tool_result", "done"), ("tool_error", "failed")])
+def test_tool_subject_survives_streaming_and_completion(delegated: bool, message_type: str, status: str) -> None:
+    events = [
+        _event(
+            KnownEventType.CHAT_MESSAGE,
+            1,
+            message_type="tool_call",
+            tool_call_id="c",
+            tool_description="read",
+            tool_subject="src/app.py",
+        ),
+        _event(KnownEventType.TOOL_STREAMING_UPDATE, 2, tool_call_id="c", text="one", stream_mode="append"),
+        _event(KnownEventType.TOOL_STREAMING_UPDATE, 3, tool_call_id="c", text="two", stream_mode="replace"),
+        _event(KnownEventType.CHAT_MESSAGE, 4, tool_call_id="c", message_type=message_type, text="finished"),
+    ]
+    if delegated:
+        events = [_delegated(event) for event in events]
+    state = PresentationState()
+    for event in events:
+        fold(state, event)
+        items = state.sub_agents["d1"].steps if delegated else state.conversation
+        assert len(items) == 1
+        assert items[0].tool_subject == "src/app.py"
+    assert items[0].status == status
+    assert items[0].text == "finished"
+    encoded = state.to_dict()
+    serialized = encoded["sub_agents"]["d1"]["steps"] if delegated else encoded["conversation"]
+    assert serialized[0]["tool_subject"] == "src/app.py"
+
+
+@pytest.mark.parametrize("subject", [None, "", 42, False, [], {"path": "not a display string"}])
+def test_invalid_tool_subject_does_not_clear_or_stringify(subject: object) -> None:
+    state = replay(
+        [
+            _event(
+                KnownEventType.CHAT_MESSAGE,
+                1,
+                message_type="tool_call",
+                tool_call_id="c",
+                tool_subject="original.py",
+            ),
+            _event(KnownEventType.TOOL_STREAMING_UPDATE, 2, tool_call_id="c", tool_subject=subject),
+            _event(KnownEventType.CHAT_MESSAGE, 3, message_type="tool_result", tool_call_id="c", tool_subject=subject),
+            _event(KnownEventType.CHAT_MESSAGE, 4, message_type="tool_call", tool_subject=subject),
+        ]
+    )
+    assert state.conversation[0].tool_subject == "original.py"
+    assert state.conversation[1].tool_subject is None
+    assert "tool_subject" not in state.to_dict()["conversation"][1]
+
+
+@pytest.mark.parametrize(
+    "event_type,message_type",
+    [
+        (KnownEventType.CHAT_MESSAGE, "tool_call"),
+        (KnownEventType.CHAT_MESSAGE, "tool_result"),
+        (KnownEventType.CHAT_MESSAGE, "tool_error"),
+        (KnownEventType.TOOL_STREAMING_UPDATE, ""),
+    ],
+)
+def test_tool_subject_can_arrive_without_a_call(event_type: str, message_type: str) -> None:
+    state = replay(
+        [_event(event_type, 1, message_type=message_type, tool_call_id="c", tool_subject="src/standalone.py")]
+    )
+    assert state.conversation[0].tool_subject == "src/standalone.py"
+
+
+def test_tool_subject_updates_are_independent_for_parallel_calls_and_agents() -> None:
+    events = [
+        _event(KnownEventType.CHAT_MESSAGE, 1, message_type="tool_call", tool_call_id="a", tool_subject="a.py"),
+        _event(KnownEventType.CHAT_MESSAGE, 2, message_type="tool_call", tool_call_id="b", tool_subject="b.py"),
+        _delegated(
+            _event(KnownEventType.CHAT_MESSAGE, 3, message_type="tool_call", tool_call_id="a", tool_subject="sub.py")
+        ),
+        _event(KnownEventType.TOOL_STREAMING_UPDATE, 4, tool_call_id="b", tool_subject="new-b.py"),
+        _delegated(
+            _event(KnownEventType.CHAT_MESSAGE, 5, message_type="tool_result", tool_call_id="a", tool_subject="done.py")
+        ),
+        _event(KnownEventType.CHAT_MESSAGE, 6, message_type="tool_error", tool_call_id="a"),
+        _event(KnownEventType.CHAT_MESSAGE, 7, message_type="tool_result", tool_call_id="b"),
+    ]
+    state = replay(events)
+    assert [(item.tool_subject, item.status) for item in state.conversation] == [
+        ("a.py", "failed"),
+        ("new-b.py", "done"),
+    ]
+    assert state.sub_agents["d1"].steps[0].tool_subject == "done.py"
+
+
+def test_legacy_tool_items_omit_subject_in_serialized_state() -> None:
+    state = replay(_session_events())
+    assert all(item.tool_subject is None for item in state.conversation)
+    assert all("tool_subject" not in item for item in state.to_dict()["conversation"])
+
+
 def test_sub_agent_activity_is_routed_away_from_the_main_transcript() -> None:
     event = _event(KnownEventType.ASSISTANT_DELTA, 1, uuid="s", text="delegated work", complete=True)
     event.sub_agent_info = {"dispatch_id": "d1", "agent_name": "investigator", "task": "find it"}
