@@ -21,6 +21,7 @@ import asyncio
 import logging
 import re
 import secrets
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
@@ -137,6 +138,8 @@ class TelegramAdapter(GatewayAdapter):
     # -- Lifecycle ---------------------------------------------------------
 
     async def start(self) -> None:
+        if self._inbound_authorizer is None:
+            raise RuntimeError("telegram adapter requires an inbound authorizer before startup")
         session = None
         if self._proxy:
             from aiogram.client.session.aiohttp import AiohttpSession
@@ -215,13 +218,17 @@ class TelegramAdapter(GatewayAdapter):
     # -- Inbound -----------------------------------------------------------
 
     async def _handle_message(self, message: TelegramMessage, bot: Bot) -> None:
+        inbound = self._to_inbound(message)
+        if not self.is_inbound_allowed(inbound):
+            # Preserve only routing/admission metadata for daemon drop/pairing.
+            # Unknown senders must not trigger downloads or media notices.
+            await self.inbound.put(replace(inbound, text="", reply_to=None))
+            return
         if message.text is None and message.caption is None and not self._media_kinds(message):
             await self._media_notice(message, bot)
             return
         attachments = await self._download_media(message, bot)
-        inbound = self._to_inbound(message, attachments)
-        if inbound is not None:
-            await self.inbound.put(inbound)
+        await self.inbound.put(replace(inbound, attachments=attachments))
 
     def _media_kinds(self, message: TelegramMessage) -> list[str]:
         """Kinds the gateway can consume for this message: image/voice/document."""
@@ -288,7 +295,7 @@ class TelegramAdapter(GatewayAdapter):
         self,
         message: TelegramMessage,
         attachments: tuple[Attachment, ...] = (),
-    ) -> Optional[InboundMessage]:
+    ) -> InboundMessage:
         sender = message.from_user
         reply_to = None
         if message.reply_to_message is not None:
@@ -302,7 +309,7 @@ class TelegramAdapter(GatewayAdapter):
             channel=self.name,
             chat_id=str(message.chat.id),
             topic_id=str(message.message_thread_id) if message.message_thread_id else None,
-            sender_id=str(sender.id) if sender else "unknown",
+            sender_id=str(sender.id) if sender else "",
             sender_name=sender.full_name if sender else "",
             message_id=str(message.message_id),
             text=message.text or message.caption or "",
@@ -339,34 +346,48 @@ class TelegramAdapter(GatewayAdapter):
 
     async def _handle_callback(self, query: CallbackQuery, bot: Bot) -> None:
         """Turn an inline-button tap into an inbound envelope with the token."""
-        decoded = decode_callback(query.data or "")
-        token = decoded[0] if decoded else None
-        pending = self._pending_buttons.pop(token, None) if token else None
-        option_id = ""
-        if pending is not None and decoded is not None:
-            options = pending.get("options") or []
-            if decoded[1] < len(options):
-                option_id = str(options[decoded[1]])
         try:
             await bot.answer_callback_query(query.id)
         except Exception:  # noqa: BLE001 — acks are cosmetic
             logger.debug("telegram: callback ack failed", exc_info=True)
-        if pending is None or not option_id or token is None:
+        decoded = decode_callback(query.data or "")
+        if decoded is None:
+            return
+        token, index = decoded
+        pending = self._pending_buttons.get(token)
+        if pending is None:
             # Unknown/expired token or stale button: swallow the tap.
+            return
+        options = pending.get("options") or []
+        if index >= len(options) or not options[index]:
             return
         message = query.message
         sender = query.from_user
-        await self.inbound.put(
-            InboundMessage(
-                channel=self.name,
-                chat_id=str(message.chat.id) if message is not None else str(pending.get("chat_id") or ""),
-                sender_id=str(sender.id) if sender else "unknown",
-                sender_name=sender.full_name if sender else "",
-                message_id=f"cb-{query.id}",
-                callback_token=token,
-                callback_option=option_id,
-            )
+        # InaccessibleMessage and inline callbacks lack reliable origin context.
+        # Never substitute the pending chat for missing Telegram metadata.
+        if not isinstance(message, TelegramMessage) or sender is None or not sender.id:
+            return
+        if str(message.chat.id) != pending.get("chat_id"):
+            return
+        inbound = InboundMessage(
+            channel=self.name,
+            chat_id=str(message.chat.id),
+            topic_id=str(message.message_thread_id) if message.message_thread_id else None,
+            sender_id=str(sender.id),
+            sender_name=sender.full_name,
+            message_id=f"cb-{query.id}",
+            callback_token=token,
+            callback_option=str(options[index]),
+            is_group=message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP),
+            # Tapping this bot's registered prompt counts as addressing it.
+            bot_mentioned=True,
         )
+        if not self.is_inbound_allowed(inbound):
+            return
+        # No await between lookup/admission and consumption: accepted taps are
+        # one-shot even when concurrent callback handlers are running.
+        self._pending_buttons.pop(token)
+        await self.inbound.put(inbound)
 
     # -- Outbound ----------------------------------------------------------
 

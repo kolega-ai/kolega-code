@@ -71,6 +71,27 @@ def test_capability_defaults_are_conservative() -> None:
     assert capabilities.streaming_mode == "final_only"
 
 
+def test_inbound_admission_denies_without_policy() -> None:
+    adapter = MinimalAdapter()
+    message = InboundMessage(channel="minimal", chat_id="c", sender_id="owner", message_id="m")
+    assert adapter.is_inbound_allowed(message) is False
+
+
+def test_inbound_admission_uses_installed_policy() -> None:
+    adapter = MinimalAdapter()
+    received: list[InboundMessage] = []
+
+    def authorize(message: InboundMessage) -> bool:
+        received.append(message)
+        return message.sender_id == "owner" and not message.is_group
+
+    adapter.set_inbound_authorizer(authorize)
+    for sender, is_group, allowed in (("owner", False, True), ("outsider", False, False), ("owner", True, False)):
+        message = InboundMessage(channel="minimal", chat_id="c", sender_id=sender, message_id="m", is_group=is_group)
+        assert adapter.is_inbound_allowed(message) is allowed
+        assert received[-1] is message
+
+
 @pytest.mark.asyncio
 async def test_unsupported_outbound_operations_raise() -> None:
     adapter = MinimalAdapter()

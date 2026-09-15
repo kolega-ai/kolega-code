@@ -135,8 +135,56 @@ def test_settings_store_round_trips_gateway_section(tmp_path: Path) -> None:
     del data["gateway"]
     assert CliSettings.from_dict(data).gateway == {}
 
-    # Invalid values are dropped on load, never crash startup.
-    assert CliSettings.from_dict({"schema_version": SETTINGS_SCHEMA_VERSION, "gateway": "not-a-dict"}).gateway == {}
+    # An explicitly malformed section must not silently erase restrictions.
+    with pytest.raises(SettingsStoreError, match="gateway: expected an object"):
+        CliSettings.from_dict({"schema_version": SETTINGS_SCHEMA_VERSION, "gateway": "not-a-dict"})
+
+
+@pytest.mark.parametrize(
+    ("gateway", "key"),
+    [
+        (None, "gateway"),
+        (False, "gateway"),
+        ([], "gateway"),
+        ({"allowed_users": "111"}, "gateway.allowed_users"),
+        ({"allowed_users": [111]}, "gateway.allowed_users"),
+        ({"allowed_users": ["111", True]}, "gateway.allowed_users"),
+        ({"allowed_users": [" \t"]}, "gateway.allowed_users"),
+        ({"group_ids": ["-1001", 1]}, "gateway.group_ids"),
+        ({"pairing_enabled": "false"}, "gateway.pairing_enabled"),
+        ({"pairing_enabled": 1}, "gateway.pairing_enabled"),
+        ({"adapter": "telegram", "allowed_users": ["@owner"]}, "gateway.allowed_users"),
+        ({"adapter": "telegram", "group_ids": ["*"]}, "gateway.group_ids"),
+    ],
+)
+def test_malformed_gateway_access_settings_raise_key_specific_errors(gateway: object, key: str) -> None:
+    with pytest.raises(SettingsStoreError, match=key) as error:
+        CliSettings.from_dict(
+            {"schema_version": SETTINGS_SCHEMA_VERSION, "gateway": gateway, "telegram_bot_token": "fake-secret"}
+        )
+    assert "fake-secret" not in str(error.value)
+    assert "settings.json" in str(error.value)
+
+
+def test_gateway_access_normalizes_strings_before_tolerant_coercion() -> None:
+    settings = CliSettings.from_dict(
+        {
+            "schema_version": SETTINGS_SCHEMA_VERSION,
+            "gateway": {
+                "adapter": " telegram ",
+                "allowed_users": [" 123 ", "123", "456"],
+                "group_ids": [" -1001 ", "-1001"],
+                "pairing_enabled": False,
+                "max_sessions": "invalid-nonsecurity-knob",
+            },
+        }
+    )
+    assert settings.gateway == {
+        "adapter": "telegram",
+        "allowed_users": ["123", "456"],
+        "group_ids": ["-1001"],
+        "pairing_enabled": False,
+    }
 
 
 def test_settings_save_keeps_fields_another_writer_changed(tmp_path: Path) -> None:
@@ -153,6 +201,31 @@ def test_settings_save_keeps_fields_another_writer_changed(tmp_path: Path) -> No
     loaded = store.load()
     assert loaded.active_theme == "Kolega Dark"
     assert loaded.telegram_bot_token == "123:fake-bot-token-for-tests-only"
+
+
+def test_settings_save_validates_merged_access_before_writing_any_field(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    store.save(CliSettings(gateway={"adapter": "echo", "allowed_users": ["123"]}))
+    stale = store.load()
+    other = store.load()
+    other.gateway["adapter"] = "telegram"
+    store.save(other)
+    before = store.path.read_bytes()
+
+    # Valid for stale's echo adapter, but invalid after merging the newer adapter.
+    stale.gateway["allowed_users"] = ["owner"]
+    stale.telegram_bot_token = "123:fake-replacement-token"
+    with pytest.raises(SettingsStoreError, match="gateway.allowed_users"):
+        store.save(stale)
+    assert store.path.read_bytes() == before
+    assert store.load().telegram_bot_token is None
+
+
+def test_settings_save_rejects_invalid_access_before_creating_settings_file(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    with pytest.raises(SettingsStoreError, match="gateway.allowed_users"):
+        store.save(CliSettings(gateway={"allowed_users": [123]}, telegram_bot_token="123:fake-token"))
+    assert not store.path.exists()
 
 
 def test_settings_save_applies_an_intentional_clear(tmp_path: Path) -> None:

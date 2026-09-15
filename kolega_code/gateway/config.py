@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 from kolega_code.cli.session_store import default_state_dir
 from kolega_code.cli.settings import CliSettings, SettingsStore, SettingsStoreError
+from kolega_code.gateway.access_settings import AccessSettingsError, validate_access_settings
 from kolega_code.gateway.stt import (
     DEFAULT_STT_PROVIDER,
     get_stt_provider_class,
@@ -62,8 +63,8 @@ class GatewayConfig:
     #: Group chats allowed to reach the gateway (empty = all groups,
     #: mention-gated). Group ids are Telegram chat ids.
     group_ids: tuple[str, ...] = ()
-    #: Whether unknown senders get a pairing code instead of silence. Only
-    #: meaningful when an allowlist is configured.
+    #: Whether unknown senders get a pairing code instead of silence, including
+    #: when there are no configured users (first-user onboarding).
     pairing_enabled: bool = False
     pairing_code_ttl_seconds: float = DEFAULT_PAIRING_TTL_SECONDS
     permission_mode: str = PermissionMode.ASK.value
@@ -88,23 +89,16 @@ class GatewayConfig:
 
 
 def _gateway_settings(state_dir: Path) -> tuple[dict[str, Any], Optional[CliSettings]]:
-    """The stored gateway section (and token), tolerating hand-edits.
-
-    A gateway daemon must not refuse to start because settings.json was
-    touched; missing pieces fall back to defaults and the adapter's own
-    startup error explains what to fix. The full ``CliSettings`` object rides
-    along because top-level STT settings and provider API keys live outside
-    the gateway section.
-    """
+    """Read settings without ever replacing unreadable restrictions with defaults."""
     try:
         settings = SettingsStore(root=state_dir).load()
         return {"_telegram_bot_token": settings.telegram_bot_token, **settings.gateway}, settings
     except SettingsStoreError as exc:
-        logger.warning("gateway: could not read settings (%s); using defaults", exc)
-        return {}, None
-    except Exception as exc:  # noqa: BLE001 — config lookup must be best-effort
-        logger.warning("gateway: could not read gateway settings (%s); using defaults", exc)
-        return {}, None
+        raise GatewayConfigError(f"Could not load gateway settings: {exc}") from exc
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        raise GatewayConfigError(
+            "Could not read settings.json; check that it is readable and contains a valid settings object."
+        ) from exc
 
 
 def _resolve_state_dir(param: Optional[Path]) -> Path:
@@ -161,6 +155,10 @@ def load_gateway_config(
     stored, settings = _gateway_settings(resolved_state_dir)
     adapter = adapter or stored.get("adapter") or DEFAULT_ADAPTER
     try:
+        stored = validate_access_settings(stored, adapter=adapter)
+    except AccessSettingsError as exc:
+        raise GatewayConfigError(str(exc)) from exc
+    try:
         permission_mode = normalize_permission_mode(
             stored.get("permission_mode"),
             default=PermissionMode.ASK,
@@ -172,9 +170,9 @@ def load_gateway_config(
         adapter=str(adapter),
         project_path=_resolve_project(project, stored),
         state_dir=resolved_state_dir,
-        allowed_users=tuple(str(item) for item in (stored.get("allowed_users") or ())),
-        group_ids=tuple(str(item) for item in (stored.get("group_ids") or ())),
-        pairing_enabled=bool(stored.get("pairing_enabled", False)),
+        allowed_users=tuple(stored.get("allowed_users", ())),
+        group_ids=tuple(stored.get("group_ids", ())),
+        pairing_enabled=stored.get("pairing_enabled", False),
         pairing_code_ttl_seconds=float(stored.get("pairing_code_ttl_seconds", DEFAULT_PAIRING_TTL_SECONDS)),
         permission_mode=permission_mode,
         request_timeout_seconds=float(stored.get("request_timeout_seconds", DEFAULT_REQUEST_TIMEOUT_SECONDS)),

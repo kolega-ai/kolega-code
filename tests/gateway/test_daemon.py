@@ -1,6 +1,8 @@
 """GatewayDaemon: lifecycle, lock, dedup, allowlist, and error isolation."""
 
 import asyncio
+import io
+import json
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -8,8 +10,9 @@ from typing import Any
 
 import pytest
 
-from kolega_code.gateway.access import GatewayAccessControl
+from kolega_code.gateway.access import ALLOWLIST_FILE_NAME, PAIRING_FILE_NAME, GatewayAccessControl
 from kolega_code.gateway.adapters.base import ChatRef, GatewayAdapter, InboundMessage
+from kolega_code.gateway.adapters.echo import EchoAdapter
 from kolega_code.gateway.config import GatewayConfig
 from kolega_code.gateway.daemon import ERROR_REPLY, GatewayDaemon, GatewayDaemonError
 
@@ -61,6 +64,7 @@ def make_config(tmp_path: Path, **overrides: Any) -> GatewayConfig:
             adapter="recording",
             project_path=tmp_path / "workspace",
             state_dir=tmp_path / "state",
+            allowed_users=("123",),
         ),
         **overrides,
     )
@@ -148,10 +152,11 @@ async def test_allowlist_blocks_unknown_senders_silently(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_pairing_replies_with_a_code_and_admission_works(tmp_path: Path) -> None:
+@pytest.mark.parametrize("allowed_users", [(), ("123",)])
+async def test_pairing_replies_with_a_code_and_admission_works(tmp_path: Path, allowed_users: tuple[str, ...]) -> None:
     adapter = RecordingAdapter()
     handler = RecordingHandler()
-    config = make_config(tmp_path, allowed_users=("123",), pairing_enabled=True)
+    config = make_config(tmp_path, allowed_users=allowed_users, pairing_enabled=True)
     daemon = GatewayDaemon(config, adapter, turn_handler=handler)
     await daemon.start()
     try:
@@ -160,6 +165,8 @@ async def test_pairing_replies_with_a_code_and_admission_works(tmp_path: Path) -
         reply = adapter.sent[0][1]
         assert "pairing approve" in reply
         code = reply.rsplit(" ", 1)[-1]
+        assert handler.handled == []
+        assert not daemon.is_message_allowed(inbound("before approval", sender_id="999"))
 
         # The operator approves the code from another process (the CLI path).
         access = GatewayAccessControl(
@@ -173,6 +180,8 @@ async def test_pairing_replies_with_a_code_and_admission_works(tmp_path: Path) -
         await adapter.inbound.put(inbound("hello again", message_id="m-2", sender_id="999"))
         assert await wait_for(lambda: len(handler.handled) == 1)
         assert handler.handled[0][1].sender_id == "999"
+        assert not daemon.is_message_allowed(inbound("other outsider", sender_id="555"))
+        assert daemon.status().access["paired_users"] == 1
     finally:
         await daemon.stop()
 
@@ -215,14 +224,19 @@ async def test_all_groups_allowed_when_no_group_list_configured(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_empty_allowlist_allows_everyone(tmp_path: Path) -> None:
+@pytest.mark.parametrize("pairing_enabled", [False, True])
+async def test_empty_allowlist_denies_everyone(tmp_path: Path, pairing_enabled: bool) -> None:
     adapter = RecordingAdapter()
     handler = RecordingHandler()
-    daemon = GatewayDaemon(make_config(tmp_path), adapter, turn_handler=handler)
+    config = make_config(tmp_path, allowed_users=(), pairing_enabled=pairing_enabled)
+    daemon = GatewayDaemon(config, adapter, turn_handler=handler)
     await daemon.start()
     try:
-        await adapter.inbound.put(inbound("anyone", message_id="m-1", sender_id="999"))
-        assert await wait_for(lambda: len(handler.handled) == 1)
+        # Await actual dispatch completion rather than timing out on an absence.
+        await daemon._handle_message(inbound("anyone", sender_id="999"))
+        assert handler.handled == []
+        assert len(adapter.sent) == int(pairing_enabled)
+        assert daemon.status().access["policy"] == ("pairing-only" if pairing_enabled else "locked")
     finally:
         await daemon.stop()
 
@@ -282,8 +296,6 @@ async def test_start_creates_workspace_and_state_dirs(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_heartbeat_writes_and_removes_the_status_file(tmp_path: Path) -> None:
-    import json
-
     daemon = GatewayDaemon(make_config(tmp_path), RecordingAdapter(), RecordingHandler())
     await daemon.start()
     try:
@@ -295,6 +307,115 @@ async def test_heartbeat_writes_and_removes_the_status_file(tmp_path: Path) -> N
         assert payload["active_sessions"] == 0
         assert isinstance(payload["heartbeat_at"], str)
         assert payload["pid"] == daemon.status().pid
+        assert payload["access"] == {
+            "policy": "restricted",
+            "configured_users": 1,
+            "paired_users": 0,
+            "pairing_enabled": False,
+        }
     finally:
         await daemon.stop()
     assert not (tmp_path / "state" / "gateway.status.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_rejected_callbacks_never_issue_pairing(tmp_path: Path) -> None:
+    adapter, handler = RecordingAdapter(), RecordingHandler()
+    daemon = GatewayDaemon(make_config(tmp_path, allowed_users=(), pairing_enabled=True), adapter, handler)
+    await daemon._handle_message(
+        replace(inbound("", sender_id="999"), callback_token="pending-token", callback_option="allow_once")
+    )
+    assert handler.handled == []
+    assert adapter.sent == []
+    assert not (tmp_path / "state" / PAIRING_FILE_NAME).exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("filename", [PAIRING_FILE_NAME, ALLOWLIST_FILE_NAME])
+@pytest.mark.parametrize(
+    "content",
+    ['{"bad": null, "other": {"expires_at": []}}', '{"999":' + "[" * 2000 + "0" + "]" * 2000 + "}"],
+)
+async def test_corrupt_access_data_does_not_stop_dispatch(tmp_path: Path, filename: str, content: str) -> None:
+    config = make_config(tmp_path, pairing_enabled=True)
+    config.state_dir.mkdir()
+    (config.state_dir / filename).write_text(content)
+    adapter, handler = RecordingAdapter(), RecordingHandler()
+    daemon = GatewayDaemon(config, adapter, handler)
+    await daemon.start()
+    try:
+        await adapter.inbound.put(inbound("pair me", sender_id="999"))
+        await adapter.inbound.put(inbound("trusted", message_id="m-2"))
+        assert await wait_for(lambda: len(handler.handled) == 1)
+        assert len(adapter.sent) == 1
+        assert handler.handled[0][1].sender_id == "123"
+        assert daemon.status().access["configured_users"] == 1
+        daemon._write_status()
+    finally:
+        await daemon.stop()
+
+
+def test_adapter_preflight_uses_the_same_sender_and_group_policy(tmp_path: Path) -> None:
+    adapter = RecordingAdapter()
+    daemon = GatewayDaemon(make_config(tmp_path, group_ids=("-100",)), adapter, RecordingHandler())
+    assert adapter.is_inbound_allowed(inbound("owner"))
+    assert not adapter.is_inbound_allowed(inbound("unknown", sender_id="999"))
+    assert not adapter.is_inbound_allowed(inbound("ambient", is_group=True, chat_id="-100"))
+    assert not adapter.is_inbound_allowed(inbound("unlisted", is_group=True, bot_mentioned=True, chat_id="-999"))
+    assert adapter.is_inbound_allowed(inbound("listed", is_group=True, bot_mentioned=True, chat_id="-100"))
+    assert not daemon.is_message_allowed(
+        inbound("listed but unknown", sender_id="999", is_group=True, bot_mentioned=True, chat_id="-100")
+    )
+
+
+@pytest.mark.parametrize("allowed_users", [(), ("custom",)])
+def test_echo_allowance_is_scoped_to_actual_console_transport(tmp_path: Path, allowed_users: tuple[str, ...]) -> None:
+    config = make_config(tmp_path, adapter="echo", allowed_users=allowed_users)
+    echo = EchoAdapter(stdin=io.StringIO(), stdout=io.StringIO())
+    daemon = GatewayDaemon(config, echo, RecordingHandler())
+    assert daemon.is_message_allowed(inbound("console", sender_id="owner")) == (not allowed_users)
+    assert daemon.is_message_allowed(inbound("custom", sender_id="custom")) == bool(allowed_users)
+    assert not daemon.is_message_allowed(inbound("stranger", sender_id="999"))
+    assert daemon.status().access["policy"] == ("restricted" if allowed_users else "local-echo")
+
+    # Neither a spoofed message channel nor a configured adapter name is enough.
+    remote = GatewayDaemon(config, RecordingAdapter(), RecordingHandler())
+    assert not remote.is_message_allowed(replace(inbound("spoof", sender_id="owner"), channel="echo"))
+
+
+@pytest.mark.asyncio
+async def test_locked_start_warns_once_and_stays_running(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    daemon = GatewayDaemon(make_config(tmp_path, allowed_users=()), RecordingAdapter(), RecordingHandler())
+    await daemon.start()
+    try:
+        assert daemon.status().running
+        assert caplog.text.count("access locked") == 1
+        daemon._write_status()
+        assert caplog.text.count("access locked") == 1
+    finally:
+        await daemon.stop()
+
+
+@pytest.mark.asyncio
+async def test_status_uses_startup_configuration_and_live_pairing_file(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    daemon = GatewayDaemon(config, RecordingAdapter(), RecordingHandler())
+    await daemon.start()
+    try:
+        # Editing disk settings does not change this process's configured ACL.
+        (config.state_dir / "settings.json").write_text('{"gateway": {"allowed_users": []}}')
+        (config.state_dir / ALLOWLIST_FILE_NAME).write_text(
+            json.dumps({"999": {"name": "Paired", "approved_at": 1000}})
+        )
+        daemon._write_status()
+        payload = json.loads((config.state_dir / "gateway.status.json").read_text())
+        assert payload["access"] == {
+            "policy": "restricted",
+            "configured_users": 1,
+            "paired_users": 1,
+            "pairing_enabled": False,
+        }
+        assert daemon.is_message_allowed(inbound("configured"))
+        assert daemon.is_message_allowed(inbound("paired", sender_id="999"))
+    finally:
+        await daemon.stop()

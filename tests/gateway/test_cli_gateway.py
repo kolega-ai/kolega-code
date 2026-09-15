@@ -10,6 +10,8 @@ from kolega_code.cli.main import parse_args
 from kolega_code.gateway.adapters.base import InboundMessage
 from kolega_code.gateway.config import GatewayConfig
 
+pytestmark = pytest.mark.usefixtures("isolated_cli_env")
+
 
 def test_parse_gateway_run_defaults() -> None:
     args = parse_args(["gateway", "run"])
@@ -179,7 +181,7 @@ def test_telegram_setup_clear_removes_the_token(tmp_path: Path) -> None:
     assert run_gateway(parse_args(["gateway", "telegram", "setup", "--clear", "--state-dir", str(state_dir)])) == 0
     settings = SettingsStore(root=state_dir).load()
     assert settings.telegram_bot_token is None
-    assert "allowed_users" not in settings.gateway
+    assert settings.gateway["allowed_users"] == ["111"]
 
 
 def test_telegram_setup_verify_checks_the_token(
@@ -225,7 +227,7 @@ def test_telegram_setup_verify_failure_does_not_save(
             self.session = AsyncMock()
 
         async def me(self) -> None:
-            raise RuntimeError("unauthorized")
+            raise RuntimeError(f"unauthorized: {TEST_BOT_TOKEN}")
 
     monkeypatch.setattr("aiogram.Bot", FailingBot)
     state_dir = tmp_path / "state"
@@ -233,7 +235,9 @@ def test_telegram_setup_verify_failure_does_not_save(
         ["gateway", "telegram", "setup", "--token", TEST_BOT_TOKEN, "--verify", "--state-dir", str(state_dir)]
     )
     assert run_gateway(args) == 1
-    assert "could not verify" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "could not verify" in error
+    assert TEST_BOT_TOKEN not in error
     assert SettingsStore(root=state_dir).load().telegram_bot_token is None
 
 
@@ -301,6 +305,7 @@ def test_status_reads_a_fresh_heartbeat_file(capsys: pytest.CaptureFixture[str],
     assert f"running (pid {os.getpid()})" in out
     assert "sessions: 3" in out
     assert "errors: 1" in out
+    assert "access policy unknown; restart/update to verify" in out
 
 
 def test_status_reports_a_stale_heartbeat_file(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
@@ -373,7 +378,11 @@ def test_pairing_list_and_approve(capsys: pytest.CaptureFixture[str], tmp_path: 
 
     list_args = parse_args(["gateway", "pairing", "list"])
     assert _gateway_pairing(list_args, config) == 0
-    assert code in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert code in output
+    assert "sender ID 999" in output
+    assert "New Person" in output
+    assert "display names are not proof of identity" in output
 
     approve_args = parse_args(["gateway", "pairing", "approve", code])
     assert _gateway_pairing(approve_args, config) == 0
@@ -382,3 +391,211 @@ def test_pairing_list_and_approve(capsys: pytest.CaptureFixture[str], tmp_path: 
     approve_args = parse_args(["gateway", "pairing", "approve", code])
     assert _gateway_pairing(approve_args, config) == 1
     assert "Unknown or expired" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("pairing_enabled", [False, True])
+def test_token_only_setup_succeeds_with_no_authorized_users_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], pairing_enabled: bool
+) -> None:
+    from kolega_code.cli.gateway import run_gateway
+    from kolega_code.cli.settings import CliSettings, SettingsStore
+
+    store = SettingsStore(tmp_path)
+    store.save(CliSettings(gateway={"pairing_enabled": pairing_enabled}))
+    args = parse_args(["gateway", "telegram", "setup", "--token", TEST_BOT_TOKEN, "--state-dir", str(tmp_path)])
+    assert run_gateway(args) == 0
+    saved = store.load()
+    assert saved.telegram_bot_token == TEST_BOT_TOKEN
+    assert saved.gateway["pairing_enabled"] is pairing_enabled
+    output = capsys.readouterr()
+    assert "no operators are authorized" in output.err
+    assert ("pairing-only" if pairing_enabled else "locked") in output.err
+    assert "--allow" in output.err
+    assert "Settings → Gateway" in output.err
+    assert "restart" in output.out
+
+
+@pytest.mark.parametrize("allow", [None, "", "  "])
+def test_setup_omitted_allow_preserves_and_explicit_empty_clears_only_configured_ids(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], allow: str | None
+) -> None:
+    from kolega_code.cli.gateway import run_gateway
+    from kolega_code.cli.settings import CliSettings, SettingsStore
+    from kolega_code.gateway.access import GatewayAccessControl
+
+    store = SettingsStore(tmp_path)
+    store.save(CliSettings(gateway={"adapter": "telegram", "allowed_users": ["111"]}))
+    access = GatewayAccessControl(state_dir=tmp_path, allowed_users=("111",), pairing_enabled=True)
+    message = InboundMessage(channel="telegram", chat_id="222", sender_id="222", message_id="1", text="hi")
+    assert access.on_unknown_sender(message) is not None
+    access.approve(access.pending()[0].code)
+    approval_file = tmp_path / "gateway_allowlist.json"
+    original_approvals = approval_file.read_bytes()
+    argv = ["gateway", "telegram", "setup", "--token", TEST_BOT_TOKEN, "--state-dir", str(tmp_path)]
+    if allow is not None:
+        argv += ["--allow", allow]
+    assert run_gateway(parse_args(argv)) == 0
+    assert store.load().gateway["allowed_users"] == (["111"] if allow is None else [])
+    assert approval_file.read_bytes() == original_approvals
+    output = capsys.readouterr()
+    assert "no operators are authorized" not in output.err
+    if allow is not None:
+        assert "persisted pairing approvals were not revoked" in output.out
+
+
+@pytest.mark.parametrize("allow", ["@owner", "*", "111, ,222", "0", "-123", "١٢٣", "123,"])
+def test_invalid_allow_does_not_replace_saved_token_or_call_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], allow: str
+) -> None:
+    from kolega_code.cli.gateway import run_gateway
+    from kolega_code.cli.settings import CliSettings, SettingsStore
+
+    store = SettingsStore(tmp_path)
+    store.save(
+        CliSettings(
+            telegram_bot_token="456:fake-original-token", gateway={"adapter": "telegram", "allowed_users": ["111"]}
+        )
+    )
+    before = store.path.read_bytes()
+
+    def unexpected_bot(*args: object, **kwargs: object) -> None:
+        pytest.fail("invalid access settings must be rejected before Telegram verification")
+
+    monkeypatch.setattr("aiogram.Bot", unexpected_bot)
+    args = parse_args(
+        [
+            "gateway",
+            "telegram",
+            "setup",
+            "--token",
+            TEST_BOT_TOKEN,
+            "--allow",
+            allow,
+            "--verify",
+            "--state-dir",
+            str(tmp_path),
+        ]
+    )
+    assert run_gateway(args) == 1
+    assert store.path.read_bytes() == before
+    error = capsys.readouterr().err
+    assert "gateway.allowed_users" in error
+    assert TEST_BOT_TOKEN not in error
+
+
+def test_gateway_cli_reports_malformed_security_settings_without_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from kolega_code.cli.gateway import run_gateway
+
+    (tmp_path / "settings.json").write_text(
+        '{"schema_version": 3, "gateway": {"allowed_users": [111]}, "telegram_bot_token": "fake-secret"}',
+        encoding="utf-8",
+    )
+    assert run_gateway(parse_args(["gateway", "run", "--state-dir", str(tmp_path)])) == 1
+    error = capsys.readouterr().err
+    assert "gateway.allowed_users" in error
+    assert "Traceback" not in error
+    assert "fake-secret" not in error
+
+
+@pytest.mark.parametrize(
+    ("policy", "configured", "paired", "pairing"),
+    [("locked", 0, 0, False), ("pairing-only", 0, 0, True), ("restricted", 0, 2, False), ("local-echo", 0, 0, False)],
+)
+def test_status_displays_heartbeat_policy_not_current_settings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], policy: str, configured: int, paired: int, pairing: bool
+) -> None:
+    import json
+    import os
+    from datetime import datetime, timezone
+
+    payload = {
+        "pid": os.getpid(),
+        "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+        "adapter": "telegram",
+        "access": {
+            "policy": policy,
+            "configured_users": configured,
+            "paired_users": paired,
+            "pairing_enabled": pairing,
+        },
+    }
+    (tmp_path / "gateway.status.json").write_text(json.dumps(payload), encoding="utf-8")
+    # Deliberately different: a running daemon has not applied these settings.
+    config = GatewayConfig(
+        adapter="telegram",
+        state_dir=tmp_path,
+        project_path=tmp_path,
+        allowed_users=("999",),
+        pairing_enabled=not pairing,
+    )
+    assert _gateway_status(config) == 0
+    output = capsys.readouterr().out
+    assert f"access: {policy}" in output
+    assert f"configured users: {configured}" in output
+    assert f"paired users: {paired}" in output
+    assert f"pairing: {'enabled' if pairing else 'disabled'}" in output
+
+
+def test_status_without_snapshot_reports_unknown_when_lock_is_held(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from filelock import FileLock
+
+    config = GatewayConfig(adapter="telegram", state_dir=tmp_path, project_path=tmp_path, allowed_users=("111",))
+    with FileLock(str(tmp_path / "gateway.lock")):
+        assert _gateway_status(config) == 0
+    assert "access policy unknown; restart/update to verify" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "access",
+    [
+        None,
+        {},
+        "locked",
+        {"policy": "locked"},
+        {"policy": "locked", "configured_users": True, "paired_users": 0, "pairing_enabled": False},
+        {"policy": "locked", "configured_users": 0, "paired_users": -1, "pairing_enabled": False},
+        {"policy": "locked", "configured_users": 0, "paired_users": 0, "pairing_enabled": "false"},
+    ],
+)
+def test_incomplete_access_snapshot_reports_unknown(access: object, capsys: pytest.CaptureFixture[str]) -> None:
+    from kolega_code.cli.gateway import _print_access_summary
+
+    _print_access_summary(access)
+    assert "access policy unknown; restart/update to verify" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_foreground_startup_prints_daemon_access_after_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from kolega_code.cli.gateway import _gateway_run
+
+    start = AsyncMock()
+    stop = AsyncMock()
+
+    def status() -> SimpleNamespace:
+        assert start.await_count == 1
+        return SimpleNamespace(
+            access={"policy": "restricted", "configured_users": 0, "paired_users": 2, "pairing_enabled": False}
+        )
+
+    daemon = SimpleNamespace(start=start, stop=stop, status=status)
+    monkeypatch.setattr("kolega_code.cli.gateway.build_adapter", lambda config: object())
+    monkeypatch.setattr("kolega_code.cli.gateway._build_turn_handler", lambda *args: object())
+    monkeypatch.setattr("kolega_code.cli.gateway.GatewayDaemon", lambda *args, **kwargs: daemon)
+    monkeypatch.setattr(asyncio.get_running_loop(), "add_signal_handler", lambda sig, callback: callback())
+    config = GatewayConfig(adapter="telegram", project_path=tmp_path, state_dir=tmp_path)
+    assert await _gateway_run(config, parse_args(["gateway", "run"])) == 0
+    output = capsys.readouterr().out
+    assert "access: restricted" in output
+    assert "paired users: 2" in output
+    assert "configured users: 0" in output
+    stop.assert_awaited_once()

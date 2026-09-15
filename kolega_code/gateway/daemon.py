@@ -27,8 +27,9 @@ from filelock import BaseFileLock, FileLock
 from filelock import Timeout as FileLockTimeout
 
 from kolega_code.events import utc_now_iso
-from kolega_code.gateway.access import GatewayAccessControl
+from kolega_code.gateway.access import AccessControlError, GatewayAccessControl
 from kolega_code.gateway.adapters.base import ChatRef, GatewayAdapter, InboundMessage
+from kolega_code.gateway.adapters.echo import DEFAULT_SENDER_ID, EchoAdapter
 from kolega_code.gateway.config import GatewayConfig
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,7 @@ class DaemonStatus:
     pid: Optional[int]
     started_at: Optional[str]
     recent_errors: int
+    access: dict[str, Any]
 
 
 class GatewayDaemon:
@@ -99,6 +101,10 @@ class GatewayDaemon:
             pairing_enabled=config.pairing_enabled,
             code_ttl_seconds=config.pairing_code_ttl_seconds,
         )
+        # Only the actual local transport gets the console-owner allowance.
+        # A remote message's channel/name is not an authorization credential.
+        self._local_echo = isinstance(adapter, EchoAdapter) and not config.allowed_users
+        self._adapter.set_inbound_authorizer(self.is_message_allowed)
 
     # -- Lifecycle ---------------------------------------------------------
 
@@ -113,6 +119,10 @@ class GatewayDaemon:
         self._dispatch_task = asyncio.create_task(self._dispatch_loop(), name="gateway-dispatch")
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop(), name="gateway-heartbeat")
         self._write_status()
+        if self.status().access["policy"] == "locked":
+            logger.warning(
+                "gateway: access locked; configure allowed users or enable pairing in Settings → Gateway, then restart"
+            )
 
     async def stop(self) -> None:
         if self._dispatch_task is not None:
@@ -137,6 +147,9 @@ class GatewayDaemon:
 
     def status(self) -> DaemonStatus:
         handler_status = self._turn_handler.status()
+        access = self._access.summary()
+        if self._local_echo:
+            access["policy"] = "local-echo"
         return DaemonStatus(
             running=self._dispatch_task is not None,
             adapter=self._adapter.name,
@@ -145,6 +158,7 @@ class GatewayDaemon:
             pid=os.getpid() if self._dispatch_task is not None else None,
             started_at=self._started_at,
             recent_errors=self._recent_errors,
+            access=access,
         )
 
     # -- Status file -------------------------------------------------------
@@ -176,6 +190,14 @@ class GatewayDaemon:
 
     # -- Dispatch ----------------------------------------------------------
 
+    def is_message_allowed(self, message: InboundMessage) -> bool:
+        """Shared preflight/final admission check; never issues pairing codes."""
+        if message.is_group and not self._group_allowed(message):
+            return False
+        if self._local_echo and message.sender_id == DEFAULT_SENDER_ID:
+            return True
+        return self._access.is_allowed(message.sender_id)
+
     async def _dispatch_loop(self) -> None:
         while True:
             message = await self._adapter.inbound.get()
@@ -193,18 +215,23 @@ class GatewayDaemon:
                 message.sender_id,
             )
             return
-        if not self._access.is_allowed(message.sender_id):
+        if not self.is_message_allowed(message):
             logger.info(
                 "gateway: dropping message from unauthorized sender %s on %s",
                 message.sender_id,
                 message.channel,
             )
-            pairing_reply = self._access.on_unknown_sender(message)
-            if pairing_reply is not None:
-                try:
+            if message.callback_token is not None or message.callback_option is not None:
+                return
+            try:
+                pairing_reply = self._access.on_unknown_sender(message)
+                if pairing_reply is not None:
                     await self._adapter.send_text(message.chat_id, pairing_reply)
-                except Exception:  # noqa: BLE001 — the drop is already logged
-                    logger.debug("gateway: pairing reply failed", exc_info=True)
+            except (AccessControlError, OSError):
+                self._recent_errors += 1
+                logger.warning("gateway: could not persist pairing request; sender remains unauthorized")
+            except Exception:  # noqa: BLE001 — failed onboarding must not stop dispatch
+                logger.debug("gateway: pairing reply failed", exc_info=True)
             return
         try:
             await self._turn_handler.handle(chat_ref, message)

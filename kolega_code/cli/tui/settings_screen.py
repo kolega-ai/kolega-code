@@ -650,7 +650,7 @@ class SettingsScreen(ModalScreen[None]):
                 yield Button("Remove token", id="gateway_token_remove", classes="quiet")
             with Vertical(classes="settings-section", id="settings_gateway_access") as access_section:
                 access_section.border_title = "Access"
-                yield Label("Allowed users (comma-separated Telegram ids; empty = anyone)")
+                yield Label("Allowed users (numeric Telegram IDs; empty = paired users only; none paired = locked)")
                 yield Input(id="gateway_allowed_users_input", placeholder="123456789, 987654321")
                 yield Label("Pairing for unknown senders")
                 yield Select(
@@ -659,12 +659,24 @@ class SettingsScreen(ModalScreen[None]):
                     allow_blank=False,
                     value="false",
                 )
+                yield Static(
+                    "Pairing can onboard the first user, but requires local CLI approval of their code. "
+                    "Clearing configured IDs does not revoke paired users.",
+                    classes="settings-hint",
+                )
                 yield Label("Permission mode")
                 yield Select(
                     [("Ask via buttons", "ask"), ("Auto-approve", "auto")],
                     id="gateway_permission_select",
                     allow_blank=False,
                     value="ask",
+                )
+                yield Static(
+                    "Authorized users are trusted operators who can control the local agent. "
+                    "'Ask' confirmations go to their chat, not a separate owner. "
+                    "Admitted group participants share the chat's control surface. "
+                    "Configured-list changes require a gateway restart; Apply does not restart it.",
+                    classes="settings-hint",
                 )
             with Vertical(classes="settings-section", id="settings_gateway_runtime") as runtime_section:
                 runtime_section.border_title = "Runtime"

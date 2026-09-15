@@ -154,11 +154,11 @@ so only what you change needs to be stored:
 | `telegram_bot_token` (top level) | — | The Telegram bot token from [@BotFather](https://t.me/BotFather), saved by `gateway telegram setup`. |
 | `gateway.adapter` | `echo` | Messaging adapter to run (`telegram`). |
 | `gateway.project` | `~/kolega-code-workspace` | Working directory for gateway sessions. |
-| `gateway.allowed_users` | `[]` (open) | Telegram user ids allowed to talk to the gateway. |
-| `gateway.group_ids` | `[]` (all, mention-gated) | Group chat ids the gateway may serve. |
-| `gateway.pairing_enabled` | `false` | Give unknown senders a one-hour pairing code instead of silence. |
+| `gateway.allowed_users` | `[]` (paired users only; none paired = locked) | Trusted Telegram operators, as quoted positive numeric user IDs. Combined with valid persisted pairing approvals; an empty list never means public access. |
+| `gateway.group_ids` | `[]` (all, mention-gated) | Group chat IDs as quoted signed nonzero numeric strings. Group restrictions also require sender authorization; they never authorize group members on their own. |
+| `gateway.pairing_enabled` | `false` | Let unknown senders request a pairing code, including the first user. Local CLI approval is required before agent access; with no authorized users this is pairing-only, not public access. |
 | `gateway.pairing_code_ttl_seconds` | `3600` | Pairing-code lifetime in seconds. |
-| `gateway.permission_mode` | `ask` | Permission mode for gateway sessions: `ask` or `auto`. |
+| `gateway.permission_mode` | `ask` | Session permission mode: `ask` or `auto`. `ask` confirms tools in the requesting chat, not with a separate machine owner; trusted users can approve their own tools and switch to `auto`. |
 | `gateway.request_timeout_seconds` | `600` | How long a permission/question prompt waits for a tap. |
 | `gateway.max_sessions` | `50` | Live-session cache size. |
 | `gateway.session_idle_ttl_seconds` | `3600` | Idle session eviction (`null` disables). |
@@ -167,6 +167,50 @@ so only what you change needs to be stored:
 | `stt_enabled` (top level) | `false` | Transcribe gateway voice notes (Tools → Voice transcription). |
 | `stt_provider` (top level) | `groq` | Remote speech-to-text provider (`groq` hosted `whisper-large-v3-turbo`, reusing the Groq API key). |
 | `stt_model` (top level) | provider default | Provider-specific model override (`whisper-large-v3-turbo` by default). |
+
+All admitted users are **trusted operators** of the local agent, not sandboxed
+guests. Admitted group participants share their chat's session and control
+surface. Unknown senders cannot run commands, approve tools, or cause attachment
+downloads or transcription.
+
+For explicit setup, use `kolega-code gateway telegram setup --allow '123456789'`
+with your numeric user ID. Token-only setup saves configuration but warns when
+no operators are authorized; it never implicitly enables pairing. Omitting
+`--allow` preserves configured IDs; explicit `--allow ''` clears only that list.
+To onboard the first user without a configured ID, enable pairing in
+**Settings → Gateway**, start/restart the daemon, DM the bot for a code, locally
+run `gateway pairing list` and review the numeric sender ID, confirm and approve
+the code with `gateway pairing approve <code>`, then DM again. Prefix those
+commands with `kolega-code`; see the
+[full pairing workflow](../../cli/gateway/#pairing-the-first-or-another-sender).
+
+Configured IDs and valid approvals in `gateway_allowlist.json` form a union.
+Clearing either source does not revoke users in the other; disabling pairing
+does not revoke approvals. Settings-based access changes require restart,
+whereas persisted approvals are reread dynamically. For exclusive-owner
+lockdown, stop the gateway, inspect both files in its state directory, remove
+unwanted approvals and configure the owner's ID, then restart. Preserve
+unrelated settings and credentials; see
+[migration and lockdown](../../cli/gateway/#upgrade-and-exclusive-owner-lockdown).
+
+Malformed access settings produce a field-specific error rather than being
+silently ignored: `gateway` must be an object, `allowed_users` and `group_ids`
+must be lists of nonempty strings, and `pairing_enabled` must be a JSON boolean.
+Telegram IDs use ASCII decimal digits: positive user IDs such as
+`["123456789"]`, signed nonzero group IDs such as `["-1001234567890"]`.
+Numbers without quotes, handles, wildcards, blank entries, mixed-type lists,
+and `"false"` instead of `false` are invalid. Missing keys and empty lists are
+valid; surrounding ID whitespace is trimmed and duplicates are removed.
+Repair the named field, **not by deleting all settings or credentials**.
+Invalid CLI/TUI edits are rejected before saving a replacement token.
+
+After upgrading, restart old daemons: empty-list deployments become locked or
+pairing-only unless valid approvals authorize users. `gateway status` reports
+the running heartbeat's `locked`, `pairing-only`, or `restricted` policy,
+configured/paired counts, and pairing flag — not un-applied settings changes.
+Older heartbeats show **access policy unknown; restart/update to verify**.
+Local echo is reported separately; its standard local `owner` allowance does
+not open Telegram access.
 
 ## Web search
 

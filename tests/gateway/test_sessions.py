@@ -9,6 +9,7 @@ commands, and eviction the way the gateway will run them.
 import asyncio
 import json
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -21,6 +22,7 @@ from kolega_code.cli.settings import SettingsStore, CliSettings
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.gateway.adapters.base import AdapterCapabilities, Attachment, ChatRef, GatewayAdapter, InboundMessage
 from kolega_code.gateway.config import GatewayConfig
+from kolega_code.gateway.daemon import GatewayDaemon
 from kolega_code.gateway.sessions import AgentTurnHandler
 from kolega_code.llm.models import Message, TextBlock
 from kolega_code.llm.providers.models import TokenCount
@@ -173,6 +175,7 @@ def make_handler(
         adapter="recording",
         project_path=workspace,
         state_dir=state_dir,
+        allowed_users=("7",),
         permission_mode="ask",
         edit_throttle_seconds=0.0,
         max_sessions=max_sessions,
@@ -656,3 +659,90 @@ async def test_button_tap_routes_through_the_daemon_path(tmp_path: Path) -> None
     response = await task
     assert response["allowed"] is False
     await handler.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pairing_enabled", [False, True])
+async def test_default_daemon_rejects_outsider_before_session_or_model_work(
+    tmp_path: Path, pairing_enabled: bool
+) -> None:
+    llm, transcriber = ScriptedLLM(), FakeTranscriber()
+    handler, adapter, config = make_handler(tmp_path, llm=llm, transcriber=transcriber)
+    daemon = GatewayDaemon(replace(config, allowed_users=(), pairing_enabled=pairing_enabled), adapter, handler)
+    try:
+        messages = [
+            inbound("read local files"),
+            inbound("/permissions auto", message_id="m-2"),
+            replace(inbound("", message_id="tap-1"), callback_token="invented", callback_option="allow_once"),
+            inbound_with_media((Attachment(kind="voice", source="untrusted.ogg"),)),
+        ]
+        for message in messages:
+            await daemon._handle_message(message)
+        assert handler.status()["active_sessions"] == 0
+        assert handler._registry.get(chat_ref()) is None
+        llm.stream.assert_not_called()
+        llm.generate.assert_not_called()
+        assert transcriber.calls == []
+        assert adapter.buttons == []
+        assert not (config.state_dir / "gateway_sessions.json").exists()
+        if pairing_enabled:
+            assert adapter.sent
+            assert all("pairing approve" in text for _, text in adapter.sent)
+        else:
+            assert adapter.sent == []
+    finally:
+        await handler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_daemon_only_trusted_operator_can_approve_and_change_permissions(tmp_path: Path) -> None:
+    handler, adapter, config = make_handler(tmp_path)
+    daemon = GatewayDaemon(config, adapter, handler)
+    approval: asyncio.Task[Any] | None = None
+    try:
+        await daemon._handle_message(inbound("hello"))
+        assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+        await wait_for_turn_done(handler, chat_ref())
+        entry = handler._registry.get(chat_ref())
+        assert entry is not None
+        request = PermissionRequest(
+            kind=PermissionKind.COMMAND,
+            tool_name="bash",
+            inputs={},
+            command="echo harmless",
+            path="",
+            mcp_server="",
+            mcp_tool="",
+        )
+        approval = asyncio.create_task(
+            entry.payload.runtime.control.request(
+                "permission",
+                {"request": serialize_permission_request(request), "rule_options": []},
+                default={"allowed": False},
+            )
+        )
+        assert await wait_for(lambda: bool(adapter.buttons))
+        assert adapter.buttons[0][0] == "42"
+        token = adapter.tokens[0]
+        tap = replace(inbound("", message_id="tap-1"), callback_token=token, callback_option="allow_once")
+
+        # Knowing the chat and pending token does not authorize another sender.
+        await daemon._handle_message(replace(tap, sender_id="999"))
+        await daemon._handle_message(replace(inbound("/permissions auto", message_id="m-2"), sender_id="999"))
+        assert not approval.done()
+        assert entry.payload.runtime.permission_mode.value == "ask"
+
+        # Trusted operators intentionally retain self-approval and auto mode.
+        await daemon._handle_message(replace(tap, message_id="tap-2"))
+        assert (await asyncio.wait_for(approval, timeout=3))["allowed"] is True
+        await daemon._handle_message(inbound("/permissions auto", message_id="m-3"))
+        assert entry.payload.runtime.permission_mode.value == "auto"
+        assert entry.payload.runtime.agent is not None
+        assert entry.payload.runtime.agent.permission_mode.value == "auto"
+        record = SessionStore(root=config.state_dir).load(entry.payload.record.session_id)
+        assert record.permission_mode == "auto"
+    finally:
+        if approval is not None and not approval.done():
+            approval.cancel()
+            await asyncio.gather(approval, return_exceptions=True)
+        await handler.shutdown()

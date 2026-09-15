@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import secrets
 import time
@@ -59,7 +60,7 @@ def _read_json(path: Path) -> dict[str, Any]:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
-    except (json.JSONDecodeError, OSError) as exc:
+    except (ValueError, RecursionError, OSError) as exc:
         logger.warning("gateway access: unreadable %s (%s); treating as empty", path, exc)
         return {}
     return raw if isinstance(raw, dict) else {}
@@ -70,6 +71,19 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     temporary = path.with_name(f"{path.name}.tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     os.replace(temporary, path)
+
+
+def _valid_identity(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip()) and value == value.strip()
+
+
+def _valid_timestamp(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value) and value >= 0
+    except OverflowError:
+        return False
 
 
 class GatewayAccessControl:
@@ -85,7 +99,7 @@ class GatewayAccessControl:
         now: Any = time.time,
     ) -> None:
         self._state_dir = state_dir
-        self._configured_users = set(allowed_users)
+        self._configured_users = {sender for sender in allowed_users if _valid_identity(sender)}
         self._pairing_enabled = pairing_enabled
         self._code_ttl_seconds = code_ttl_seconds
         self._now = now
@@ -95,20 +109,35 @@ class GatewayAccessControl:
     # -- Daemon side -------------------------------------------------------
 
     def is_allowed(self, sender_id: str) -> bool:
-        if not self._configured_users:
-            # No allowlist configured: anyone may talk to the gateway.
-            return True
+        if not _valid_identity(sender_id):
+            return False
         if sender_id in self._configured_users:
             return True
-        return sender_id in _read_json(self._allowlist_path)
+        return sender_id in self._approved_users()
+
+    def summary(self) -> dict[str, Any]:
+        """Report this process's configured policy plus live pairing approvals."""
+        paired_count = len(self._approved_users())
+        policy = (
+            "restricted"
+            if self._configured_users or paired_count
+            else "pairing-only"
+            if self._pairing_enabled
+            else "locked"
+        )
+        return {
+            "policy": policy,
+            "configured_users": len(self._configured_users),
+            "paired_users": paired_count,
+            "pairing_enabled": self._pairing_enabled,
+        }
 
     def on_unknown_sender(self, message: InboundMessage) -> Optional[str]:
         """Return the pairing reply to send, or None to drop silently.
 
-        Pairing only applies while an allowlist is configured; without one the
-        gateway is open and no sender is ever "unknown".
+        This also bootstraps the first user: issuing a code never grants access.
         """
-        if not self._configured_users or not self._pairing_enabled:
+        if not self._pairing_enabled or not _valid_identity(message.sender_id):
             return None
         pending = self._pending()
         existing = next((entry for entry in pending.values() if entry["sender_id"] == message.sender_id), None)
@@ -173,8 +202,34 @@ class GatewayAccessControl:
 
     # -- Internals ---------------------------------------------------------
 
+    def _approved_users(self) -> dict[str, dict[str, Any]]:
+        return {
+            sender: entry
+            for sender, entry in _read_json(self._allowlist_path).items()
+            if _valid_identity(sender)
+            and isinstance(entry, dict)
+            and isinstance(entry.get("name"), str)
+            and _valid_timestamp(entry.get("approved_at"))
+        }
+
     def _pending(self) -> dict[str, dict[str, Any]]:
-        return {str(code): dict(entry) for code, entry in _read_json(self._pairing_path).items()}
+        pending: dict[str, dict[str, Any]] = {}
+        now = self._now()
+        for code, entry in _read_json(self._pairing_path).items():
+            if (
+                not _valid_identity(code)
+                or not isinstance(entry, dict)
+                or entry.get("code", code) != code
+                or not _valid_identity(entry.get("sender_id"))
+                or not _valid_timestamp(entry.get("created_at"))
+                or not _valid_timestamp(entry.get("expires_at"))
+                or any(not isinstance(entry.get(key, ""), str) for key in ("sender_name", "channel", "chat_id"))
+            ):
+                continue
+            if entry["created_at"] >= entry["expires_at"] or now >= entry["expires_at"]:
+                continue
+            pending[code] = {**entry, "code": code}
+        return pending
 
     def _write_pairings(self, pending: dict[str, dict[str, Any]]) -> None:
         # Prune expired codes and cap the set so an abandoned gateway cannot

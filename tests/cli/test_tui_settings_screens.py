@@ -1629,6 +1629,99 @@ async def test_gateway_settings_page_rejects_a_bad_token(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("allowed", ["@owner", "*", "111, ,222", "0", "１２３"])
+async def test_gateway_invalid_access_does_not_mutate_settings_or_replacement_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+    allowed: str,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+    settings = settings_store.load()
+    settings.telegram_bot_token = "123:fake-original-token"
+    settings.gateway = {"adapter": "telegram", "allowed_users": ["111"]}
+    settings_store.save(settings)
+    app.settings = settings_store.load()
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen._show_category("gateway")
+        await pilot.pause()
+        before_file = settings_store.path.read_bytes()
+        before_settings = app.settings.to_dict()
+        screen.query_one("#gateway_token_input", Input).value = "456:fake-replacement-token"
+        screen.query_one("#gateway_allowed_users_input", Input).value = allowed
+        await app._save_settings_from_ui()
+        assert settings_store.path.read_bytes() == before_file
+        assert app.settings.to_dict() == before_settings
+        assert "gateway.allowed_users" in str(screen.query_one("#settings_status").render())
+
+
+@pytest.mark.asyncio
+async def test_gateway_clearing_configured_ids_preserves_paired_approvals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+    from kolega_code.gateway.access import GatewayAccessControl
+    from kolega_code.gateway.adapters.base import InboundMessage
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+    settings = settings_store.load()
+    settings.gateway = {"adapter": "telegram", "allowed_users": ["111"], "pairing_enabled": False}
+    settings_store.save(settings)
+    app.settings = settings_store.load()
+    approval_path = settings_store.root / "gateway_allowlist.json"
+    access = GatewayAccessControl(state_dir=settings_store.root, pairing_enabled=True)
+    reply = access.on_unknown_sender(
+        InboundMessage(channel="telegram", chat_id="222", sender_id="222", message_id="pair-1", text="hi")
+    )
+    assert reply is not None
+    access.approve(reply.rsplit(" ", 1)[-1])
+    assert access.is_allowed("222")
+    before_approvals = approval_path.read_bytes()
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen._show_category("gateway")
+        await pilot.pause()
+        notices = " ".join(str(widget.render()) for widget in screen.query("#settings_gateway_access Static"))
+        assert "empty = paired users only; none paired = locked" in notices
+        assert "local CLI approval" in notices
+        assert "trusted operators" in notices
+        assert "gateway restart" in notices
+        screen.query_one("#gateway_allowed_users_input", Input).value = ""
+        await app._save_settings_from_ui()
+        saved = settings_store.load()
+        assert saved.gateway.get("allowed_users", []) == []
+        assert saved.gateway["pairing_enabled"] is False
+        assert approval_path.read_bytes() == before_approvals
+        restarted_access = GatewayAccessControl(
+            state_dir=settings_store.root,
+            allowed_users=tuple(saved.gateway.get("allowed_users", [])),
+            pairing_enabled=saved.gateway["pairing_enabled"],
+        )
+        assert restarted_access.is_allowed("222")
+        assert not restarted_access.is_allowed("111")
+        assert not restarted_access.is_allowed("999")
+
+
+@pytest.mark.asyncio
 async def test_mcp_settings_page_oauth_controls_and_saving(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

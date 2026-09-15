@@ -6,6 +6,30 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Security
+
+- **Telegram gateway now fails closed.** Empty configured and persisted
+  allowlists no longer admit everyone: access is locked, or pairing-only when
+  explicitly enabled. Unknown senders cannot start sessions, run commands,
+  download attachments, or consume permission buttons. First-user pairing
+  requires local review of the numeric sender ID and approval of the code.
+- **Strict access settings and running-policy diagnostics.** Malformed
+  restrictions produce actionable field-specific errors rather than permissive
+  defaults. Token-only setup warns when no operators are authorized; omitting
+  `--allow` preserves configured IDs, while `--allow ''` clears only that list.
+  Startup/status report the enforced access policy from the daemon heartbeat;
+  old snapshots without policy fields are explicitly unknown.
+- **Migration required for formerly open gateways.** Restart old daemons after
+  upgrading; updating files alone does not change a running process. Configured
+  IDs and `gateway_allowlist.json` approvals remain a union, with no automatic
+  deletion of approvals or sessions. For exclusive-owner access, stop the
+  gateway, inspect both authorization sources, remove unwanted approvals,
+  configure the owner, and restart without deleting settings or credentials.
+  All admitted users remain trusted operators: `ask` prompts their chat, allows
+  them to approve their own tools, and does not prevent switching to `auto`;
+  admitted group participants share the chat's control surface. Local echo
+  smoke testing remains available without opening remote access.
+
 ## 0.38.0 - 2026-09-11
 
 ### Added
