@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.39.0 - 2026-09-15
+
 ### Security
 
 - **Telegram gateway now fails closed.** Empty configured and persisted
