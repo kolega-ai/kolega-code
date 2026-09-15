@@ -143,6 +143,7 @@ async def test_textual_app_shows_working_progress_during_active_turn(
         assert composer.disabled is False
         assert "Working…" in str(turn_status.render())
         assert "0s" in str(turn_status.render())
+        assert "Esc to interrupt" in str(turn_status.render())
 
         now = 103.0
         app._render_event(
@@ -152,6 +153,7 @@ async def test_textual_app_shows_working_progress_during_active_turn(
         app._refresh_turn_status_strip()
         assert "Indexing workspace" in str(turn_status.render())
         assert "3s" in str(turn_status.render())
+        assert "Esc to interrupt" in str(turn_status.render())
 
         now = 423.0
         release.set()
@@ -161,6 +163,7 @@ async def test_textual_app_shows_working_progress_during_active_turn(
         assert composer.placeholder == COMPOSER_PLACEHOLDER
         assert composer.disabled is False
         assert "Done in 5m 23s" in str(turn_status.render())
+        assert "Esc to interrupt" not in str(turn_status.render())
 
 
 @pytest.mark.asyncio
@@ -195,8 +198,12 @@ async def test_confirmations_surface_as_logs_without_toasts(tmp_path: Path, monk
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "summary"),
+    [("Idle", "Done in 12s"), ("Stopped", "Stopped after 12s"), ("Error", "Errored after 12s")],
+)
 async def test_turn_status_strip_shows_spinner_and_outcome_glyph(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str, summary: str
 ) -> None:
     pytest.importorskip("textual")
 
@@ -212,12 +219,75 @@ async def test_turn_status_strip_shows_spinner_and_outcome_glyph(
         content = app._turn_status_content()
         assert any(frame in content for frame in theme.spinner_frames())
         assert "Working…" in content
+        assert "Esc to interrupt" in content
 
         now = 12.0
-        app._finish_turn_progress("Finished.", TurnState.IDLE)
+        app._finish_turn_progress("Finished.", TurnState(state))
         content = app._turn_status_content()
-        assert theme.g(theme.Glyph.CHECK) in content
-        assert "Done in 12s" in content
+        glyph = theme.Glyph.CHECK if state == "Idle" else theme.Glyph.CROSS
+        assert theme.g(glyph) in content
+        assert summary in content
+        assert "Esc to interrupt" not in content
+        assert app._turn_timer is None
+
+
+@pytest.mark.asyncio
+async def test_turn_spinner_uses_fast_repaint_only_ticks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import Mock
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    now = 100.0
+    monkeypatch.setattr(app, "_now", lambda: now)
+
+    async with app.run_test():
+        schedule = Mock(wraps=app.set_interval)
+        monkeypatch.setattr(app, "set_interval", schedule)
+        app._begin_turn_progress()
+        schedule.assert_called_once_with(0.08, app._refresh_turn_status_strip, name="turn-status")
+        assert app._turn_timer is not None
+        app._turn_timer.pause()
+
+        update = Mock(wraps=app._turn_status.update)
+        agents_tick = Mock()
+        workflows_tick = Mock()
+        monkeypatch.setattr(app._turn_status, "update", update)
+        monkeypatch.setattr(app, "_tick_running_sub_agents", agents_tick)
+        monkeypatch.setattr(app, "_tick_running_workflows", workflows_tick)
+
+        for tick in range(1, 27):
+            now = 100.0 + tick * 0.08
+            app._refresh_turn_status_strip()
+
+        assert update.call_count == 26
+        assert all(call.kwargs == {"layout": False} for call in update.call_args_list)
+        assert len({call.args[0] for call in update.call_args_list}) > 1
+        # Only the one-line strip gets faster; transcript activity stays at ~1 Hz.
+        assert agents_tick.call_count == 2
+        assert workflows_tick.call_count == 2
+        app._clear_turn_status_strip()
+        assert app._turn_timer is None
+        assert app._turn_status_content() == ""
+
+
+@pytest.mark.asyncio
+async def test_turn_status_keeps_interrupt_hint_visible_with_long_activity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rich.text import Text
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    monkeypatch.setattr(app, "_now", lambda: 100.0)
+
+    async with app.run_test():
+        app._begin_turn_progress("Indexing [workspace] 文" * 20 + "\nand running checks")
+        for width in (40, 80):
+            content = Text.from_markup(app._turn_status_content(width=width))
+            assert content.cell_len <= width
+            assert "\n" not in content.plain
+            assert content.plain.endswith("Esc to interrupt")
+            assert "0s" in content.plain
+            assert "…" in content.plain
+        app._clear_turn_status_strip()
 
 
 @pytest.mark.asyncio

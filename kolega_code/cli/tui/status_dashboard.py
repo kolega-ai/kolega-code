@@ -5,7 +5,9 @@ from __future__ import annotations
 import time
 from typing import Optional
 
+from rich.cells import cell_len
 from rich.markup import escape
+from rich.text import Text
 from textual.widgets import Static
 
 from kolega_code.agent import AgentEvent
@@ -291,7 +293,7 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         self._turn_final_state = tui_state.TurnState.IDLE
         self._spinner_frame = 0
         self._turn_timer = self.set_interval(
-            theme.SPINNER_INTERVAL, self._refresh_turn_status_strip, name="turn-status"
+            theme.TURN_STATUS_SPINNER_INTERVAL, self._refresh_turn_status_strip, name="turn-status"
         )
         self._refresh_turn_status_strip()
 
@@ -332,12 +334,12 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             return
 
         self._spinner_frame += 1
-        content = self._turn_status_content()
+        content = self._turn_status_content(width=strip.content_size.width or None)
         strip.display = bool(content)
         if content != self._last_turn_status_content:
             self._last_turn_status_content = content
             # layout=False: the strip is a fixed one-line band (styles: height 1) and
-            # only its text changes, so a full-screen reflow per spinner frame (4Hz)
+            # only its text changes, so a full-screen reflow per spinner frame
             # is pure waste on large transcripts.
             strip.update(content, layout=False)
         # Tick elapsed time on running sub-agents at most once per second so the
@@ -348,16 +350,20 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             self._tick_running_sub_agents()
             self._tick_running_workflows()
 
-    def _turn_status_content(self) -> str:
+    def _turn_status_content(self, *, width: int | None = None) -> str:
         if self._turn_started_at is not None:
             elapsed = max(0.0, self._now() - self._turn_started_at)
             status = self._turn_status_text or messages.WORKING
             frames = theme.spinner_frames()
             frame = frames[self._spinner_frame % len(frames)]
-            return (
-                f"[{Color.ACCENT}]{frame}[/{Color.ACCENT}] {escape(status)} "
-                f"[dim]{theme.g(Glyph.BULLET_SEP)} {self._format_turn_duration(elapsed)}[/dim]"
-            )
+            separator = theme.g(Glyph.BULLET_SEP)
+            meta = f"{separator} {self._format_turn_duration(elapsed)} {separator} {messages.TURN_INTERRUPT_HINT}"
+            # Reserve room for the interrupt hint, even when activity text is long.
+            # Rich counts terminal cells correctly for wide Unicode characters.
+            label = Text(status.replace("\r", " ").replace("\n", " "))
+            if width is not None:
+                label.truncate(max(0, width - cell_len(f"{frame}  {meta}")), overflow="ellipsis")
+            return f"[{Color.ACCENT}]{frame}[/{Color.ACCENT}] {escape(label.plain)} [dim]{escape(meta)}[/dim]"
         if self._turn_final_text:
             if self._turn_final_state is tui_state.TurnState.ERROR:
                 glyph, color = Glyph.CROSS, Color.ERROR

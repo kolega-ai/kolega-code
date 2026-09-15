@@ -729,7 +729,7 @@ async def test_textual_app_cancel_restores_queued_followups_to_composer(
         assert not [entry for entry in app.conversation_entries if entry.kind == "queued"]
 
         composer.load_text(draft)
-        app.action_cancel_generation()
+        await pilot.press("escape")
         await _pause_until(pilot, lambda: app.agent_worker is None)
 
         assert app.agent_worker is None

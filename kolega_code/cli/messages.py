@@ -41,6 +41,7 @@ ATTACH_CLIPBOARD_EMPTY = (
 
 # Turn progress
 WORKING = "Working…"
+TURN_INTERRUPT_HINT = "Esc to interrupt"
 PREPARING_CHECKPOINT = "Preparing checkpoint…"
 GENERATING = "Generating…"
 THINKING = "Thinking…"

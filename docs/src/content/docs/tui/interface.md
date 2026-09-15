@@ -43,9 +43,15 @@ choice; the full editor remains available for every advanced setting.
 
 ## Conversation details
 
+- **Your messages** — a subtle background distinguishes your prompts from agent
+  replies. The blank separator below each message stays unshaded.
 - **Streaming** — the view stays anchored to the bottom while the agent is
   responding. When you scroll up, a **jump-to-bottom** affordance appears so you
   can return to the live edge.
+- **Working indicator** — a smooth spinner, current activity, elapsed time, and
+  `Esc to interrupt` hint appear just above the composer during a turn. Press
+  `Esc` or `Ctrl+C` to interrupt. When the turn ends, the line shows its outcome
+  and duration instead.
 - **Queued follow-ups** — prompts submitted while the agent is still running show
   as `Queued` transcript entries. When the active turn finishes, they are sent
   automatically in FIFO order and become normal user messages.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Optional
 
 from rich.markdown import Markdown as RichMarkdown
 from rich.segment import Segment
@@ -31,6 +31,8 @@ from .state import ConversationEntry
 
 class ConversationEntryWidget(Static):
     """Displays one ConversationEntry and is updated in place as the entry changes."""
+
+    COMPONENT_CLASSES: ClassVar[set[str]] = {"conversation-entry--user"}
 
     def __init__(self, entry: ConversationEntry, format_entry: Callable[[ConversationEntry], Any]) -> None:
         super().__init__("", markup=False)
@@ -75,7 +77,17 @@ class ConversationEntryWidget(Static):
         )
 
     def render_line(self, y: int) -> Strip:
-        strip = _with_selection_style(super().render_line(y), self.text_selection, y, self.selection_style)
+        strip = super().render_line(y)
+        if self.entry.kind == "user":
+            # Tint content only: padding stays on the transcript surface, and the
+            # existing gap remains inside the widget for mouse-selection hit tests.
+            background = self.get_component_rich_style("conversation-entry--user").bgcolor
+            strip = strip.adjust_cell_length(self.size.width)
+            strip = Strip(
+                Segment.apply_style(strip, post_style=Style.from_color(bgcolor=background)),
+                strip.cell_length,
+            )
+        strip = _with_selection_style(strip, self.text_selection, y, self.selection_style)
         return _with_selection_offsets(strip, y)
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
