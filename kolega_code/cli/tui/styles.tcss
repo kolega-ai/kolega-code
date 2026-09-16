@@ -143,6 +143,25 @@ ToolEntryWidget .tool-body {
     color: $text-muted;
 }
 
+/* Startup inherits the scrollback entry interface, not tool-row indentation. */
+StartupEntryWidget > Collapsible {
+    border: round $surface-lighten-2;
+    padding: 0 1;
+}
+
+StartupEntryWidget CollapsibleTitle {
+    padding: 0;
+}
+
+StartupEntryWidget Collapsible Contents {
+    padding: 0;
+}
+
+StartupEntryWidget .startup-configuration {
+    border: none;
+    padding: 0;
+}
+
 ToolEntryWidget.thinking-entry .tool-body {
     color: $text-muted;
     text-style: italic;

@@ -30,7 +30,8 @@ from kolega_code.tool_subjects import build_tool_subject, configured_tool_subjec
 from .. import messages, theme
 from ..skills import skill_activation_label, skill_names_in_text
 from ..theme import Color, Glyph
-from .constants import QUESTION_TOOL_NAME, STARTUP_WORDMARK
+from .constants import QUESTION_TOOL_NAME
+from .startup import StartupEntryWidget
 from .state import (
     ConversationEntry,
     PhaseState,
@@ -92,7 +93,8 @@ class _IndentedRenderState:
 
 class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
     def _restore_conversation_history(self, history: list[dict]) -> None:
-        self.conversation_entries = []
+        # Model/settings rebuilds should not undo the user's disclosure choices.
+        self.conversation_entries = [entry for entry in self.conversation_entries if entry.kind == "startup"]
         self._stream_entries = {}
         self._tool_entries = {}
         self._tool_stream_buffers = {}
@@ -126,6 +128,8 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             self.conversation_entries.extend(self._conversation_entries_from_history_items(history[summary_index:]))
         else:
             self.conversation_entries.extend(self._conversation_entries_from_history_items(history))
+        if len(self.conversation_entries) > 1:
+            self._fold_startup_entry(render=False)
         self._render_conversation()
 
     def _resume_compaction_entry(self) -> Optional[ConversationEntry]:
@@ -1385,7 +1389,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
 
     def _maybe_expand_transcript_window(self) -> None:
         """Mount older transcript entries when the user scrolls near the top."""
-        if self._modal_cover_active:
+        if self._modal_cover_active or self._conversation_anchor_pending:
             return
         window = self._transcript_window
         if window is None:
@@ -1465,6 +1469,8 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             self._update_jump_button()
 
     def _make_entry_widget(self, entry: ConversationEntry) -> ConversationEntryWidget | ToolEntryWidget:
+        if entry.kind == "startup":
+            return StartupEntryWidget(entry, self._startup_title, self._startup_summary, self._format_startup_entry)
         if entry.kind in {"tool_call", "tool_result", "tool_error"}:
             return ToolEntryWidget(
                 entry,
@@ -1516,11 +1522,19 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         self._conversation_anchor_pending = True
 
         def anchor_after_refresh() -> None:
-            self._conversation_anchor_pending = False
             if not view.is_attached:
+                self._conversation_anchor_pending = False
                 return
             view.set_auto_follow(True)
-            view.anchor()
+            # Textual anchoring bottom-aligns even a short transcript (negative
+            # scroll offset). A fresh startup card belongs at the top instead.
+            fresh = len(self.conversation_entries) <= 2 and all(
+                entry.kind in {"startup", "progress"} for entry in self.conversation_entries
+            )
+            view.anchor(not fresh)
+            if fresh:
+                view.scroll_to(y=0, animate=False, immediate=True)
+            self._conversation_anchor_pending = False
             if update_button:
                 self.call_after_refresh(self._update_jump_button)
 
@@ -1721,36 +1735,16 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         return grid
 
     def _format_startup_entry(self, entry: ConversationEntry) -> Text:
-        lines = entry.content.splitlines()
-        try:
-            separator = lines.index("")
-        except ValueError:
-            separator = len(STARTUP_WORDMARK)
         rendered = Text()
-        logo_lines = lines[:separator]
-        if logo_lines:
-            top, bottom = theme.splash_colors()
-            gradient = (
-                theme.gradient_hex(top, bottom, len(logo_lines)) if theme.supports_truecolor(self.console) else []
-            )
-            if gradient:
-                # Two-tone vertical gradient: accent at top -> secondary at bottom.
-                for index, line in enumerate(logo_lines):
-                    if index:
-                        rendered.append("\n")
-                    rendered.append(line, style=f"bold {gradient[index]}")
-            else:
-                # 256-color terminal: flat bold primary (matches the primary buttons).
-                rendered.append("\n".join(logo_lines), style=f"bold {top}")
-        for line in lines[separator + 1 :]:
-            rendered.append("\n")
+        for line in entry.content.splitlines()[2:]:
+            if rendered:
+                rendered.append("\n")
             label, sep, value = line.partition(": ")
-            if sep and label and len(label) <= 12:
-                # Aligned two-column key/value line: muted label, normal value.
-                rendered.append(f"{label + ':':<13}", style="dim")
+            if sep and label and len(label) <= 18:
+                rendered.append(f"{label}: ", style=Color.MUTED)
                 rendered.append(value)
             else:
-                rendered.append(line, style="dim")
+                rendered.append(line, style=Color.MUTED)
         return rendered
 
     def _format_tool_entry(self, entry: ConversationEntry) -> Text | Group:

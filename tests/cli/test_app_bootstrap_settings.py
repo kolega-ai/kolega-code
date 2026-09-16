@@ -107,7 +107,8 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
         assert app.query_one("#status_task_list_markdown", PlanningMarkdown).source == "No task list has been set."
         assert app.conversation_entries[0].kind == "startup"
         startup = app.conversation_entries[0].content
-        assert "____          _" in startup
+        assert startup.startswith("Kolega Code v")
+        assert "____          _" not in startup
         assert f"Project: {project}" in startup
         assert f"Session: {session.session_id[:8]}" in startup
         assert "Mode: cli" in startup

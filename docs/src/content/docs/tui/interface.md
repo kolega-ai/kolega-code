@@ -43,6 +43,12 @@ choice; the full editor remains available for every advanced setting.
 
 ## Conversation details
 
+- **Startup card** — a static, compact card shows the project, model, effort,
+  credential status, mode, permissions, and detected language servers. Expand
+  **Session & configuration** for full paths, session details, and diagnostics.
+  The card folds after your first message and starts folded when restoring a
+  conversation. Click its title (or focus it and press `Enter`) to reopen it;
+  later messages respect that choice. Resetting the thread restores the card.
 - **Your messages** — a subtle background distinguishes your prompts from agent
   replies. The blank separator below each message stays unshaded.
 - **Streaming** — the view stays anchored to the bottom while the agent is

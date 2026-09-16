@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Optional, TypeVar
 
 from rich.console import Group
+from rich.table import Table
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
@@ -104,6 +105,7 @@ from .slash_commands import (
 )
 from .theme import Color, Glyph
 from .updater import check_for_update, current_version, update_status_message
+from .tui.startup import display_project_path
 from .tui import constants as tui_constants
 from .tui import agent_runtime as tui_agent_runtime
 from .tui import changes_screen as tui_changes
@@ -2981,12 +2983,23 @@ class KolegaCodeApp(
         self._log_status(messages.HANDOFF_SUCCESS.format(title=new_record.title), "ok")
 
     def _add_conversation_entry(self, entry: tui_state.ConversationEntry) -> None:
+        if entry.kind == "user":
+            self._fold_startup_entry()
         self.conversation_entries.append(entry)
         if entry.uuid:
             self._stream_entries[entry.uuid] = entry
         if entry.tool_call_id:
             self._tool_entries[entry.tool_call_id] = entry
         self._invalidate_conversation(entry)
+
+    def _fold_startup_entry(self, *, render: bool = True) -> None:
+        """Fold once on the first message; later messages respect manual expansion."""
+        startup = next((entry for entry in self.conversation_entries if entry.kind == "startup"), None)
+        if startup is not None and not startup.startup_auto_folded:
+            startup.startup_auto_folded = True
+            startup.startup_collapsed = True
+            if render:
+                self._invalidate_conversation(startup)
 
     def _ensure_startup_entry(self, *, render: bool = True) -> None:
         existing = next((entry for entry in self.conversation_entries if entry.kind == "startup"), None)
@@ -3042,7 +3055,7 @@ class KolegaCodeApp(
             if self.config is not None
             else None
         )
-        startup_lines = [*tui_constants.STARTUP_WORDMARK, ""]
+        startup_lines = [f"Kolega Code v{current_version()}", ""]
         if self.config is None:
             startup_lines.extend(
                 [
@@ -3088,6 +3101,64 @@ class KolegaCodeApp(
         if self._running_under_tmux_or_screen():
             startup_lines.extend(["", messages.TMUX_SHORTCUT_HINT])
         return "\n".join(startup_lines)
+
+    def _startup_title(self, entry: tui_state.ConversationEntry, width: int | None = None) -> str:
+        title = Text("kolega code", style=f"bold {Color.ACCENT}")
+        title.append(f"  v{current_version()}", style=Color.MUTED)
+        if entry.startup_collapsed:
+            _, model = self._startup_model()
+            title.append(
+                f" · {model or 'not configured'} · {display_project_path(self.active_project_path)}",
+                style=Color.MUTED,
+            )
+        if width is not None:
+            if width <= 0:
+                return ""
+            title.truncate(width, overflow="ellipsis")
+        return title.markup
+
+    def _startup_summary(self, entry: tui_state.ConversationEntry, width: int) -> Group:
+        provider, model = self._startup_model()
+        effort = self._startup_thinking_effort() or "not supported"
+        credential = key_status(provider, self.project_path, self.settings) if model else "not configured"
+        model_text = Text()
+        model_text.append("MODEL\n", style=Color.MUTED)
+        model_text.append(f"{provider} / {model}" if model else provider)
+        model_text.append(f"\n{effort} effort · key {credential}", style=Color.MUTED)
+        workspace = Text()
+        workspace.append("WORKSPACE\n", style=Color.MUTED)
+        workspace.append(self.interaction_mode, style=f"bold {Color.ACCENT}")
+        permission_color = Color.WARNING if self.permission_mode == PermissionMode.AUTO else ""
+        workspace.append(f" · {self.permission_mode.value} permissions", style=permission_color)
+        workspace.append(f"\n{self.mode} agent", style=Color.MUTED)
+        lsp_lines = [line.strip() for line in self._startup_lsp_lines() if "→" in line]
+        if lsp_lines:
+            lsp_summary = "setup needed" if any("(install:" in line for line in lsp_lines) else ", ".join(lsp_lines)
+            workspace.append(f" · LSP: {lsp_summary}", style=Color.MUTED)
+        fields = Table.grid(expand=True, padding=(0, 3))
+        if width >= 76:
+            fields.add_column(ratio=1)
+            fields.add_column(ratio=1)
+            fields.add_row(model_text, workspace)
+        else:
+            fields.add_column()
+            fields.add_row(model_text)
+            fields.add_row(Text(""))
+            fields.add_row(workspace)
+        parts: list[Any] = [Text(display_project_path(self.active_project_path)), fields]
+        if self.config is None:
+            parts.append(
+                Text(
+                    f"{messages.DISCONNECTED_HEADLINE}\n{messages.DISCONNECTED_STARTUP_GUIDANCE}\n"
+                    f"{messages.DISCONNECTED_SIDEBAR_GUIDANCE}",
+                    style=Color.WARNING,
+                )
+            )
+        errors = list(getattr(self.agent, "prompt_override_errors", []) or [])
+        diagnostics = self.custom_agent_catalog.diagnostics
+        if errors or diagnostics:
+            parts.append(Text("Configuration warnings — expand Session & configuration.", style=Color.WARNING))
+        return Group(*parts)
 
     @staticmethod
     def _running_under_tmux_or_screen() -> bool:

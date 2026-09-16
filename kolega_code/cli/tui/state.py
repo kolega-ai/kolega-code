@@ -97,6 +97,10 @@ class ConversationEntry:
     # e.g. {"kind": "peer", "session_id": ..., "title": ...}. UI-only display
     # metadata; excluded from equality like the other render caches.
     origin: Optional[dict] = field(default=None, compare=False, repr=False)
+    # Startup disclosure state survives scrollback remounts, not session storage.
+    startup_collapsed: bool = field(default=False, compare=False, repr=False)
+    startup_details_expanded: bool = field(default=False, compare=False, repr=False)
+    startup_auto_folded: bool = field(default=False, compare=False, repr=False)
 
     def materialize(self) -> str:
         """Fold any deferred stream deltas into ``content`` and return it.

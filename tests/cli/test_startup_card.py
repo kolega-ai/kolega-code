@@ -1,0 +1,141 @@
+"""Startup disclosures preserve diagnostics and survive transcript lifecycle changes."""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+
+import pytest
+from rich.console import Console
+from rich.text import Text
+from textual.selection import Selection
+from textual.widgets import Collapsible
+from textual.widgets._collapsible import CollapsibleTitle
+
+from kolega_code.cli.tui.startup import StartupEntryWidget, StartupText, display_project_path
+from kolega_code.cli.tui.state import ConversationEntry
+from kolega_code.cli.tui.widgets import ChatComposer
+from kolega_code.llm.models import Message, TextBlock
+
+from ._app_test_utils import _build_mention_test_app
+
+
+async def _wait_for_layout(pilot, predicate, *, timeout: float = 6.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        if predicate():
+            return
+    raise AssertionError("startup layout did not settle")
+
+
+def test_home_abbreviation_is_unambiguous(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: Path("/Users/person")))
+    assert display_project_path(Path("/Users/person")) == "~"
+    assert display_project_path(Path("/Users/person/project")) == "~/project"
+    assert display_project_path(Path("/Users/person-other/project")) == "/Users/person-other/project"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", [40, 60, 80, 120, 160])
+async def test_startup_is_compact_selectable_and_width_aware(tmp_path, monkeypatch, width) -> None:
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(width, 50)) as pilot:
+        app._set_sidebar_visible(False)
+        await _wait_for_layout(pilot, lambda: bool(app.query(StartupEntryWidget)))
+        card = app.query_one(StartupEntryWidget)
+        outer = card.query_one(Collapsible)
+        assert not outer.collapsed
+        details = card.query_one(".startup-configuration", Collapsible)
+        assert details.collapsed
+        await _wait_for_layout(pilot, lambda: 0 < card.region.width <= width and card.region.height > 1)
+        await _wait_for_layout(pilot, lambda: card.region.y == app._conversation.region.y)
+        # Even at 40 columns this is far smaller than the old logo/config dump.
+        assert card.region.height < 22
+        title = outer.query_one(CollapsibleTitle)
+        assert title.size.height == 1
+        summary = card.query_one(".startup-summary", StartupText)
+        selected = summary.get_selection(Selection(None, None))
+        assert selected is not None
+        assert "MODEL" in selected[0]
+        assert "WORKSPACE" in selected[0]
+        assert "build" in selected[0]
+        assert "ask permissions" in selected[0]
+        assert any(segment.style and "offset" in segment.style.meta for segment in summary.render_line(0))
+        assert not any(segment.style and segment.style.link for segment in summary.render_line(0))
+        details.collapsed = False
+        await _wait_for_layout(pilot, lambda: card.entry.startup_details_expanded)
+        config = card.query_one(".startup-details", StartupText)
+        await _wait_for_layout(pilot, lambda: config.region.height > 1)
+        copied = config.get_selection(Selection(None, None))
+        assert copied is not None and str(app.project_path) in copied[0].replace("\n", "")
+        assert "Project:" in copied[0]
+        assert "Session:" in copied[0] and "API key:" in copied[0]
+
+
+@pytest.mark.asyncio
+async def test_first_submission_folds_once_and_manual_reopening_survives_rebuild(tmp_path, monkeypatch) -> None:
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 50)) as pilot:
+        app._set_sidebar_visible(False)
+        card = app.query_one(StartupEntryWidget)
+        entry = card.entry
+        composer = app.query_one(ChatComposer)
+        composer.load_text("inspect the project")
+        composer.focus()
+        await pilot.press("enter")
+        await _wait_for_layout(pilot, lambda: entry.startup_auto_folded and app.agent_worker is None)
+        await _wait_for_layout(pilot, lambda: card.query_one(Collapsible).collapsed)
+        assert entry.startup_collapsed
+        title = card.query_one(CollapsibleTitle)
+        title.focus()
+        await pilot.press("enter")
+        await _wait_for_layout(pilot, lambda: not entry.startup_collapsed)
+        app._add_conversation_entry(ConversationEntry(kind="user", content="second message"))
+        app._ensure_startup_entry()
+        app._render_conversation()
+        await _wait_for_layout(pilot, lambda: app.query_one(StartupEntryWidget) is not card)
+        assert not app.query_one(StartupEntryWidget).query_one(Collapsible).collapsed
+        assert app.query_one(StartupEntryWidget).entry is entry
+
+
+@pytest.mark.asyncio
+async def test_restore_folds_and_reset_opens_a_fresh_card(tmp_path, monkeypatch) -> None:
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    history = [Message(role="user", content=[TextBlock(text="restored prompt")]).to_dict()]
+    async with app.run_test(size=(100, 40)) as pilot:
+        app._restore_conversation_history(history)
+        await _wait_for_layout(pilot, lambda: app.query_one(StartupEntryWidget).entry.startup_collapsed)
+        entry = app.query_one(StartupEntryWidget).entry
+        app.query_one(StartupEntryWidget).query_one(Collapsible).collapsed = False
+        await _wait_for_layout(pilot, lambda: not entry.startup_collapsed)
+        app._restore_conversation_history(history)
+        await _wait_for_layout(pilot, lambda: app.query_one(StartupEntryWidget).entry is entry)
+        assert not entry.startup_collapsed
+        await app._reset_current_thread()
+        await _wait_for_layout(pilot, lambda: app.query_one(StartupEntryWidget).entry is not entry)
+        fresh = app.query_one(StartupEntryWidget).entry
+        assert not fresh.startup_auto_folded and not fresh.startup_collapsed
+        assert [e.kind for e in app.conversation_entries].count("startup") == 1
+
+
+@pytest.mark.asyncio
+async def test_configuration_is_literal_and_same_length_edits_refresh(tmp_path, monkeypatch) -> None:
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 50)) as pilot:
+        card = app.query_one(StartupEntryWidget)
+        card.query_one(".startup-configuration", Collapsible).collapsed = False
+        card.entry.content = "Kolega Code v0\n\nProject: [bold]not markup[/bold]\nModel: first"
+        card.refresh_content()
+        details = card.query_one(".startup-details", StartupText)
+        await _wait_for_layout(pilot, lambda: details.region.height > 0)
+        assert "[bold]not markup[/bold]" in str(details.render())
+        card.entry.content = card.entry.content.replace("first", "other")
+        card.refresh_content()
+        assert "other" in str(details.render()) and "first" not in str(details.render())
+        for width in [0, 1, 7, 24]:
+            text = Text.from_markup(app._startup_title(card.entry, width))
+            assert text.cell_len <= width
+        output = Console(width=80, record=True)
+        output.print(app._startup_summary(card.entry, 80))
+        assert "WORKSPACE" in output.export_text()
