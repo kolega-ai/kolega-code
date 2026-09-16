@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any, Optional, TypeVar
 
 from rich.console import Group
-from rich.table import Table
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
@@ -3133,10 +3132,8 @@ class KolegaCodeApp(
         title.append(f"  v{current_version()}", style=Color.MUTED)
         if entry.startup_collapsed:
             _, model = self._startup_model()
-            title.append(
-                f" · {model or 'not configured'} · {display_project_path(self.active_project_path)}",
-                style=Color.MUTED,
-            )
+            title.append(f" · {model or 'not configured'}", style=Color.MUTED)
+        title.append(f" · {display_project_path(self.active_project_path)}", style=Color.MUTED)
         if width is not None:
             if width <= 0:
                 return ""
@@ -3147,31 +3144,26 @@ class KolegaCodeApp(
         provider, model = self._startup_model()
         effort = self._startup_thinking_effort() or "not supported"
         credential = key_status(provider, self.project_path, self.settings) if model else "not configured"
-        model_text = Text()
-        model_text.append("MODEL\n", style=Color.MUTED)
-        model_text.append(f"{provider} / {model}" if model else provider)
-        model_text.append(f"\n{effort} effort · key {credential}", style=Color.MUTED)
+        if credential.startswith("present"):
+            credential = "key present"
+        elif credential.startswith("signed in as "):
+            credential = "signed in"
+        elif credential == "missing":
+            credential = "key missing"
+        elif credential == "not required for the local provider":
+            credential = "no key needed"
+        model_text = Text(f"{provider} / {model}" if model else provider)
+        model_text.append(f" · {effort} effort", style=Color.MUTED)
         workspace = Text()
-        workspace.append("WORKSPACE\n", style=Color.MUTED)
         workspace.append(self.interaction_mode, style=f"bold {Color.ACCENT}")
         permission_color = Color.WARNING if self.permission_mode == PermissionMode.AUTO else ""
         workspace.append(f" · {self.permission_mode.value} permissions", style=permission_color)
-        workspace.append(f"\n{self.mode} agent", style=Color.MUTED)
+        workspace.append(f" · {credential}", style=Color.MUTED)
         lsp_lines = [line.strip() for line in self._startup_lsp_lines() if "→" in line]
         if lsp_lines:
-            lsp_summary = "setup needed" if any("(install:" in line for line in lsp_lines) else ", ".join(lsp_lines)
+            lsp_summary = "setup needed" if any("(install:" in line for line in lsp_lines) else "ready"
             workspace.append(f" · LSP: {lsp_summary}", style=Color.MUTED)
-        fields = Table.grid(expand=True, padding=(0, 3))
-        if width >= 76:
-            fields.add_column(ratio=1)
-            fields.add_column(ratio=1)
-            fields.add_row(model_text, workspace)
-        else:
-            fields.add_column()
-            fields.add_row(model_text)
-            fields.add_row(Text(""))
-            fields.add_row(workspace)
-        parts: list[Any] = [Text(display_project_path(self.active_project_path)), fields]
+        parts: list[Any] = [model_text, workspace]
         if self.config is None:
             parts.append(
                 Text(

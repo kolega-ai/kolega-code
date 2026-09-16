@@ -36,6 +36,55 @@ def test_home_abbreviation_is_unambiguous(monkeypatch: pytest.MonkeyPatch) -> No
     assert display_project_path(Path("/Users/person-other/project")) == "/Users/person-other/project"
 
 
+@pytest.mark.parametrize(
+    ("credential", "compact"),
+    [
+        ("present via ANTHROPIC_API_KEY", "key present"),
+        ("present in local settings", "key present"),
+        ("present via environment override", "key present"),
+        ("signed in as person@example.com (subscription)", "signed in"),
+        ("not signed in", "not signed in"),
+        ("missing", "key missing"),
+        ("not required for the local provider", "no key needed"),
+        ("key not set (optional)", "key not set (optional)"),
+        ("endpoint not defined", "endpoint not defined"),
+    ],
+)
+def test_startup_compacts_credentials_without_losing_configuration_details(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, credential: str, compact: str
+) -> None:
+    from kolega_code.cli import app as app_module
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    monkeypatch.setattr(app_module, "key_status", lambda *args: credential)
+    entry = ConversationEntry(kind="startup", content=app._startup_content())
+    output = Console(width=160, record=True)
+    output.print(app._startup_summary(entry, 160))
+    lines = output.export_text().splitlines()
+    assert len(lines) == 2
+    assert lines[1] == f"build · ask permissions · {compact}"
+    assert f"API key: {credential}" in entry.content
+
+
+@pytest.mark.parametrize("setup_needed", [False, True])
+def test_startup_summarizes_lsp_and_keeps_server_details_in_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setup_needed: bool
+) -> None:
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    server_lines = ["  Python → pyright", "  TypeScript → typescript-language-server"]
+    if setup_needed:
+        server_lines.append("  Rust → rust-analyzer (install: rustup component add rust-analyzer)")
+    monkeypatch.setattr(app, "_startup_lsp_lines", lambda: ["", "LSP:", *server_lines, ""])
+    entry = ConversationEntry(kind="startup", content=app._startup_content())
+    output = Console(width=160, record=True)
+    output.print(app._startup_summary(entry, 160))
+    text = output.export_text()
+    assert len(text.splitlines()) == 2
+    assert f"LSP: {'setup needed' if setup_needed else 'ready'}" in text
+    assert "pyright" not in text
+    assert all(line in entry.content for line in server_lines)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("width", "sidebar"),
@@ -85,15 +134,22 @@ async def test_startup_is_compact_selectable_and_width_aware(tmp_path, monkeypat
         assert details.collapsed
         await _wait_for_layout(pilot, lambda: 0 < card.region.width <= width and card.region.height > 1)
         await _wait_for_layout(pilot, lambda: card.region.y == app._conversation.region.y)
-        # Even at 40 columns this is far smaller than the old logo/config dump.
-        assert card.region.height < 22
+        # Header, two summary rows, disclosure, and two border rows. Only
+        # narrow terminals may add wrapped rows; no decorative blank rows.
+        await _wait_for_layout(pilot, lambda: card.region.height <= (8 if width == 40 else 6))
         title = outer.query_one(CollapsibleTitle)
         assert title.size.height == 1
+        assert "~/project" in Text.from_markup(app._startup_title(card.entry)).plain
         summary = card.query_one(".startup-summary", StartupText)
         selected = summary.get_selection(Selection(None, None))
         assert selected is not None
-        assert "MODEL" in selected[0]
-        assert "WORKSPACE" in selected[0]
+        assert app.config is not None
+        assert app.config.long_context_config.model in selected[0]
+        assert "effort" in selected[0]
+        assert "key" in selected[0]
+        assert "MODEL" not in selected[0]
+        assert "WORKSPACE" not in selected[0]
+        assert "ANTHROPIC_API_KEY" not in selected[0]
         assert "build" in selected[0]
         assert "ask permissions" in selected[0]
         assert any(segment.style and "offset" in segment.style.meta for segment in summary.render_line(0))
@@ -173,4 +229,4 @@ async def test_configuration_is_literal_and_same_length_edits_refresh(tmp_path, 
             assert text.cell_len <= width
         output = Console(width=80, record=True)
         output.print(app._startup_summary(card.entry, 80))
-        assert "WORKSPACE" in output.export_text()
+        assert "build · ask permissions" in output.export_text()

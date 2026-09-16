@@ -56,7 +56,7 @@ class StartupEntryWidget(ToolEntryWidget):
     DEFAULT_CSS = """
     StartupEntryWidget {
         height: auto;
-        padding-bottom: 1;
+        padding: 0;
     }
     StartupEntryWidget > Collapsible {
         border: round $surface-lighten-2;
@@ -75,7 +75,7 @@ class StartupEntryWidget(ToolEntryWidget):
         padding: 0;
     }
     StartupEntryWidget .startup-summary {
-        margin: 1 0 0 0;
+        margin: 0;
     }
     StartupEntryWidget .startup-configuration {
         border: none;
@@ -83,7 +83,7 @@ class StartupEntryWidget(ToolEntryWidget):
         background: transparent;
     }
     StartupEntryWidget .startup-details {
-        margin-top: 1;
+        margin: 0;
     }
     """
 
