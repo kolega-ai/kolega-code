@@ -774,6 +774,9 @@ class CompletionDropdown(OptionList):
 
     can_focus = False
 
+    class StateChanged(TextualMessage):
+        """The dropdown opened or closed, including Escape without a text edit."""
+
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._items: list[CompletionItem] = []
@@ -783,17 +786,23 @@ class CompletionDropdown(OptionList):
         return self.display
 
     def open_with(self, items: list[CompletionItem]) -> None:
+        was_open = self.display
         self._items = list(items)
         self.clear_options()
         self.add_options([item.prompt for item in self._items])
         if self._items:
             self.highlighted = 0
         self.display = True
+        if not was_open:
+            self.post_message(self.StateChanged())
 
     def close(self) -> None:
+        was_open = self.display
         self.display = False
         self._items = []
         self.clear_options()
+        if was_open:
+            self.post_message(self.StateChanged())
 
     def highlighted_entry(self) -> Optional[IndexEntry | SlashCommandEntry]:
         if self.highlighted is None or not self._items:

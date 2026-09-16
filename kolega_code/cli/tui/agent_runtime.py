@@ -436,6 +436,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             # queue instead of running immediately (which would cancel the verifier
             # via the exclusive ``turns`` worker group) and Esc can interrupt the loop.
             self.agent_worker = None
+            self._refresh_shortcut_context()
 
     # ------------------------------------------------------------------
     # Autonomous goal loop

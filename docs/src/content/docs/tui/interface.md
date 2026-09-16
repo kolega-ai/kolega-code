@@ -112,8 +112,16 @@ the turn keeps running while you look around.
 
 ## Key bindings at a glance
 
+The bottom shortcut bar follows focus: **send** while idle, **queue** while
+working, **answer** for question text, and **choose / select / dismiss** during
+completion. Option lists show their own selection keys. Hints fit as whole
+items rather than clipped labels; omitted shortcuts still work. Press `F1` or
+click **…** for the complete local reference without replacing your draft.
+`/help` remains an agent command. Inspector and settings shortcuts are unchanged.
+
 | Keys | Action |
 | --- | --- |
+| `F1` / click `…` | Open the local keyboard shortcut reference |
 | `Shift+Tab` | Toggle Build ⇄ Plan mode (`/plan` / `/build` if Shift is unavailable) |
 | `Ctrl+P` | Toggle shell/edit permissions between Ask ⇄ Auto |
 | `Ctrl+O` | Show or hide the side panel |

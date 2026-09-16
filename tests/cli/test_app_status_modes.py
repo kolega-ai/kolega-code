@@ -655,8 +655,10 @@ async def test_textual_app_ctrl_p_toggles_permission_mode(tmp_path: Path, monkey
 
 
 @pytest.mark.asyncio
-async def test_footer_renders_ctrl_p_permissions_exactly_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Regression: "Ctrl+P Permissions" must appear once, not twice, in the footer.
+async def test_footer_omits_permissions_hint_without_disabling_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Context hints may omit Ctrl+P, but its real binding stays functional.
 
     Textual's command palette defaults to ctrl+p, which collided with the
     toggle_permission_mode binding and rendered "Ctrl+P Permissions" twice.
@@ -665,6 +667,7 @@ async def test_footer_renders_ctrl_p_permissions_exactly_once(tmp_path: Path, mo
     pytest.importorskip("textual")
 
     from textual.widgets import Footer
+    from textual.binding import Binding
     from textual.widgets._footer import FooterKey
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -699,9 +702,13 @@ async def test_footer_renders_ctrl_p_permissions_exactly_once(tmp_path: Path, mo
         footer = app.query_one(Footer)
         ctrl_p_keys = [key for key in footer.query(FooterKey) if key.key == "ctrl+p"]
 
-        assert len(ctrl_p_keys) == 1
-        assert ctrl_p_keys[0].key_display == "Ctrl+P"
-        assert ctrl_p_keys[0].description == "Permissions"
+        assert ctrl_p_keys == []
+        permissions = [binding for binding in app.BINDINGS if isinstance(binding, Binding) and binding.key == "ctrl+p"]
+        assert len(permissions) == 1
+        before = app.permission_mode
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+        assert app.permission_mode != before
 
 
 def test_app_ctrl_bindings_use_explicit_key_display() -> None:

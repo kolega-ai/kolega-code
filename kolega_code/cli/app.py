@@ -28,7 +28,6 @@ from textual.timer import Timer
 from textual.worker import WorkerState
 from textual.widgets import (
     Button,
-    Footer,
     OptionList,
     Static,
     TabbedContent,
@@ -107,6 +106,7 @@ from .theme import Color, Glyph
 from .updater import check_for_update, current_version, update_status_message
 from .tui.startup import display_project_path
 from .tui.metadata import MetadataStrip
+from .tui.shortcut_bar import ContextFooter, ShortcutHelpScreen
 from .tui import constants as tui_constants
 from .tui import agent_runtime as tui_agent_runtime
 from .tui import changes_screen as tui_changes
@@ -167,6 +167,7 @@ class KolegaCodeApp(
         Binding("ctrl+c", "cancel_generation", "Cancel", show=True, key_display="Ctrl+C"),
         Binding("escape", "cancel_generation", "Cancel", show=False),
         Binding("ctrl+q", "quit", "Quit", show=True, key_display="Ctrl+Q"),
+        Binding("f1", "shortcut_help", "Shortcuts", show=False, priority=True),
     ]
 
     def __init__(
@@ -490,7 +491,7 @@ class KolegaCodeApp(
                                     classes="quiet",
                                 )
                                 yield Static("", id="settings_summary_status")
-        yield Footer()
+        yield ContextFooter()
 
     def _diagnostics_header(self) -> dict:
         """One-shot environment/config snapshot for the diagnostics timeline."""
@@ -1174,6 +1175,21 @@ class KolegaCodeApp(
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if event.text_area.id == "composer":
             self._refresh_completion_dropdown()
+            self._refresh_shortcut_context()
+
+    def on_completion_dropdown_state_changed(self, event: tui_widgets.CompletionDropdown.StateChanged) -> None:
+        self._refresh_shortcut_context()
+
+    def _refresh_shortcut_context(self) -> None:
+        if self.screen_stack:
+            for footer in self.screen_stack[0].query(ContextFooter):
+                footer.refresh_context()
+
+    def action_shortcut_help(self) -> None:
+        if isinstance(self.screen, ShortcutHelpScreen):
+            self.screen.action_close()
+        elif len(self.screen_stack) == 1:
+            self._push_fullscreen_modal(ShortcutHelpScreen())
 
     def _refresh_completion_dropdown(self) -> None:
         try:
@@ -2186,6 +2202,7 @@ class KolegaCodeApp(
         self._close_memory_manager()
 
     def on_worker_state_changed(self, event) -> None:
+        self._refresh_shortcut_context()
         # Capture worker (e.g. agent-turn) crashes that Textual otherwise only logs to stderr.
         try:
             if event.state is WorkerState.ERROR and self._diag is not None:
@@ -2504,6 +2521,8 @@ class KolegaCodeApp(
         The synchronous set_focus handles the common fast path; the deferred
         re-assert defeats the documented race where compose/resume/disable churn
         resets focus right after we set it (see tui_widgets.PromptPanel.prompt)."""
+        if self._modal_cover_active:
+            return
         actions = self._active_prompt_actions()
         if actions is None:
             return
@@ -2560,6 +2579,10 @@ class KolegaCodeApp(
         click), to the conversation transcript (AUTO_FOCUS on resume/resize), or to
         any other stray widget. No-op when no prompt is active or the list is already
         focused."""
+        # A prompt may arrive while local help or another modal is open. Never
+        # route the modal's keystrokes into a covered question or approval.
+        if self._modal_cover_active:
+            return
         actions = self._active_prompt_actions()
         if actions is None or self.screen.focused is actions:
             return
@@ -2683,6 +2706,7 @@ class KolegaCodeApp(
             pass
 
     def _refresh_input_area_visibility(self) -> None:
+        self._refresh_shortcut_context()
         prompt_or_decision_pending = (
             self._pending_approval is not None or self._pending_question is not None or self._plan_decision_active
         )
@@ -2709,6 +2733,7 @@ class KolegaCodeApp(
             # composer helpers so a late finalize can't raise WorkerFailed.
             return
         composer.disabled = not enabled or self._plan_decision_active or self._pending_approval is not None
+        self._refresh_shortcut_context()
         if self.config is None and self.agent is None:
             composer.placeholder = messages.DISCONNECTED_COMPOSER_PLACEHOLDER
         elif enabled and composer.placeholder == messages.DISCONNECTED_COMPOSER_PLACEHOLDER:
