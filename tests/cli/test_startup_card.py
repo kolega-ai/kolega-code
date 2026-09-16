@@ -37,6 +37,38 @@ def test_home_abbreviation_is_unambiguous(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("width", "sidebar"),
+    [(40, False), (60, False), (80, False), (120, False), (120, True), (160, True)],
+)
+async def test_startup_configuration_follows_summary_without_blank_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, width: int, sidebar: bool
+) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path.resolve()))
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(width, 50)) as pilot:
+        app._set_sidebar_visible(sidebar)
+        await _wait_for_layout(pilot, lambda: bool(app.query(StartupEntryWidget)))
+        card = app.query_one(StartupEntryWidget)
+        summary = card.query_one(".startup-summary", StartupText)
+        configuration = card.query_one(".startup-configuration", Collapsible)
+        title = configuration.query_one(CollapsibleTitle)
+
+        def disclosure_follows_content() -> bool:
+            lines = [summary.render_line(y).text for y in range(summary.content_size.height)]
+            occupied_rows = [y for y, line in enumerate(lines) if line.strip()]
+            return bool(occupied_rows) and title.region.y == summary.content_region.y + occupied_rows[-1] + 1
+
+        await _wait_for_layout(pilot, disclosure_follows_content)
+        configuration.collapsed = False
+        await _wait_for_layout(pilot, lambda: card.entry.startup_details_expanded and disclosure_follows_content())
+        await pilot.resize_terminal(width + 8, 50)
+        await _wait_for_layout(pilot, disclosure_follows_content)
+        configuration.collapsed = True
+        await _wait_for_layout(pilot, lambda: not card.entry.startup_details_expanded and disclosure_follows_content())
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("width", [40, 60, 80, 120, 160])
 async def test_startup_is_compact_selectable_and_width_aware(tmp_path, monkeypatch, width) -> None:
     # Exercise a normal home-relative project, not the runner's arbitrarily

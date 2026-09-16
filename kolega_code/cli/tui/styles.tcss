@@ -157,6 +157,11 @@ StartupEntryWidget Collapsible Contents {
     padding: 0;
 }
 
+/* The summary and configuration are one card, not separate chat entries. */
+StartupEntryWidget StartupText {
+    padding: 0;
+}
+
 StartupEntryWidget .startup-configuration {
     border: none;
     padding: 0;

@@ -75,7 +75,7 @@ class StartupEntryWidget(ToolEntryWidget):
         padding: 0;
     }
     StartupEntryWidget .startup-summary {
-        margin: 1 0;
+        margin: 1 0 0 0;
     }
     StartupEntryWidget .startup-configuration {
         border: none;
