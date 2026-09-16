@@ -54,6 +54,12 @@ choice; the full editor remains available for every advanced setting.
   The card folds after your first message and starts folded when restoring a
   conversation. Click its title (or focus it and press `Enter`) to reopen it;
   later messages respect that choice. Resetting the thread restores the card.
+- **Discovery tips** — optional, off by default. Enable **Discovery tips** in
+  **Settings → Appearance** and Apply to show one quiet tip below the startup
+  card on fresh sessions. Click **Next** (or focus it and press `Enter`) to cycle;
+  tips never rotate automatically. They disappear after the first message and
+  do not appear on resumed sessions. The preference is saved, but the tip index
+  is local to the current thread; tips are not sent to the agent.
 - **Your messages** — a subtle background distinguishes your prompts from agent
   replies. The blank separator below each message stays unshaded.
 - **Streaming** — the view stays anchored to the bottom while the agent is

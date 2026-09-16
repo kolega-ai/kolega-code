@@ -10,7 +10,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, OptionList, Select, Static
+from textual.widgets import Button, Input, Label, OptionList, Select, Static, Switch
 from textual.widgets.option_list import Option
 
 from kolega_code.agent.tool_backend.search_backends import (
@@ -635,6 +635,19 @@ class SettingsScreen(ModalScreen[None]):
                     allow_blank=False,
                     value=theme.DEFAULT_THEME_NAME,
                 )
+                yield Label("Discovery tips")
+                yield Switch(
+                    value=self.owner.settings.discovery_tips,
+                    id="discovery_tips_switch",
+                    animate=False,
+                    tooltip="Show discovery tips on fresh sessions",
+                )
+                yield Static(
+                    "Show one quiet tip on fresh sessions. Off by default; use Next to cycle. "
+                    "No tracking or automatic rotation. Saved when you Apply.",
+                    classes="settings-hint",
+                    markup=False,
+                )
 
     def _compose_gateway_page(self) -> ComposeResult:
         with VerticalScroll(id="settings_page_gateway", classes="settings-page"):
@@ -790,6 +803,9 @@ class SettingsScreen(ModalScreen[None]):
             self.owner._commit_visible_api_key()
         self.call_after_refresh(self._refresh_apply_label)
 
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        self.call_after_refresh(self._refresh_apply_label)
+
     def _reset_connection_status(self) -> None:
         if self._initializing:
             return
@@ -800,8 +816,8 @@ class SettingsScreen(ModalScreen[None]):
 
     def _snapshot(self) -> tuple[tuple[str, Any], ...]:
         values: list[tuple[str, Any]] = []
-        for widget in self.query("Select, Input"):
-            if not isinstance(widget, (Select, Input)):
+        for widget in self.query("Select, Input, Switch"):
+            if not isinstance(widget, (Select, Input, Switch)):
                 continue
             widget_id = widget.id or ""
             # provider_api_key_input follows the highlighted provider rather than holding

@@ -3017,26 +3017,33 @@ class KolegaCodeApp(
         if startup is not None and not startup.startup_auto_folded:
             startup.startup_auto_folded = True
             startup.startup_collapsed = True
+            startup.startup_tip_visible = False
             if render:
                 self._invalidate_conversation(startup)
 
     def _ensure_startup_entry(self, *, render: bool = True) -> None:
         existing = next((entry for entry in self.conversation_entries if entry.kind == "startup"), None)
         if existing is None:
-            self.conversation_entries.insert(
-                0, tui_state.ConversationEntry(kind="startup", content=self._startup_content())
-            )
-        elif self.conversation_entries[0] is existing:
-            existing.content = self._startup_content()
-            if render:
-                self._invalidate_conversation(existing)
-            return
+            existing = tui_state.ConversationEntry(kind="startup", content=self._startup_content())
+            self.conversation_entries.insert(0, existing)
+            rebuild = True
         else:
             existing.content = self._startup_content()
-            self.conversation_entries.remove(existing)
-            self.conversation_entries.insert(0, existing)
+            rebuild = self.conversation_entries[0] is not existing
+            if rebuild:
+                self.conversation_entries.remove(existing)
+                self.conversation_entries.insert(0, existing)
+        existing.startup_tip_visible = (
+            self.settings.discovery_tips
+            and not self._resuming_session
+            and not existing.startup_auto_folded
+            and not any(item.get("role") in {"user", "assistant"} for item in self.session.history)
+        )
         if render:
-            self._render_conversation()
+            if rebuild:
+                self._render_conversation()
+            else:
+                self._invalidate_conversation(existing)
 
     def _startup_prompt_override_lines(self) -> list[str]:
         lines: list[str] = []

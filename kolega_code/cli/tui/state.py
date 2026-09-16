@@ -101,6 +101,8 @@ class ConversationEntry:
     startup_collapsed: bool = field(default=False, compare=False, repr=False)
     startup_details_expanded: bool = field(default=False, compare=False, repr=False)
     startup_auto_folded: bool = field(default=False, compare=False, repr=False)
+    startup_tip_visible: bool = field(default=False, compare=False, repr=False)
+    startup_tip_index: int = field(default=0, compare=False, repr=False)
 
     def materialize(self) -> str:
         """Fold any deferred stream deltas into ``content`` and return it.
