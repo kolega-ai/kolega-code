@@ -147,8 +147,10 @@ async def test_tool_title_resizes_without_replacing_expanded_widget(
         app._apply_theme(theme)
         app._set_sidebar_visible(False)
         app._render_event(_tool_event("tool_call", "resize", subject=subject))
-        await _wait_for_layout(pilot, lambda: bool(app.query(ToolEntryWidget)))
-        widget = app.query(ToolEntryWidget).last()
+        await _wait_for_layout(
+            pilot, lambda: any(widget.entry.tool_call_id == "resize" for widget in app.query(ToolEntryWidget))
+        )
+        widget = next(widget for widget in app.query(ToolEntryWidget) if widget.entry.tool_call_id == "resize")
         title = widget.query_one(CollapsibleTitle)
         collapsible = widget.query_one(Collapsible)
         await _wait_for_layout(pilot, lambda: title.size.height == 1 and "src/" in widget._title)
@@ -190,8 +192,10 @@ async def test_drag_selection_copies_subject_and_click_still_toggles(
     async with app.run_test(size=(100, 35)) as pilot:
         app._set_sidebar_visible(False)
         app._render_event(_tool_event("tool_result", "copy", subject="src/copy.py", text="body"))
-        await _wait_for_layout(pilot, lambda: bool(app.query(ToolEntryWidget)))
-        widget = app.query(ToolEntryWidget).last()
+        await _wait_for_layout(
+            pilot, lambda: any(widget.entry.tool_call_id == "copy" for widget in app.query(ToolEntryWidget))
+        )
+        widget = next(widget for widget in app.query(ToolEntryWidget) if widget.entry.tool_call_id == "copy")
         title = widget.query_one(CollapsibleTitle)
         await _wait_for_layout(pilot, lambda: title.size.height == 1 and "src/copy.py" in title.render_line(0).text)
         await pilot.mouse_down(title, offset=(2, 0))

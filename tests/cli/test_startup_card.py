@@ -39,6 +39,9 @@ def test_home_abbreviation_is_unambiguous(monkeypatch: pytest.MonkeyPatch) -> No
 @pytest.mark.asyncio
 @pytest.mark.parametrize("width", [40, 60, 80, 120, 160])
 async def test_startup_is_compact_selectable_and_width_aware(tmp_path, monkeypatch, width) -> None:
+    # Exercise a normal home-relative project, not the runner's arbitrarily
+    # deep --basetemp path (which intentionally wraps without losing content).
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path.resolve()))
     app = _build_mention_test_app(tmp_path, monkeypatch)
     async with app.run_test(size=(width, 50)) as pilot:
         app._set_sidebar_visible(False)
