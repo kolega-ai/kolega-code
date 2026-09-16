@@ -174,7 +174,7 @@ async def test_textual_app_resumes_gigacode_enabled_across_mode_rebuilds(
         assert coder.gigacode_enabled is True
         assert extension_by_name(coder.prompt_extensions, "gigacode").title == "gigacode — workflow orchestration"
         assert "Gigacode: on" in app.conversation_entries[0].content
-        assert "gigacode on" in str(app.query_one("#session_meta", Static).render())
+        assert "Gigacode: enabled" in str(app.query_one("#session_meta", Static).tooltip)
         dashboard = str(app.query_one("#status_dashboard", Static).render())
         assert "Gigacode" in dashboard
         assert "On" in dashboard
@@ -252,7 +252,7 @@ async def test_textual_app_gigacode_command_persists_and_updates_status(
         assert FakeCoderAgent.instances[-1].apply_calls[-1] == (False, None)
         assert store.load(session.session_id).gigacode_enabled is False
         assert "Gigacode: off" in app.conversation_entries[0].content
-        assert "gigacode off" in str(app.query_one("#session_meta", Static).render())
+        assert "gigacode" not in str(app.query_one("#session_meta", Static).render())
 
 
 @pytest.mark.asyncio

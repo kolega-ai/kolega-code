@@ -36,6 +36,7 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         return self.query_one("#status_usage", Static)
 
     def _refresh_status_dashboard(self) -> None:
+        self._refresh_metadata()
         provider, model = self._startup_model()
         self._status_state.provider = provider
         self._status_state.model = model

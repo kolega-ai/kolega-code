@@ -11,6 +11,11 @@ looking at.
 
 The screen is split into two columns:
 
+- **Metadata strip** — the project, cached Git branch, short session ID, mode,
+  and permissions fit on one line. On narrow terminals, session and branch yield
+  space to the project and permission state; Auto permissions use a warning
+  color. Hover for unabbreviated context. Full session titles and configuration
+  remain in the startup card and Status tab.
 - **Conversation panel** (left, larger) — your chat with the agent. Responses
   stream in live, tool calls and sub-agent activity appear inline, and detailed
   tool results are collapsed by default so you can expand only what you need.

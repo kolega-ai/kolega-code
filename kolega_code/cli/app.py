@@ -106,6 +106,7 @@ from .slash_commands import (
 from .theme import Color, Glyph
 from .updater import check_for_update, current_version, update_status_message
 from .tui.startup import display_project_path
+from .tui.metadata import MetadataStrip
 from .tui import constants as tui_constants
 from .tui import agent_runtime as tui_agent_runtime
 from .tui import changes_screen as tui_changes
@@ -395,6 +396,7 @@ class KolegaCodeApp(
         self._log_output_buffer: list[Any] = []
         self._log_flush_timer: Optional[Timer] = None
         self._flush_pacer = tui_pacing.FlushPacer()
+        self._metadata_strip = MetadataStrip(classes="meta", id="session_meta")
 
     def get_line_filters(self) -> Sequence[LineFilter]:
         """Apply the terminal-control boundary after Textual's style filters."""
@@ -403,11 +405,8 @@ class KolegaCodeApp(
     def compose(self) -> ComposeResult:
         with Horizontal(id="body"):
             with Vertical(id="conversation_panel"):
-                yield Static(
-                    self._meta_content(),
-                    classes="meta",
-                    id="session_meta",
-                )
+                self._refresh_metadata()
+                yield self._metadata_strip
                 yield tui_widgets.ConversationView(id="conversation")
                 yield tui_widgets.JumpToBottomBar(
                     f"{theme.g(Glyph.DOWN)} More output below — click to jump to the latest",
@@ -2651,26 +2650,21 @@ class KolegaCodeApp(
             return
 
     def _meta_content(self) -> str:
-        gigacode = "on" if self._gigacode_enabled else "off"
-        short_id = self.session.session_id[:8]
-        if self.session.title and self.session.title != self.session.name:
-            title = self.session.title
-            if len(title) > 36:
-                title = f"{title[:35]}…"
-            session_segment = f"{title} · {self.session.name} ({short_id})"
-        else:
-            session_segment = f"{self.session.name} ({short_id})"
-        return (
-            f"{self.active_project_path} | {session_segment} | "
-            f"agent {self.mode} | {self.interaction_mode} | permissions {self.permission_mode.value} | "
-            f"gigacode {gigacode}"
+        self._refresh_metadata()
+        return self._metadata_strip.content_for_width().plain
+
+    def _refresh_metadata(self) -> None:
+        self._metadata_strip.update_context(
+            project_path=self.active_project_path,
+            branch=self._session_diff_scope.branch if self._session_diff_scope else "",
+            session_id=self.session.session_id,
+            interaction_mode=self.interaction_mode,
+            permission_mode=self.permission_mode.value,
+            gigacode_enabled=self._gigacode_enabled,
         )
 
     def _update_mode_chrome(self) -> None:
-        try:
-            self.query_one("#session_meta", Static).update(self._meta_content())
-        except Exception:
-            pass
+        self._refresh_metadata()
         self._refresh_status_dashboard()
         self._refresh_planning_sidebar()
         self._ensure_startup_entry()
