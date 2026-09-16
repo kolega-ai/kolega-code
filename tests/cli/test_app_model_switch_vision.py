@@ -22,10 +22,11 @@ class _FakeConversation:
         return self._has_images
 
 
-class _FakeAgent:
+class _FakeAgent(FakeCoderAgent):
     """Minimal agent stand-in exposing the vision capability + conversation probe."""
 
-    def __init__(self, *, supports_vision: bool, has_images: bool):
+    def __init__(self, *, supports_vision: bool, has_images: bool) -> None:
+        super().__init__()
         self.supports_vision = supports_vision
         self.conversation = _FakeConversation(has_images)
 
@@ -54,7 +55,7 @@ async def test_switch_to_non_vision_model_with_image_history_warns(tmp_path, mon
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
-    async with app.run_test():
+    async with app.run_test() as pilot:
         # Install a non-vision agent with image history, as if the rebuild produced it.
         async def _fake_ensure(rebuild=False):
             monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=False, has_images=True))
@@ -69,6 +70,7 @@ async def test_switch_to_non_vision_model_with_image_history_warns(tmp_path, mon
         app._add_conversation_entry = lambda entry: entries.append(entry)
 
         await app._switch_model("deepseek", DEEPSEEK_DEFAULT_MODEL)
+        await pilot.resize_terminal(100, 32)
 
         assert hints, "expected a composer hint warning for non-vision model with image history"
         text, tone = hints[0]
@@ -97,7 +99,7 @@ async def test_switch_to_vision_model_with_image_history_no_warn(tmp_path, monke
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
-    async with app.run_test():
+    async with app.run_test() as pilot:
 
         async def _fake_ensure(rebuild=False):
             monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=True, has_images=True))
@@ -112,6 +114,7 @@ async def test_switch_to_vision_model_with_image_history_no_warn(tmp_path, monke
         app._add_conversation_entry = lambda entry: entries.append(entry)
 
         await app._switch_model("anthropic", "claude-opus-4-8")
+        await pilot.resize_terminal(100, 32)
 
         assert hints == [], "vision-capable model should not trigger the image-history warning"
         assert entries == [], "vision-capable model should not add a system message"
@@ -132,7 +135,7 @@ async def test_switch_to_non_vision_model_without_image_history_no_warn(tmp_path
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
-    async with app.run_test():
+    async with app.run_test() as pilot:
 
         async def _fake_ensure(rebuild=False):
             monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=False, has_images=False))
@@ -147,6 +150,7 @@ async def test_switch_to_non_vision_model_without_image_history_no_warn(tmp_path
         app._add_conversation_entry = lambda entry: entries.append(entry)
 
         await app._switch_model("deepseek", DEEPSEEK_DEFAULT_MODEL)
+        await pilot.resize_terminal(100, 32)
 
         assert hints == [], "no image history should not trigger the warning"
         assert entries == [], "no image history should not add a system message"
