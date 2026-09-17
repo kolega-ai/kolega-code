@@ -104,6 +104,7 @@ from .slash_commands import (
 from .theme import Color, Glyph
 from .updater import check_for_update, current_version, update_status_message
 from .tui.startup import display_project_path
+from .tui.discovery import DiscoveryTip
 from .tui.metadata import MetadataStrip
 from .tui.shortcut_bar import ContextFooter, ShortcutHelpScreen
 from .tui import constants as tui_constants
@@ -358,6 +359,8 @@ class KolegaCodeApp(
         self._settings_screen: Optional[tui_settings_screen.SettingsScreen] = None
         self._memory_screen: Optional[tui_memory.MemoryScreen] = None
         self._onboarding_screen: Optional[tui_onboarding.OnboardingScreen] = None
+        self._discovery_tip_screen: DiscoveryTip | None = None
+        self._discovery_tips_ready: bool = False
         self._onboarding_skipped = False
         self._permission_lock = asyncio.Lock()
         self._persistence_lock = asyncio.Lock()
@@ -719,6 +722,8 @@ class KolegaCodeApp(
         await self._restore_loop_on_startup()
         if self.config is None and not self._onboarding_skipped:
             await self.action_open_onboarding()
+        self._discovery_tips_ready = True
+        await self._maybe_show_discovery_tip()
 
     @property
     def _conversation(self) -> tui_widgets.ConversationView:
@@ -1426,6 +1431,7 @@ class KolegaCodeApp(
             # Re-check after the stack pop has fully settled (nested modals keep
             # the cover active, so their dismissal must not resync early).
             self.call_after_refresh(resync)
+            self.call_after_refresh(self._maybe_show_discovery_tip)
         except Exception:
             resync()
 
@@ -1439,6 +1445,46 @@ class KolegaCodeApp(
         screen = tui_settings_screen.SettingsScreen(self, category=category)
         self._settings_screen = screen
         self._push_fullscreen_modal(screen)
+
+    async def _maybe_show_discovery_tip(self) -> None:
+        """Offer one tip per fresh thread, without covering setup or prompts."""
+        if not self._discovery_tips_ready:
+            return
+        startup = next((entry for entry in self.conversation_entries if entry.kind == "startup"), None)
+        eligible = (
+            self.settings.discovery_tips
+            and startup is not None
+            and not startup.startup_auto_folded
+            and not any(item.get("role") in {"user", "assistant"} for item in self.session.history)
+        )
+        if self._discovery_tip_screen is not None:
+            if not eligible and self.screen is self._discovery_tip_screen:
+                self._discovery_tip_screen.action_close()
+            return
+        if (
+            not eligible
+            or startup is None
+            or startup.startup_tip_shown
+            or self.config is None
+            or self._modal_cover_active
+            or self._turn_active
+            or self.agent_worker is not None
+            or self._scheduled_loop is not None
+            or self._goal is not None
+            or self._pending_approval is not None
+            or self._pending_question is not None
+            or self._plan_decision_active
+            or self._active_prompt_actions() is not None
+        ):
+            return
+        startup.startup_tip_shown = True
+        self._discovery_tip_screen = DiscoveryTip()
+        await self.push_screen(self._discovery_tip_screen, callback=self._on_discovery_tip_dismissed)
+
+    def _on_discovery_tip_dismissed(self, _result: object = None) -> None:
+        self._discovery_tip_screen = None
+        self._on_fullscreen_modal_dismissed()
+        self._schedule_primary_focus_restore()
 
     def action_open_memory(self, *, inspect_disabled: bool = False) -> None:
         """Open the backend-neutral project-memory browser and editor."""
@@ -3016,14 +3062,19 @@ class KolegaCodeApp(
         if startup is not None and not startup.startup_auto_folded:
             startup.startup_auto_folded = True
             startup.startup_collapsed = True
-            startup.startup_tip_visible = False
             if render:
                 self._invalidate_conversation(startup)
+            if self._discovery_tips_ready:
+                self.call_after_refresh(self._maybe_show_discovery_tip)
 
     def _ensure_startup_entry(self, *, render: bool = True) -> None:
         existing = next((entry for entry in self.conversation_entries if entry.kind == "startup"), None)
         if existing is None:
-            existing = tui_state.ConversationEntry(kind="startup", content=self._startup_content())
+            existing = tui_state.ConversationEntry(
+                kind="startup",
+                content=self._startup_content(),
+                startup_tip_shown=self._resuming_session and not self._discovery_tips_ready,
+            )
             self.conversation_entries.insert(0, existing)
             rebuild = True
         else:
@@ -3032,17 +3083,13 @@ class KolegaCodeApp(
             if rebuild:
                 self.conversation_entries.remove(existing)
                 self.conversation_entries.insert(0, existing)
-        existing.startup_tip_visible = (
-            self.settings.discovery_tips
-            and not self._resuming_session
-            and not existing.startup_auto_folded
-            and not any(item.get("role") in {"user", "assistant"} for item in self.session.history)
-        )
         if render:
             if rebuild:
                 self._render_conversation()
             else:
                 self._invalidate_conversation(existing)
+        if self._discovery_tips_ready:
+            self.call_after_refresh(self._maybe_show_discovery_tip)
 
     def _startup_prompt_override_lines(self) -> list[str]:
         lines: list[str] = []

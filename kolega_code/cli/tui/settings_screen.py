@@ -640,11 +640,11 @@ class SettingsScreen(ModalScreen[None]):
                     value=self.owner.settings.discovery_tips,
                     id="discovery_tips_switch",
                     animate=False,
-                    tooltip="Show discovery tips on fresh sessions",
+                    tooltip="Show a quick-tip modal on fresh sessions",
                 )
                 yield Static(
-                    "Show one quiet tip on fresh sessions. Off by default; use Next to cycle. "
-                    "No tracking or automatic rotation. Saved when you Apply.",
+                    "Show a quick-tip modal once per fresh thread. Off by default; use Next to cycle, "
+                    "Got it or Esc to close. No tracking or automatic rotation. Saved when you Apply.",
                     classes="settings-hint",
                     markup=False,
                 )

@@ -11,7 +11,6 @@ from textual.app import ComposeResult
 from textual.widgets import Collapsible
 from textual.widgets._collapsible import CollapsibleTitle
 
-from .discovery import DiscoveryTip
 from .state import ConversationEntry
 from .widgets import ConversationEntryWidget, SelectableCollapsible, ToolEntryWidget
 
@@ -100,7 +99,6 @@ class StartupEntryWidget(ToolEntryWidget):
         self._summary: StartupText | None = None
         self._details: StartupText | None = None
         self._configuration: Collapsible | None = None
-        self._tip: DiscoveryTip | None = None
 
     def compose(self) -> ComposeResult:
         self._summary = StartupText(self.entry, lambda entry: self._summary_factory(entry, self.content_size.width))
@@ -120,9 +118,6 @@ class StartupEntryWidget(ToolEntryWidget):
             collapsed=self.entry.startup_collapsed,
         )
         yield self._collapsible
-        if self.entry.startup_tip_visible:
-            self._tip = DiscoveryTip(index=self.entry.startup_tip_index)
-            yield self._tip
 
     def refresh_content(self) -> None:
         if self._collapsible is None:
@@ -133,15 +128,6 @@ class StartupEntryWidget(ToolEntryWidget):
             self._summary.refresh_content()
         if self._details is not None:
             self._details.refresh_content()
-        if self._tip is None and self.entry.startup_tip_visible:
-            self._tip = DiscoveryTip(index=self.entry.startup_tip_index)
-            self.mount(self._tip)
-        if self._tip is not None:
-            self._tip.display = self.entry.startup_tip_visible
-
-    def on_discovery_tip_changed(self, event: DiscoveryTip.Changed) -> None:
-        event.stop()
-        self.entry.startup_tip_index = event.index
 
     def on_collapsible_expanded(self, event: Collapsible.Expanded) -> None:
         self._remember_disclosure(event.collapsible)

@@ -69,37 +69,73 @@ async def _wait_for_layout(pilot: Pilot, predicate: Callable[[], bool]) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("width", [32, 80])
+@pytest.mark.parametrize("width", [32, 40, 80])
 @pytest.mark.parametrize("theme_name", ["textual-dark", "textual-light"])
 async def test_discovery_tip_cycles_by_click_and_keyboard_and_is_selectable(width: int, theme_name: str) -> None:
     pytest.importorskip("textual")
-    from textual.app import App, ComposeResult
+    from textual.app import App
+    from textual.content import Content
     from textual.selection import Selection
     from textual.widgets import Button, Static
 
     from kolega_code.cli.tui.discovery import DISCOVERY_TIPS, DiscoveryTip
 
     class TipApp(App[None]):
-        def compose(self) -> ComposeResult:
-            yield DiscoveryTip(id="tip")
+        async def on_mount(self) -> None:
+            await self.push_screen(DiscoveryTip(id="tip"))
 
     app = TipApp()
     app.theme = theme_name
-    async with app.run_test(size=(width, 12)) as pilot:
-        tip = app.query_one(DiscoveryTip)
+    async with app.run_test(size=(width, 24)) as pilot:
+        tip = app.screen
+        assert isinstance(tip, DiscoveryTip)
+        dialog = tip.query_one(".discovery-tip-dialog")
         copy = tip.query_one(".discovery-tip-text", Static)
-        button = tip.query_one(Button)
+        button = tip.query_one(".discovery-tip-next", Button)
+        close = tip.query_one("#discovery-tip-close", Button)
+        badge = tip.query_one(".discovery-tip-badge", Static)
+        position = tip.query_one(".discovery-tip-position", Static)
         await _wait_for_layout(
             pilot,
             lambda: (
                 copy.region.width > 0
                 and button.region.width > 0
                 and button.region.right <= width
-                and tip.region.height >= copy.region.height
+                and dialog.region.contains_region(copy.region)
+                and dialog.region.contains_region(close.region)
             ),
         )
+        assert dialog.region.height <= 12
+        assert dialog.region.width <= width - 2
+        assert dialog.styles.border_left[0] == "round"
+        assert app.screen.focused is close
+        assert not close.styles.text_style.reverse
+        assert badge.styles.background.a > 0
+        assert badge.styles.color != badge.styles.background
+        assert badge.region.y < copy.region.y < button.region.y
+        assert str(badge.render()) == "QUICK TIP"
         assert tip.current_tip == DISCOVERY_TIPS[0]
-        assert copy.get_selection(Selection(None, None)) == (f"Tip: {tip.current_tip}", "\n")
+        assert copy.get_selection(Selection(None, None)) == (tip.current_tip, "\n")
+
+        def assert_tip_presentation(shortcut: str, number: int) -> None:
+            assert str(position.render()) == f"{number} / 3"
+            content = copy.render()
+            assert isinstance(content, Content)
+            assert content.plain == tip.current_tip
+            highlighted = "".join(
+                segment.text
+                for y in range(copy.content_size.height)
+                for segment in copy.render_line(y)
+                if segment.style and segment.style.bold and segment.style.reverse
+            )
+            assert highlighted == shortcut
+            assert not any(
+                segment.style and (segment.style.link or segment.style.blink)
+                for y in range(copy.content_size.height)
+                for segment in copy.render_line(y)
+            )
+
+        assert_tip_presentation("/plan", 1)
         # Native Content must expose mouse-selection offsets, not just get_selection.
         await _wait_for_layout(
             pilot,
@@ -112,17 +148,22 @@ async def test_discovery_tip_cycles_by_click_and_keyboard_and_is_selectable(widt
         assert await pilot.click(button)
         await pilot.pause()
         assert tip.current_tip == DISCOVERY_TIPS[1]
+        assert_tip_presentation("Ctrl+G", 2)
         button.focus()
         await pilot.press("enter")
         await pilot.pause()
         assert tip.current_tip == DISCOVERY_TIPS[2]
+        assert_tip_presentation("@", 3)
         await pilot.press("enter")
         await pilot.pause()
         assert tip.current_tip == DISCOVERY_TIPS[0]
-        assert copy.get_selection(Selection(None, None)) == (f"Tip: {tip.current_tip}", "\n")
+        assert copy.get_selection(Selection(None, None)) == (tip.current_tip, "\n")
+        assert_tip_presentation("/plan", 1)
         # A fresh widget never inherits another widget's position.
         tip.action_next_tip()
         assert DiscoveryTip().current_tip == DISCOVERY_TIPS[0]
+        await pilot.press("escape")
+        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
 
 
 def _configured_app(
@@ -171,7 +212,7 @@ def _configured_app(
 
 
 @pytest.mark.asyncio
-async def test_startup_tip_opt_in_preserves_index_across_refresh_and_remount(
+async def test_startup_tip_modal_is_opt_in_and_stays_dismissed_across_refresh_and_remount(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
 ) -> None:
     from kolega_code.cli.tui.discovery import DISCOVERY_TIPS, DiscoveryTip
@@ -179,11 +220,12 @@ async def test_startup_tip_opt_in_preserves_index_across_refresh_and_remount(
 
     app = _configured_app(tmp_path, monkeypatch, False)
     async with app.run_test(size=(120, 40)) as pilot:
-        assert not app.query(DiscoveryTip)
+        assert not isinstance(app.screen, DiscoveryTip)
         app.settings.discovery_tips = True
         app._ensure_startup_entry()
-        await _wait_for_layout(pilot, lambda: bool(app.query(DiscoveryTip)))
-        tip = app.query_one(DiscoveryTip)
+        await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
+        tip = app.screen
+        assert isinstance(tip, DiscoveryTip)
         await _wait_for_layout(pilot, lambda: tip.region.height > 0)
         card = app.query_one(StartupEntryWidget)
         tip.action_next_tip()
@@ -191,18 +233,15 @@ async def test_startup_tip_opt_in_preserves_index_across_refresh_and_remount(
         for _ in range(3):
             app._ensure_startup_entry()
             await pilot.pause()
-        assert app.query_one(DiscoveryTip) is tip
+        assert app.screen is tip
         assert tip.current_tip == DISCOVERY_TIPS[1]
-        app.settings.discovery_tips = False
+        assert not card.query(DiscoveryTip)
+        await pilot.press("escape")
+        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
         app._ensure_startup_entry()
-        await _wait_for_layout(pilot, lambda: not tip.display and tip.region.height == 0)
-        app.settings.discovery_tips = True
-        app._ensure_startup_entry()
-        await _wait_for_layout(pilot, lambda: tip.display and tip.region.height > 0)
-        assert app.query_one(DiscoveryTip) is tip
         app._render_conversation()
         await _wait_for_layout(pilot, lambda: app.query_one(StartupEntryWidget) is not card)
-        assert app.query_one(DiscoveryTip).current_tip == DISCOVERY_TIPS[1]
+        assert not isinstance(app.screen, DiscoveryTip)
         # Discovery stays presentation-only: no model message or persisted tip index.
         assert not app.session.history
         assert all(tip_text not in entry.content for tip_text in DISCOVERY_TIPS for entry in app.conversation_entries)
@@ -210,10 +249,11 @@ async def test_startup_tip_opt_in_preserves_index_across_refresh_and_remount(
 
 
 @pytest.mark.asyncio
-async def test_first_submission_hides_tip_even_when_card_reopens_and_reset_starts_fresh(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+@pytest.mark.parametrize("dismiss", ["escape", "enter", "click"])
+async def test_tip_dismissal_restores_focus_and_reset_starts_fresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None, dismiss: str
 ) -> None:
-    from textual.widgets import Collapsible
+    from textual.widgets import Button, Collapsible
 
     from kolega_code.cli.tui.discovery import DISCOVERY_TIPS, DiscoveryTip
     from kolega_code.cli.tui.startup import StartupEntryWidget
@@ -221,26 +261,36 @@ async def test_first_submission_hides_tip_even_when_card_reopens_and_reset_start
 
     app = _configured_app(tmp_path, monkeypatch, True)
     async with app.run_test(size=(120, 40)) as pilot:
-        await _wait_for_layout(pilot, lambda: bool(app.query(DiscoveryTip)))
-        tip = app.query_one(DiscoveryTip)
+        await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
+        tip = app.screen
+        assert isinstance(tip, DiscoveryTip)
         tip.action_next_tip()
         composer = app.query_one(ChatComposer)
+        close = tip.query_one("#discovery-tip-close", Button)
+        await _wait_for_layout(pilot, lambda: tip.focused is close)
+        if dismiss == "click":
+            assert await pilot.click(close)
+        else:
+            await pilot.press(dismiss)
+        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1 and app.screen.focused is composer)
+        assert not app.session.history
         composer.load_text("inspect the workspace")
         composer.focus()
         await pilot.press("enter")
-        await _wait_for_layout(pilot, lambda: app.agent_worker is None and not tip.display)
+        await _wait_for_layout(pilot, lambda: app.agent_worker is None and bool(app.session.history))
         card = app.query_one(StartupEntryWidget)
         card.query_one(Collapsible).collapsed = False
         app._ensure_startup_entry()
         await pilot.pause()
-        assert not tip.display
+        assert not isinstance(app.screen, DiscoveryTip)
         assert app.config is not None
         await app._build_agent(app.config, rebuild=True)
         await _wait_for_layout(pilot, lambda: app.query_one(StartupEntryWidget) is not card)
-        assert not any(widget.display for widget in app.query(DiscoveryTip))
+        assert not isinstance(app.screen, DiscoveryTip)
         await app._reset_current_thread()
-        await _wait_for_layout(pilot, lambda: any(widget.display for widget in app.query(DiscoveryTip)))
-        assert app.query_one(DiscoveryTip).current_tip == DISCOVERY_TIPS[0]
+        await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
+        assert isinstance(app.screen, DiscoveryTip)
+        assert app.screen.current_tip == DISCOVERY_TIPS[0]
 
 
 @pytest.mark.asyncio
@@ -259,10 +309,101 @@ async def test_discovery_never_appears_when_resuming_or_restoring_history(
     app = _configured_app(tmp_path, monkeypatch, True, resuming=resuming, history=history)
     async with app.run_test(size=(120, 40)) as pilot:
         assert bool(app.session.history) is with_history
-        assert not app.query(DiscoveryTip)
+        assert not isinstance(app.screen, DiscoveryTip)
         app._ensure_startup_entry()
         await pilot.pause()
-        assert not app.query(DiscoveryTip)
+        assert not isinstance(app.screen, DiscoveryTip)
+        await app._reset_current_thread()
+        await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cover", ["settings", "onboarding"])
+@pytest.mark.parametrize("submit_before_close", [False, True])
+async def test_tip_waits_for_other_modals_and_rechecks_thread_freshness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cover: str, submit_before_close: bool
+) -> None:
+    from kolega_code.cli.tui.discovery import DiscoveryTip
+    from kolega_code.cli.tui.state import ConversationEntry
+
+    app = _configured_app(tmp_path, monkeypatch, False)
+    async with app.run_test(size=(100, 40)) as pilot:
+        if cover == "settings":
+            app.action_open_settings(category="appearance")
+        else:
+            config = app.config
+            app.config = None
+            await app.action_open_onboarding()
+            app.config = config
+        covered = app.screen
+        app.settings.discovery_tips = True
+        app._ensure_startup_entry()
+        await pilot.pause()
+        assert app.screen is covered
+        assert len(app.screen_stack) == 2
+        if submit_before_close:
+            app._add_conversation_entry(ConversationEntry(kind="user", content="a new request"))
+        await pilot.press("escape")
+        if submit_before_close:
+            await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
+            assert not isinstance(app.screen, DiscoveryTip)
+        else:
+            await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
+            assert len(app.screen_stack) == 2
+
+
+@pytest.mark.asyncio
+async def test_disabling_tips_closes_the_open_modal_without_reopening_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kolega_code.cli.tui.discovery import DiscoveryTip
+
+    app = _configured_app(tmp_path, monkeypatch, True)
+    async with app.run_test(size=(80, 30)) as pilot:
+        assert isinstance(app.screen, DiscoveryTip)
+        app.settings.discovery_tips = False
+        app._ensure_startup_entry()
+        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
+        app.settings.discovery_tips = True
+        app._ensure_startup_entry()
+        await pilot.pause()
+        assert len(app.screen_stack) == 1
+
+
+@pytest.mark.asyncio
+async def test_tip_does_not_cover_active_prompts_or_let_them_steal_modal_focus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from textual.widgets import Button
+
+    from kolega_code.cli.tui.discovery import DiscoveryTip
+    from kolega_code.cli.tui.state import PendingQuestion
+    from kolega_code.cli.tui.widgets import ActionList
+
+    app = _configured_app(tmp_path, monkeypatch, False)
+    async with app.run_test(size=(100, 40)) as pilot:
+        question = PendingQuestion(question="Choose?", options=["A", "B"], request_id="tip-focus")
+        app._pending_question = question
+        app._show_question_options(question.question, question.options)
+        app.settings.discovery_tips = True
+        await app._maybe_show_discovery_tip()
+        assert len(app.screen_stack) == 1
+        app._pending_question = None
+        app._set_question_actions_visible(False)
+        await app._maybe_show_discovery_tip()
+        tip = app.screen
+        assert isinstance(tip, DiscoveryTip)
+        close = tip.query_one("#discovery-tip-close", Button)
+        app._pending_question = question
+        app._show_question_options(question.question, question.options)
+        app._heal_prompt_focus()
+        await _wait_for_layout(pilot, lambda: tip.focused is close)
+        await pilot.press("escape")
+        actions = app.query_one("#question_actions", ActionList)
+        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1 and app.screen.focused is actions)
+        assert app._pending_question is question
+        app._pending_question = None
+        app._set_question_actions_visible(False)
 
 
 @pytest.mark.asyncio
@@ -273,10 +414,14 @@ async def test_discovery_settings_switch_roundtrip_and_discard(
     pytest.importorskip("textual")
     from textual.widgets import Button, Switch
 
+    from kolega_code.cli.tui.discovery import DiscoveryTip
     from kolega_code.cli.tui.settings_screen import ConfirmDiscardSettingsScreen, SettingsScreen
 
     app = _configured_app(tmp_path, monkeypatch, enabled)
     async with app.run_test(size=(100, 40)) as pilot:
+        if enabled:
+            await pilot.press("escape")
+            await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
         app.action_open_settings(category="appearance")
         await pilot.pause()
         screen = app.screen
@@ -309,6 +454,10 @@ async def test_discovery_settings_switch_roundtrip_and_discard(
 
         screen.action_close()
         await pilot.pause()
+        if not enabled:
+            await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
+            await pilot.press("escape")
+            await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
         app.action_open_settings(category="appearance")
         await pilot.pause()
         reopened = app.screen
