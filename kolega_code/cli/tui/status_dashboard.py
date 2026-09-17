@@ -50,7 +50,11 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         try:
             self._status_session.update(self._format_session_card())
             self._status_dashboard.update(self._format_status_dashboard())
-            self._status_usage.update(self._usage_summary_lines())
+            usage_lines = self._usage_summary_lines()
+            self._status_usage.update(usage_lines)
+            self.query_one("#status_usage_section").set_class(
+                usage_lines == messages.STATUS_USAGE_EMPTY_MESSAGE, "empty-state"
+            )
         except Exception:
             return
 
@@ -88,20 +92,20 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         if state.loop:
             loop_line = f"{label('Loop')} [bold]{escape(state.loop)}[/bold]\n"
         if state.usage_percentage is None:
-            context_lines = theme.styled("Waiting for first context count", Color.MUTED)
+            context_lines = label(f"Context · {messages.STATUS_CONTEXT_EMPTY_MESSAGE}")
         else:
             percentage = f"{state.usage_percentage:.1f}%"
             token_line = self._context_token_line(state.input_tokens, state.max_tokens)
             threshold = self._compression_threshold_line(state.compression_threshold)
             context_lines = (
-                f"[{context_style}]{self._context_bar(state.usage_percentage)}[/] "
+                f"{label('Context')}\n[{context_style}]{self._context_bar(state.usage_percentage)}[/] "
                 f"[bold {context_style}]{percentage}[/]\n"
                 f"{token_line}\n"
                 f"{theme.styled(threshold, Color.MUTED)}"
             )
-            if state.context_note:
-                note_style = self._context_note_style(state.alert_level)
-                context_lines += f"\n[{note_style}]{escape(state.context_note)}[/{note_style}]"
+        if state.context_note:
+            note_style = self._context_note_style(state.alert_level)
+            context_lines += f"\n[{note_style}]{escape(state.context_note)}[/{note_style}]"
 
         if state.is_compacting:
             indicator = escape(state.compaction_message or messages.COMPACTING)
@@ -126,7 +130,6 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             f"{loop_line}"
             f"{worktree_line}"
             f"{turn_line}\n\n"
-            f"{label('Context')}\n"
             f"{context_lines}\n\n"
             f"{label('Activity')}\n"
             f"{escape(messages.DISCONNECTED_ACTIVITY if disconnected else state.activity)}"
@@ -147,10 +150,28 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             base = baseline.get(key)
             return (base if isinstance(base, int) else 0) + getattr(live, key)
 
+        coverage = baseline.get("coverage") or {}
+        partial = isinstance(coverage, dict) and bool(coverage.get("pre_accounting_turns"))
+        # No requests is different from a request with zero/unreported tokens.
+        # Historical partial coverage must remain visible even with zero totals.
+        if not partial and not any(
+            combined(key)
+            for key in (
+                "requests",
+                "failed",
+                "total_tokens",
+                "input_tokens",
+                "output_tokens",
+                "cache_read_input_tokens",
+                "cache_write_input_tokens",
+                "reasoning_output_tokens",
+            )
+        ):
+            return messages.STATUS_USAGE_EMPTY_MESSAGE
+
         total = combined("total_tokens")
         session_line = f"Session: [bold]{self._format_token_count(total)}[/bold] tokens"
-        coverage = baseline.get("coverage") or {}
-        if isinstance(coverage, dict) and coverage.get("pre_accounting_turns"):
+        if partial:
             # Turns journaled before accounting existed: totals are a floor.
             session_line += theme.styled(" (partial)", Color.MUTED)
 

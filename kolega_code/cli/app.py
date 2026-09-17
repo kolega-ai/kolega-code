@@ -446,15 +446,19 @@ class KolegaCodeApp(
                             with Vertical(classes="status-section", id="status_summary_section") as status_section:
                                 status_section.border_title = "Status"
                                 yield Static("", id="status_dashboard", markup=True)
-                            with Vertical(classes="status-section", id="status_usage_section") as usage_section:
+                            with Vertical(
+                                classes="status-section empty-state", id="status_usage_section"
+                            ) as usage_section:
                                 usage_section.border_title = "Usage"
-                                yield Static("", id="status_usage", markup=True)
-                            with Vertical(classes="status-section", id="status_task_list_section") as task_section:
+                                yield Static(messages.STATUS_USAGE_EMPTY_MESSAGE, id="status_usage", markup=True)
+                            with Vertical(
+                                classes="status-section empty-state", id="status_task_list_section"
+                            ) as task_section:
                                 task_section.border_title = "Task List"
                                 yield tui_widgets.PlanningMarkdown(
-                                    messages.TASK_LIST_EMPTY_MESSAGE,
+                                    messages.STATUS_TASK_LIST_EMPTY_MESSAGE,
                                     id="status_task_list_markdown",
-                                    empty_source=messages.TASK_LIST_EMPTY_MESSAGE,
+                                    empty_source=messages.STATUS_TASK_LIST_EMPTY_MESSAGE,
                                 )
                     if self.show_logs:
                         with TabPane("Logs", id="logs_pane"):
@@ -2739,14 +2743,16 @@ class KolegaCodeApp(
 
     def _refresh_planning_sidebar(self) -> None:
         plan_content = self._latest_plan or messages.PLAN_EMPTY_MESSAGE
-        task_list_content = self.session.task_list_markdown or messages.TASK_LIST_EMPTY_MESSAGE
+        tasks_empty = not self.session.task_list_markdown.strip()
+        task_list_content = messages.STATUS_TASK_LIST_EMPTY_MESSAGE if tasks_empty else self.session.task_list_markdown
         try:
             plan_markdown = self.query_one("#planning_plan_markdown", tui_widgets.PlanningMarkdown)
             task_list_markdown = self.query_one("#status_task_list_markdown", tui_widgets.PlanningMarkdown)
             plan_markdown.update(plan_content)
             task_list_markdown.update(task_list_content)
             plan_markdown.set_class(plan_content == messages.PLAN_EMPTY_MESSAGE, "empty-state")
-            task_list_markdown.set_class(task_list_content == messages.TASK_LIST_EMPTY_MESSAGE, "empty-state")
+            task_list_markdown.set_class(tasks_empty, "empty-state")
+            self.query_one("#status_task_list_section").set_class(tasks_empty, "empty-state")
         except Exception:
             pass
 

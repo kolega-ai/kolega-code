@@ -342,13 +342,16 @@ async def test_sidebar_tab_and_settings_planning_computed_styles_keep_contrast(
         assert app.query_one("#status_dashboard").styles.padding.top == 1
         assert app.query_one("#status_dashboard").styles.padding.bottom == 1
         task_list_markdown = app.query_one("#status_task_list_markdown")
-        assert task_list_markdown.styles.padding.bottom == 1
+        assert task_list_markdown.styles.padding.bottom == 0
 
         settings_background = app.query_one("#settings_summary_panel").styles.background
 
         for section in app.query(".status-section"):
             assert section.styles.background == app.query_one("#status_form").styles.background
-            assert str(section.styles.border) != "Edges()"
+            if section.id in {"status_usage_section", "status_task_list_section"}:
+                assert str(section.styles.border) == "Edges()"
+            else:
+                assert str(section.styles.border) != "Edges()"
         for section in app.query(".planning-section"):
             assert section.styles.background == app.query_one("#planning_form").styles.background
             assert str(section.styles.border) != "Edges()"

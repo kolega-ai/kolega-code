@@ -27,6 +27,10 @@ DISCONNECTED_MODEL = "not connected"
 TASK_LIST_EMPTY_MESSAGE = "No task list has been set."
 TASK_LIST_HEADER = "## Task List"
 PLAN_EMPTY_MESSAGE = "No plan captured yet."
+# Compact sidebar copy is presentation-only; tool responses keep the messages above.
+STATUS_CONTEXT_EMPTY_MESSAGE = "Not measured"
+STATUS_USAGE_EMPTY_MESSAGE = "Usage · None yet"
+STATUS_TASK_LIST_EMPTY_MESSAGE = "Task List · Not set"
 # Shown once in the startup block when running inside tmux/screen, where Shift
 # chords often never reach the app.
 TMUX_SHORTCUT_HINT = (

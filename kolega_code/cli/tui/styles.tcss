@@ -254,6 +254,17 @@ ToolEntryWidget.thinking-entry .tool-body {
     margin-bottom: 1;
 }
 
+.status-section.empty-state {
+    border: none;
+    margin-bottom: 0;
+}
+
+#status_usage_section.empty-state #status_usage,
+#status_task_list_section.empty-state #status_task_list_markdown {
+    padding: 0;
+    color: $text-muted;
+}
+
 #mcp_status {
     height: auto;
     margin-bottom: 1;

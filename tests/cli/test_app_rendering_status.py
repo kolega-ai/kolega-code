@@ -332,7 +332,7 @@ async def test_planning_sidebar_marks_empty_states(tmp_path: Path, monkeypatch: 
 
     from kolega_code.cli.tui.widgets import PlanningMarkdown
 
-    from kolega_code.cli.messages import PLAN_EMPTY_MESSAGE, TASK_LIST_EMPTY_MESSAGE
+    from kolega_code.cli.messages import PLAN_EMPTY_MESSAGE, STATUS_TASK_LIST_EMPTY_MESSAGE
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
@@ -341,7 +341,7 @@ async def test_planning_sidebar_marks_empty_states(tmp_path: Path, monkeypatch: 
         task_list_md = app.query_one("#status_task_list_markdown", PlanningMarkdown)
         assert plan_md.source == PLAN_EMPTY_MESSAGE
         assert plan_md.has_class("empty-state")
-        assert task_list_md.source == TASK_LIST_EMPTY_MESSAGE
+        assert task_list_md.source == STATUS_TASK_LIST_EMPTY_MESSAGE
         assert task_list_md.has_class("empty-state")
 
         app._latest_plan = "# Plan\n\n- do the thing"

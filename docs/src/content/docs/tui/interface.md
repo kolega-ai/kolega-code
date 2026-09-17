@@ -42,6 +42,13 @@ conversation and the Planning tab's task list.
 | **Planning** | The current **Plan** (markdown from the planning agent) and the shared **Task List** that both modes can edit. |
 | **Settings** | A compact summary of the model, credential source, agent overrides, tools, and theme. Select **Open Settings** for the categorized full-screen editor, or **Continue Setup** when disconnected. See [Settings & API Keys](../../configuration/settings-and-api-keys/). |
 
+In **Status**, a fresh session keeps empty sections quiet: context reads
+**Context · Not measured**, and Usage and Task List are muted single-line rows.
+Their full cards appear automatically when there are recorded requests, usage,
+or tasks. Failed requests and incomplete historical usage still show their
+details, even when token totals are zero. Clearing the task list returns it to
+the compact row; resetting the thread does not erase lifetime session usage.
+
 When no valid model configuration exists, a separate first-run wizard opens over
 the interface. It handles only the initial account/provider connection and model
 choice; the full editor remains available for every advanced setting.
