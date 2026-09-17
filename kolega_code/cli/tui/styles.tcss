@@ -122,7 +122,8 @@ ToolEntryWidget Collapsible Contents {
     padding-left: 2;
 }
 
-ToolEntryWidget .tool-preview {
+ToolEntryWidget .tool-preview,
+ToolEntryWidget .tool-command-preview {
     height: auto;
     padding-left: 2;
 }
@@ -135,12 +136,18 @@ ToolEntryWidget.agent-activity Collapsible Contents {
     padding-left: 4;
 }
 
-ToolEntryWidget.agent-activity .tool-preview {
+ToolEntryWidget.agent-activity .tool-preview,
+ToolEntryWidget.agent-activity .tool-command-preview {
     padding-left: 4;
 }
 
 ToolEntryWidget .tool-body {
     color: $text-muted;
+}
+
+ToolEntryWidget .tool-details {
+    height: auto;
+    margin-bottom: 1;
 }
 
 /* Startup inherits the scrollback entry interface, not tool-row indentation. */

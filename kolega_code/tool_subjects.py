@@ -36,6 +36,7 @@ _ANSI = re.compile(
 )
 _URL = re.compile(r"(?i)(?:[a-z][a-z0-9+.-]*:)?//[^\s<>\"']+")
 _PATCH_HEADER = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$", re.MULTILINE)
+_HEREDOC_START = re.compile(r"<<(-?)(?!<)[ \t]*(['\"]?)([A-Za-z0-9_]+)\2(?=[ \t\r\n;&|<>]|$)")
 _SENSITIVE_NAME = re.compile(
     r"key|token|secret|password|passwd|credential|auth|cookie|session|signature|"
     r"header|username|connection.?string",
@@ -92,6 +93,7 @@ _NO_SUBJECT_TOOLS = frozenset({"eval", "browser_evaluate", "write_stdin", "dispa
 _INTERPRETERS = frozenset(
     {"sh", "bash", "zsh", "fish", "python", "python3", "node", "ruby", "perl", "powershell", "pwsh"}
 )
+_DISPLAY_PATH_LIST_LIMIT = 32
 
 
 def configured_tool_subject_secrets(config: AgentConfig | None) -> tuple[str, ...]:
@@ -119,6 +121,14 @@ def _string(value: object) -> str:
     return value if isinstance(value, str) and len(value) <= _MAX_INPUT_LENGTH else ""
 
 
+def _secret_values(secret_values: Iterable[str] = ()) -> tuple[str, ...] | None:
+    supplied = (secret_values,) if isinstance(secret_values, str) else secret_values
+    values = tuple(islice(supplied, _MAX_SECRET_VALUES + 1))
+    if len(values) > _MAX_SECRET_VALUES or any(not isinstance(value, str) for value in values):
+        return None
+    return values
+
+
 def _first_string(data: dict[str, object], keys: tuple[str, ...]) -> str:
     for key in keys:
         value = _string(data.get(key))
@@ -142,6 +152,21 @@ def _clean(text: str) -> str:
         for char in text
         if char.isspace() or unicodedata.category(char) not in {"Cc", "Cf", "Cs"}
     )
+
+
+def _clean_preserving_layout(text: str) -> str:
+    """Strip controls/ANSI while preserving ordinary command spacing and newlines."""
+    text = _ANSI.sub("", text)
+    cleaned: list[str] = []
+    for char in text:
+        category = unicodedata.category(char)
+        if char in {" ", "\t", "\n", "\r"}:
+            cleaned.append(char)
+        elif char.isspace():
+            cleaned.append(" ")
+        elif category not in {"Cc", "Cf", "Cs"}:
+            cleaned.append(char)
+    return "".join(cleaned)
 
 
 def _safe_url(value: str) -> str:
@@ -244,6 +269,11 @@ def _redact(text: str, values: tuple[str, ...]) -> str:
     return text
 
 
+def _normalized_tool_name(tool_name: str) -> str:
+    name = re.split(r"__|[.:/]", tool_name.strip().lower())[-1]
+    return _ALIASES.get(name, name)
+
+
 def sanitize_tool_subject(subject: object, *, secret_values: Iterable[str] = ()) -> str:
     """Sanitize already-emitted metadata into at most 240 single-line characters.
 
@@ -256,9 +286,8 @@ def sanitize_tool_subject(subject: object, *, secret_values: Iterable[str] = ())
     text = _string(subject)
     if not text:
         return ""
-    supplied = (secret_values,) if isinstance(secret_values, str) else secret_values
-    values = tuple(islice(supplied, _MAX_SECRET_VALUES + 1))
-    if len(values) > _MAX_SECRET_VALUES or any(not isinstance(value, str) for value in values):
+    values = _secret_values(secret_values)
+    if values is None:
         return ""
     # Redact both before and after control removal, to handle configured values
     # containing controls as well as controls inserted into recognizable tokens.
@@ -295,8 +324,15 @@ def _shorten_path(value: str, project_path: str | Path | None) -> str:
 
 
 def _patch_subject(patch: object, project_path: str | Path | None) -> str:
+    paths = _patch_paths(patch, project_path)
+    return ", ".join(paths)
+
+
+def _patch_paths(
+    patch: object, project_path: str | Path | None, *, secret_values: tuple[str, ...] | None = None
+) -> list[str]:
     if not isinstance(patch, str):
-        return ""
+        return []
     # A bounded scan is safe here because only complete, anchored file headers
     # are selected, never a partial final line or a hunk's +/-/space-prefixed body.
     prefix = patch[:_MAX_INPUT_LENGTH]
@@ -304,12 +340,292 @@ def _patch_subject(patch: object, project_path: str | Path | None) -> str:
         prefix = prefix[: prefix.rfind("\n")] if "\n" in prefix else ""
     paths: list[str] = []
     for match in _PATCH_HEADER.finditer(prefix):
-        path = _shorten_path(match.group(1).rstrip("\r"), project_path)
+        value = match.group(1).rstrip("\r")
+        if secret_values is not None:
+            value = _redact(value, secret_values)
+        path = _shorten_path(value, project_path)
         if path not in paths:
             paths.append(path)
         if len(paths) == _MAX_PATCH_PATHS:
             break
-    return ", ".join(paths)
+    return paths
+
+
+def _looks_like_display_url(value: str) -> bool:
+    if re.search(r"(?i)[a-z][a-z0-9+.-]*://", value):
+        return True
+    if not value.startswith("//"):
+        return False
+    # Allow normal UNC-like //server/share paths, but reject URL-ish authority
+    # payloads and malformed network roots.
+    if any(marker in value for marker in ("@", "?", "#")):
+        return True
+    host, _, remainder = value[2:].partition("/")
+    if not host or ":" in host:
+        return True
+    share, _, _ = remainder.partition("/")
+    return not share
+
+
+def _safe_display_path(value: str, values: tuple[str, ...]) -> str:
+    if not value or len(value) > _MAX_INPUT_LENGTH:
+        return ""
+    cleaned = _clean_preserving_layout(_redact(value, values))
+    if any(char in cleaned for char in ("\t", "\n", "\r")):
+        return ""
+    cleaned = _redact(cleaned, values)
+    if not cleaned:
+        return ""
+    if _looks_like_display_url(cleaned) or any(char in cleaned for char in "`$;&|<>"):
+        return ""
+    path_module = ntpath if ntpath.splitdrive(cleaned)[0] or "\\" in cleaned else posixpath
+    path = path_module.normpath(cleaned)
+    if not path:
+        return ""
+    if path.startswith("-"):
+        return ""
+    if " " in path and not any(marker in path for marker in (path_module.sep, ".", "~")):
+        return ""
+    if path in {"~", "."}:
+        return path
+    if path.startswith(("~/", "~\\")):
+        return path
+    if path.startswith("~"):
+        return ""
+    return path
+
+
+def _replace_heredoc_bodies(text: str) -> str:
+    if "<<" not in text:
+        return text
+    lines = text.splitlines(keepends=True)
+    if not lines:
+        return text
+    result: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        result.append(line)
+        matches = list(_HEREDOC_START.finditer(line))
+        if "<<" not in line:
+            index += 1
+            continue
+        # Unknown / partially parsed delimiters could leave file contents in
+        # the display. Only one fully recognized heredoc per line is supported.
+        if len(matches) != 1 or line.count("<<") != 1:
+            return ""
+        match = matches[0]
+        strip_tabs = match.group(1) == "-"
+        delimiter = match.group(3)
+        body_index = index + 1
+        body_placeholder_added = False
+        while body_index < len(lines):
+            body_line = lines[body_index]
+            candidate = body_line.lstrip("\t") if strip_tabs else body_line
+            if candidate.rstrip("\r\n") == delimiter:
+                result.append(body_line)
+                index = body_index + 1
+                break
+            if not body_placeholder_added:
+                newline = "\n"
+                if body_line.endswith("\r\n"):
+                    newline = "\r\n"
+                elif body_line.endswith("\r"):
+                    newline = "\r"
+                elif not body_line.endswith(("\n", "\r")):
+                    newline = ""
+                result.append(f"{SECRET_PLACEHOLDER}{newline}")
+                body_placeholder_added = True
+            body_index += 1
+        else:
+            return ""
+        continue
+    return "".join(result)
+
+
+def _shell_tokens(text: str, *, posix: bool) -> list[str] | None:
+    try:
+        lexer = shlex.shlex(text, posix=posix, punctuation_chars=";&|<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        return list(lexer)
+    except ValueError:
+        return None
+
+
+def _token_spans(text: str, tokens: list[str]) -> list[tuple[int, int]] | None:
+    spans: list[tuple[int, int]] = []
+    search_from = 0
+    for token in tokens:
+        start = text.find(token, search_from)
+        if start < 0:
+            return None
+        end = start + len(token)
+        spans.append((start, end))
+        search_from = end
+    return spans
+
+
+def _sanitize_command_token(token: str) -> str:
+    match = _URL.search(token)
+    if not match:
+        return token
+    safe_url = _safe_url(token[match.start() :])
+    return token[: match.start()] + (safe_url or SECRET_PLACEHOLDER)
+
+
+def _sensitive_command_index(tokens: list[str]) -> int | None:
+    programs = {posixpath.basename(token).lower() for token in tokens}
+    interpreter = bool(programs & _INTERPRETERS) or any(
+        re.fullmatch(r"python\d+(?:\.\d+)?", program) for program in programs
+    )
+    for index, token in enumerate(tokens):
+        name = re.split(r"[=:]", token, maxsplit=1)[0]
+        assignment = "=" in token and _sensitive_name(name)
+        header = ":" in token and _sensitive_name(name)
+        separated_value = (
+            _sensitive_name(token) and index + 1 < len(tokens) and tokens[index + 1].startswith(("=", ":"))
+        )
+        long_flag = token.startswith("--") and (_sensitive_name(name) or name[2:] in _PAYLOAD_FLAGS)
+        short_flag = bool(re.match(r"^-[uUpH]", token))
+        curl_payload = "curl" in programs and bool(re.match(r"^-[a-zA-Z]*[uUpHbFdEK]", token))
+        inline_code = interpreter and token.lower() in {"-c", "-e", "-command", "-encodedcommand", "-enc"}
+        if assignment or header or separated_value or long_flag or short_flag or curl_payload or inline_code:
+            return index
+    return None
+
+
+def _prefix_placeholder_from_index(text: str, tokens: list[str], index: int) -> str:
+    raw_tokens = _shell_tokens(text, posix=False)
+    if raw_tokens is not None and len(raw_tokens) == len(tokens):
+        spans = _token_spans(text, raw_tokens)
+        if spans is not None:
+            return f"{text[: spans[index][0]]}{SECRET_PLACEHOLDER}".rstrip()
+    prefix = shlex.join(tokens[:index])
+    return f"{prefix} {SECRET_PLACEHOLDER}".strip()
+
+
+def _replace_token_text(text: str, source_tokens: list[str], replacement_tokens: list[str]) -> str:
+    raw_tokens = _shell_tokens(text, posix=False)
+    if raw_tokens is None or len(raw_tokens) != len(source_tokens):
+        return shlex.join(replacement_tokens)
+    spans = _token_spans(text, raw_tokens)
+    if spans is None:
+        return shlex.join(replacement_tokens)
+    pieces: list[str] = []
+    cursor = 0
+    for (start, end), source, replacement in zip(spans, source_tokens, replacement_tokens):
+        pieces.append(text[cursor:start])
+        pieces.append(replacement if source != replacement else text[start:end])
+        cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+def _safe_command_display(text: str, values: tuple[str, ...]) -> str:
+    if not text:
+        return ""
+    text = _clean_preserving_layout(_redact(text, values))
+    if not text.strip():
+        return ""
+    text = _redact(text, values)
+    text = _replace_heredoc_bodies(text)
+    if not text:
+        return ""
+    embedded = re.search(r"`|\$\(|<\(|>\(|<<<", text)
+    if embedded:
+        # Retained prefixes still need decoded-token and URL inspection, not
+        # just literal redaction: shell quotes can split configured secrets.
+        prefix = _safe_command_display(text[: embedded.start()], values)
+        return f"{prefix}{SECRET_PLACEHOLDER}"
+    tokens = _shell_tokens(text, posix=True)
+    if tokens is None:
+        return ""
+    safe_tokens = [_sanitize_command_token(token) for token in tokens]
+    sensitive_index = _sensitive_command_index(safe_tokens)
+    if sensitive_index is not None:
+        return _safe_command_display(_prefix_placeholder_from_index(text, tokens, sensitive_index), values)
+    display_tokens = [_redact(token, values) for token in safe_tokens]
+    display = _replace_token_text(text, tokens, display_tokens) if display_tokens != tokens else text
+    display = _redact(display, values)
+    return display if display.strip() else ""
+
+
+def sanitize_tool_display(
+    value: object,
+    *,
+    secret_values: Iterable[str] = (),
+) -> dict[str, list[str] | str]:
+    """Sanitize already-emitted structured display metadata.
+
+    Accepted shapes are exactly ``{"paths": [..]}`` and ``{"command": "..."}``.
+    Unsupported keys, malformed values, invalid quoting, dangerous URL/shell
+    payloads, and overlong inputs fail closed. Command displays preserve safe
+    multiline layout, but suppress inline-code / heredoc bodies / shell
+    payloads to ``SECRET_PLACEHOLDER`` rather than displaying arbitrary
+    embedded programs.
+    """
+    values = _secret_values(secret_values)
+    if values is None or not isinstance(value, dict):
+        return {}
+    keys = set(value)
+    if keys == {"paths"}:
+        paths = value.get("paths")
+        if not isinstance(paths, list) or not paths or len(paths) > _DISPLAY_PATH_LIST_LIMIT:
+            return {}
+        safe_paths: list[str] = []
+        for item in paths:
+            if not isinstance(item, str):
+                return {}
+            safe = _safe_display_path(item, values)
+            if not safe:
+                return {}
+            if safe not in safe_paths:
+                safe_paths.append(safe)
+            if len(safe_paths) > _MAX_PATCH_PATHS:
+                return {}
+        return {"paths": safe_paths} if safe_paths else {}
+    if keys == {"command"}:
+        command = _string(value.get("command"))
+        if not command:
+            return {}
+        safe = _safe_command_display(command, values)
+        return {"command": safe} if safe else {}
+    return {}
+
+
+def build_tool_display(
+    tool_name: str,
+    tool_input: object,
+    *,
+    project_path: str | Path | None = None,
+    secret_values: Iterable[str] = (),
+) -> dict[str, list[str] | str]:
+    """Best-effort structured transcript metadata for safe tool displays."""
+    if not isinstance(tool_name, str) or len(tool_name) > 256:
+        return {}
+    name = _normalized_tool_name(tool_name)
+    if not name or name in _NO_SUBJECT_TOOLS:
+        return {}
+    data = tool_input if isinstance(tool_input, dict) else {}
+    values = _secret_values(secret_values)
+    if values is None:
+        return {}
+    if name == "apply_patch":
+        patch = tool_input if isinstance(tool_input, str) else data.get("input", data.get("patch"))
+        raw_paths = _patch_paths(patch, project_path, secret_values=values)
+        paths = [_safe_display_path(path, values) for path in raw_paths]
+        return {"paths": paths} if raw_paths and all(paths) else {}
+    if name in _FILE_TOOLS:
+        keys = ("file_path", "path") if name in {"read", "claude_edit", "claude_write"} else ("path", "file_path")
+        path = _first_string(data, keys)
+        safe = _safe_display_path(_shorten_path(_redact(path, values), project_path), values) if path else ""
+        return {"paths": [safe]} if safe else {}
+    if name == "exec_command":
+        command = _first_string(data, ("command",))
+        safe = _safe_command_display(command, values)
+        return {"command": safe} if safe else {}
+    return {}
 
 
 def build_tool_subject(
@@ -328,8 +644,7 @@ def build_tool_subject(
     """
     if not isinstance(tool_name, str) or len(tool_name) > 256:
         return ""
-    name = re.split(r"__|[.:/]", tool_name.strip().lower())[-1]
-    name = _ALIASES.get(name, name)
+    name = _normalized_tool_name(tool_name)
     if not name or name in _NO_SUBJECT_TOOLS:
         return ""
     data = tool_input if isinstance(tool_input, dict) else {}

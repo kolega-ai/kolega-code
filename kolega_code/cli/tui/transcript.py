@@ -24,8 +24,13 @@ from kolega_code.llm.models import (
     ToolResult,
     WebSearchCallBlock,
 )
-from kolega_code.services.lsp import extract_lsp_label
-from kolega_code.tool_subjects import build_tool_subject, configured_tool_subject_secrets, sanitize_tool_subject
+from kolega_code.tool_subjects import (
+    build_tool_display,
+    build_tool_subject,
+    configured_tool_subject_secrets,
+    sanitize_tool_display,
+    sanitize_tool_subject,
+)
 
 from .. import messages, theme
 from ..skills import skill_activation_label, skill_names_in_text
@@ -41,13 +46,13 @@ from .state import (
     TurnState,
     WorkflowActivity,
     TOOL_STATE_PRESENTATION,
-    tool_state_presentation,
 )
 from . import app_base as tui_app_base
 from . import pacing as tui_pacing
 from . import widgets as tui_widgets
 from .sub_agent_screen import SubAgentEntryWidget
 from .widgets import ConversationEntryWidget, JumpToBottomBar, ToolEntryWidget
+from .tool_presentation import edit_previews, entry_paths, merge_edit_preview, path_label, tool_title
 
 
 def _is_standalone_system_reminder_history_item(item: dict) -> bool:
@@ -257,6 +262,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                     tool_name=block.name,
                     tool_call_id=getattr(block, "execution_id", None),
                     tool_subject=self._restored_tool_subject(block.name, block.input),
+                    tool_display=self._restored_tool_display(block.name, block.input),
                 )
                 entries.append(entry)
                 if remember_tool_entry is not None:
@@ -449,10 +455,19 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             secret_values=(*configured_tool_subject_secrets(self.config), *self.settings.api_keys.values()),
         )
 
+    def _restored_tool_display(self, tool_name: str, tool_input: object) -> dict[str, list[str] | str]:
+        return build_tool_display(
+            tool_name,
+            tool_input,
+            project_path=self.active_project_path,
+            secret_values=(*configured_tool_subject_secrets(self.config), *self.settings.api_keys.values()),
+        )
+
     def _add_tool_message(self, message_type: str, content: dict) -> None:
         tool_name = str(content.get("tool_description") or content.get("tool_name") or "tool")
         tool_call_id = str(content.get("tool_call_id") or "")
         tool_subject = sanitize_tool_subject(content.get("tool_subject"))
+        tool_display = sanitize_tool_display(content.get("tool_display"))
         text = str(content.get("text") or "")
         if tool_name == QUESTION_TOOL_NAME and message_type in {"tool_call", "tool_result"}:
             return
@@ -485,6 +500,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 tool_name=tool_name,
                 tool_call_id=tool_call_id or None,
                 tool_subject=tool_subject,
+                tool_display=tool_display,
                 full_content=full_content,
             )
             # A preview event can land before this entry exists; apply any stash now.
@@ -501,6 +517,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         entry.full_content = full_content
         entry.tool_call_id = tool_call_id or entry.tool_call_id
         entry.tool_subject = tool_subject or entry.tool_subject
+        entry.tool_display = tool_display or entry.tool_display
         if entry.tool_call_id:
             self._tool_entries[entry.tool_call_id] = entry
         self._invalidate_conversation(entry)
@@ -509,6 +526,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         tool_name = str(content.get("tool_name") or content.get("tool_description") or "tool")
         tool_call_id = str(content.get("tool_call_id") or "")
         tool_subject = sanitize_tool_subject(content.get("tool_subject"))
+        tool_display = sanitize_tool_display(content.get("tool_display"))
         text = str(content.get("text") or "")
         is_complete = bool(content.get("is_complete"))
         stream_mode = str(content.get("stream_mode") or "replace")
@@ -549,6 +567,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                     tool_name=tool_name,
                     tool_call_id=tool_call_id or None,
                     tool_subject=tool_subject,
+                    tool_display=tool_display,
                     full_content=full_content,
                 )
             )
@@ -561,6 +580,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         entry.full_content = full_content or entry.full_content
         entry.tool_call_id = tool_call_id or entry.tool_call_id
         entry.tool_subject = tool_subject or entry.tool_subject
+        entry.tool_display = tool_display or entry.tool_display
         if entry.tool_call_id:
             self._tool_entries[entry.tool_call_id] = entry
         self._invalidate_conversation(entry)
@@ -579,15 +599,22 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         tool_name = str(content.get("tool_name") or "")
         if not tool_call_id:
             return
+        content = self._display_edit_preview(content)
         entry = self._find_tool_entry(tool_call_id, tool_name)
         if entry is None:
             # Preview can arrive before the tool entry exists; stash and apply on creation.
             previews: dict[str, dict] = getattr(self, "_pending_edit_previews", None) or {}
-            previews[tool_call_id] = content
+            previews[tool_call_id] = merge_edit_preview(previews.get(tool_call_id), content)
             self._pending_edit_previews = previews
             return
-        entry.edit_preview = content
+        entry.edit_preview = merge_edit_preview(entry.edit_preview, content)
         self._invalidate_conversation(entry)
+
+    def _display_edit_preview(self, content: dict) -> dict:
+        """Normalize only the UI copy, not the event used for change tracking."""
+        display = self._restored_tool_display("read", {"file_path": content.get("path")})
+        paths = display.get("paths")
+        return {**content, "path": paths[0] if isinstance(paths, list) and paths else "file"}
 
     def _record_file_change_event(self, event: AgentEvent) -> Optional[SessionFileChange]:
         """Capture a UI-only edit preview in the live session changes list."""
@@ -641,12 +668,15 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         tool_call_id = str(content.get("tool_call_id") or "").strip()
         if not tool_call_id:
             return
+        content = self._display_edit_preview(content)
         activity = self._ensure_sub_agent_activity(event)
         step = activity.tool_steps.get(tool_call_id)
         if step is None:
-            activity.pending_edit_previews[tool_call_id] = dict(content)
+            activity.pending_edit_previews[tool_call_id] = merge_edit_preview(
+                activity.pending_edit_previews.get(tool_call_id), content
+            )
         else:
-            step.edit_preview = dict(content)
+            step.edit_preview = merge_edit_preview(step.edit_preview, content)
         self._invalidate_sub_agent_detail(activity)
 
     def _attach_pending_sub_agent_edit_preview(self, activity: SubAgentActivity, step: ConversationEntry) -> None:
@@ -814,6 +844,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         tool_name = str(content.get("tool_description") or content.get("tool_name") or "tool")
         tool_call_id = str(content.get("tool_call_id") or "").strip()
         tool_subject = sanitize_tool_subject(content.get("tool_subject"))
+        tool_display = sanitize_tool_display(content.get("tool_display"))
         text = str(content.get("text") or "")
         if message_type == "tool_call":
             entry_content = text or f"Calling {tool_name}"
@@ -841,6 +872,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 tool_name=tool_name,
                 tool_call_id=tool_call_id or None,
                 tool_subject=tool_subject,
+                tool_display=tool_display,
                 full_content=full_content,
             )
             activity.steps.append(step)
@@ -853,6 +885,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         step.complete = complete
         step.tool_name = tool_name
         step.tool_subject = tool_subject or step.tool_subject
+        step.tool_display = tool_display or step.tool_display
         step.full_content = full_content or step.full_content
         self._attach_pending_sub_agent_edit_preview(activity, step)
 
@@ -1477,6 +1510,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 self._tool_entry_title,
                 self._tool_preview_renderable,
                 title_for_width=self._tool_entry_title,
+                preview_for_width=self._tool_preview_renderable,
             )
         if entry.kind == "thinking":
             return ToolEntryWidget(entry, self._thinking_entry_title)
@@ -1755,70 +1789,47 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
 
     @staticmethod
     def _tool_entry_title(entry: ConversationEntry, width: int | None = None) -> str:
-        state, color = tool_state_presentation(entry.kind)
-        header = Text.from_markup(theme.role_header(Glyph.TOOL, escape(entry.tool_name or "tool"), color))
-        separator = f" {theme.g(Glyph.BULLET_SEP)} "
-        status = Text(separator + state, style="dim")
-        suffix = status.copy()
-        # Surface an LSP diagnostics summary as a severity-colored badge in the title
-        # (e.g. "· 2 LSP warnings") so warnings are visible without expanding. The
-        # label is recovered from the result text, which covers live edits, sub-agent
-        # steps, and restored sessions through this one shared title factory.
-        label = extract_lsp_label(entry.full_content or entry.content)
-        if label:
-            head, sep, rest = label.partition(" ")
-            badge = f"{head} LSP {rest}" if sep else f"LSP {label}"  # "2 warnings" -> "2 LSP warnings"
-            badge_color = Color.ERROR if "error" in label else Color.WARNING if "warning" in label else Color.MUTED
-            suffix.append(separator + badge, style=badge_color)
-        if width is not None:
-            # Reserve status first. Existing diagnostics remain when they fit;
-            # shrinking a terminal must not wrap a title or lose running/failed.
-            width = max(0, width)
-            if not width:
-                return ""
-            if header.cell_len + suffix.cell_len > width:
-                suffix = status
-            if suffix.cell_len >= width:
-                status = Text(state, style=color)
-                status.truncate(width, overflow="ellipsis")
-                return status.markup
-            header.truncate(width - suffix.cell_len, overflow="ellipsis")
-        subject = Text(entry.tool_subject, style="dim")
-        if width is not None:
-            available = width - header.cell_len - suffix.cell_len - len(separator)
-            if available > 0:
-                subject.truncate(available, overflow="ellipsis")
-            else:
-                subject = Text()
-        if subject:
-            header.append(separator, style="dim")
-            header.append_text(subject)
-        header.append_text(suffix)
-        return header.markup
+        return tool_title(entry, width)[0].markup
 
-    def _tool_preview_renderable(self, entry: ConversationEntry) -> Optional[Group]:
+    def _tool_preview_renderable(self, entry: ConversationEntry, width: int | None = None) -> Optional[Group]:
         """Inline diff/file-head preview for an edit tool, or None to hide the preview region."""
-        preview = entry.edit_preview
-        if not preview:
-            return None
+        previews = edit_previews(entry.edit_preview)
+        paths = entry_paths(entry)
+        if not previews:
+            # Pending, failed, binary/no-op, and restored patches may have no
+            # diff events. Keep their files identifiable without a title list.
+            return Group(*(path_label(path, width) for path in paths)) if len(paths) > 1 else None
         try:
-            return self._build_edit_preview(preview)
+            show_path = len(paths) != 1 or len(previews) != 1
+            parts: list[RenderableType] = [
+                self._build_edit_preview(preview, show_path=show_path, width=width) for preview in previews
+            ]
+            seen = {preview.get("path") for preview in previews}
+            if show_path:
+                parts.extend(path_label(path, width) for path in paths if path not in seen)
+            return Group(*parts)
         except Exception:
             return None
 
-    def _build_edit_preview(self, preview: dict) -> Group:
+    def _build_edit_preview(self, preview: dict, *, show_path: bool = True, width: int | None = None) -> Group:
         kind = str(preview.get("kind") or "")
         path = str(preview.get("path") or "file")
         lines = preview.get("lines") or []
         more = int(preview.get("more") or 0)
 
-        meta = Text()
-        meta.append(escape(path), style="bold")
+        counts = Text()
         if kind == "diff":
-            meta.append("  ")
-            meta.append(f"+{int(preview.get('adds') or 0)}", style=Color.SUCCESS)
-            meta.append(" ")
-            meta.append(f"-{int(preview.get('dels') or 0)}", style=Color.ERROR)
+            counts.append(f"+{int(preview.get('adds') or 0)}", style=Color.SUCCESS)
+            counts.append(" ")
+            counts.append(f"-{int(preview.get('dels') or 0)}", style=Color.ERROR)
+        meta = Text()
+        if show_path:
+            path_width = None if width is None else max(0, width - (counts.cell_len + 2 if counts else 0))
+            meta.append_text(path_label(path, path_width))
+        if counts:
+            if meta:
+                meta.append("  ")
+            meta.append_text(counts)
 
         if kind == "head":
             code = "\n".join(str(row[1]) for row in lines if isinstance(row, (list, tuple)) and len(row) >= 2)
@@ -1826,7 +1837,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         else:
             body = self._edit_preview_diff(lines)
 
-        parts: list = [meta, body]
+        parts: list = [meta, body] if meta else [body]
         if more > 0:
             footer = Text(f"{theme.g(Glyph.ELLIPSIS)} +{more} more lines", style="dim")
             parts.append(footer)

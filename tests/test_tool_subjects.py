@@ -9,7 +9,13 @@ from pathlib import Path
 import pytest
 
 from kolega_code.security.secrets import SECRET_PLACEHOLDER
-from kolega_code.tool_subjects import MAX_SUBJECT_LENGTH, build_tool_subject, sanitize_tool_subject
+from kolega_code.tool_subjects import (
+    MAX_SUBJECT_LENGTH,
+    build_tool_display,
+    build_tool_subject,
+    sanitize_tool_display,
+    sanitize_tool_subject,
+)
 
 pytestmark = pytest.mark.usefixtures("isolated_cli_env")
 
@@ -368,3 +374,206 @@ def test_bounded_secret_iterable() -> None:
 def test_repeated_short_secrets_do_not_expand_placeholders_recursively() -> None:
     assert sanitize_tool_subject("e", secret_values=["e"] * 256) == SECRET_PLACEHOLDER
     assert len(sanitize_tool_subject("e" * 1000, secret_values=["e"] * 256)) <= MAX_SUBJECT_LENGTH
+
+
+def test_tool_display_paths_keep_full_safe_paths_and_multi_file_patches() -> None:
+    long_name = "src/" + ("文件" * 130) + ".py"
+    assert build_tool_display("read", {"file_path": f"/project/{long_name}"}, project_path="/project") == {
+        "paths": [long_name]
+    }
+    assert len(
+        build_tool_display("read", {"file_path": f"/project/{long_name}"}, project_path="/project")["paths"][0]
+    ) > (MAX_SUBJECT_LENGTH)
+    assert build_tool_display("read", {"file_path": "/project-other/outside.py"}, project_path="/project") == {
+        "paths": ["/project-other/outside.py"]
+    }
+    assert build_tool_display("read", {"file_path": "/home/tester/.config/test"}, project_path="/project") == {
+        "paths": ["~/.config/test"]
+    }
+    assert build_tool_display("apply_patch", _PATCH, project_path="/project") == {
+        "paths": ["old.py", "new.py", "added.py", "deleted.py"]
+    }
+
+
+def test_tool_display_paths_redact_secrets_before_control_cleaning() -> None:
+    secret = "fake\x00credential"
+    assert sanitize_tool_display(
+        {"paths": [f"/tmp/{secret}/report.txt"]},
+        secret_values=[secret],
+    ) == {"paths": [f"/tmp/{SECRET_PLACEHOLDER}/report.txt"]}
+
+
+def test_tool_display_paths_allow_long_scratchpad_absolute_and_windows_forms() -> None:
+    scratchpad_path = (
+        "/var/folders/ny/myl4qfms7svd_wp4yywp3nzr0000gn/T/kolega-code-501/"
+        "kolega-code-9dacd4aeafb1bdcd72578a1a/c0d65426a0c84a3cba954bc7987a2ef4/"
+        + ("nested/" * 20)
+        + "final-output.json"
+    )
+    result = build_tool_display("read", {"file_path": scratchpad_path}, project_path="/project")
+    assert result == {"paths": [scratchpad_path]}
+    assert len(result["paths"][0]) > MAX_SUBJECT_LENGTH
+    assert result["paths"][0].endswith("/final-output.json")
+    assert build_tool_display(
+        "read", {"file_path": r"C:\scratchpad\logs\final-output.json"}, project_path="/project"
+    ) == {"paths": [r"C:\scratchpad\logs\final-output.json"]}
+    assert build_tool_display(
+        "read",
+        {"file_path": r"\\server\share\scratchpad\final-output.json"},
+        project_path="/project",
+    ) == {"paths": [r"\\server\share\scratchpad\final-output.json"]}
+
+
+@pytest.mark.parametrize(
+    ("name", "args"),
+    [
+        ("unknown", {"path": "src/app.py"}),
+        ("web_fetch", {"url": "https://example.test/path"}),
+        ("exec_command", {"title": "ls"}),
+        ("read", {"file_path": "/project/unsafe;name.py"}),
+        (
+            "apply_patch",
+            "*** Begin Patch\n*** Update File: /project/ok.py\n*** Update File: --password=nope\n*** End Patch\n",
+        ),
+    ],
+)
+def test_tool_display_unsupported_and_unsafe_inputs_fail_closed(name: str, args: object) -> None:
+    assert build_tool_display(name, args, project_path="/project") == {}
+
+
+def test_tool_display_preserves_benign_multiline_commands() -> None:
+    command = "cd src\npytest -q tests/test_tool_subjects.py\n"
+    assert build_tool_display("exec_command", {"command": command}) == {"command": command}
+    assert sanitize_tool_display({"command": command}) == {"command": command}
+
+
+def test_tool_display_suppresses_inline_code_and_heredoc_bodies() -> None:
+    inline = build_tool_display("exec_command", {"command": "python -c 'print(1)'"}).get("command", "")
+    assert isinstance(inline, str)
+    assert inline == f"python {SECRET_PLACEHOLDER}"
+    heredoc = build_tool_display("exec_command", {"command": "cat <<'EOF'\nhello\nworld\nEOF\nprintf done\n"}).get(
+        "command", ""
+    )
+    assert isinstance(heredoc, str)
+    assert "hello" not in heredoc and "world" not in heredoc
+    assert heredoc.startswith("cat <<'EOF'\n")
+    assert f"\n{SECRET_PLACEHOLDER}\nEOF\nprintf done\n" in heredoc
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat <<'END-DATA'\nPRIVATE_FILE_BODY\nEND-DATA\n",
+        "cat <<\\EOF\nPRIVATE_FILE_BODY\nEOF\n",
+        "cat <<END-DATA\nEND\nPRIVATE_FILE_BODY\nEND-DATA\n",
+        "cat <<'EOF'X\nEOF\nPRIVATE_FILE_BODY\nEOFX\n",
+        "cat <<EOF <<'END-DATA'\nfirst\nEOF\nPRIVATE_FILE_BODY\nEND-DATA\n",
+        "cat <<<PRIVATE_FILE_BODY",
+    ],
+)
+def test_tool_display_unsupported_heredocs_fail_closed(command: str) -> None:
+    assert build_tool_display("exec_command", {"command": command}) == {}
+    assert sanitize_tool_display({"command": command}) == {}
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "--password PRIVATE_ARGUMENT",
+        "$(printf PRIVATE_ARGUMENT)",
+        "`printf PRIVATE_ARGUMENT`",
+        "<(printf PRIVATE_ARGUMENT)",
+        "-c 'print(\"PRIVATE_ARGUMENT\")'",
+    ],
+)
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "echo FAKE_CONFIGURED_'CREDENTIAL'",
+        "curl 'https://fake-user:FAKE_PASSWORD@example.test/path?token=FAKE_QUERY'",
+    ],
+)
+def test_tool_display_sanitizes_retained_prefix_before_suppressing_payload(prefix: str, suffix: str) -> None:
+    command = f"{prefix} python {suffix}"
+    secrets = ["FAKE_CONFIGURED_CREDENTIAL"]
+    built = build_tool_display("exec_command", {"command": command}, secret_values=secrets)
+    sanitized = sanitize_tool_display({"command": command}, secret_values=secrets)
+    assert built == sanitized
+    assert built
+    displayed = str(built["command"])
+    assert "FAKE" not in displayed
+    assert "CREDENTIAL" not in displayed
+    assert "PRIVATE_ARGUMENT" not in displayed
+    assert "fake-user" not in displayed
+    assert sanitize_tool_display(built) == built
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "curl 'https://fake-user:fake-password@example.test/path?token=FAKE_QUERY#FAKE_FRAGMENT'\nprintf ok\n",
+        "curl --data 'password=FAKE_CREDENTIAL_TAIL' https://example.test/path\nprintf ok\n",
+        "env API_KEY='FAKE CREDENTIAL TAIL' pytest -q\nprintf ok\n",
+    ],
+)
+def test_tool_display_redacts_urls_credentials_and_payloads(command: str) -> None:
+    result = build_tool_display("exec_command", {"command": command}).get("command", "")
+    assert "FAKE" not in result
+    assert "CREDENTIAL" not in result
+    assert "TAIL" not in result
+    assert "fake-password" not in result
+    assert "token=" not in result
+
+
+def test_tool_display_sanitizer_is_strict_and_literal() -> None:
+    assert sanitize_tool_display({"paths": ["src/main.py", "src/main.py"]}) == {"paths": ["src/main.py"]}
+    assert sanitize_tool_display({"paths": ["/abs/path"]}) == {"paths": ["/abs/path"]}
+    assert sanitize_tool_display({"paths": ["curl --password nope"]}) == {}
+    assert sanitize_tool_display({"paths": ["--password=nope"]}) == {}
+    assert sanitize_tool_display({"command": ["ls"]}) == {}
+    assert sanitize_tool_display({"command": "unterminated '"}) == {}
+    assert sanitize_tool_display({"command": "printf '[bold]x[/bold]\\n'"}) == {"command": "printf '[bold]x[/bold]\\n'"}
+    assert sanitize_tool_display({"paths": ["src/main.py"], "command": "ls"}) == {}
+
+
+def test_tool_display_size_bounds_and_secret_boundary() -> None:
+    assert sanitize_tool_display({"command": "a" * 100_000}) == {}
+    secret = "FAKE_CONFIGURED_CREDENTIAL"
+    assert sanitize_tool_display({"command": "x" * 230 + secret}, secret_values=[secret]) == {
+        "command": "x" * 230 + SECRET_PLACEHOLDER
+    }
+    assert build_tool_display("exec_command", {"command": "x" * 16_380 + secret}, secret_values=[secret]) == {}
+
+
+def test_tool_display_command_redacts_quote_split_known_secret_and_roundtrips() -> None:
+    secret = "FAKE_CONFIGURED_CREDENTIAL"
+    built = build_tool_display(
+        "exec_command",
+        {"command": "echo FAKE_CONFIGURED_'CREDENTIAL'\nprintf ok\n"},
+        secret_values=[secret],
+    )
+    assert built == {"command": f"echo {SECRET_PLACEHOLDER}\nprintf ok\n"}
+    assert sanitize_tool_display(built, secret_values=[secret]) == built
+    assert sanitize_tool_display(sanitize_tool_display(built, secret_values=[secret]), secret_values=[secret]) == built
+
+
+@pytest.mark.parametrize("tool", ["read", "apply_patch"])
+def test_display_redacts_before_lexical_path_normalization(tool: str) -> None:
+    secret = "FAKE//PRIVATE/VALUE"
+    path = f"/var/tmp/{secret}/file.py"
+    arguments = {"file_path": path} if tool == "read" else {"patch": f"*** Update File: {path}\n"}
+    built = build_tool_display(tool, arguments, secret_values=[secret])
+    assert built == {"paths": [f"/var/tmp/{SECRET_PLACEHOLDER}/file.py"]}
+
+
+def test_tool_display_path_roundtrips_with_absolute_redacted_path() -> None:
+    secret = "FAKE_CONFIGURED_CREDENTIAL"
+    built = build_tool_display(
+        "read",
+        {"file_path": f"/var/tmp/{secret}/artifact.log"},
+        project_path="/project",
+        secret_values=[secret],
+    )
+    assert built == {"paths": [f"/var/tmp/{SECRET_PLACEHOLDER}/artifact.log"]}
+    assert sanitize_tool_display(built, secret_values=[secret]) == built
+    assert sanitize_tool_display(sanitize_tool_display(built, secret_values=[secret]), secret_values=[secret]) == built

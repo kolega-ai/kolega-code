@@ -457,7 +457,16 @@ async def test_textual_app_composer_auto_grows_caps_and_shrinks(
                     complete=True,
                 )
             )
-        await pilot.pause()
+        # Transcript mounting and scrollbar geometry settle on separate turns.
+        await _pause_until(
+            pilot,
+            lambda: (
+                composer.vertical_scrollbar.display
+                and conversation.vertical_scrollbar.display
+                and composer.vertical_scrollbar.region.x == conversation.vertical_scrollbar.region.x
+                and composer.vertical_scrollbar.region.width == conversation.vertical_scrollbar.region.width
+            ),
+        )
         assert composer.vertical_scrollbar.display is True
         assert conversation.vertical_scrollbar.display is True
         assert composer.vertical_scrollbar.region.x == conversation.vertical_scrollbar.region.x

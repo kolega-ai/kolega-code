@@ -83,9 +83,22 @@ choice; the full editor remains available for every advanced setting.
   shorten to fit one line while keeping the state visible, including in the
   sub-agent inspector and restored conversations. If no safe subject is
   available, the row keeps its tool name and state. Expand to see the full result.
-  Subject text is plain, not a hyperlink; known credentials are redacted, and
+  Long paths shorten in the middle, retaining the filename and nearby parent
+  directories; filenames are emphasized and directories muted. Expand to select
+  the complete display path. Single-file edits put the filename in the title
+  only, above their diff. Multi-file patches label each file above its own diff
+  instead of repeating a path list in the title.
+- **Commands** — short commands stay in the tool title. Longer or multiline
+  commands have an indented preview of at most two lines; expanding replaces
+  that preview with the complete safe command before the output. Wrapping does
+  not rewrite shell syntax, and expanded commands retain their newlines.
+  Embedded code, heredoc bodies, and sensitive payloads remain suppressed;
+  oversized or ambiguous display metadata is omitted rather than exposed.
+  These display rules also apply in the sub-agent inspector and restored sessions.
+- **Display safety** — subject and detail text is plain, not a hyperlink; known
+  credentials are redacted, and
   URL credentials, query strings, and fragments are omitted. This sanitizes the
-  subject only, not the tool's full output.
+  display metadata only, not the tool's full output.
 - **Sub-agents** — when the main agent dispatches a sub-agent, a live card tracks
   it inline: the agent name, elapsed time, tool count, token usage, what it's doing
   right now, and a tail of its latest output. Press `Ctrl+G` (or click the card) to

@@ -75,7 +75,7 @@ from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
 from .tools import ToolCollection, ToolExtension  # noqa: F401 - ToolCollection kept for downstream monkeypatching
 from kolega_code.tools import ToolError
-from kolega_code.tool_subjects import build_tool_subject, configured_tool_subject_secrets
+from kolega_code.tool_subjects import build_tool_display, build_tool_subject, configured_tool_subject_secrets
 from .utils.commands import CommandProcessor
 
 if TYPE_CHECKING:
@@ -1414,10 +1414,23 @@ class BaseAgent(LogMixin):
             # Deliberately do not log the exception: it could contain credentials.
             return ""
 
+    def _build_tool_display(self, tool_name: str, tool_input: object) -> dict[str, list[str] | str]:
+        """Structured display metadata parallel to ``tool_subject``."""
+        try:
+            return build_tool_display(
+                tool_name,
+                tool_input,
+                project_path=self.project_path,
+                secret_values=configured_tool_subject_secrets(self.config),
+            )
+        except Exception:
+            return {}
+
     async def execute_single_tool(self, tool_use_block: ToolCall) -> ToolResult:
         """Execute a single tool and return its result with metadata"""
         tool_name = tool_use_block.name
         tool_subject = self._build_tool_subject(tool_name, tool_use_block.input)
+        tool_display = self._build_tool_display(tool_name, tool_use_block.input)
         inputs = (
             {"input": tool_use_block.input}
             if tool_use_block.input_kind == "freeform" and isinstance(tool_use_block.input, str)
@@ -1449,6 +1462,7 @@ class BaseAgent(LogMixin):
                     tool_description=tool_name,
                     tool_call_id=tool_execution_id,
                     tool_subject=tool_subject,
+                    tool_display=tool_display,
                 )
                 return ToolResult(
                     tool_use_id=provider_tool_call_id,
@@ -1486,6 +1500,7 @@ class BaseAgent(LogMixin):
                         tool_description=tool_name,
                         tool_call_id=tool_execution_id,
                         tool_subject=tool_subject,
+                        tool_display=tool_display,
                     )
                     return ToolResult(
                         tool_use_id=provider_tool_call_id,
@@ -1506,6 +1521,7 @@ class BaseAgent(LogMixin):
                         tool_description=tool_name,
                         tool_call_id=tool_execution_id,
                         tool_subject=tool_subject,
+                        tool_display=tool_display,
                     )
                     return ToolResult(
                         tool_use_id=provider_tool_call_id,
@@ -1524,11 +1540,17 @@ class BaseAgent(LogMixin):
             )
             if pre.blocked:
                 return await self._blocked_tool_result(
-                    tool_name, provider_tool_call_id, tool_execution_id, pre.reason, tool_subject=tool_subject
+                    tool_name,
+                    provider_tool_call_id,
+                    tool_execution_id,
+                    pre.reason,
+                    tool_subject=tool_subject,
+                    tool_display=tool_display,
                 )
             if pre.updated_input is not None:
                 inputs = pre.updated_input
                 tool_subject = self._build_tool_subject(tool_name, inputs)
+                tool_display = self._build_tool_display(tool_name, inputs)
 
             # Send tool_call message to indicate we're starting execution
             if not all(
@@ -1544,6 +1566,7 @@ class BaseAgent(LogMixin):
                     tool_description=tool_name,
                     tool_call_id=tool_execution_id,
                     tool_subject=tool_subject,
+                    tool_display=tool_display,
                 )
 
             output = await registry.call(tool_name, **inputs)
@@ -1577,6 +1600,7 @@ class BaseAgent(LogMixin):
                 tool_call_id=tool_execution_id,
                 images=images,
                 tool_subject=tool_subject,
+                tool_display=tool_display,
             )
 
             return ToolResult(
@@ -1600,6 +1624,7 @@ class BaseAgent(LogMixin):
                 tool_description=tool_name,
                 tool_call_id=tool_execution_id,
                 tool_subject=tool_subject,
+                tool_display=tool_display,
             )
 
             return ToolResult(
@@ -1622,6 +1647,7 @@ class BaseAgent(LogMixin):
                 tool_description=tool_name,
                 tool_call_id=tool_execution_id,
                 tool_subject=tool_subject,
+                tool_display=tool_display,
             )
 
             return ToolResult(
@@ -1671,6 +1697,7 @@ class BaseAgent(LogMixin):
                         tool_description=block.name,
                         tool_call_id=execution_id,
                         tool_subject=self._build_tool_subject(block.name, block.input),
+                        tool_display=self._build_tool_display(block.name, block.input),
                     )
                     results.append(
                         ToolResult(
@@ -1899,6 +1926,7 @@ class BaseAgent(LogMixin):
         reason: str,
         *,
         tool_subject: Optional[str] = None,
+        tool_display: Optional[dict[str, list[str] | str]] = None,
     ) -> ToolResult:
         """Build the is_error ToolResult a blocked tool produces — identical to the
         permission-deny path so the model and UI handle a hook block the same way."""
@@ -1913,6 +1941,7 @@ class BaseAgent(LogMixin):
             tool_description=tool_name,
             tool_call_id=tool_execution_id,
             tool_subject=tool_subject,
+            tool_display=tool_display,
         )
         return ToolResult(
             tool_use_id=provider_tool_call_id,
@@ -1974,6 +2003,7 @@ class BaseAgent(LogMixin):
         images: Optional[Sequence[Tuple[str, str]]] = None,
         *,
         tool_subject: Optional[str] = None,
+        tool_display: Optional[dict[str, list[str] | str]] = None,
     ) -> None:
         """
         Send a message to the chat interface.
@@ -1984,8 +2014,18 @@ class BaseAgent(LogMixin):
             images: ``(media_type, base64_data)`` pairs a tool produced, so a
                 frontend can show the picture rather than a description of one
         """
-        # Preserve the old emitter call shape for callers without metadata.
-        subject_kwargs = {"tool_subject": tool_subject} if tool_subject else {}
+        if tool_subject or tool_display:
+            await self.emitter.chat(
+                message_type,
+                content,
+                is_streaming=is_streaming,
+                tool_description=tool_description,
+                tool_call_id=tool_call_id,
+                images=images,
+                tool_subject=tool_subject,
+                tool_display=tool_display,
+            )
+            return
         await self.emitter.chat(
             message_type,
             content,
@@ -1993,7 +2033,6 @@ class BaseAgent(LogMixin):
             tool_description=tool_description,
             tool_call_id=tool_call_id,
             images=images,
-            **subject_kwargs,
         )
 
     @staticmethod
@@ -2152,6 +2191,7 @@ class BaseAgent(LogMixin):
                 tool_description=tool_name,
                 tool_call_id=tool_execution_id,
                 tool_subject=self._build_tool_subject(tool_name, tool_call_delta.get("input")),
+                tool_display=self._build_tool_display(tool_name, tool_call_delta.get("input")),
             )
 
     def should_stop_after_tools(self) -> bool:

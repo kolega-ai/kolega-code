@@ -59,7 +59,7 @@ def test_title_reserves_status_and_uses_cell_width(kind: str, state: str, width:
     if width >= len(state):
         assert state in title.plain
     if width >= 30:
-        assert "src/" in title.plain
+        assert ".py" in title.plain
         assert "…" in title.plain
     assert "matches" not in title.plain
     assert "10000" not in title.plain

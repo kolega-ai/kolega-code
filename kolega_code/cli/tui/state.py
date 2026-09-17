@@ -75,6 +75,7 @@ class ConversationEntry:
     tool_name: Optional[str] = None
     tool_call_id: Optional[str] = None
     tool_subject: str = ""  # bounded, sanitized input subject; never raw tool arguments
+    tool_display: dict[str, list[str] | str] = field(default_factory=dict)  # safe paths / command, not raw args
     tone: Optional[str] = None  # "warning" | "error" styling hint for progress entries
     full_content: str = ""  # untruncated tool output for expand-on-demand (capped)
     edit_preview: Optional[dict] = None  # UI-only structured diff/head preview for edit tools (not persisted)

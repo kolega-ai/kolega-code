@@ -86,6 +86,12 @@ def _assert_pair(agent: BaseAgent, subject: str, terminal: str = "tool_result") 
     assert all("input" not in event.content and "arguments" not in event.content for event in events)
 
 
+def _assert_display_pair(agent: BaseAgent, display: dict[str, object], terminal: str = "tool_result") -> None:
+    events = _events(agent)
+    assert [event.content["message_type"] for event in events] == ["tool_call", terminal]
+    assert [event.content["tool_display"] for event in events] == [display, display]
+
+
 async def test_success_emits_paired_relative_path_without_changing_result(
     agent: BaseAgent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -93,6 +99,7 @@ async def test_success_emits_paired_relative_path_without_changing_result(
     inputs = {"file_path": str(agent.project_path / "src/main.py"), "content": "not a subject"}
     result = await agent.execute_single_tool(_call(inputs=inputs))
     _assert_pair(agent, "src/main.py")
+    _assert_display_pair(agent, {"paths": ["src/main.py"]})
     handler.assert_awaited_once_with(**inputs)
     assert result.content == "tool output" and result.tool_use_id == "provider-0"
     assert result.execution_id == "execution-0" and not result.is_error
@@ -108,6 +115,7 @@ async def test_execution_errors_keep_call_subject(
     _install(agent, monkeypatch, "read", handler=AsyncMock(side_effect=failure))
     result = await agent.execute_single_tool(_call(inputs={"file_path": "src/main.py"}))
     _assert_pair(agent, "src/main.py", "tool_error")
+    _assert_display_pair(agent, {"paths": ["src/main.py"]}, "tool_error")
     assert result.is_error and result.content == str(failure)
 
 
@@ -118,6 +126,7 @@ async def test_unknown_tool_has_subject_without_extra_call(agent: BaseAgent, mon
     assert result.is_error and len(events) == 1
     assert events[0].content["message_type"] == "tool_error"
     assert events[0].content["tool_subject"] == "src/missing.py"
+    assert "tool_display" not in events[0].content
 
 
 @pytest.mark.parametrize("decision", ["denied", "exception", "invalid"])
@@ -138,6 +147,7 @@ async def test_permission_rejection_has_subject_without_execution(
     assert result.is_error and len(events) == 1
     assert events[0].content["message_type"] == "tool_error"
     assert events[0].content["tool_subject"] == "ls src"
+    assert events[0].content["tool_display"] == {"command": "ls src"}
 
 
 @pytest.mark.parametrize("blocked", [False, True])
@@ -155,9 +165,11 @@ async def test_hook_rewrite_or_rejection_uses_actual_input(
         assert result.is_error
         events = _events(agent)
         assert len(events) == 1 and events[0].content["tool_subject"] == "before.py"
+        assert events[0].content["tool_display"] == {"paths": ["before.py"]}
     else:
         handler.assert_awaited_once_with(file_path="after.py")
         _assert_pair(agent, "after.py")
+        _assert_display_pair(agent, {"paths": ["after.py"]})
 
 
 async def test_exclusive_batch_rejection_builds_each_subject(agent: BaseAgent, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -174,6 +186,8 @@ async def test_exclusive_batch_rejection_builds_each_subject(agent: BaseAgent, m
     assert [event.content["message_type"] for event in events] == ["tool_error", "tool_error"]
     assert [event.content["tool_subject"] for event in events] == ["first.py", "second.py"]
     assert [event.content["tool_call_id"] for event in events] == ["execution-0", "execution-1"]
+    assert "tool_display" not in events[0].content
+    assert events[1].content["tool_display"] == {"paths": ["second.py"]}
 
 
 async def test_parallel_same_name_calls_do_not_share_subject(agent: BaseAgent, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -201,6 +215,7 @@ async def test_parallel_same_name_calls_do_not_share_subject(agent: BaseAgent, m
         events = [event for event in _events(agent) if event.content["tool_call_id"] == f"execution-{index}"]
         assert [event.content["message_type"] for event in events] == ["tool_call", "tool_result"]
         assert [event.content["tool_subject"] for event in events] == [path, path]
+        assert [event.content["tool_display"] for event in events] == [{"paths": [path]}, {"paths": [path]}]
 
 
 @pytest.mark.parametrize(
@@ -233,6 +248,10 @@ async def test_freeform_and_invalid_inputs_do_not_leak_payloads(
             assert event.content["tool_subject"] == subject
         else:
             assert "tool_subject" not in event.content
+        if name == "apply_patch" and subject:
+            assert event.content["tool_display"] == {"paths": ["added.py"]}
+        else:
+            assert "tool_display" not in event.content
 
 
 async def test_scoped_credentials_redacted_without_global_mutation(
@@ -308,6 +327,7 @@ async def test_hosted_pairs_use_only_action_inputs(
             assert event.content["tool_subject"] == subject
         else:
             assert "tool_subject" not in event.content
+        assert "tool_display" not in event.content
 
 
 @pytest.mark.parametrize("with_input", [False, True])
@@ -323,10 +343,13 @@ async def test_streamed_write_announces_once_and_enriches_completion(
     events = _events(agent)
     assert [event.content["message_type"] for event in events] == ["tool_call", "tool_result"]
     assert events[1].content["tool_subject"] == "streamed.py"
+    assert events[1].content["tool_display"] == {"paths": ["streamed.py"]}
     if with_input:
         assert events[0].content["tool_subject"] == "streamed.py"
+        assert events[0].content["tool_display"] == {"paths": ["streamed.py"]}
     else:
         assert "tool_subject" not in events[0].content
+        assert "tool_display" not in events[0].content
 
 
 async def test_emitter_optional_shape_and_sanitization(agent: BaseAgent) -> None:
@@ -343,6 +366,10 @@ async def test_emitter_optional_shape_and_sanitization(agent: BaseAgent) -> None
     await agent.emitter.chat("tool_call", "unchanged", tool_subject="\x1b[31mhello\n" + "x" * 300)
     subject = _events(agent)[-1].content["tool_subject"]
     assert len(subject) <= MAX_SUBJECT_LENGTH and "\x1b" not in subject and "\n" not in subject
+    await agent.emitter.chat("tool_call", "unchanged", tool_display={"command": "\x1b[31mprintf ok\n"})
+    assert _events(agent)[-1].content["tool_display"] == {"command": "printf ok\n"}
+    await agent.emitter.chat("tool_call", "unchanged", tool_display={"command": {"raw": "DO_NOT_SHOW"}})
+    assert "tool_display" not in _events(agent)[-1].content
 
 
 async def test_wrapper_forwards_subject_and_keeps_old_call_shape(
@@ -352,29 +379,43 @@ async def test_wrapper_forwards_subject_and_keeps_old_call_shape(
     monkeypatch.setattr(agent.emitter, "chat", chat)
     await agent.send_chat_message("response", "unchanged")
     assert "tool_subject" not in chat.call_args.kwargs
+    assert "tool_display" not in chat.call_args.kwargs
     await agent.send_chat_message("tool_call", "unchanged", tool_subject="src/main.py")
     assert chat.call_args.kwargs["tool_subject"] == "src/main.py"
+    await agent.send_chat_message("tool_call", "unchanged", tool_display={"paths": ["src/main.py"]})
+    assert chat.call_args.kwargs["tool_display"] == {"paths": ["src/main.py"]}
 
 
-@pytest.mark.parametrize("boundary", ["builder", "emitter"])
+@pytest.mark.parametrize("boundary", ["subject_builder", "display_builder", "subject_emitter", "display_emitter"])
 async def test_subject_failure_does_not_fail_tool_execution(
     agent: BaseAgent, monkeypatch: pytest.MonkeyPatch, boundary: str
 ) -> None:
     def fail(*args: Any, **kwargs: Any) -> str:
         raise RuntimeError("fake formatting failure")
 
-    target = (
-        "kolega_code.agent.baseagent.build_tool_subject"
-        if boundary == "builder"
-        else "kolega_code.events.sanitize_tool_subject"
-    )
+    target = {
+        "subject_builder": "kolega_code.agent.baseagent.build_tool_subject",
+        "display_builder": "kolega_code.agent.baseagent.build_tool_display",
+        "subject_emitter": "kolega_code.events.sanitize_tool_subject",
+        "display_emitter": "kolega_code.events.sanitize_tool_display",
+    }[boundary]
     monkeypatch.setattr(target, fail)
     handler = _install(agent, monkeypatch, "read")
     result = await agent.execute_single_tool(_call(inputs={"file_path": "src/main.py"}))
     handler.assert_awaited_once()
     assert not result.is_error and result.content == "tool output"
     assert len(_events(agent)) == 2
-    assert all("tool_subject" not in event.content for event in _events(agent))
+    expected_subject = boundary == "display_builder" or boundary == "display_emitter"
+    expected_display = boundary == "subject_builder" or boundary == "subject_emitter"
+    for event in _events(agent):
+        if expected_subject:
+            assert event.content["tool_subject"] == "src/main.py"
+        else:
+            assert "tool_subject" not in event.content
+        if expected_display:
+            assert event.content["tool_display"] == {"paths": ["src/main.py"]}
+        else:
+            assert "tool_display" not in event.content
 
 
 async def test_cancellation_propagates_without_extra_result(agent: BaseAgent, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -383,6 +424,7 @@ async def test_cancellation_propagates_without_extra_result(agent: BaseAgent, mo
         await agent.execute_single_tool(_call(inputs={"file_path": "src/main.py"}))
     events = _events(agent)
     assert len(events) == 1 and events[0].content["tool_subject"] == "src/main.py"
+    assert events[0].content["tool_display"] == {"paths": ["src/main.py"]}
     assert agent.current_tool_call_id is None
 
 
@@ -406,7 +448,9 @@ async def test_nested_eval_callback_does_not_replace_parent_subject(
         "execution-0",
     ]
     assert "tool_subject" not in events[0].content and "tool_subject" not in events[3].content
+    assert "tool_display" not in events[0].content and "tool_display" not in events[3].content
     assert events[1].content["tool_subject"] == events[2].content["tool_subject"] == "nested.py"
+    assert events[1].content["tool_display"] == events[2].content["tool_display"] == {"paths": ["nested.py"]}
 
 
 async def test_subagent_metadata_survives_subject_emission(agent: BaseAgent, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -417,4 +461,5 @@ async def test_subagent_metadata_survives_subject_emission(agent: BaseAgent, mon
     )
     await agent.execute_single_tool(_call(inputs={"file_path": "child.py"}))
     _assert_pair(agent, "child.py")
+    _assert_display_pair(agent, {"paths": ["child.py"]})
     assert all(event.sub_agent_info == agent.sub_agent_context for event in _events(agent))

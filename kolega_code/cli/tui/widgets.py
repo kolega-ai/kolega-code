@@ -15,6 +15,7 @@ from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
+from textual.content import Content
 from textual.message import Message as TextualMessage
 from textual.selection import Selection
 from textual.strip import Strip
@@ -28,6 +29,7 @@ from ..prompt_history import PROMPT_HISTORY_MAX
 from ..slash_commands import SlashCommandEntry
 from .app_base import KolegaAppBase
 from .state import ConversationEntry
+from .tool_presentation import command_preview, entry_command, entry_paths, tool_title
 
 
 class ConversationEntryWidget(Static):
@@ -73,6 +75,7 @@ class ConversationEntryWidget(Static):
             self.entry.complete,
             self.entry.tool_name,
             self.entry.tool_subject,
+            repr(self.entry.tool_display),
             self.entry.tone,
             len(self.entry.full_content),
             repr(self.entry.edit_preview),
@@ -296,6 +299,7 @@ class ToolEntryWidget(Vertical):
         preview_factory: Optional[Callable[[ConversationEntry], Any]] = None,
         *,
         title_for_width: Optional[Callable[[ConversationEntry, int], str]] = None,
+        preview_for_width: Optional[Callable[[ConversationEntry, int], Any]] = None,
     ) -> None:
         if entry.kind in {"tool_call", "tool_result", "tool_error"}:
             classes: Optional[str] = "agent-activity"
@@ -307,10 +311,16 @@ class ToolEntryWidget(Vertical):
         self.entry = entry
         self._title_factory = title_factory
         self._title_for_width = title_for_width
+        self._preview_for_width = preview_for_width
         self._preview_factory = preview_factory
         self._collapsible: Optional[Collapsible] = None
         self._body: Optional[Static] = None
         self._preview: Optional[Static] = None
+        self._command_preview: Optional[Static] = None
+        self._details: Optional[Static] = None
+        self._details_text: str = ""
+        self._command_key: tuple[str, int, bool] | None = None
+        self._title_width: int | None = None
         self._title = ""
         self._body_content: object = None
         self._body_len = 0
@@ -323,12 +333,17 @@ class ToolEntryWidget(Vertical):
         # collapsible so collapsing only hides Contents, not the preview itself.
         self._preview = Static("", markup=False, classes="tool-preview")
         self._preview.display = False
+        self._command_preview = Static("", markup=False, classes="tool-command-preview")
+        self._command_preview.display = False
+        self._details = Static("", markup=False, classes="tool-details")
+        self._details.display = False
         self._body = Static("", markup=False, classes="tool-body")
         self._collapsible = SelectableCollapsible(
+            self._details,
             self._body,
             title=self._title_factory(self.entry),
             collapsed=True,
-            persistent_children=(self._preview,),
+            persistent_children=(self._command_preview, self._preview),
         )
         yield self._collapsible
 
@@ -336,7 +351,7 @@ class ToolEntryWidget(Vertical):
         self.refresh_content()
 
     def on_resize(self, event: events.Resize) -> None:
-        self._refresh_title()
+        self.refresh_content()
 
     def _refresh_title(self) -> None:
         if self._collapsible is None:
@@ -353,6 +368,7 @@ class ToolEntryWidget(Vertical):
                 - title_widget.styles.gutter.width
                 - symbols,
             )
+            self._title_width = width
             title = self._title_for_width(self.entry, width)
         else:
             title = self._title_factory(self.entry)
@@ -373,6 +389,7 @@ class ToolEntryWidget(Vertical):
         self.entry.materialize()
 
         self._refresh_title()
+        self._refresh_details()
 
         body_content = self.entry.full_content or self.entry.content
         if self.entry.kind == "thinking":
@@ -389,11 +406,18 @@ class ToolEntryWidget(Vertical):
             self._body_content = body_content
 
         if self._preview is not None:
-            preview_key = repr(self.entry.edit_preview)
+            width = max(0, self.content_size.width - (4 if self.has_class("agent-activity") else 2))
+            preview_key = repr((self.entry.edit_preview, self.entry.tool_display, width))
             if preview_key == self._preview_key:
                 return
             self._preview_key = preview_key
-            renderable = self._preview_factory(self.entry) if self._preview_factory else None
+            renderable = (
+                self._preview_for_width(self.entry, width)
+                if self._preview_for_width
+                else self._preview_factory(self.entry)
+                if self._preview_factory
+                else None
+            )
             if renderable is not None:
                 self._preview.update(renderable)
                 if not self._preview_visible:
@@ -406,6 +430,37 @@ class ToolEntryWidget(Vertical):
                     self._preview.display = False
                     self._preview_visible = False
                     self._preview.refresh(layout=True)
+
+    def _refresh_details(self) -> None:
+        """Expanded literal details are separate from the untouched tool result."""
+        if self._details is None or self._command_preview is None or self._collapsible is None:
+            return
+        command = entry_command(self.entry)
+        paths = entry_paths(self.entry)
+        separate = bool(command) and tool_title(self.entry, self._title_width)[1]
+        width = max(0, self.content_size.width - (4 if self.has_class("agent-activity") else 2))
+        title = Text.from_markup(self._title).plain
+        # Do not repeat a complete short path/command already visible above.
+        # Multi-file diff labels reserve room for their existing +/- counts.
+        clipped_paths = (
+            paths[0] not in title if len(paths) == 1 else any(cell_len(path) > max(0, width - 16) for path in paths)
+        )
+        details = command if separate else "\n".join(paths) if clipped_paths else ""
+        if details != self._details_text:
+            self._details.update(Content(details))
+            self._details_text = details
+        self._details.display = bool(details)
+        # Expansion replaces the clipped command with the complete safe command.
+        visible = separate and self._collapsible.collapsed
+        key = (command, width, visible)
+        if key != self._command_key:
+            self._command_key = key
+            self._command_preview.display = visible
+            if visible:
+                self._command_preview.update(Content.from_rich_text(command_preview(command, width)))
+
+    def on_collapsible_collapsed(self, event: Collapsible.Collapsed) -> None:
+        self._refresh_details()
 
 
 class ScrollbackWindow:
