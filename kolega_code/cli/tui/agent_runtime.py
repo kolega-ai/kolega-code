@@ -1574,12 +1574,14 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 try:
                     await agent.cleanup()
                 except Exception as exc:  # noqa: BLE001 — reported, never masks the primary failure
+                    self._agent_cleanup_failed = True
                     self._log_status(f"agent cleanup failed: {exc}", level="warn")
         finally:
             if bundle is not None:
                 try:
                     await cleanup_extension_bundle(bundle)
                 except Exception as exc:  # noqa: BLE001 — reported, never masks the primary failure
+                    self._agent_cleanup_failed = True
                     self._log_status(f"extension cleanup failed: {exc}", level="warn")
 
     async def _cleanup_extension_bundle(self) -> None:

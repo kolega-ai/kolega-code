@@ -1503,7 +1503,13 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
 
     def _make_entry_widget(self, entry: ConversationEntry) -> ConversationEntryWidget | ToolEntryWidget:
         if entry.kind == "startup":
-            return StartupEntryWidget(entry, self._startup_title, self._startup_summary, self._format_startup_entry)
+            return StartupEntryWidget(
+                entry,
+                self._startup_title,
+                self._startup_summary,
+                self._format_startup_entry,
+                self._startup_recent_sessions,
+            )
         if entry.kind in {"tool_call", "tool_result", "tool_error"}:
             return ToolEntryWidget(
                 entry,
@@ -1564,6 +1570,12 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             # scroll offset). A fresh startup card belongs at the top instead.
             fresh = len(self.conversation_entries) <= 2 and all(
                 entry.kind in {"startup", "progress"} for entry in self.conversation_entries
+            )
+            # A refused resume adds a visible system notice, not a conversation.
+            # Keep the choices in place so the next click still hits the same row.
+            fresh = fresh or (
+                bool(self._startup_recent_sessions())
+                and all(entry.kind in {"startup", "progress", "system"} for entry in self.conversation_entries)
             )
             view.anchor(not fresh)
             if fresh:

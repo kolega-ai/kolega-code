@@ -65,6 +65,15 @@ choice; the full editor remains available for every advanced setting.
   The card folds after your first message and starts folded when restoring a
   conversation. Click its title (or focus it and press `Enter`) to reopen it;
   later messages respect that choice. Resetting the thread restores the card.
+- **Recent sessions** — on a fresh launch, the startup card lists up to three
+  recent sessions from the same project, between its status rows and
+  **Session & configuration**. Click a title, or focus it with `Tab` and press
+  `Enter`, to resume that conversation. The session is locked before the current
+  app closes; if another instance owns it, a warning appears and you stay where
+  you are. Close the other instance and click again to retry. Unsent drafts or
+  a saved worktree change require confirmation. The list is absent when there
+  are no other saved sessions, when launching with `--resume`, or after starting
+  a conversation; clearing the thread does not bring the choices back.
 - **Discovery tips** — optional, off by default. Enable **Discovery tips** in
   **Settings → Appearance** and Apply to show a compact **QUICK TIP** modal
   once per fresh thread, after setup or Settings closes. Shortcuts are highlighted

@@ -597,6 +597,20 @@ ConfirmSettingsActionScreen {
     color: $text-muted;
 }
 
+/* Resume confirmation must also fit alongside a draft on narrow terminals. */
+ConfirmSettingsActionScreen.resume-session-confirmation .dialog-hint {
+    display: none;
+}
+
+ConfirmSettingsActionScreen.resume-session-confirmation #settings_action_buttons Button {
+    width: 1fr;
+    min-width: 0;
+}
+
+ConfirmSettingsActionScreen.resume-session-confirmation #settings_action_dialog {
+    overflow-y: auto;
+}
+
 OnboardingScreen {
     align: center middle;
     background: $background;

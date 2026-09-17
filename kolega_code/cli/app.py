@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Optional, TypeVar
 
 from rich.console import Group
+from rich.markup import escape
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
@@ -86,7 +87,7 @@ from .mentions import build_file_attachments
 from .prompt_history import load_prompt_history, save_prompt_history
 from .provider_registry import default_ui_thinking_effort
 from .session_journal import RewindOutcome, TurnSummary
-from .session_store import SessionRecord, SessionStore, resolve_active_project
+from .session_store import SessionLockedError, SessionRecord, SessionStore, SessionStoreError, resolve_active_project
 from .settings import CliSettings, SettingsStore
 from kolega_code.agent.custom_agents import CustomAgentCatalog, discover_custom_agents
 from kolega_code.services.terminal import LocalTerminalManager
@@ -103,7 +104,7 @@ from .slash_commands import (
 )
 from .theme import Color, Glyph
 from .updater import check_for_update, current_version, update_status_message
-from .tui.startup import display_project_path
+from .tui.startup import RecentSessionItem, StartupEntryWidget, display_project_path
 from .tui.discovery import DiscoveryTip
 from .tui.metadata import MetadataStrip
 from .tui.shortcut_bar import ContextFooter, ShortcutHelpScreen
@@ -234,6 +235,13 @@ class KolegaCodeApp(
         self.show_logs = show_logs
         self.startup_config_error = startup_config_error
         self._resuming_session = resuming_session
+        self._recent_sessions_available = (
+            not resuming_session and not self.session.history and not self.session.compaction
+        )
+        self._recent_sessions: tuple[RecentSessionItem, ...] = ()
+        self._resume_in_progress = False
+        # A claimed target for main.py's clean, same-process app relaunch.
+        self.resume_session: SessionRecord | None = None
         # Two managers, one stream. The TUI reads live events off the CLI queue;
         # the agent broadcasts into the recording wrapper, which assigns each
         # event a sequence number and persists it before forwarding. That is what
@@ -289,6 +297,8 @@ class KolegaCodeApp(
         #: Set when action_quit saves the session cleanly; main.py prints the
         #: resume-with-session-ID hint only when this is True.
         self._quit_cleanly = False
+        self._session_shutdown_task: asyncio.Task[None] | None = None
+        self._agent_cleanup_failed = False
         self.extension_selection = extension_selection
         self._extension_bundle = None
         self.agent = None
@@ -727,7 +737,115 @@ class KolegaCodeApp(
         if self.config is None and not self._onboarding_skipped:
             await self.action_open_onboarding()
         self._discovery_tips_ready = True
+        if self._recent_sessions_available:
+            self.run_worker(self._load_recent_sessions(), name="recent-sessions", group="recent-sessions")
         await self._maybe_show_discovery_tip()
+
+    def _startup_recent_sessions(self) -> tuple[RecentSessionItem, ...]:
+        return self._recent_sessions if self._recent_sessions_available else ()
+
+    async def _load_recent_sessions(self) -> None:
+        try:
+            records = await asyncio.to_thread(self.store.list, project_path=self.project_path, recover=False)
+        except (OSError, SessionStoreError, TypeError, ValueError) as exc:
+            self._log_status(f"Could not list recent sessions: {exc}", "warning")
+            return
+        if not self._recent_sessions_available:
+            return
+        items = tuple(
+            RecentSessionItem(record.session_id, str(record.title or record.name or ""), str(record.updated_at or ""))
+            for record in records
+            if record.session_id != self.session.session_id
+        )[:3]
+        if items == self._recent_sessions:
+            return
+        self._recent_sessions = items
+        self._ensure_startup_entry()
+
+    def on_startup_entry_widget_resume_requested(self, event: StartupEntryWidget.ResumeRequested) -> None:
+        event.stop()
+        if self._resume_in_progress or not self._recent_sessions_available or self._modal_cover_active:
+            return
+        if not any(item.session_id == event.session_id for item in self._recent_sessions):
+            return
+        self._resume_in_progress = True
+        self.run_worker(self._resume_recent_session(event.session_id), name="resume-session", group="resume-session")
+
+    async def _resume_recent_session(self, session_id: str) -> None:
+        """Claim before leaving the current UI; main.py performs the actual resume."""
+        claimed = False
+        composer = self.query_one("#composer", tui_widgets.ChatComposer)
+        was_disabled = composer.disabled
+        composer.disabled = True
+        try:
+            claim = asyncio.create_task(asyncio.to_thread(self.store.claim_for_resume, session_id, self.project_path))
+            try:
+                record = await asyncio.shield(claim)
+                claimed = True
+            except asyncio.CancelledError:
+                # A cancelled worker cannot stop the disk thread. Wait for it
+                # before releasing a reservation it may still be acquiring.
+                while True:
+                    try:
+                        await asyncio.shield(claim)
+                    except asyncio.CancelledError:
+                        if claim.cancelled():
+                            break
+                        # Repeated cancellation must not detach the disk thread.
+                        continue
+                    except (OSError, ValueError, SessionStoreError):
+                        break
+                    else:
+                        claimed = True
+                        break
+                raise
+            active_path, warning = await asyncio.to_thread(
+                resolve_active_project, record, self.store, self.project_path, persist_fallback=False
+            )
+            if not self._recent_sessions_available or self._turn_active or self.agent_worker is not None:
+                return
+            reasons: list[str] = []
+            if composer.text or self._pending_image_attachments:
+                reasons.append("Your unsent message and attachments will be discarded.")
+            if active_path != self.active_project_path:
+                reasons.append(f"The saved session will open in:\n{display_project_path(active_path)}")
+            if warning:
+                reasons.append(warning)
+            if reasons:
+                confirmation = tui_settings_screen.ConfirmSettingsActionScreen(
+                    "Resume session?", escape("\n\n".join(reasons)), "Resume"
+                )
+                confirmation.add_class("resume-session-confirmation")
+                confirmed = await self.push_screen_wait(confirmation)
+                self._on_fullscreen_modal_dismissed()
+                if not confirmed:
+                    return
+            if not self._recent_sessions_available or self._turn_active or self.agent_worker is not None:
+                return
+            # Preserve the current record before committing to closing its UI.
+            await self._save_session_history_async()
+            await self._save_session_async()
+            self.resume_session = record
+            await self.action_quit()
+        except (OSError, ValueError, SessionStoreError, WorktreeError) as exc:
+            notice = (
+                "Could not resume session: it is already open in another instance. Close it there, then click again."
+                if isinstance(exc, SessionLockedError)
+                else f"Could not resume session: {exc}"
+            )
+            # _notify_user records to the opt-in Logs tab, not a popup. Keep the
+            # refusal visible in the conversation while leaving the choices usable.
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=notice))
+            self._notify_user(notice, severity="warning")
+        finally:
+            if self.resume_session is not None and not self._quit_cleanly:
+                self.resume_session = None
+            if claimed and self.resume_session is None:
+                self.store.release_session_lock(session_id)
+            self._resume_in_progress = False
+            if self.resume_session is None:
+                composer.disabled = was_disabled
+                self._schedule_primary_focus_restore()
 
     @property
     def _conversation(self) -> tui_widgets.ConversationView:
@@ -1081,6 +1199,8 @@ class KolegaCodeApp(
             pass
 
     async def on_chat_composer_submitted(self, event: tui_widgets.ChatComposer.Submitted) -> None:
+        if self._resume_in_progress:
+            return
         text = event.value
         stripped_text = text.strip()
         self._persist_prompt_history(event.composer)
@@ -2268,6 +2388,15 @@ class KolegaCodeApp(
             pass
 
     async def action_quit(self) -> None:
+        # Resume runs in a worker; Ctrl-Q can arrive while it is shutting down.
+        # All callers share one teardown, which survives cancellation of any
+        # individual caller and is also awaited by the launcher.
+        if self._session_shutdown_task is None:
+            self._session_shutdown_task = asyncio.create_task(self._shutdown_session())
+        await asyncio.shield(self._session_shutdown_task)
+
+    async def _shutdown_session(self) -> None:
+        saved = False
         try:
             # Release control first, so any prompt still open resolves to its
             # default instead of leaving a turn waiting on a closing window.
@@ -2287,23 +2416,25 @@ class KolegaCodeApp(
                     except Exception:
                         pass
                 await self._save_session_history_async()
-            # The session is durably saved: the post-quit resume hint may point
-            # at it. If any step above raised, the flag stays False and main.py
-            # prints nothing (the finally still exits).
-            self._quit_cleanly = True
+            saved = True
         finally:
             # Generation teardown and the sink drain run even when an earlier
             # step raised; the original failure still propagates.
             try:
-                await self._cleanup_agent_generation()
-                # After cleanup: cancelled streams settle their failures into
-                # the ledger first, so the drain below captures them.
-                if self._usage_sink is not None:
-                    await self._usage_sink.aclose()
+                try:
+                    await self._cleanup_agent_generation()
+                    # After cleanup: cancelled streams settle their failures into
+                    # the ledger first, so the drain below captures them.
+                    if self._usage_sink is not None:
+                        await self._usage_sink.aclose()
+                finally:
+                    await self._stop_inbox_socket()
+                    self._unregister_from_inbox()
+                    self._close_memory_manager()
+                # Relaunch is allowed only after both persistence and teardown
+                # succeeded, never after a partially drained old runtime.
+                self._quit_cleanly = saved and not self._agent_cleanup_failed
             finally:
-                await self._stop_inbox_socket()
-                self._unregister_from_inbox()
-                self._close_memory_manager()
                 self.exit()
 
     def _set_sidebar_visible(self, visible: bool) -> None:
@@ -2783,7 +2914,9 @@ class KolegaCodeApp(
             # teardown); nothing to update then. Guarded like the sibling
             # composer helpers so a late finalize can't raise WorkerFailed.
             return
-        composer.disabled = not enabled or self._plan_decision_active or self._pending_approval is not None
+        composer.disabled = (
+            not enabled or self._plan_decision_active or self._pending_approval is not None or self._resume_in_progress
+        )
         self._refresh_shortcut_context()
         if self.config is None and self.agent is None:
             composer.placeholder = messages.DISCONNECTED_COMPOSER_PLACEHOLDER
@@ -3064,6 +3197,7 @@ class KolegaCodeApp(
 
     def _fold_startup_entry(self, *, render: bool = True) -> None:
         """Fold once on the first message; later messages respect manual expansion."""
+        self._recent_sessions_available = False
         startup = next((entry for entry in self.conversation_entries if entry.kind == "startup"), None)
         if startup is not None and not startup.startup_auto_folded:
             startup.startup_auto_folded = True

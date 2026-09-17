@@ -66,6 +66,7 @@ if TYPE_CHECKING:
     from .onboarding_screen import OnboardingScreen
     from .session_diff import DiffScope, SessionDiffFile, SessionDiffTrackerBase, TurnCheckpoint
     from .settings_screen import SettingsScreen
+    from .startup import RecentSessionItem
     from .pacing import FlushPacer
     from .sub_agent_screen import SubAgentInspectorScreen
     from .terminal_display import TerminalDisplayNormalizer
@@ -139,9 +140,9 @@ class KolegaAppBase(App):
         _inbox_socket: object | None
         _hook_dispatcher: HookDispatcher | None
         _session_started: bool
-        #: True once action_quit has saved the session; gates the post-quit
-        #: resume hint printed by main.py.
+        #: True only after persistence and teardown; gates relaunch and quit hints.
         _quit_cleanly: bool
+        _agent_cleanup_failed: bool
         agent: BaseAgent | None
         agent_worker: Worker | None
         conversation_entries: list[tui_state.ConversationEntry]
@@ -257,6 +258,7 @@ class KolegaAppBase(App):
         def _fold_startup_entry(self, *, render: bool = True) -> None: ...
         def _startup_title(self, entry: tui_state.ConversationEntry, width: int | None = None) -> str: ...
         def _startup_summary(self, entry: tui_state.ConversationEntry, width: int) -> Group: ...
+        def _startup_recent_sessions(self) -> tuple[RecentSessionItem, ...]: ...
         def _flush_log_output(self) -> None: ...
         def _flush_terminal_output(self) -> None: ...
         def _focus_active_prompt(self) -> None: ...
