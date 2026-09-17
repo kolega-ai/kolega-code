@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -13,6 +14,51 @@ if TYPE_CHECKING:
     from textual.pilot import Pilot
 
     from kolega_code.cli.app import KolegaCodeApp
+
+
+TIP_SHORTCUTS: tuple[str, ...] = (
+    "/plan",
+    "Ctrl+G",
+    "@",
+    "/loop",
+    "/rewind",
+    "",
+    "/memory",
+    "/handoff",
+    "/skills",
+    "/permissions",
+    "/copy",
+    "/lsp",
+)
+
+
+def test_discovery_tip_catalog_preserves_originals_and_uses_registered_commands() -> None:
+    from kolega_code.cli.slash_commands import TUI_COMMAND_NAMES
+    from kolega_code.cli.tui.discovery import DISCOVERY_TIPS
+
+    assert DISCOVERY_TIPS[:3] == (
+        "Try /plan to explore a change before editing files.",
+        "Ctrl+G opens the sub-agent inspector without losing your place.",
+        "Type @ in the composer to mention a file in your project.",
+    )
+    assert len(DISCOVERY_TIPS) == len(TIP_SHORTCUTS)
+    assert len(set(DISCOVERY_TIPS)) == len(DISCOVERY_TIPS)
+    for tip, shortcut in zip(DISCOVERY_TIPS, TIP_SHORTCUTS, strict=True):
+        assert "".join(re.findall(r"/[\w-]+|Ctrl\+\w+|@", tip)) == shortcut
+        assert set(re.findall(r"/[\w-]+", tip)) <= TUI_COMMAND_NAMES
+        assert "\n" not in tip
+
+
+def test_discovery_tip_initial_index_wraps_and_fresh_widgets_reset() -> None:
+    from kolega_code.cli.tui.discovery import DISCOVERY_TIPS, DiscoveryTip
+
+    count = len(DISCOVERY_TIPS)
+    for index in (-count - 1, -1, 0, count - 1, count, count + 1):
+        tip = DiscoveryTip(index=index)
+        assert tip.current_tip == DISCOVERY_TIPS[index % count]
+        tip.action_next_tip()
+        assert tip.current_tip == DISCOVERY_TIPS[(index + 1) % count]
+        assert DiscoveryTip().current_tip == DISCOVERY_TIPS[0]
 
 
 def test_discovery_tips_default_off(tmp_path: Path) -> None:
@@ -95,70 +141,65 @@ async def test_discovery_tip_cycles_by_click_and_keyboard_and_is_selectable(widt
         close = tip.query_one("#discovery-tip-close", Button)
         badge = tip.query_one(".discovery-tip-badge", Static)
         position = tip.query_one(".discovery-tip-position", Static)
-        await _wait_for_layout(
-            pilot,
-            lambda: (
-                copy.region.width > 0
-                and button.region.width > 0
-                and button.region.right <= width
-                and dialog.region.contains_region(copy.region)
-                and dialog.region.contains_region(close.region)
-            ),
-        )
-        assert dialog.region.height <= 12
-        assert dialog.region.width <= width - 2
-        assert dialog.styles.border_left[0] == "round"
-        assert app.screen.focused is close
-        assert not close.styles.text_style.reverse
-        assert badge.styles.background.a > 0
-        assert badge.styles.color != badge.styles.background
-        assert badge.region.y < copy.region.y < button.region.y
-        assert str(badge.render()) == "QUICK TIP"
-        assert tip.current_tip == DISCOVERY_TIPS[0]
-        assert copy.get_selection(Selection(None, None)) == (tip.current_tip, "\n")
 
-        def assert_tip_presentation(shortcut: str, number: int) -> None:
-            assert str(position.render()) == f"{number} / 3"
+        async def assert_tip_presentation(index: int) -> None:
+            expected_tip = DISCOVERY_TIPS[index]
+            await _wait_for_layout(
+                pilot,
+                lambda: (
+                    tip.current_tip == expected_tip
+                    and str(position.render()) == f"{index + 1} / {len(DISCOVERY_TIPS)}"
+                    and dialog.region.height <= 12
+                    and dialog.region.width <= width - 2
+                    and all(
+                        widget.region.width > 0 and dialog.region.contains_region(widget.region)
+                        for widget in (badge, position, copy, button, close)
+                    )
+                    and badge.region.y < copy.region.y < button.region.y
+                    and copy.region.bottom <= button.region.y
+                    and "".join("".join(copy.render_line(y).text.split()) for y in range(copy.content_size.height))
+                    == "".join(expected_tip.split())
+                ),
+            )
             content = copy.render()
             assert isinstance(content, Content)
-            assert content.plain == tip.current_tip
+            assert content.plain == expected_tip
+            assert copy.get_selection(Selection(None, None)) == (expected_tip, "\n")
             highlighted = "".join(
                 segment.text
                 for y in range(copy.content_size.height)
                 for segment in copy.render_line(y)
                 if segment.style and segment.style.bold and segment.style.reverse
             )
-            assert highlighted == shortcut
+            assert highlighted == TIP_SHORTCUTS[index]
             assert not any(
                 segment.style and (segment.style.link or segment.style.blink)
                 for y in range(copy.content_size.height)
                 for segment in copy.render_line(y)
             )
+            # Check native mouse-selection offsets after each wrapped layout.
+            await _wait_for_layout(
+                pilot,
+                lambda: app.screen.get_widget_and_offset_at(copy.region.x + 1, copy.region.y)[1] is not None,
+            )
 
-        assert_tip_presentation("/plan", 1)
-        # Native Content must expose mouse-selection offsets, not just get_selection.
-        await _wait_for_layout(
-            pilot,
-            lambda: app.screen.get_widget_and_offset_at(copy.region.x + 1, copy.region.y)[1] is not None,
-        )
+        await assert_tip_presentation(0)
+        assert dialog.styles.border_left[0] == "round"
+        assert app.screen.focused is close
+        assert not close.styles.text_style.reverse
+        assert badge.styles.background.a > 0
+        assert badge.styles.color != badge.styles.background
+        assert str(badge.render()) == "QUICK TIP"
         assert button.can_focus
         assert button.tooltip == "Next discovery tip"
         assert button.active_effect_duration == 0
 
         assert await pilot.click(button)
-        await pilot.pause()
-        assert tip.current_tip == DISCOVERY_TIPS[1]
-        assert_tip_presentation("Ctrl+G", 2)
+        await assert_tip_presentation(1)
         button.focus()
-        await pilot.press("enter")
-        await pilot.pause()
-        assert tip.current_tip == DISCOVERY_TIPS[2]
-        assert_tip_presentation("@", 3)
-        await pilot.press("enter")
-        await pilot.pause()
-        assert tip.current_tip == DISCOVERY_TIPS[0]
-        assert copy.get_selection(Selection(None, None)) == (tip.current_tip, "\n")
-        assert_tip_presentation("/plan", 1)
+        for step in range(2, len(DISCOVERY_TIPS) + 1):
+            await pilot.press("enter")
+            await assert_tip_presentation(step % len(DISCOVERY_TIPS))
         # A fresh widget never inherits another widget's position.
         tip.action_next_tip()
         assert DiscoveryTip().current_tip == DISCOVERY_TIPS[0]

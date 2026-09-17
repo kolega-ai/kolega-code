@@ -14,6 +14,15 @@ DISCOVERY_TIPS: tuple[str, ...] = (
     "Try /plan to explore a change before editing files.",
     "Ctrl+G opens the sub-agent inspector without losing your place.",
     "Type @ in the composer to mention a file in your project.",
+    "Use /loop with a schedule and prompt to repeat a check.",
+    "Use /rewind to review changes before restoring an earlier turn.",
+    "In Build mode, ask to create and switch to a Git worktree for isolated changes.",
+    "Open /memory to browse and edit private project memory.",
+    "Try /handoff to start a fresh session with a summary of this one.",
+    "Run /skills to discover reusable workflows available in this project.",
+    "Use /permissions to check the current shell and edit approval mode.",
+    "Run /copy to copy the last response to your clipboard.",
+    "Run /lsp to inspect language-server status and spot missing servers.",
 )
 
 

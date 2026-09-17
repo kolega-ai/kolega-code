@@ -90,7 +90,9 @@ choice; the full editor remains available for every advanced setting.
   `Esc` closes the modal and returns focus to the conversation. Dismissed tips
   stay dismissed until the thread is reset, and do not appear on resumed
   conversations. The preference is saved, but cycling and dismissal are local;
-  tips are not sent to the agent.
+  tips are not sent to the agent. The catalogue covers planning, sub-agents,
+  file mentions, scheduled loops, rewind, Git worktrees, project memory,
+  handoff, skills, permissions, copying responses, and language-server status.
 - **Your messages** — a subtle background distinguishes your prompts from agent
   replies. The blank separator below each message stays unshaded.
 - **Streaming** — the view stays anchored to the bottom while the agent is
