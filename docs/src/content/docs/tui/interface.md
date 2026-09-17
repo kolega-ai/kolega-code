@@ -101,7 +101,11 @@ choice; the full editor remains available for every advanced setting.
 - **Working indicator** — a smooth spinner, current activity, elapsed time, and
   `Esc to interrupt` hint appear just above the composer during a turn. Press
   `Esc` or `Ctrl+C` to interrupt. When the turn ends, the line shows its outcome
-  and duration instead.
+  and duration instead. In truecolor terminals, a soft theme-colored shimmer
+  sweeps across the activity text; the time and interrupt hint stay steady.
+  The shimmer uses the existing status timer and stops when the turn ends.
+  It falls back to flat text with 256-color output, `NO_COLOR`, or reduced
+  animation settings (`TEXTUAL_ANIMATIONS=basic` or `TEXTUAL_ANIMATIONS=none`).
 - **Queued follow-ups** — prompts submitted while the agent is still running show
   as `Queued` transcript entries. When the active turn finishes, they are sent
   automatically in FIFO order and become normal user messages.

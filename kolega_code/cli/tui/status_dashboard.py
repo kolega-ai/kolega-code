@@ -16,6 +16,7 @@ from .. import messages, theme
 from ..theme import Color, Glyph
 from . import app_base as tui_app_base
 from . import state as tui_state
+from .turn_status import TurnStatus
 
 
 class StatusDashboardMixin(tui_app_base.KolegaAppBase):
@@ -28,8 +29,8 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         return self.query_one("#status_dashboard", Static)
 
     @property
-    def _turn_status(self) -> Static:
-        return self.query_one("#turn_status", Static)
+    def _turn_status(self) -> TurnStatus:
+        return self.query_one("#turn_status", TurnStatus)
 
     @property
     def _status_usage(self) -> Static:
@@ -386,7 +387,10 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             label = Text(status.replace("\r", " ").replace("\n", " "))
             if width is not None:
                 label.truncate(max(0, width - cell_len(f"{frame}  {meta}")), overflow="ellipsis")
-            return f"[{Color.ACCENT}]{frame}[/{Color.ACCENT}] {escape(label.plain)} [dim]{escape(meta)}[/dim]"
+            # Reuse the existing 80 ms repaint cadence. Only the activity label
+            # shimmers; the elapsed time and interrupt hint remain steady.
+            label = self._turn_status.shimmer(label, elapsed)
+            return f"[{Color.ACCENT}]{frame}[/{Color.ACCENT}] {label.markup} [dim]{escape(meta)}[/dim]"
         if self._turn_final_text:
             if self._turn_final_state is tui_state.TurnState.ERROR:
                 glyph, color = Glyph.CROSS, Color.ERROR

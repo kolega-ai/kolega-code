@@ -108,6 +108,7 @@ from .tui.startup import RecentSessionItem, StartupEntryWidget, display_project_
 from .tui.discovery import DiscoveryTip
 from .tui.metadata import MetadataStrip
 from .tui.shortcut_bar import ContextFooter, ShortcutHelpScreen
+from .tui.turn_status import TurnStatus
 from .tui import constants as tui_constants
 from .tui import agent_runtime as tui_agent_runtime
 from .tui import changes_screen as tui_changes
@@ -439,7 +440,7 @@ class KolegaCodeApp(
                 yield tui_widgets.ActionList(id="model_actions")
                 yield tui_widgets.ActionList(id="effort_actions")
                 yield tui_widgets.ActionList(id="theme_actions")
-                yield Static("", id="turn_status", markup=True)
+                yield TurnStatus("", id="turn_status", markup=True)
                 yield Static("", id="queued_messages", markup=False)
                 with Horizontal(id="composer_hint_row"):
                     yield Static("", id="composer_hint", markup=False)
