@@ -195,20 +195,53 @@ def test_context_rendering_does_not_resolve_or_inspect_project(monkeypatch: pyte
 
 
 def test_roles_are_looked_up_from_live_theme() -> None:
-    strip = make_strip()
     original_theme = active_theme().name
     try:
         for name in available_themes():
             apply_theme(name)
-            text = strip.content_for_width()
             console = Console()
-            assert text.get_style_at_offset(console, text.plain.index("build")).color == Style.parse(Color.ACCENT).color
+            text = make_strip(mode="build").content_for_width()
+            plan = make_strip(mode="plan").content_for_width()
+            build_color = text.get_style_at_offset(console, text.plain.index("build")).color
+            plan_color = plan.get_style_at_offset(console, plan.plain.index("plan")).color
+            assert build_color == Style.parse(Color.ACCENT).color
+            assert plan_color == Style.parse(Color.SUCCESS).color
+            assert build_color != plan_color
             assert text.get_style_at_offset(console, text.plain.index("auto")).color == Style.parse(Color.WARNING).color
             assert text.get_style_at_offset(console, text.plain.index("feat/")).color == Style.parse(Color.MUTED).color
             ask = make_strip(permission="ask").content_for_width()
             assert ask.get_style_at_offset(console, ask.plain.index("ask")).color == Style.parse(Color.SUCCESS).color
     finally:
         apply_theme(original_theme)
+
+
+@pytest.mark.parametrize(("mode", "role"), [("build", "ACCENT"), ("plan", "SUCCESS")])
+def test_mode_indicator_keeps_distinct_style_in_compact_widths(mode: str, role: str) -> None:
+    original_theme = active_theme().name
+    try:
+        for name in available_themes():
+            apply_theme(name)
+            text = make_strip(mode=mode).content_for_width(10)
+            assert text.plain == f"{mode} auto"
+            console = Console()
+            assert (
+                text.get_style_at_offset(console, text.plain.index(mode)).color
+                == Style.parse(getattr(Color, role)).color
+            )
+            assert text.get_style_at_offset(console, text.plain.index("auto")).color == Style.parse(Color.WARNING).color
+    finally:
+        apply_theme(original_theme)
+
+
+def test_no_color_output_preserves_mode_labels() -> None:
+    console = Console(color_system=None, force_terminal=False, width=80)
+    for mode in ("build", "plan"):
+        text = make_strip(mode=mode).content_for_width()
+        with console.capture() as capture:
+            console.print(text, end="")
+        output = capture.get()
+        assert mode in output
+        assert "\x1b[" not in output
 
 
 @pytest.mark.asyncio

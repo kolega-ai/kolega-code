@@ -5,12 +5,21 @@ import time
 from unittest.mock import Mock
 
 import pytest
+from rich.color import Color as RichColor
+from rich.console import Console
+from rich.style import Style
+from rich.text import Text
 
+from kolega_code.cli.theme import Color
 from kolega_code.cli.tui.metadata import MetadataStrip
 from kolega_code.cli.tui.session_diff import DiffScope
 from kolega_code.permissions import PermissionMode
 
 from ._app_test_utils import _build_mention_test_app
+
+
+def _style_color(text: Text, label: str) -> RichColor | None:
+    return text.get_style_at_offset(Console(), text.plain.index(label)).color
 
 
 @pytest.mark.asyncio
@@ -67,3 +76,45 @@ async def test_metadata_keeps_risk_visible_and_updates_in_place(tmp_path, monkey
         app._update_mode_chrome()
         assert app.query_one(MetadataStrip) is strip
         assert "plan" in strip.render().plain and "ask" in strip.render().plain
+
+
+@pytest.mark.asyncio
+async def test_interaction_mode_toggle_updates_metadata_mode_color(tmp_path, monkeypatch) -> None:
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(80, 35)) as pilot:
+        app._set_sidebar_visible(False)
+        strip = app.query_one(MetadataStrip)
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
+            await pilot.pause(0.02)
+            if strip.content_size.width == 80 and "build" in strip.render().plain:
+                break
+        assert strip.render().cell_len <= 80
+
+        build = strip.render()
+        assert "build" in build.plain
+        build_color = _style_color(build, "build")
+        assert build_color == Style.parse(Color.ACCENT).color
+
+        await app.action_toggle_interaction_mode()
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
+            await pilot.pause(0.02)
+            if strip.interaction_mode == "plan" and "plan" in strip.render().plain:
+                break
+        plan = strip.render()
+        assert "plan" in plan.plain
+        plan_color = _style_color(plan, "plan")
+        assert plan_color == Style.parse(Color.SUCCESS).color
+        assert plan_color != build_color
+
+        await app.action_toggle_interaction_mode()
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
+            await pilot.pause(0.02)
+            if strip.interaction_mode == "build" and "build" in strip.render().plain:
+                break
+        rebuilt = strip.render()
+        assert "build" in rebuilt.plain
+        assert _style_color(rebuilt, "build") == build_color
+        assert app.query_one(MetadataStrip) is strip

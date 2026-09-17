@@ -50,6 +50,11 @@ def _project_for_width(project: str, width: int) -> str:
     return _prefix(basename, width - 1) + "…"
 
 
+def _mode_style(mode: str) -> str:
+    """Semantic color for the interaction-mode indicator."""
+    return Color.SUCCESS if mode == "plan" else Color.ACCENT
+
+
 class MetadataStrip(Static):
     """Session metadata supplied by the app; never performs repository lookups.
 
@@ -128,6 +133,7 @@ class MetadataStrip(Static):
         branch = _single_line(self.branch)
         session = _prefix(_single_line(self.session_id), 8)
         mode = _single_line(self.interaction_mode)
+        mode_style = _mode_style(self.interaction_mode)
         permission = _single_line(self.permission_mode)
         permission_style = Color.WARNING if self.permission_mode == "auto" else Color.SUCCESS
         separator = " · "
@@ -142,15 +148,15 @@ class MetadataStrip(Static):
                 text.append(value, style)
             return text
 
-        protected = [(mode, Color.ACCENT), (f"permissions {permission}", permission_style)]
+        protected = [(mode, mode_style), (f"permissions {permission}", permission_style)]
         if width is not None and join(protected).cell_len > width:
             for label in ("perm ", ""):
-                protected = [(mode, Color.ACCENT), (label + permission, permission_style)]
+                protected = [(mode, mode_style), (label + permission, permission_style)]
                 if join(protected).cell_len <= width:
                     break
             else:
                 # At very small widths spend cells on words, not decoration.
-                compact = Text(mode, Color.ACCENT)
+                compact = Text(mode, mode_style)
                 compact.append(" ")
                 compact.append(permission, permission_style)
                 if compact.cell_len <= width:
