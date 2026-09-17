@@ -32,16 +32,16 @@ appears above the composer until those prompts are sent. See
 
 Run `/memory` to open the full-screen [Project Memory](../project-memory/)
 browser/editor. It manages private durable project knowledge separately from the
-conversation and the Planning tab's task list.
+conversation and the Status tab's task list.
 
 ## Side-panel tabs
 
 | Tab | What it shows |
 | --- | --- |
-| **Status** | The active provider/model and thinking effort, the current interaction mode (Build/Plan), permission mode, the agent's turn state (idle, generating, thinking, running a tool, running sub-agents, waiting for input, …), token usage (including cache hit rate), context warnings, the active [goal](../../goal/) status when a goal is set, and the active [scheduled loop](../../loop/) with its schedule, countdown to the next iteration, and iteration count when a loop is running. |
+| **Status** | The active provider/model and thinking effort, the current interaction mode (Build/Plan), permission mode, the agent's turn state (idle, generating, thinking, running a tool, running sub-agents, waiting for input, …), token usage (including cache hit rate), context warnings, the shared **Task List**, the active [goal](../../goal/) status when a goal is set, and the active [scheduled loop](../../loop/) with its schedule, countdown to the next iteration, and iteration count when a loop is running. |
 | **Logs** | Optional. Launch with `--show-logs` to show a timestamped, color-coded diagnostic activity log. New entries preserve manual scrollback and an indicator flags unseen entries when you're on another tab. |
 | **Terminal** | Live output from commands the agent runs. |
-| **Planning** | The current **Plan** (markdown from the planning agent) and the shared **Task List** that both modes can edit. |
+| **Plan** | The current plan document (Markdown from the planning agent). Both modes can update the shared Task List in **Status**. |
 | **Settings** | A compact summary of the model, credential source, agent overrides, tools, and theme. Select **Open Settings** for the categorized full-screen editor, or **Continue Setup** when disconnected. See [Settings & API Keys](../../configuration/settings-and-api-keys/). |
 
 In **Status**, a fresh session keeps empty sections quiet: context reads
@@ -50,6 +50,14 @@ Their full cards appear automatically when there are recorded requests, usage,
 or tasks. Failed requests and incomplete historical usage still show their
 details, even when token totals are zero. Clearing the task list returns it to
 the compact row; resetting the thread does not erase lifetime session usage.
+
+Populated task lists use accented `[ ]` markers for pending work and muted
+`[x]` markers with static strikethrough for completed work. Nested tasks retain
+their own completion state, and long descriptions wrap under their text rather
+than under the checkbox. The list stays in its original order and is selectable
+for copying; clicking a checkbox does not toggle it. This is display-only
+styling: saved Markdown and the shared task-list tools are unchanged, with no
+completion animation or added counters.
 
 When no valid model configuration exists, a separate first-run wizard opens over
 the interface. It handles only the initial account/provider connection and model

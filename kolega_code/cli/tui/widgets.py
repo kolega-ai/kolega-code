@@ -29,6 +29,7 @@ from ..prompt_history import PROMPT_HISTORY_MAX
 from ..slash_commands import SlashCommandEntry
 from .app_base import KolegaAppBase
 from .state import ConversationEntry
+from .task_list import TaskListMarkdown
 from .tool_presentation import command_preview, entry_command, entry_paths, tool_title
 
 
@@ -196,17 +197,30 @@ class PlanningMarkdown(Static):
     renderable and skipping identical updates entirely.
     """
 
+    COMPONENT_CLASSES: ClassVar[set[str]] = {"task-list--pending", "task-list--completed"}
+    DEFAULT_CSS = """
+    PlanningMarkdown .task-list--pending {
+        color: $accent;
+        text-style: bold;
+    }
+    PlanningMarkdown .task-list--completed {
+        color: $text-muted;
+    }
+    """
+
     def __init__(
         self,
         markdown: str = "",
         *,
         empty_source: str | None = None,
+        task_list: bool = False,
         **kwargs,
     ) -> None:
         classes = kwargs.pop("classes", None)
         combined_classes = "planning-markdown" if not classes else f"planning-markdown {classes}"
         self.source = ""
         self._empty_sources = {empty_source} if empty_source is not None else set()
+        self._task_list = task_list
         super().__init__("", markup=False, classes=combined_classes, **kwargs)
         self.update(markdown)
 
@@ -224,13 +238,35 @@ class PlanningMarkdown(Static):
         renderable: object
         if markdown in self._empty_sources or not markdown.strip():
             renderable = Text(markdown)
+        elif self._task_list:
+            renderable = TaskListMarkdown(markdown, code_theme=cli_theme.markdown_code_theme())
         else:
             renderable = RichMarkdown(markdown, code_theme=cli_theme.markdown_code_theme())
         super().update(renderable, layout=layout)
 
     def render_line(self, y: int) -> Strip:
-        strip = _with_selection_style(super().render_line(y), self.text_selection, y, self.selection_style)
+        strip = super().render_line(y)
+        if self._task_list:
+            pending = self.get_component_rich_style("task-list--pending")
+            completed = self.get_component_rich_style("task-list--completed")
+            segments: list[Segment] = []
+            for segment in strip:
+                style = segment.style
+                if style is not None and "task_checked" in style.meta:
+                    marker = bool(style.meta.get("task_marker"))
+                    if style.meta["task_checked"]:
+                        style += completed + Style(bold=False, strike=not marker)
+                    elif marker:
+                        style += pending
+                segments.append(Segment(segment.text, style, segment.control))
+            strip = Strip(segments, strip.cell_length)
+        strip = _with_selection_style(strip, self.text_selection, y, self.selection_style)
         return _with_selection_offsets(strip, y)
+
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        lines = [super(PlanningMarkdown, self).render_line(y).text.rstrip() for y in range(self.size.height)]
+        text = "\n".join(lines)
+        return (selection.extract(text), "\n") if text.strip() else None
 
 
 class SelectableCollapsibleTitle(CollapsibleTitle):

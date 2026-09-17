@@ -469,6 +469,7 @@ class KolegaCodeApp(
                                     messages.STATUS_TASK_LIST_EMPTY_MESSAGE,
                                     id="status_task_list_markdown",
                                     empty_source=messages.STATUS_TASK_LIST_EMPTY_MESSAGE,
+                                    task_list=True,
                                 )
                     if self.show_logs:
                         with TabPane("Logs", id="logs_pane"):
