@@ -420,6 +420,9 @@ async def test_send_message_tool_resolves_names_and_reports_receipt(
 
     async with app_a.run_test():
         async with app_b.run_test():
+            # Keep queued payloads available for inspection: an idle recipient
+            # can drain them while delivery awaits journaling before the receipt.
+            app_b._turn_active = True
             result = await _extension(app_a).tools["send_message"](recipient="beta", text="ping from the tool")
 
             assert result.startswith("Message delivered to beta (")
