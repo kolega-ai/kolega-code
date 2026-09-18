@@ -156,6 +156,15 @@ def bundle_url(tmp_path: Path) -> Iterator[str]:
 
 
 @pytest.fixture
+def tool_subject_url(tmp_path: Path) -> Iterator[tuple[str, str]]:
+    events = _interleaved_turn()
+    subject = "src/" + "目录/" * 45 + "[bold]<a href='https://example.test'>file.py</a>[/bold]"
+    events[3].content["tool_subject"] = subject
+    for url in _bundle(events, tmp_path / "bundle", "tool subjects"):
+        yield url, subject
+
+
+@pytest.fixture
 def delegating_url(tmp_path: Path) -> Iterator[str]:
     yield from _bundle(_delegating_turn(), tmp_path / "bundle", "delegating")
 
@@ -399,6 +408,60 @@ async def test_tool_output_is_collapsed_until_asked_for(bundle_url: str) -> None
     assert "read_file" in head and "done" in head.lower()
     assert expanded == 1 and "12 lines" in opened_text
     assert recollapsed == 0, "clicking again did not put it away"
+
+
+@pytest.mark.asyncio
+async def test_tool_subject_is_literal_single_line_and_keeps_status_and_expansion(
+    tool_subject_url: tuple[str, str],
+) -> None:
+    url, subject = tool_subject_url
+    async with playwright_api.async_playwright() as driver:
+        try:
+            browser = await driver.chromium.launch(headless=True)
+        except Exception as exc:  # pragma: no cover - depends on the local install
+            pytest.skip(f"chromium is not installed for playwright: {exc}")
+        try:
+            page = await browser.new_page()
+            await page.goto(url)
+            await page.wait_for_selector(".kc-entry")
+            await page.eval_on_selector("#scrub", "(el) => { el.value = '600'; el.dispatchEvent(new Event('input')); }")
+            await page.wait_for_selector(".kc-tool-subject")
+            assert (await page.inner_text(".kc-tool-status")).lower() == "running"
+            assert await page.text_content(".kc-tool-subject") == subject
+            assert await page.locator(".kc-tool-subject a").count() == 0
+            await page.click("[data-tool-key] >> nth=0")
+
+            for width in (1200, 640, 320):
+                await page.set_viewport_size({"width": width, "height": 900})
+                await page.wait_for_function(
+                    """() => {
+                        const subject = document.querySelector('.kc-tool-subject');
+                        const status = document.querySelector('.kc-tool-status');
+                        const head = document.querySelector('.kc-tool-head');
+                        const range = document.createRange();
+                        range.selectNodeContents(subject);
+                        const a = subject.getBoundingClientRect();
+                        const b = status.getBoundingClientRect();
+                        const h = head.getBoundingClientRect();
+                        // Ellipsis can produce both full and clipped rectangles.
+                        // A single visual line has overlapping vertical bounds.
+                        const rects = [...range.getClientRects()];
+                        return rects.length > 0 &&
+                            Math.max(...rects.map(r => r.top)) < Math.min(...rects.map(r => r.bottom)) &&
+                            Math.abs((a.top + a.bottom) - (b.top + b.bottom)) < 2 &&
+                            b.right <= Math.min(h.right, innerWidth) + 1;
+                    }"""
+                )
+                assert await page.locator(".kc-tool-output").count() == 1
+
+            await page.eval_on_selector(
+                "#scrub", "(el) => { el.value = '1000'; el.dispatchEvent(new Event('input')); }"
+            )
+            assert (await page.inner_text(".kc-tool-status")).lower() == "done"
+            assert await page.text_content(".kc-tool-subject") == subject
+            assert await page.inner_text(".kc-tool-output") == "12 lines"
+        finally:
+            await browser.close()
 
 
 @pytest.mark.asyncio

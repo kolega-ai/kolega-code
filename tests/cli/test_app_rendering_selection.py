@@ -443,6 +443,16 @@ async def test_collapsed_tool_title_supports_drag_selection_and_toggle(
         collapsible = widget.query_one(Collapsible)
         title = widget.query_one(CollapsibleTitle)
 
+        # Anchoring can move this short transcript between computing the
+        # mouse-down coordinates and dispatching it, leaving no selection start.
+        await _wait_for_layout(
+            pilot,
+            lambda: (
+                not app._conversation_anchor_pending
+                and title.region.height == 1
+                and widget.region.bottom == app._conversation.content_region.bottom
+            ),
+        )
         await pilot.mouse_down(title, offset=(2, 0))
         await pilot._post_mouse_events([events.MouseMove], title, offset=(21, 0), button=1)
         await pilot.mouse_up(title, offset=(21, 0))
@@ -490,11 +500,25 @@ async def test_expanded_tool_body_line_start_selection_copies(tmp_path: Path, mo
 
         widget = app.query(ToolEntryWidget).last()
         title = widget.query_one(CollapsibleTitle)
+        await _wait_for_layout(
+            pilot,
+            lambda: (
+                not app._conversation_anchor_pending
+                and title.region.height == 1
+                and widget.region.bottom == app._conversation.content_region.bottom
+            ),
+        )
         await pilot.click(title, offset=(1, 0))
-        await pilot.pause()
 
         body = widget.query_one(".tool-body", Static)
-        assert widget.query_one(Collapsible).collapsed is False
+        await _wait_for_layout(
+            pilot,
+            lambda: (
+                not widget.query_one(Collapsible).collapsed
+                and body.region.height == 3
+                and widget.region.bottom == app._conversation.content_region.bottom
+            ),
+        )
         assert body.region.x == widget.region.x + 4
 
         body_y = body.region.y - widget.region.y

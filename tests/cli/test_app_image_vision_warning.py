@@ -19,7 +19,7 @@ from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
 
 
-from ._app_test_utils import build_test_config, install_fake_agents
+from ._app_test_utils import FakeCoderAgent, build_test_config, install_fake_agents
 
 
 def _image_attachment(path: str = "clipboard") -> dict:
@@ -39,10 +39,11 @@ class _FakeConversation:
         return self._has_images
 
 
-class _FakeAgent:
+class _FakeAgent(FakeCoderAgent):
     """Minimal agent stand-in exposing vision capability + conversation probe."""
 
     def __init__(self, *, supports_vision: bool, has_images: bool = False, model: str = "test-model"):
+        super().__init__()
         self.supports_vision = supports_vision
         self.conversation = _FakeConversation(has_images)
         self.primary_model_config = type("Cfg", (), {"model": model})()

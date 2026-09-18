@@ -56,6 +56,10 @@ class ConversationItem:
     artifacts: list[ArtifactRef] = field(default_factory=list)
     #: Structured edit preview attached to a tool item, when the tool edited a file.
     edit_preview: Optional[dict] = None
+    #: Bounded, already-sanitized display metadata; never raw tool arguments.
+    tool_subject: Optional[str] = None
+    #: Complete safe paths / command for expanded details (never raw arguments).
+    tool_display: Optional[dict[str, list[str] | str]] = None
 
 
 @dataclass
@@ -238,6 +242,8 @@ def _item_dict(item: ConversationItem) -> dict:
     for key, value in (
         ("stream_id", item.stream_id),
         ("tool_name", item.tool_name),
+        ("tool_subject", item.tool_subject),
+        ("tool_display", item.tool_display),
         ("tool_call_id", item.tool_call_id),
         ("status", item.status),
         ("tone", item.tone),
@@ -476,9 +482,38 @@ def _on_chat_message(state: PresentationState, event: AgentEvent) -> None:
 _TOOL_STATUS = {"tool_call": "running", "tool_result": "done", "tool_error": "failed"}
 
 
+def _tool_subject_of(event: AgentEvent) -> Optional[str]:
+    # Sanitization belongs to the producer, not this deterministic replay fold.
+    # Do not stringify malformed metadata or clear an established subject.
+    subject = event.content.get("tool_subject")
+    return subject if isinstance(subject, str) and subject else None
+
+
+def _tool_display_of(event: AgentEvent) -> Optional[dict[str, list[str] | str]]:
+    """Copy valid producer-sanitized metadata without consulting replay-time env."""
+    display = event.content.get("tool_display")
+    if not isinstance(display, dict):
+        return None
+    if set(display) == {"command"}:
+        command = display["command"]
+        if isinstance(command, str) and 0 < len(command) <= 16_384:
+            return {"command": command}
+    elif set(display) == {"paths"}:
+        paths = display["paths"]
+        if (
+            isinstance(paths, list)
+            and 0 < len(paths) <= 8
+            and all(isinstance(path, str) and 0 < len(path) <= 16_384 for path in paths)
+        ):
+            return {"paths": list(paths)}
+    return None
+
+
 def _on_tool_message(state: PresentationState, event: AgentEvent, message_type: str) -> None:
     tool_call_id = str(event.content.get("tool_call_id") or "")
     tool_name = str(event.content.get("tool_description") or "")
+    tool_subject = _tool_subject_of(event)
+    tool_display = _tool_display_of(event)
     text = _text_of(event, "text")
     status = _TOOL_STATUS[message_type]
     key = f"{_sub_agent_key(event) or ''}:{tool_call_id}"
@@ -487,6 +522,10 @@ def _on_tool_message(state: PresentationState, event: AgentEvent, message_type: 
     if existing is not None and existing.kind == "tool":
         existing.status = status
         existing.tool_name = existing.tool_name or tool_name
+        if tool_subject is not None:
+            existing.tool_subject = tool_subject
+        if tool_display is not None:
+            existing.tool_display = tool_display
         if text:
             existing.text = text
         existing.artifacts = list(event.artifacts) or existing.artifacts
@@ -499,6 +538,8 @@ def _on_tool_message(state: PresentationState, event: AgentEvent, message_type: 
             kind="tool",
             text=text,
             tool_name=tool_name,
+            tool_subject=tool_subject,
+            tool_display=tool_display,
             tool_call_id=tool_call_id or None,
             status=status,
             artifacts=list(event.artifacts),
@@ -512,6 +553,8 @@ def _on_tool_message(state: PresentationState, event: AgentEvent, message_type: 
 
 def _on_tool_streaming_update(state: PresentationState, event: AgentEvent) -> None:
     tool_call_id = str(event.content.get("tool_call_id") or "")
+    tool_subject = _tool_subject_of(event)
+    tool_display = _tool_display_of(event)
     key = f"{_sub_agent_key(event) or ''}:{tool_call_id}"
     index = state._tools.get(key)
     target = _resolve(state, event, index) if index is not None else None
@@ -523,6 +566,8 @@ def _on_tool_streaming_update(state: PresentationState, event: AgentEvent) -> No
                 kind="tool",
                 text=text,
                 tool_name=str(event.content.get("tool_name") or ""),
+                tool_subject=tool_subject,
+                tool_display=tool_display,
                 tool_call_id=tool_call_id or None,
                 status="running",
             ),
@@ -531,6 +576,10 @@ def _on_tool_streaming_update(state: PresentationState, event: AgentEvent) -> No
         if tool_call_id:
             state._tools[key] = _index_of(state, event)
         return
+    if tool_subject is not None:
+        target.tool_subject = tool_subject
+    if tool_display is not None:
+        target.tool_display = tool_display
     if str(event.content.get("stream_mode") or "") == "replace":
         target.text = text
     else:

@@ -24,12 +24,19 @@ from kolega_code.llm.models import (
     ToolResult,
     WebSearchCallBlock,
 )
-from kolega_code.services.lsp import extract_lsp_label
+from kolega_code.tool_subjects import (
+    build_tool_display,
+    build_tool_subject,
+    configured_tool_subject_secrets,
+    sanitize_tool_display,
+    sanitize_tool_subject,
+)
 
 from .. import messages, theme
 from ..skills import skill_activation_label, skill_names_in_text
 from ..theme import Color, Glyph
-from .constants import QUESTION_TOOL_NAME, STARTUP_WORDMARK
+from .constants import QUESTION_TOOL_NAME
+from .startup import StartupEntryWidget
 from .state import (
     ConversationEntry,
     PhaseState,
@@ -39,13 +46,13 @@ from .state import (
     TurnState,
     WorkflowActivity,
     TOOL_STATE_PRESENTATION,
-    tool_state_presentation,
 )
 from . import app_base as tui_app_base
 from . import pacing as tui_pacing
 from . import widgets as tui_widgets
 from .sub_agent_screen import SubAgentEntryWidget
 from .widgets import ConversationEntryWidget, JumpToBottomBar, ToolEntryWidget
+from .tool_presentation import edit_previews, entry_paths, merge_edit_preview, path_label, tool_title
 
 
 def _is_standalone_system_reminder_history_item(item: dict) -> bool:
@@ -91,7 +98,8 @@ class _IndentedRenderState:
 
 class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
     def _restore_conversation_history(self, history: list[dict]) -> None:
-        self.conversation_entries = []
+        # Model/settings rebuilds should not undo the user's disclosure choices.
+        self.conversation_entries = [entry for entry in self.conversation_entries if entry.kind == "startup"]
         self._stream_entries = {}
         self._tool_entries = {}
         self._tool_stream_buffers = {}
@@ -125,6 +133,8 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             self.conversation_entries.extend(self._conversation_entries_from_history_items(history[summary_index:]))
         else:
             self.conversation_entries.extend(self._conversation_entries_from_history_items(history))
+        if len(self.conversation_entries) > 1:
+            self._fold_startup_entry(render=False)
         self._render_conversation()
 
     def _resume_compaction_entry(self) -> Optional[ConversationEntry]:
@@ -237,8 +247,9 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                     ConversationEntry(
                         kind="tool_result",
                         content=self._tool_result_preview(summary),
-                        tool_name=WebSearchCallBlock.TOOL_LABEL,
+                        tool_name=block.tool_label,
                         tool_call_id=block.item_id or None,
+                        tool_subject=self._restored_tool_subject(block.tool_label, block.action),
                         full_content=self._capped_tool_text(summary),
                     )
                 )
@@ -250,6 +261,8 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                     complete=False,
                     tool_name=block.name,
                     tool_call_id=getattr(block, "execution_id", None),
+                    tool_subject=self._restored_tool_subject(block.name, block.input),
+                    tool_display=self._restored_tool_display(block.name, block.input),
                 )
                 entries.append(entry)
                 if remember_tool_entry is not None:
@@ -434,9 +447,27 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         self.session.history = self.agent.dump_message_history()
         self.session.compaction = self.agent.dump_compaction_state()
 
+    def _restored_tool_subject(self, tool_name: str, tool_input: object) -> str:
+        return build_tool_subject(
+            tool_name,
+            tool_input,
+            project_path=self.active_project_path,
+            secret_values=(*configured_tool_subject_secrets(self.config), *self.settings.api_keys.values()),
+        )
+
+    def _restored_tool_display(self, tool_name: str, tool_input: object) -> dict[str, list[str] | str]:
+        return build_tool_display(
+            tool_name,
+            tool_input,
+            project_path=self.active_project_path,
+            secret_values=(*configured_tool_subject_secrets(self.config), *self.settings.api_keys.values()),
+        )
+
     def _add_tool_message(self, message_type: str, content: dict) -> None:
         tool_name = str(content.get("tool_description") or content.get("tool_name") or "tool")
         tool_call_id = str(content.get("tool_call_id") or "")
+        tool_subject = sanitize_tool_subject(content.get("tool_subject"))
+        tool_display = sanitize_tool_display(content.get("tool_display"))
         text = str(content.get("text") or "")
         if tool_name == QUESTION_TOOL_NAME and message_type in {"tool_call", "tool_result"}:
             return
@@ -468,6 +499,8 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 complete=complete,
                 tool_name=tool_name,
                 tool_call_id=tool_call_id or None,
+                tool_subject=tool_subject,
+                tool_display=tool_display,
                 full_content=full_content,
             )
             # A preview event can land before this entry exists; apply any stash now.
@@ -483,6 +516,8 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         entry.tool_name = tool_name
         entry.full_content = full_content
         entry.tool_call_id = tool_call_id or entry.tool_call_id
+        entry.tool_subject = tool_subject or entry.tool_subject
+        entry.tool_display = tool_display or entry.tool_display
         if entry.tool_call_id:
             self._tool_entries[entry.tool_call_id] = entry
         self._invalidate_conversation(entry)
@@ -490,6 +525,8 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
     def _apply_tool_streaming_update(self, content: dict) -> None:
         tool_name = str(content.get("tool_name") or content.get("tool_description") or "tool")
         tool_call_id = str(content.get("tool_call_id") or "")
+        tool_subject = sanitize_tool_subject(content.get("tool_subject"))
+        tool_display = sanitize_tool_display(content.get("tool_display"))
         text = str(content.get("text") or "")
         is_complete = bool(content.get("is_complete"))
         stream_mode = str(content.get("stream_mode") or "replace")
@@ -529,6 +566,8 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                     complete=is_complete,
                     tool_name=tool_name,
                     tool_call_id=tool_call_id or None,
+                    tool_subject=tool_subject,
+                    tool_display=tool_display,
                     full_content=full_content,
                 )
             )
@@ -540,6 +579,8 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         entry.tool_name = tool_name
         entry.full_content = full_content or entry.full_content
         entry.tool_call_id = tool_call_id or entry.tool_call_id
+        entry.tool_subject = tool_subject or entry.tool_subject
+        entry.tool_display = tool_display or entry.tool_display
         if entry.tool_call_id:
             self._tool_entries[entry.tool_call_id] = entry
         self._invalidate_conversation(entry)
@@ -558,15 +599,22 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         tool_name = str(content.get("tool_name") or "")
         if not tool_call_id:
             return
+        content = self._display_edit_preview(content)
         entry = self._find_tool_entry(tool_call_id, tool_name)
         if entry is None:
             # Preview can arrive before the tool entry exists; stash and apply on creation.
             previews: dict[str, dict] = getattr(self, "_pending_edit_previews", None) or {}
-            previews[tool_call_id] = content
+            previews[tool_call_id] = merge_edit_preview(previews.get(tool_call_id), content)
             self._pending_edit_previews = previews
             return
-        entry.edit_preview = content
+        entry.edit_preview = merge_edit_preview(entry.edit_preview, content)
         self._invalidate_conversation(entry)
+
+    def _display_edit_preview(self, content: dict) -> dict:
+        """Normalize only the UI copy, not the event used for change tracking."""
+        display = self._restored_tool_display("read", {"file_path": content.get("path")})
+        paths = display.get("paths")
+        return {**content, "path": paths[0] if isinstance(paths, list) and paths else "file"}
 
     def _record_file_change_event(self, event: AgentEvent) -> Optional[SessionFileChange]:
         """Capture a UI-only edit preview in the live session changes list."""
@@ -620,12 +668,15 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         tool_call_id = str(content.get("tool_call_id") or "").strip()
         if not tool_call_id:
             return
+        content = self._display_edit_preview(content)
         activity = self._ensure_sub_agent_activity(event)
         step = activity.tool_steps.get(tool_call_id)
         if step is None:
-            activity.pending_edit_previews[tool_call_id] = dict(content)
+            activity.pending_edit_previews[tool_call_id] = merge_edit_preview(
+                activity.pending_edit_previews.get(tool_call_id), content
+            )
         else:
-            step.edit_preview = dict(content)
+            step.edit_preview = merge_edit_preview(step.edit_preview, content)
         self._invalidate_sub_agent_detail(activity)
 
     def _attach_pending_sub_agent_edit_preview(self, activity: SubAgentActivity, step: ConversationEntry) -> None:
@@ -792,6 +843,8 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         """
         tool_name = str(content.get("tool_description") or content.get("tool_name") or "tool")
         tool_call_id = str(content.get("tool_call_id") or "").strip()
+        tool_subject = sanitize_tool_subject(content.get("tool_subject"))
+        tool_display = sanitize_tool_display(content.get("tool_display"))
         text = str(content.get("text") or "")
         if message_type == "tool_call":
             entry_content = text or f"Calling {tool_name}"
@@ -818,6 +871,8 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 complete=complete,
                 tool_name=tool_name,
                 tool_call_id=tool_call_id or None,
+                tool_subject=tool_subject,
+                tool_display=tool_display,
                 full_content=full_content,
             )
             activity.steps.append(step)
@@ -829,6 +884,8 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         step.content = entry_content
         step.complete = complete
         step.tool_name = tool_name
+        step.tool_subject = tool_subject or step.tool_subject
+        step.tool_display = tool_display or step.tool_display
         step.full_content = full_content or step.full_content
         self._attach_pending_sub_agent_edit_preview(activity, step)
 
@@ -1365,7 +1422,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
 
     def _maybe_expand_transcript_window(self) -> None:
         """Mount older transcript entries when the user scrolls near the top."""
-        if self._modal_cover_active:
+        if self._modal_cover_active or self._conversation_anchor_pending:
             return
         window = self._transcript_window
         if window is None:
@@ -1445,8 +1502,22 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             self._update_jump_button()
 
     def _make_entry_widget(self, entry: ConversationEntry) -> ConversationEntryWidget | ToolEntryWidget:
+        if entry.kind == "startup":
+            return StartupEntryWidget(
+                entry,
+                self._startup_title,
+                self._startup_summary,
+                self._format_startup_entry,
+                self._startup_recent_sessions,
+            )
         if entry.kind in {"tool_call", "tool_result", "tool_error"}:
-            return ToolEntryWidget(entry, self._tool_entry_title, self._tool_preview_renderable)
+            return ToolEntryWidget(
+                entry,
+                self._tool_entry_title,
+                self._tool_preview_renderable,
+                title_for_width=self._tool_entry_title,
+                preview_for_width=self._tool_preview_renderable,
+            )
         if entry.kind == "thinking":
             return ToolEntryWidget(entry, self._thinking_entry_title)
         if entry.kind == "compaction_summary":
@@ -1491,11 +1562,25 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         self._conversation_anchor_pending = True
 
         def anchor_after_refresh() -> None:
-            self._conversation_anchor_pending = False
             if not view.is_attached:
+                self._conversation_anchor_pending = False
                 return
             view.set_auto_follow(True)
-            view.anchor()
+            # Textual anchoring bottom-aligns even a short transcript (negative
+            # scroll offset). A fresh startup card belongs at the top instead.
+            fresh = len(self.conversation_entries) <= 2 and all(
+                entry.kind in {"startup", "progress"} for entry in self.conversation_entries
+            )
+            # A refused resume adds a visible system notice, not a conversation.
+            # Keep the choices in place so the next click still hits the same row.
+            fresh = fresh or (
+                bool(self._startup_recent_sessions())
+                and all(entry.kind in {"startup", "progress", "system"} for entry in self.conversation_entries)
+            )
+            view.anchor(not fresh)
+            if fresh:
+                view.scroll_to(y=0, animate=False, immediate=True)
+            self._conversation_anchor_pending = False
             if update_button:
                 self.call_after_refresh(self._update_jump_button)
 
@@ -1582,8 +1667,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 return self._format_sub_agent_renderable(activity)
             return Text(entry.content)
         if entry.kind in TOOL_STATE_PRESENTATION:
-            state, color = tool_state_presentation(entry.kind)
-            return self._format_tool_entry(entry, state=state, color=color)
+            return self._format_tool_entry(entry)
         if entry.kind == "system":
             return Text(entry.content, style="dim")
         if entry.kind == "lsp":
@@ -1697,83 +1781,67 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         return grid
 
     def _format_startup_entry(self, entry: ConversationEntry) -> Text:
-        lines = entry.content.splitlines()
-        try:
-            separator = lines.index("")
-        except ValueError:
-            separator = len(STARTUP_WORDMARK)
         rendered = Text()
-        logo_lines = lines[:separator]
-        if logo_lines:
-            top, bottom = theme.splash_colors()
-            gradient = (
-                theme.gradient_hex(top, bottom, len(logo_lines)) if theme.supports_truecolor(self.console) else []
-            )
-            if gradient:
-                # Two-tone vertical gradient: accent at top -> secondary at bottom.
-                for index, line in enumerate(logo_lines):
-                    if index:
-                        rendered.append("\n")
-                    rendered.append(line, style=f"bold {gradient[index]}")
-            else:
-                # 256-color terminal: flat bold primary (matches the primary buttons).
-                rendered.append("\n".join(logo_lines), style=f"bold {top}")
-        for line in lines[separator + 1 :]:
-            rendered.append("\n")
+        for line in entry.content.splitlines()[2:]:
+            if rendered:
+                rendered.append("\n")
             label, sep, value = line.partition(": ")
-            if sep and label and len(label) <= 12:
-                # Aligned two-column key/value line: muted label, normal value.
-                rendered.append(f"{label + ':':<13}", style="dim")
+            if sep and label and len(label) <= 18:
+                rendered.append(f"{label}: ", style=Color.MUTED)
                 rendered.append(value)
             else:
-                rendered.append(line, style="dim")
+                rendered.append(line, style=Color.MUTED)
         return rendered
 
-    def _format_tool_entry(self, entry: ConversationEntry, *, state: str, color: str) -> Text | Group:
-        tool_name = escape(entry.tool_name or "tool")
-        header = theme.role_header(Glyph.TOOL, tool_name, color, state=state)
+    def _format_tool_entry(self, entry: ConversationEntry) -> Text | Group:
+        header = self._tool_entry_title(entry)
         if not entry.content:
             return Text.from_markup(header)
         return self._entry_renderable(header, entry.content)
 
-    def _tool_entry_title(self, entry: ConversationEntry) -> str:
-        state, color = tool_state_presentation(entry.kind)
-        header = theme.role_header(Glyph.TOOL, escape(entry.tool_name or "tool"), color, state=state)
-        # Surface an LSP diagnostics summary as a severity-colored badge in the title
-        # (e.g. "· 2 LSP warnings") so warnings are visible without expanding. The
-        # label is recovered from the result text, which covers live edits, sub-agent
-        # steps, and restored sessions through this one shared title factory.
-        label = extract_lsp_label(entry.full_content or entry.content)
-        if label:
-            head, sep, rest = label.partition(" ")
-            badge = f"{head} LSP {rest}" if sep else f"LSP {label}"  # "2 warnings" -> "2 LSP warnings"
-            badge_color = Color.ERROR if "error" in label else Color.WARNING if "warning" in label else Color.MUTED
-            header += " " + theme.styled(f"{theme.g(Glyph.BULLET_SEP)} {badge}", badge_color)
-        return header
+    @staticmethod
+    def _tool_entry_title(entry: ConversationEntry, width: int | None = None) -> str:
+        return tool_title(entry, width)[0].markup
 
-    def _tool_preview_renderable(self, entry: ConversationEntry) -> Optional[Group]:
+    def _tool_preview_renderable(self, entry: ConversationEntry, width: int | None = None) -> Optional[Group]:
         """Inline diff/file-head preview for an edit tool, or None to hide the preview region."""
-        preview = entry.edit_preview
-        if not preview:
-            return None
+        previews = edit_previews(entry.edit_preview)
+        paths = entry_paths(entry)
+        if not previews:
+            # Pending, failed, binary/no-op, and restored patches may have no
+            # diff events. Keep their files identifiable without a title list.
+            return Group(*(path_label(path, width) for path in paths)) if len(paths) > 1 else None
         try:
-            return self._build_edit_preview(preview)
+            show_path = len(paths) != 1 or len(previews) != 1
+            parts: list[RenderableType] = [
+                self._build_edit_preview(preview, show_path=show_path, width=width) for preview in previews
+            ]
+            seen = {preview.get("path") for preview in previews}
+            if show_path:
+                parts.extend(path_label(path, width) for path in paths if path not in seen)
+            return Group(*parts)
         except Exception:
             return None
 
-    def _build_edit_preview(self, preview: dict) -> Group:
+    def _build_edit_preview(self, preview: dict, *, show_path: bool = True, width: int | None = None) -> Group:
         kind = str(preview.get("kind") or "")
         path = str(preview.get("path") or "file")
         lines = preview.get("lines") or []
         more = int(preview.get("more") or 0)
 
-        meta = Text()
-        meta.append(escape(path), style="bold")
+        counts = Text()
         if kind == "diff":
-            meta.append("  ")
-            meta.append(f"+{int(preview.get('adds') or 0)}", style=Color.SUCCESS)
-            meta.append(" ")
-            meta.append(f"-{int(preview.get('dels') or 0)}", style=Color.ERROR)
+            counts.append(f"+{int(preview.get('adds') or 0)}", style=Color.SUCCESS)
+            counts.append(" ")
+            counts.append(f"-{int(preview.get('dels') or 0)}", style=Color.ERROR)
+        meta = Text()
+        if show_path:
+            path_width = None if width is None else max(0, width - (counts.cell_len + 2 if counts else 0))
+            meta.append_text(path_label(path, path_width))
+        if counts:
+            if meta:
+                meta.append("  ")
+            meta.append_text(counts)
 
         if kind == "head":
             code = "\n".join(str(row[1]) for row in lines if isinstance(row, (list, tuple)) and len(row) >= 2)
@@ -1781,7 +1849,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         else:
             body = self._edit_preview_diff(lines)
 
-        parts: list = [meta, body]
+        parts: list = [meta, body] if meta else [body]
         if more > 0:
             footer = Text(f"{theme.g(Glyph.ELLIPSIS)} +{more} more lines", style="dim")
             parts.append(footer)

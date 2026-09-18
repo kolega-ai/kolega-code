@@ -1,0 +1,390 @@
+"""Fullscreen startup splash widget for the Textual TUI."""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+from typing import ClassVar
+
+from rich.cells import cell_len
+from rich.text import Text
+from textual.timer import Timer
+from textual.widgets import Static
+
+from .. import theme
+from .turn_status import _shimmer_palette, shimmer_text
+
+
+# Large block glyphs expose the working label's coarse timer and palette steps.
+# Keep the faster cadence local to this short-lived, repaint-only widget.
+_FRAME_INTERVAL = 1 / 60
+_SHIMMER_CELLS_PER_SECOND = 16.0
+# A broader fade keeps each cell's color transition gentle at the faster speed.
+_SHIMMER_RADIUS = 12.0
+_DEFAULT_STAGE = "Preparing workspace"
+
+# Ten-pixel glyphs pack into five terminal rows. Double-weight stems, rounded
+# shoulders, and slightly narrower L/E forms balance the wide, open counters.
+_KOLEGA: dict[str, tuple[str, ...]] = {
+    "K": (
+        "11000011",
+        "11000110",
+        "11001100",
+        "11011000",
+        "11110000",
+        "11110000",
+        "11011000",
+        "11001100",
+        "11000110",
+        "11000011",
+    ),
+    "O": (
+        "00111100",
+        "01111110",
+        "11000011",
+        "11000011",
+        "11000011",
+        "11000011",
+        "11000011",
+        "11000011",
+        "01111110",
+        "00111100",
+    ),
+    "L": (
+        "1100000",
+        "1100000",
+        "1100000",
+        "1100000",
+        "1100000",
+        "1100000",
+        "1100000",
+        "1100000",
+        "1111111",
+        "1111111",
+    ),
+    "E": (
+        "1111111",
+        "1111111",
+        "1100000",
+        "1100000",
+        "1111110",
+        "1111110",
+        "1100000",
+        "1100000",
+        "1111111",
+        "1111111",
+    ),
+    "G": (
+        "00111110",
+        "01111110",
+        "11000000",
+        "11000000",
+        "11001111",
+        "11001111",
+        "11000011",
+        "11000011",
+        "01111110",
+        "00111100",
+    ),
+    "A": (
+        "00111100",
+        "01111110",
+        "11000011",
+        "11000011",
+        "11111111",
+        "11111111",
+        "11000011",
+        "11000011",
+        "11000011",
+        "11000011",
+    ),
+}
+
+
+def _pack_rows(rows: tuple[str, ...]) -> tuple[str, ...]:
+    packed: list[str] = []
+    for top_index in range(0, len(rows), 2):
+        top = rows[top_index]
+        bottom = rows[top_index + 1] if top_index + 1 < len(rows) else "0" * len(top)
+        line = []
+        for upper, lower in zip(top, bottom):
+            match upper == "1", lower == "1":
+                case True, True:
+                    line.append("█")
+                case True, False:
+                    line.append("▀")
+                case False, True:
+                    line.append("▄")
+                case _:
+                    line.append(" ")
+        packed.append("".join(line))
+    return tuple(packed)
+
+
+def _wordmark(word: str, glyphs: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
+    packed = [_pack_rows(glyphs[letter]) for letter in word]
+    return tuple("  ".join(letter[row] for letter in packed) for row in range(len(packed[0])))
+
+
+_KOLEGA_LINES = _wordmark("KOLEGA", _KOLEGA)
+_CODE_LINE = "─────   C  O  D  E   ─────"
+_LOGO_WIDTH = max(cell_len(line) for line in _KOLEGA_LINES)
+_FULL_SPLASH_MIN_HEIGHT = 11
+
+
+class BootSplash(Static):
+    """A single-widget, theme-aware cinematic boot splash.
+
+    Public interface:
+    - ``BootSplash(project_path: Path | None = None, version: str | None = None)``
+    - ``set_stage(stage: str) -> None``
+    - ``start_animation() -> None``
+    - ``stop_animation() -> None``
+    """
+
+    COMPONENT_CLASSES: ClassVar[set[str]] = {
+        "boot-splash--logo-base",
+        "boot-splash--logo-accent",
+        "boot-splash--logo-peak",
+        "boot-splash--stage",
+        "boot-splash--muted",
+    }
+
+    DEFAULT_CSS = """
+    BootSplash {
+        width: 100%;
+        height: 100%;
+        background: $background;
+        color: $text-muted;
+    }
+
+    BootSplash .boot-splash--logo-base {
+        color: $text;
+    }
+
+    BootSplash .boot-splash--logo-accent {
+        color: $primary;
+    }
+
+    BootSplash .boot-splash--logo-peak {
+        color: $secondary;
+    }
+
+    BootSplash .boot-splash--stage {
+        color: $text;
+    }
+
+    BootSplash .boot-splash--muted {
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, project_path: Path | None = None, version: str | None = None) -> None:
+        if version is None:
+            from kolega_code import __version__ as version
+
+        super().__init__("", id="boot_splash", markup=False)
+        self.project_path = Path.cwd() if project_path is None else Path(project_path)
+        self.version = version
+        self._stage = _DEFAULT_STAGE
+        self._timer: Timer | None = None
+        self._started_at: float | None = None
+
+    def set_stage(self, stage: str) -> None:
+        """Update the single startup phase line."""
+        self._stage = " ".join(str(stage).split()) or _DEFAULT_STAGE
+        self.refresh(layout=False)
+
+    def start_animation(self) -> None:
+        """Start the repaint-only shimmer timer when the terminal supports it."""
+        self._started_at = self._now()
+        self._stop_timer(refresh=False)
+        if self._can_animate():
+            self._timer = self.set_interval(_FRAME_INTERVAL, self._on_animation_frame, name="boot-splash")
+        self.refresh(layout=False)
+
+    def stop_animation(self) -> None:
+        """Stop all splash animation work and leave a static frame behind."""
+        self._started_at = None
+        self._stop_timer(refresh=False)
+        self.refresh(layout=False)
+
+    def on_unmount(self) -> None:
+        self._started_at = None
+        self._stop_timer(refresh=False)
+
+    def render(self) -> Text:
+        width = max(0, self.size.width)
+        height = max(0, self.size.height)
+        return self._render_for_size(width, height)
+
+    def _now(self) -> float:
+        return time.monotonic()
+
+    def _on_animation_frame(self) -> None:
+        if not self._can_animate():
+            self._started_at = None
+            self._stop_timer(refresh=True)
+            return
+        self.refresh(layout=False)
+
+    def _stop_timer(self, *, refresh: bool) -> None:
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+        if refresh:
+            self.refresh(layout=False)
+
+    def _can_animate(self) -> bool:
+        if not self.is_mounted:
+            return False
+        console = self.app.console
+        return (
+            theme.supports_truecolor(console)
+            and console.color_system is not None
+            and not console.no_color
+            and self.app.animation_level == "full"
+        )
+
+    def _elapsed(self) -> float:
+        if self._started_at is None:
+            return 0.0
+        return max(0.0, self._now() - self._started_at)
+
+    def _render_for_size(self, width: int, height: int) -> Text:
+        if width <= 0 or height <= 0:
+            return Text()
+        if width < _LOGO_WIDTH or height < _FULL_SPLASH_MIN_HEIGHT:
+            lines = self._compact_lines(width, height)
+        else:
+            lines = self._full_lines(width, height)
+        return self._compose_lines(lines, width)
+
+    def _full_lines(self, width: int, height: int) -> list[Text]:
+        logo_width = min(_LOGO_WIDTH, width)
+        code = _center_padded_plain(_CODE_LINE, logo_width)
+        logo = self._style_logo([*_KOLEGA_LINES, " " * logo_width, code])
+        # Keep the framing rules quiet; only the lettering catches the shared sweep.
+        muted = self.get_component_rich_style("boot-splash--muted")
+        for column, character in enumerate(code):
+            if character == "─":
+                logo[-1].stylize(muted, column, column + 1)
+        logo = self._center_logo(logo, width, logo_width)
+
+        stage = self._line(self._fit(f"▶ {self._stage}", width), width, "boot-splash--stage")
+        meta = self._line(self._fit(self._metadata(), width), width, "boot-splash--muted")
+        body: list[Text] = [*logo, Text(), Text(), stage, meta]
+        top_pad = max(0, (height - len(body)) // 2)
+        body = [Text() for _ in range(top_pad)] + body
+        return body[:height]
+
+    def _compact_lines(self, width: int, height: int) -> list[Text]:
+        body: list[Text] = []
+        if height >= 1:
+            body.append(self._line(self._fit("KOLEGA CODE", width), width, "boot-splash--logo-base"))
+        if height >= 2:
+            body.append(self._line(self._fit(self._stage, width), width, "boot-splash--stage"))
+        if height >= 3:
+            body.append(self._line(self._fit(self._metadata(), width), width, "boot-splash--muted"))
+        top_pad = max(0, (height - len(body)) // 2)
+        return ([Text() for _ in range(top_pad)] + body)[:height]
+
+    def _style_logo(self, lines: list[str]) -> list[Text]:
+        base = self.get_component_rich_style("boot-splash--logo-base")
+        logo_width = max((cell_len(line) for line in lines), default=0)
+        padded_lines = [_pad_cells(line, logo_width) for line in lines]
+        if not self._can_animate():
+            return [Text(line, style=base) for line in padded_lines]
+
+        base_color = base.color
+        accent = self.get_component_rich_style("boot-splash--logo-accent").color
+        peak = self.get_component_rich_style("boot-splash--logo-peak").color
+        if base_color is None or accent is None or peak is None:
+            return [Text(line, style=base) for line in padded_lines]
+        palette = _shimmer_palette(base_color, accent, peak, steps=65)
+        elapsed = self._elapsed()
+        # Every line is padded to the same width, so shimmer_text samples one shared
+        # sweep coordinate across the whole logo instead of per-row independent cycles.
+        return [
+            shimmer_text(
+                Text(line, style=base),
+                elapsed,
+                palette,
+                band_radius=_SHIMMER_RADIUS,
+                cells_per_second=_SHIMMER_CELLS_PER_SECOND,
+            )
+            for line in padded_lines
+        ]
+
+    def _center_logo(self, lines: list[Text], width: int, logo_width: int) -> list[Text]:
+        prefix = " " * max(0, (width - logo_width) // 2)
+        centered: list[Text] = []
+        for line in lines:
+            output = Text(prefix)
+            output.append(line)
+            centered.append(output)
+        return centered
+
+    def _metadata(self) -> str:
+        return f"{self.project_path} · v{self.version}"
+
+    def _line(self, plain: str, width: int, component: str) -> Text:
+        return Text(_center_plain(plain, width), style=self.get_component_rich_style(component))
+
+    def _fit(self, plain: str, width: int) -> str:
+        return _truncate_cells(plain, width)
+
+    def _compose_lines(self, lines: list[Text], width: int) -> Text:
+        output = Text()
+        for index, line in enumerate(lines):
+            fitted = line.copy()
+            if fitted.cell_len > width:
+                fitted.truncate(width, overflow="ellipsis")
+            output.append(fitted)
+            if index < len(lines) - 1:
+                output.append("\n")
+        return output
+
+
+def _center_plain(plain: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    fitted = _truncate_cells(plain, width)
+    return " " * max(0, (width - cell_len(fitted)) // 2) + fitted
+
+
+def _center_padded_plain(plain: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    fitted = _truncate_cells(plain, width)
+    left = max(0, (width - cell_len(fitted)) // 2)
+    return _pad_cells(" " * left + fitted, width)
+
+
+def _pad_cells(plain: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    return plain + " " * max(0, width - cell_len(plain))
+
+
+def _truncate_cells(plain: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    if cell_len(plain) <= width:
+        return plain
+    ellipsis = theme.g(theme.Glyph.ELLIPSIS)
+    if cell_len(ellipsis) > width:
+        return ""
+    budget = width - cell_len(ellipsis)
+    out: list[str] = []
+    used = 0
+    for char in plain:
+        char_width = cell_len(char)
+        if used + char_width > budget:
+            break
+        out.append(char)
+        used += char_width
+    return "".join(out) + ellipsis
+
+
+__all__ = ["BootSplash"]

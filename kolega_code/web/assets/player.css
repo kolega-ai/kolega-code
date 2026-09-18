@@ -344,6 +344,29 @@ body::after {
   flex-wrap: wrap;
 }
 
+.kc-tool-head.has-subject {
+  flex-wrap: nowrap;
+}
+
+.kc-tool-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--kc-text-muted);
+}
+
+.kc-tool-head.has-subject .kc-tool-name {
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.kc-tool-head.has-subject .kc-tool-status {
+  flex-shrink: 0;
+}
+
 .kc-tool-name {
   color: var(--kc-tool);
   font-weight: 600;

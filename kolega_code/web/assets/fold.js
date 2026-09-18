@@ -109,6 +109,7 @@ function newItem(fields) {
     complete: fields.complete === undefined ? true : fields.complete,
     streamId: fields.streamId ?? null,
     toolName: fields.toolName ?? null,
+    toolSubject: fields.toolSubject ?? null,
     toolCallId: fields.toolCallId ?? null,
     status: fields.status ?? null,
     tone: fields.tone ?? null,
@@ -173,9 +174,17 @@ function onAssistantDelta(state, event, kind) {
   if (complete) state.streams.delete(streamKey);
 }
 
+function toolSubjectOf(event) {
+  // Already sanitized by the producer. Match Python without coercing objects
+  // or letting missing/empty metadata clear an established subject.
+  const subject = event.content && event.content.tool_subject;
+  return typeof subject === "string" && subject ? subject : null;
+}
+
 function onToolMessage(state, event, messageType) {
   const toolCallId = String((event.content && event.content.tool_call_id) || "");
   const toolName = String((event.content && event.content.tool_description) || "");
+  const toolSubject = toolSubjectOf(event);
   const text = textOf(event, "text");
   const status = TOOL_STATUS[messageType];
   const key = `${subAgentKey(event) || ""}:${toolCallId}`;
@@ -184,6 +193,7 @@ function onToolMessage(state, event, messageType) {
   if (existing && existing.kind === "tool") {
     existing.status = status;
     existing.toolName = existing.toolName || toolName;
+    if (toolSubject !== null) existing.toolSubject = toolSubject;
     if (text) existing.text = text;
     if (event.artifacts && event.artifacts.length) existing.artifacts = event.artifacts;
     if (status !== "running") state.tools.delete(key);
@@ -195,6 +205,7 @@ function onToolMessage(state, event, messageType) {
       kind: "tool",
       text,
       toolName,
+      toolSubject,
       toolCallId: toolCallId || null,
       status,
       artifacts: event.artifacts || [],
@@ -270,6 +281,7 @@ function onChatMessage(state, event) {
 
 function onToolStreamingUpdate(state, event) {
   const toolCallId = String((event.content && event.content.tool_call_id) || "");
+  const toolSubject = toolSubjectOf(event);
   const key = `${subAgentKey(event) || ""}:${toolCallId}`;
   const index = state.tools.get(key);
   let target = index === undefined ? null : resolve(state, event, index);
@@ -281,6 +293,7 @@ function onToolStreamingUpdate(state, event) {
         kind: "tool",
         text,
         toolName: String((event.content && event.content.tool_name) || ""),
+        toolSubject,
         toolCallId: toolCallId || null,
         status: "running",
       }),
@@ -289,6 +302,7 @@ function onToolStreamingUpdate(state, event) {
     if (toolCallId) state.tools.set(key, indexOf(state, event));
     return;
   }
+  if (toolSubject !== null) target.toolSubject = toolSubject;
   if (String((event.content && event.content.stream_mode) || "") === "replace") {
     target.text = text;
   } else {
@@ -517,6 +531,7 @@ function itemDict(item) {
   const optional = [
     ["stream_id", item.streamId],
     ["tool_name", item.toolName],
+    ["tool_subject", item.toolSubject],
     ["tool_call_id", item.toolCallId],
     ["status", item.status],
     ["tone", item.tone],

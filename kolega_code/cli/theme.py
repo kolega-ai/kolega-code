@@ -77,6 +77,9 @@ ASCII_FALLBACKS = {
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 SPINNER_FRAMES_ASCII = "|/-\\"
 SPINNER_INTERVAL = 0.25
+# Only the repaint-only working strip uses the faster cadence; the inspector
+# and other heavier views keep their existing refresh rate.
+TURN_STATUS_SPINNER_INTERVAL = 0.08
 
 # Truncation and layout limits
 TOOL_RESULT_PREVIEW_CHARS = 500
