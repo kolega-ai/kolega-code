@@ -170,6 +170,10 @@ class StartupEntryWidget(ToolEntryWidget):
             title=self._title_factory(self.entry),
             collapsed=self.entry.startup_collapsed,
         )
+        # Persist changes before a pending resize/refresh can copy the old entry
+        # state back into the widget. Expanded/Collapsed messages arrive later.
+        self.watch(self._collapsible, "collapsed", self._remember_startup_collapsed, init=False)
+        self.watch(self._configuration, "collapsed", self._remember_configuration_collapsed, init=False)
         yield self._collapsible
 
     def refresh_content(self) -> None:
@@ -184,18 +188,12 @@ class StartupEntryWidget(ToolEntryWidget):
         if self._details is not None:
             self._details.refresh_content()
 
-    def on_collapsible_expanded(self, event: Collapsible.Expanded) -> None:
-        self._remember_disclosure(event.collapsible)
+    def _remember_startup_collapsed(self, collapsed: bool) -> None:
+        self.entry.startup_collapsed = collapsed
+        self._refresh_title()
 
-    def on_collapsible_collapsed(self, event: Collapsible.Collapsed) -> None:
-        self._remember_disclosure(event.collapsible)
-
-    def _remember_disclosure(self, collapsible: Collapsible) -> None:
-        if collapsible is self._collapsible:
-            self.entry.startup_collapsed = collapsible.collapsed
-            self._refresh_title()
-        elif collapsible is self._configuration:
-            self.entry.startup_details_expanded = not collapsible.collapsed
+    def _remember_configuration_collapsed(self, collapsed: bool) -> None:
+        self.entry.startup_details_expanded = not collapsed
 
 
 class RecentSessionsWidget(Vertical):

@@ -90,6 +90,8 @@ dependencies = [
     "pygments==2.20.0",
     "pyyaml==6.0.3",
     "readability-lxml==0.8.4.1",
+    # BeautifulSoup's selector parser: fixes CVE-2026-86000 and CVE-2026-85999.
+    "soupsieve==2.9.2",
     "tavily-python==0.7.26",
     "tenacity==9.1.4",
     "textual==8.2.5",
