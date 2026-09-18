@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from pathlib import Path
 import time
@@ -10,6 +11,7 @@ import pytest
 from rich.cells import cell_len
 from rich.color import ColorSystem
 from rich.console import Console
+from rich.style import Style
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.pilot import Pilot
@@ -237,7 +239,7 @@ async def test_boot_splash_truecolor_full_motion_uses_one_repaint_timer(
         assert splash._timer is not None
         splash._timer.pause()
         schedule.assert_called_once()
-        assert schedule.call_args.args[:2] == (0.08, splash._on_animation_frame)
+        assert schedule.call_args.args[:2] == (pytest.approx(1 / 60), splash._on_animation_frame)
         assert schedule.call_args.kwargs["name"] == "boot-splash"
 
         first = splash._render_for_size(80, 24)
@@ -258,6 +260,122 @@ async def test_boot_splash_truecolor_full_motion_uses_one_repaint_timer(
         splash.stop_animation()
         stop.assert_called_once()
         assert splash._timer is None
+
+
+@pytest.mark.asyncio
+async def test_boot_splash_shimmer_sweeps_at_sixteen_cells_per_second(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    splash = BootSplash(project_path=tmp_path, version="1.0.0")
+    app = BootSplashTestApp(splash)
+    now = 100.0
+    monkeypatch.setattr(splash, "_now", lambda: now)
+    styles = {
+        "boot-splash--logo-base": Style(color="#000000"),
+        "boot-splash--logo-accent": Style(color="#808080"),
+        "boot-splash--logo-peak": Style(color="#ffffff"),
+    }
+
+    async with app.run_test(size=(80, 24)):
+        monkeypatch.setattr(app.console, "_color_system", ColorSystem.TRUECOLOR)
+        monkeypatch.setattr(app.console, "no_color", False)
+        app.animation_level = "full"
+        splash.start_animation()
+        assert splash._timer is not None
+        splash._timer.pause()
+        monkeypatch.setattr(splash, "get_component_rich_style", styles.__getitem__)
+        peaks: list[int] = []
+        for elapsed in (1.0, 1.5, 2.0):
+            now = 100.0 + elapsed
+            row = splash._style_logo(["█" * 56])[0]
+            peaks.append(_colors(row).index("#ffffff"))
+
+        # Half a second advances eight cells; the working label still uses its
+        # original eight-cells-per-second default.
+        assert peaks[1] - peaks[0] == 8
+        assert peaks[2] - peaks[1] == 8
+        splash.stop_animation()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "palette",
+    [("#e8edf5", "#2288bb", "#cc88ee"), ("#202124", "#125b92", "#7f1d80")],
+    ids=["dark", "light"],
+)
+async def test_boot_splash_shimmer_blends_smoothly_between_frames(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, palette: tuple[str, str, str]
+) -> None:
+    splash = BootSplash(project_path=tmp_path, version="1.0.0")
+    app = BootSplashTestApp(splash)
+    now = 100.0
+    monkeypatch.setattr(splash, "_now", lambda: now)
+    styles = {
+        "boot-splash--logo-base": Style(color=palette[0]),
+        "boot-splash--logo-accent": Style(color=palette[1]),
+        "boot-splash--logo-peak": Style(color=palette[2]),
+    }
+
+    async with app.run_test(size=(80, 24)):
+        monkeypatch.setattr(app.console, "_color_system", ColorSystem.TRUECOLOR)
+        monkeypatch.setattr(app.console, "no_color", False)
+        app.animation_level = "full"
+        splash.start_animation()
+        assert splash._timer is not None
+        splash._timer.pause()
+        monkeypatch.setattr(splash, "get_component_rich_style", styles.__getitem__)
+        samples: list[tuple[int, int, int]] = []
+        for frame in range(480):
+            now = 100.0 + frame / 60
+            row = splash._style_logo(["█" * 56])[0]
+            color = row.get_style_at_offset(app.console, 20).color
+            assert color is not None
+            rgb = color.get_truecolor()
+            samples.append((rgb.red, rgb.green, rgb.blue))
+
+        # A block letter must fade through intermediate shades, rather than hold
+        # one of a few palette entries and suddenly jump to the next.
+        assert len(set(samples)) >= 40
+        largest_step = max(
+            abs(channel - previous_channel)
+            for previous, current in zip(samples, samples[1:])
+            for previous_channel, channel in zip(previous, current)
+        )
+        assert largest_step <= 20
+        splash.stop_animation()
+
+
+@pytest.mark.asyncio
+async def test_boot_splash_animation_frames_repaint_without_reflow(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    splash = BootSplash(project_path=tmp_path, version="1.0.0")
+    app = BootSplashTestApp(splash)
+    now = 100.0
+    monkeypatch.setattr(splash, "_now", lambda: now)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        monkeypatch.setattr(app.console, "_color_system", ColorSystem.TRUECOLOR)
+        monkeypatch.setattr(app.console, "no_color", False)
+        app.animation_level = "full"
+        splash.start_animation()
+        assert splash._timer is not None
+        splash._timer.pause()
+        await _wait_for_layout(pilot, lambda: splash.size == app.screen.size and not app.screen._layout_required)
+        reflow = Mock(wraps=app.screen._compositor.reflow)
+        monkeypatch.setattr(app.screen._compositor, "reflow", reflow)
+        first = _lines(splash)
+
+        for frame in range(1, 9):
+            now = 100.0 + frame / 60
+            splash._on_animation_frame()
+            painted = asyncio.Event()
+            app.call_after_refresh(painted.set)
+            await asyncio.wait_for(painted.wait(), timeout=6)
+
+        assert _lines(splash) == first
+        reflow.assert_not_called()
+        splash.stop_animation()
 
 
 @pytest.mark.asyncio

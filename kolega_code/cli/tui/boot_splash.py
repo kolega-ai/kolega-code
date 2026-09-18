@@ -15,7 +15,12 @@ from .. import theme
 from .turn_status import _shimmer_palette, shimmer_text
 
 
-_FRAME_INTERVAL = 0.08
+# Large block glyphs expose the working label's coarse timer and palette steps.
+# Keep the faster cadence local to this short-lived, repaint-only widget.
+_FRAME_INTERVAL = 1 / 60
+_SHIMMER_CELLS_PER_SECOND = 16.0
+# A broader fade keeps each cell's color transition gentle at the faster speed.
+_SHIMMER_RADIUS = 12.0
 _DEFAULT_STAGE = "Preparing workspace"
 
 # Ten-pixel glyphs pack into five terminal rows. Double-weight stems, rounded
@@ -296,11 +301,20 @@ class BootSplash(Static):
         peak = self.get_component_rich_style("boot-splash--logo-peak").color
         if base_color is None or accent is None or peak is None:
             return [Text(line, style=base) for line in padded_lines]
-        palette = _shimmer_palette(base_color, accent, peak)
+        palette = _shimmer_palette(base_color, accent, peak, steps=65)
         elapsed = self._elapsed()
         # Every line is padded to the same width, so shimmer_text samples one shared
         # sweep coordinate across the whole logo instead of per-row independent cycles.
-        return [shimmer_text(Text(line, style=base), elapsed, palette) for line in padded_lines]
+        return [
+            shimmer_text(
+                Text(line, style=base),
+                elapsed,
+                palette,
+                band_radius=_SHIMMER_RADIUS,
+                cells_per_second=_SHIMMER_CELLS_PER_SECOND,
+            )
+            for line in padded_lines
+        ]
 
     def _center_logo(self, lines: list[Text], width: int, logo_width: int) -> list[Text]:
         prefix = " " * max(0, (width - logo_width) // 2)

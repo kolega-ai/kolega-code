@@ -20,19 +20,26 @@ _SWEEP_GAP = 4.0
 
 
 @lru_cache(maxsize=32)
-def _shimmer_palette(base: Color, accent: Color, peak: Color) -> tuple[Style, ...]:
-    colors = theme.gradient_hex(base.get_truecolor().hex, accent.get_truecolor().hex, 9)
-    colors += theme.gradient_hex(accent.get_truecolor().hex, peak.get_truecolor().hex, 9)[1:]
+def _shimmer_palette(base: Color, accent: Color, peak: Color, *, steps: int = 9) -> tuple[Style, ...]:
+    colors = theme.gradient_hex(base.get_truecolor().hex, accent.get_truecolor().hex, steps)
+    colors += theme.gradient_hex(accent.get_truecolor().hex, peak.get_truecolor().hex, steps)[1:]
     return tuple(Style(color=color) for color in colors)
 
 
-def shimmer_text(label: Text, elapsed: float, palette: tuple[Style, ...]) -> Text:
+def shimmer_text(
+    label: Text,
+    elapsed: float,
+    palette: tuple[Style, ...],
+    *,
+    band_radius: float = _BAND_RADIUS,
+    cells_per_second: float = _CELLS_PER_SECOND,
+) -> Text:
     """Sweep a soft highlight in terminal cells, preserving text and inline styles."""
     result = label.copy()
     if not label or not palette:
         return result
-    center = (max(0.0, elapsed) * _CELLS_PER_SECOND) % (label.cell_len + 2 * _BAND_RADIUS + _SWEEP_GAP)
-    center -= _BAND_RADIUS
+    center = (max(0.0, elapsed) * cells_per_second) % (label.cell_len + 2 * band_radius + _SWEEP_GAP)
+    center -= band_radius
     cell = 0
     run_start = 0
     level = 0
@@ -42,7 +49,7 @@ def shimmer_text(label: Text, elapsed: float, palette: tuple[Style, ...]) -> Tex
         next_level = level
         if width:
             distance = abs(cell + (width - 1) / 2 - center)
-            strength = max(0.0, 1.0 - distance / _BAND_RADIUS)
+            strength = max(0.0, 1.0 - distance / band_radius)
             strength = strength * strength * (3.0 - 2.0 * strength)
             next_level = round(strength * (len(palette) - 1))
             cell += width
