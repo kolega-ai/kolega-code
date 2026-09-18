@@ -7,6 +7,24 @@ Launching `kolega-code .` opens a full terminal UI built with
 [Textual](https://textual.textualize.io/). This page is a map of what you're
 looking at.
 
+## Starting up
+
+Once the terminal UI opens, a themed block-letter **KOLEGA CODE** splash
+appears while the workspace, skills, tools, and any saved conversation are
+prepared. The stage line reports the work being performed—not a simulated
+percentage or countdown—and the project path and version appear below it.
+
+The wordmark shares one gentle shimmer sweep in truecolor terminals.
+256-color output, `NO_COLOR`, and reduced animation settings
+(`TEXTUAL_ANIMATIONS=basic` or `TEXTUAL_ANIMATIONS=none`) use a static logo.
+Small terminals use compact text instead of clipped block letters.
+
+There is no minimum display time: the splash gives way as soon as startup
+is ready, or earlier if a question or permission prompt needs an answer.
+First-run setup, discovery tips, and startup errors keep their normal behavior.
+The composer stays disabled until it can accept input; `Ctrl+Q` quits during
+startup, and `Esc` or `Ctrl+C` cancels startup when no prompt is active.
+
 ## Layout
 
 The screen is split into two columns:

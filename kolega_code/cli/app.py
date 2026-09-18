@@ -109,6 +109,7 @@ from .tui.discovery import DiscoveryTip
 from .tui.metadata import MetadataStrip
 from .tui.shortcut_bar import ContextFooter, ShortcutHelpScreen
 from .tui.turn_status import TurnStatus
+from .tui.boot_splash import BootSplash
 from .tui import constants as tui_constants
 from .tui import agent_runtime as tui_agent_runtime
 from .tui import changes_screen as tui_changes
@@ -299,6 +300,12 @@ class KolegaCodeApp(
         #: resume-with-session-ID hint only when this is True.
         self._quit_cleanly = False
         self._session_shutdown_task: asyncio.Task[None] | None = None
+        self._startup_task: asyncio.Task[None] | None = None
+        self._startup_complete = asyncio.Event()
+        self._startup_pending = True
+        self._startup_cancelled = False
+        self._startup_body: Horizontal | None = None
+        self._boot_splash = BootSplash(self.active_project_path)
         self._agent_cleanup_failed = False
         self.extension_selection = extension_selection
         self._extension_bundle = None
@@ -417,7 +424,8 @@ class KolegaCodeApp(
         return (*super().get_line_filters(), self._terminal_control_filter)
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="body"):
+        with Horizontal(id="body", disabled=True) as body:
+            self._startup_body = body
             with Vertical(id="conversation_panel"):
                 self._refresh_metadata()
                 yield self._metadata_strip
@@ -510,6 +518,7 @@ class KolegaCodeApp(
                                 )
                                 yield Static("", id="settings_summary_status")
         yield ContextFooter()
+        yield self._boot_splash
 
     def _diagnostics_header(self) -> dict:
         """One-shot environment/config snapshot for the diagnostics timeline."""
@@ -542,7 +551,7 @@ class KolegaCodeApp(
     # ------------------------------------------------------------------
 
     def _peer_status(self) -> str:
-        return "busy" if (self._turn_active or self.agent_worker is not None) else "idle"
+        return "busy" if (self._startup_pending or self._turn_active or self.agent_worker is not None) else "idle"
 
     def _register_with_inbox(self) -> None:
         """Publish this session's live entry so sibling sessions can see and
@@ -645,6 +654,68 @@ class KolegaCodeApp(
 
     async def on_mount(self) -> None:
         self.settings = self.settings_store.load()
+        # Mount is batched by Textual: awaiting agent/tool setup here prevents
+        # even a loading screen from painting. Theme the first frame, then return.
+        truecolor = theme.supports_truecolor(self.console)
+        for textual_theme in theme.build_textual_themes(truecolor=truecolor):
+            self.register_theme(textual_theme)
+        theme.apply_theme(self.settings.active_theme)
+        try:
+            self.theme = theme.textual_theme_name(self.settings.active_theme)
+        except Exception:
+            pass
+        self._set_chat_enabled(False)
+        self._boot_splash.start_animation()
+        self.call_after_refresh(self._launch_startup)
+
+    def _launch_startup(self) -> None:
+        if self._startup_task is None and not self._startup_cancelled and self.is_running:
+            self._startup_task = asyncio.create_task(self._run_startup(), name="kolega-startup")
+
+    async def _run_startup(self) -> None:
+        try:
+            await self._initialize_startup()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Preserve Textual's normal startup-exception/crash-log path instead
+            # of losing an exception in a detached task.
+            self._handle_exception(exc)
+        finally:
+            self._startup_pending = False
+            self._dismiss_boot_splash()
+            self._startup_complete.set()
+
+    async def _cancel_startup(self) -> None:
+        already_cancelled = self._startup_cancelled
+        self._startup_cancelled = True
+        self._dismiss_boot_splash()
+        task = self._startup_task
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            if not already_cancelled:
+                task.cancel()
+            # Finish partial-generation cleanup before closing the memory store,
+            # usage sink or session. A second quit must not cancel that cleanup.
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+        self._startup_pending = False
+        self._startup_complete.set()
+
+    def _set_startup_stage(self, stage: str) -> None:
+        if self._startup_pending:
+            self._boot_splash.set_stage(stage)
+
+    def _dismiss_boot_splash(self) -> None:
+        self._boot_splash.stop_animation()
+        self._boot_splash.display = False
+        if self._startup_body is not None:
+            self._startup_body.disabled = False
+
+    async def _initialize_startup(self) -> None:
+        self._set_startup_stage("Preparing workspace…")
         self._register_with_inbox()
         await self._start_inbox_socket()
         self._restore_prompt_history()
@@ -685,18 +756,6 @@ class KolegaCodeApp(
             self._flush_pacer.attach(self._watchdog.recent_excess)
         except Exception:
             self._diag, self._watchdog = None, None
-        # Register all themes and apply the persisted one before the first paint,
-        # so the splash and settings controls render already themed. In non-truecolor
-        # terminals (e.g. macOS Terminal.app) the chrome is neutralized to gray so it
-        # doesn't quantize to a saturated cube color.
-        truecolor = theme.supports_truecolor(self.console)
-        for textual_theme in theme.build_textual_themes(truecolor=truecolor):
-            self.register_theme(textual_theme)
-        theme.apply_theme(self.settings.active_theme)
-        try:
-            self.theme = theme.textual_theme_name(self.settings.active_theme)
-        except Exception:
-            pass
         self._update_settings_status()
         if self._startup_workspace_warning:
             self._add_conversation_entry(
@@ -714,20 +773,15 @@ class KolegaCodeApp(
         self._ensure_startup_entry()
         self._update_detach_button()
         if self.check_for_updates:
-            self.run_worker(self._check_for_update_on_startup(), name="kolega-update-check", group="updates")
+            self.run_worker(self._check_for_update_on_startup, name="kolega-update-check", group="updates")
         # Warm the @-mention file index off the event loop so the first mention has
         # results without blocking the UI on os.walk (slow on iCloud/large trees).
         self._maybe_refresh_file_index()
         self._schedule_conversation_bottom_anchor()
-        self.run_worker(self._consume_events(), name="kolega-events", group="events")
-        # Always-on scheduler tick. It is a cheap no-op with no loop armed, and
-        # only re-renders the dashboard when the coarse countdown label changes.
-        self._loop_scheduler_timer = self.set_interval(LOOP_TICK_SECONDS, self._loop_tick, name="loop-scheduler")
+        self.run_worker(self._consume_events, name="kolega-events", group="events")
         try:
             if self.config is not None:
                 await self._build_agent(self.config)
-                self._set_chat_enabled(True)
-                self._schedule_primary_focus_restore()
             else:
                 await self._ensure_agent_from_settings()
         except KolegaExtensionLoadError as exc:
@@ -735,12 +789,24 @@ class KolegaCodeApp(
             # without the requested extension.
             self.exit(return_code=1, message=str(exc))
             return
+        if not self.is_running or self._startup_cancelled:
+            return
+        # No minimum duration or final animation: hand over as soon as the
+        # generation is usable, before any onboarding/loop/discovery prompt.
+        self._dismiss_boot_splash()
         await self._restore_loop_on_startup()
+        self._startup_pending = False
+        self._set_chat_enabled(self.agent is not None)
+        self._schedule_primary_focus_restore()
+        # Start the scheduler only after initialization and any resume prompt.
+        self._loop_scheduler_timer = self.set_interval(LOOP_TICK_SECONDS, self._loop_tick, name="loop-scheduler")
+        if self._queued_messages:
+            self._schedule_maybe_start_queued_message()
         if self.config is None and not self._onboarding_skipped:
             await self.action_open_onboarding()
         self._discovery_tips_ready = True
         if self._recent_sessions_available:
-            self.run_worker(self._load_recent_sessions(), name="recent-sessions", group="recent-sessions")
+            self.run_worker(self._load_recent_sessions, name="recent-sessions", group="recent-sessions")
         await self._maybe_show_discovery_tip()
 
     def _startup_recent_sessions(self) -> tuple[RecentSessionItem, ...]:
@@ -766,7 +832,12 @@ class KolegaCodeApp(
 
     def on_startup_entry_widget_resume_requested(self, event: StartupEntryWidget.ResumeRequested) -> None:
         event.stop()
-        if self._resume_in_progress or not self._recent_sessions_available or self._modal_cover_active:
+        if (
+            self._startup_pending
+            or self._resume_in_progress
+            or not self._recent_sessions_available
+            or self._modal_cover_active
+        ):
             return
         if not any(item.session_id == event.session_id for item in self._recent_sessions):
             return
@@ -1203,6 +1274,11 @@ class KolegaCodeApp(
     async def on_chat_composer_submitted(self, event: tui_widgets.ChatComposer.Submitted) -> None:
         if self._resume_in_progress:
             return
+        if self._startup_pending:
+            if self._pending_question is not None:
+                await self._answer_pending_question(event.value)
+                event.composer.load_text("")
+            return
         text = event.value
         stripped_text = text.strip()
         self._persist_prompt_history(event.composer)
@@ -1353,7 +1429,7 @@ class KolegaCodeApp(
         if self._file_index_refreshing or not self.file_index.is_stale():
             return
         self._file_index_refreshing = True
-        self.run_worker(self._refresh_file_index(), name="kolega-file-index", group="file-index")
+        self.run_worker(self._refresh_file_index, name="kolega-file-index", group="file-index")
 
     async def _refresh_file_index(self) -> None:
         try:
@@ -1502,7 +1578,7 @@ class KolegaCodeApp(
         return False
 
     async def action_toggle_interaction_mode(self) -> None:
-        if self._mode_switch_blocked():
+        if self._startup_pending or self._mode_switch_blocked():
             return
 
         target = (
@@ -1513,7 +1589,7 @@ class KolegaCodeApp(
         await self._set_interaction_mode(target)
 
     async def action_toggle_permission_mode(self) -> None:
-        if self._permission_mode_switch_blocked():
+        if self._startup_pending or self._permission_mode_switch_blocked():
             return
         target = PermissionMode.AUTO if self.permission_mode == PermissionMode.ASK else PermissionMode.ASK
         await self._set_permission_mode(target)
@@ -1563,6 +1639,8 @@ class KolegaCodeApp(
 
     def action_open_settings(self, category: str = "model") -> None:
         """Open the full-screen settings editor."""
+        if self._startup_pending:
+            return
         if self._settings_screen is not None or self._onboarding_screen is not None:
             return
         if self._pending_approval is not None or self._pending_question is not None or self._plan_decision_active:
@@ -1614,6 +1692,8 @@ class KolegaCodeApp(
 
     def action_open_memory(self, *, inspect_disabled: bool = False) -> None:
         """Open the backend-neutral project-memory browser and editor."""
+        if self._startup_pending:
+            return
         if self._memory_screen is not None or self._onboarding_screen is not None:
             return
         if self._pending_approval is not None or self._pending_question is not None or self._plan_decision_active:
@@ -2302,6 +2382,13 @@ class KolegaCodeApp(
             self._schedule_session_diff_refresh()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if self._startup_pending and action in {
+            "toggle_interaction_mode",
+            "toggle_permission_mode",
+            "open_settings",
+            "open_memory",
+        }:
+            return False
         if action == "open_changes":
             return self._changes_available()
         return True
@@ -2344,12 +2431,12 @@ class KolegaCodeApp(
         if activity is not None:
             self.action_open_sub_agent(activity.agent_id)
 
-    def on_unmount(self) -> None:
+    async def on_unmount(self) -> None:
+        await self._cancel_startup()
         # Stop the watchdog thread on shutdown (also keeps test apps from leaking threads).
         if self._watchdog is not None:
             self._watchdog.stop()
-        # Backstop for teardown paths that never reach action_quit; this hook is
-        # sync, so the socket closes when the serve task next runs.
+        # Backstop for teardown paths that never reach action_quit.
         if self._share_server is not None:
             self._share_server.request_stop()
             self._share_server = None
@@ -2403,6 +2490,7 @@ class KolegaCodeApp(
             # Release control first, so any prompt still open resolves to its
             # default instead of leaving a turn waiting on a closing window.
             self.control_channel.release(tui_constants.TUI_CLIENT_ID)
+            await self._cancel_startup()
             if self._watchdog is not None:
                 self._watchdog.stop()
             # Persist any streaming tail still buffered for coalescing, so a
@@ -2890,6 +2978,10 @@ class KolegaCodeApp(
             pass
 
     def _refresh_input_area_visibility(self) -> None:
+        if self._startup_pending and (self._pending_question is not None or self._pending_approval is not None):
+            # Startup hooks/extensions can ask a real question. Never conceal
+            # the control-channel prompt behind branding.
+            self._dismiss_boot_splash()
         self._refresh_shortcut_context()
         prompt_or_decision_pending = (
             self._pending_approval is not None or self._pending_question is not None or self._plan_decision_active
@@ -2917,7 +3009,11 @@ class KolegaCodeApp(
             # composer helpers so a late finalize can't raise WorkerFailed.
             return
         composer.disabled = (
-            not enabled or self._plan_decision_active or self._pending_approval is not None or self._resume_in_progress
+            not enabled
+            or self._plan_decision_active
+            or self._pending_approval is not None
+            or self._resume_in_progress
+            or (self._startup_pending and self._pending_question is None)
         )
         self._refresh_shortcut_context()
         if self.config is None and self.agent is None:

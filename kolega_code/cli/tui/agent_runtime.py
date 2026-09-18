@@ -926,7 +926,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._maybe_start_queued_message()
 
     def _maybe_start_queued_message(self) -> bool:
-        if not self._queued_messages or self.agent is None:
+        if self._startup_pending or not self._queued_messages or self.agent is None:
             return False
         if self._turn_active or self.agent_worker is not None:
             return False
@@ -1182,6 +1182,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 self._write_log(messages.LOG_IGNORED_EVENT.format(event_type=event.event_type), "debug")
 
     def action_cancel_generation(self) -> None:
+        if self._startup_pending and self._pending_question is None and self._pending_approval is None:
+            self.run_worker(self.action_quit, name="startup-quit", group="startup-quit")
+            return
         # /handoff generation is a helper request, not an agent turn: Esc aborts
         # the handoff stream cooperatively and leaves the session untouched.
         if self._handoff_in_progress and self._handoff_cancel_event is not None:
@@ -1347,6 +1350,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         restore_transcript: bool = True,
         preserve_queued: bool = False,
     ) -> None:
+        self._set_startup_stage("Loading skills and agents…")
         await self._prime_recording_offset()
         history = self.session.history
         compaction = self.session.compaction
@@ -1530,6 +1534,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             # Initialize LSP (language detection + server resolution)
             agent = self.agent
             assert agent.tool_collection is not None
+            self._set_startup_stage("Initializing tools…")
             await agent.tool_collection.initialize()
             agent.gigacode_enabled = gigacode_active
             # A session-level /web-search override outlives agent rebuilds (model
@@ -1538,6 +1543,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 agent.apply_web_search_mode(self._web_search_mode)
             self._initialize_ledger_diff_tracker()
             if restoring_history:
+                self._set_startup_stage("Restoring session…")
                 self.agent.restore_message_history(history)
                 self.agent.restore_compaction_state(compaction)
                 self.agent.session_recorder = self._session_recorder
@@ -1547,6 +1553,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 await bind_extension_agent(extension_bundle, self.agent)
             self._update_mode_chrome()
             self._ensure_startup_entry()
+            self._set_startup_stage("Running startup hooks…")
             await self._fire_session_start_once()
             # Refresh the Settings-tab LSP status now that the agent (and its
             # initialized lsp_manager) exists. Without this the status is stale

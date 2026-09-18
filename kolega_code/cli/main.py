@@ -1270,6 +1270,9 @@ def _run_tui(args: argparse.Namespace) -> int:
             # Awaited teardown for exits that bypass action_quit (startup
             # errors, crashes); a no-op after a normal quit.
             cleanup_error: BaseException | None = None
+            cancel_startup = getattr(app, "_cancel_startup", None)
+            if cancel_startup is not None:
+                await cancel_startup()
             shutdown_task = getattr(app, "_session_shutdown_task", None)
             if shutdown_task is not None:
                 try:

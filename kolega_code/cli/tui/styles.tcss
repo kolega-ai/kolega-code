@@ -1,5 +1,6 @@
 Screen {
     layout: vertical;
+    layers: base boot;
     scrollbar-background: $surface;
     scrollbar-background-hover: $surface;
     scrollbar-background-active: $surface-lighten-2;
@@ -7,6 +8,15 @@ Screen {
     scrollbar-color-hover: $text-muted;
     scrollbar-color-active: $text;
     scrollbar-corner-color: $surface;
+}
+
+#boot_splash {
+    layer: boot;
+    overlay: screen;
+    position: absolute;
+    offset: 0 0;
+    width: 100vw;
+    height: 100vh;
 }
 
 #body {
@@ -708,6 +718,9 @@ OnboardingScreen Select:focus > SelectCurrent,
 #composer {
     dock: bottom;
     height: auto;
+    /* Keep one content cell after padding, even beneath a tiny splash.
+       Rich cannot wrap TextArea's placeholder at zero width. */
+    min-width: 2;
     min-height: 5;
     max-height: 15;
     padding: 0 0 0 1;
