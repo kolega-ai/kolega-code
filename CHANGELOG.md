@@ -6,6 +6,40 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.40.0 - 2026-09-18
+
+### Added
+
+- **Faster, clearer startup.** A themed splash paints immediately while the
+  application loads, followed by a compact startup card with expandable details
+  that folds away when the conversation begins.
+- **Resume recent sessions from the startup card.** Browse recent conversations
+  and resume them directly, with ownership checks to avoid opening a session
+  already in use.
+- **Context-sensitive keyboard help.** A shortcut bar follows the focused widget,
+  and `F1` opens local help for the current context.
+- **Optional discovery tips.** Fresh sessions can show dismissible tips covering
+  commands, settings, and workflows; enable them in Settings.
+
+### Changed
+
+- **More informative tool calls.** Tool headings include concise, sanitized
+  subjects such as file paths, commands, and search queries. Recorded sessions
+  and the web player retain those subjects too.
+- **A more compact, readable TUI.** Session metadata, empty sidebar sections,
+  task lists, transcript paths, and command previews take less space. Build and
+  plan indicators have distinct colors, and working-state labels use a subtle
+  shimmer.
+
+### Fixed
+
+- Startup-card disclosure preferences persist reliably across rapid toggles and
+  terminal resizes.
+
+### Security
+
+- Updated Soup Sieve to 2.9.2 to fix CVE-2026-86000 and CVE-2026-85999.
+
 ## 0.39.0 - 2026-09-15
 
 ### Security
