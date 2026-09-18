@@ -9,10 +9,12 @@ looking at.
 
 ## Starting up
 
-Once the terminal UI opens, a themed block-letter **KOLEGA CODE** splash
-appears while the workspace, skills, tools, and any saved conversation are
-prepared. The stage line reports the work being performed—not a simulated
-percentage or countdown—and the project path and version appear below it.
+Once the terminal UI opens, a bold **KOLEGA** wordmark with a smaller,
+letter-spaced **CODE** subtitle appears while the workspace, skills, tools,
+and any saved conversation are prepared. The high-contrast lettering uses
+theme-colored highlights. The stage line reports the work being performed—not
+a simulated percentage or countdown—and the project path and version appear
+below it.
 
 The wordmark shares one gentle shimmer sweep in truecolor terminals.
 256-color output, `NO_COLOR`, and reduced animation settings

@@ -80,11 +80,17 @@ async def test_boot_splash_full_geometry_wordmark_metadata_and_no_children() -> 
         rendered = _lines(splash)
         assert all(cell_len(line) <= splash.size.width for line in rendered)
 
-        block_lines = [line.strip() for line in rendered if any(char in line for char in "█▀▄")]
-        assert len(block_lines) == 7
-        assert all(cell_len(line) == 35 for line in block_lines[:4])
-        assert all(cell_len(line) <= 15 for line in block_lines[4:])
-        assert all(cell_len(line) < cell_len(block_lines[0]) for line in block_lines[4:])
+        block_lines = [line for line in rendered if any(char in line for char in "█▀▄")]
+        assert len(block_lines) == 5
+        assert max(cell_len(line.strip()) for line in block_lines) == 56
+        assert all(len(line) - len(line.lstrip()) == 12 for line in block_lines)
+        assert block_lines[0].lstrip().startswith("██   ▄█▀   ▄████▄")
+        assert block_lines[-1].endswith("███████  ███████   ▀████▀   ██    ██")
+        subtitle = next(line for line in rendered if "C  O  D  E" in line)
+        assert subtitle == " " * 27 + "─────   C  O  D  E   ─────"
+        assert rendered.index(subtitle) == rendered.index(block_lines[-1]) + 2
+        stage_index = next(index for index, line in enumerate(rendered) if "▶ Preparing workspace" in line)
+        assert stage_index == rendered.index(subtitle) + 3
         assert any("▶ Preparing workspace" in line for line in rendered)
         assert any(f"{project} · v9.8.7" in line for line in rendered)
 
@@ -134,7 +140,44 @@ async def test_boot_splash_compact_fallback_has_no_overflow_or_block_logo(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("elapsed", [0.0, 0.75, 4.5])
+async def test_boot_splash_resize_across_wordmark_boundaries_keeps_lockup_centered(tmp_path: Path) -> None:
+    splash = BootSplash(project_path=tmp_path / "非常に長いプロジェクト名🧪", version="1.0.0")
+    app = BootSplashTestApp(splash)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        for width, height, full in [
+            (56, 11, True),
+            (55, 11, False),
+            (80, 10, False),
+            (80, 11, True),
+            (1, 1, False),
+            (80, 24, True),
+        ]:
+            await pilot.resize_terminal(width, height)
+            await _wait_for_layout(
+                pilot,
+                lambda: (
+                    splash.size.width == width
+                    and splash.size.height == height
+                    and any("█" in line for line in _lines(splash)) == full
+                ),
+            )
+            rendered = _lines(splash)
+            assert len(rendered) == height
+            assert all(cell_len(line) <= width for line in rendered)
+            if full:
+                first_logo_row = next(index for index, line in enumerate(rendered) if "█" in line)
+                assert first_logo_row == (height - 11) // 2
+                assert any("C  O  D  E" in line for line in rendered)
+                assert any("▶ Preparing workspace" in line for line in rendered)
+                assert any("v1.0.0" in line or "…" in line for line in rendered)
+            elif width >= 10:
+                assert any("KOLEGA CODE" in line for line in rendered)
+                assert not any("─" in line for line in rendered)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("elapsed", [0.0, 0.75, 3.5, 4.5, 6.75])
 async def test_boot_splash_shimmer_uses_shared_columns_for_kolega_and_code_rows(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, elapsed: float
 ) -> None:
@@ -155,15 +198,23 @@ async def test_boot_splash_shimmer_uses_shared_columns_for_kolega_and_code_rows(
         now = started_at + elapsed
         rendered_lines = list(splash._render_for_size(80, 24).split("\n"))
         block_lines = [line for line in rendered_lines if any(char in line.plain for char in "█▀▄")]
-        assert len(block_lines) == 7
+        assert len(block_lines) == 5
         assert {cell_len(line.plain) for line in block_lines} == {cell_len(block_lines[0].plain)}
 
         logo_start = cell_len(block_lines[0].plain) - _LOGO_WIDTH
         kolega_row = block_lines[0]
-        code_row = block_lines[-1]
+        code_row = next(line for line in rendered_lines if "C  O  D  E" in line.plain)
+        muted = splash.get_component_rich_style("boot-splash--muted").color
+        assert muted is not None
+        assert code_row.cell_len == kolega_row.cell_len
         for column in range(_LOGO_WIDTH):
             offset = logo_start + column
-            assert _color_at(code_row, offset) == _color_at(kolega_row, offset)
+            for row in block_lines[1:]:
+                assert _color_at(row, offset) == _color_at(kolega_row, offset)
+            if code_row.plain[offset] == "─":
+                assert _color_at(code_row, offset) == muted.name
+            else:
+                assert _color_at(code_row, offset) == _color_at(kolega_row, offset)
 
 
 @pytest.mark.asyncio

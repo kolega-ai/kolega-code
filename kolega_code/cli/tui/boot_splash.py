@@ -18,20 +18,81 @@ from .turn_status import _shimmer_palette, shimmer_text
 _FRAME_INTERVAL = 0.08
 _DEFAULT_STAGE = "Preparing workspace"
 
+# Ten-pixel glyphs pack into five terminal rows. Double-weight stems, rounded
+# shoulders, and slightly narrower L/E forms balance the wide, open counters.
 _KOLEGA: dict[str, tuple[str, ...]] = {
-    "K": ("10001", "10010", "10100", "11000", "10100", "10010", "10001"),
-    "O": ("01110", "10001", "10001", "10001", "10001", "10001", "01110"),
-    "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
-    "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
-    "G": ("01111", "10000", "10000", "10111", "10001", "10001", "01111"),
-    "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
-}
-
-_CODE: dict[str, tuple[str, ...]] = {
-    "C": ("111", "100", "100", "100", "111"),
-    "O": ("111", "101", "101", "101", "111"),
-    "D": ("110", "101", "101", "101", "110"),
-    "E": ("111", "100", "110", "100", "111"),
+    "K": (
+        "11000011",
+        "11000110",
+        "11001100",
+        "11011000",
+        "11110000",
+        "11110000",
+        "11011000",
+        "11001100",
+        "11000110",
+        "11000011",
+    ),
+    "O": (
+        "00111100",
+        "01111110",
+        "11000011",
+        "11000011",
+        "11000011",
+        "11000011",
+        "11000011",
+        "11000011",
+        "01111110",
+        "00111100",
+    ),
+    "L": (
+        "1100000",
+        "1100000",
+        "1100000",
+        "1100000",
+        "1100000",
+        "1100000",
+        "1100000",
+        "1100000",
+        "1111111",
+        "1111111",
+    ),
+    "E": (
+        "1111111",
+        "1111111",
+        "1100000",
+        "1100000",
+        "1111110",
+        "1111110",
+        "1100000",
+        "1100000",
+        "1111111",
+        "1111111",
+    ),
+    "G": (
+        "00111110",
+        "01111110",
+        "11000000",
+        "11000000",
+        "11001111",
+        "11001111",
+        "11000011",
+        "11000011",
+        "01111110",
+        "00111100",
+    ),
+    "A": (
+        "00111100",
+        "01111110",
+        "11000011",
+        "11000011",
+        "11111111",
+        "11111111",
+        "11000011",
+        "11000011",
+        "11000011",
+        "11000011",
+    ),
 }
 
 
@@ -57,11 +118,11 @@ def _pack_rows(rows: tuple[str, ...]) -> tuple[str, ...]:
 
 def _wordmark(word: str, glyphs: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
     packed = [_pack_rows(glyphs[letter]) for letter in word]
-    return tuple(" ".join(letter[row] for letter in packed) for row in range(len(packed[0])))
+    return tuple("  ".join(letter[row] for letter in packed) for row in range(len(packed[0])))
 
 
 _KOLEGA_LINES = _wordmark("KOLEGA", _KOLEGA)
-_CODE_LINES = _wordmark("CODE", _CODE)
+_CODE_LINE = "─────   C  O  D  E   ─────"
 _LOGO_WIDTH = max(cell_len(line) for line in _KOLEGA_LINES)
 _FULL_SPLASH_MIN_HEIGHT = 11
 
@@ -93,15 +154,15 @@ class BootSplash(Static):
     }
 
     BootSplash .boot-splash--logo-base {
-        color: $primary;
+        color: $text;
     }
 
     BootSplash .boot-splash--logo-accent {
-        color: $secondary;
+        color: $primary;
     }
 
     BootSplash .boot-splash--logo-peak {
-        color: $text;
+        color: $secondary;
     }
 
     BootSplash .boot-splash--stage {
@@ -196,13 +257,18 @@ class BootSplash(Static):
 
     def _full_lines(self, width: int, height: int) -> list[Text]:
         logo_width = min(_LOGO_WIDTH, width)
-        code = [_center_padded_plain(line, logo_width) for line in _CODE_LINES]
-        logo_plain = [*_KOLEGA_LINES, " " * logo_width, *code]
-        logo = self._center_logo(self._style_logo(logo_plain), width, logo_width)
+        code = _center_padded_plain(_CODE_LINE, logo_width)
+        logo = self._style_logo([*_KOLEGA_LINES, " " * logo_width, code])
+        # Keep the framing rules quiet; only the lettering catches the shared sweep.
+        muted = self.get_component_rich_style("boot-splash--muted")
+        for column, character in enumerate(code):
+            if character == "─":
+                logo[-1].stylize(muted, column, column + 1)
+        logo = self._center_logo(logo, width, logo_width)
 
         stage = self._line(self._fit(f"▶ {self._stage}", width), width, "boot-splash--stage")
         meta = self._line(self._fit(self._metadata(), width), width, "boot-splash--muted")
-        body: list[Text] = [*logo, Text(), stage, meta]
+        body: list[Text] = [*logo, Text(), Text(), stage, meta]
         top_pad = max(0, (height - len(body)) // 2)
         body = [Text() for _ in range(top_pad)] + body
         return body[:height]
