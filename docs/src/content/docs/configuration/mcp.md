@@ -59,6 +59,20 @@ Project MCP config is intentionally gated because it can point at local executab
 }
 ```
 
+#### Parallel Search
+
+Parallel Search MCP provides live web search and URL fetching through `web_search` and `web_fetch`. The default endpoint requires no account, API key, or OAuth:
+
+```json
+{
+  "id": "parallel-search",
+  "name": "Parallel Search",
+  "transport": "streamable_http",
+  "url": "https://search.parallel.ai/mcp",
+  "enabled": true
+}
+```
+
 ### `sse`
 
 ```json
