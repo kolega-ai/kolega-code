@@ -74,6 +74,8 @@ class ConversationEntry:
     uuid: Optional[str] = None
     tool_name: Optional[str] = None
     tool_call_id: Optional[str] = None
+    tool_subject: str = ""  # bounded, sanitized input subject; never raw tool arguments
+    tool_display: dict[str, list[str] | str] = field(default_factory=dict)  # safe paths / command, not raw args
     tone: Optional[str] = None  # "warning" | "error" styling hint for progress entries
     full_content: str = ""  # untruncated tool output for expand-on-demand (capped)
     edit_preview: Optional[dict] = None  # UI-only structured diff/head preview for edit tools (not persisted)
@@ -96,6 +98,11 @@ class ConversationEntry:
     # e.g. {"kind": "peer", "session_id": ..., "title": ...}. UI-only display
     # metadata; excluded from equality like the other render caches.
     origin: Optional[dict] = field(default=None, compare=False, repr=False)
+    # Startup disclosure state survives scrollback remounts, not session storage.
+    startup_collapsed: bool = field(default=False, compare=False, repr=False)
+    startup_details_expanded: bool = field(default=False, compare=False, repr=False)
+    startup_auto_folded: bool = field(default=False, compare=False, repr=False)
+    startup_tip_shown: bool = field(default=False, compare=False, repr=False)
 
     def materialize(self) -> str:
         """Fold any deferred stream deltas into ``content`` and return it.

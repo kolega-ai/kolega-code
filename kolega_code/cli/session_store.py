@@ -132,6 +132,10 @@ class SessionStoreError(RuntimeError):
     """Raised when a CLI session cannot be loaded or saved."""
 
 
+class SessionLockedError(SessionStoreError):
+    """Another instance currently owns the session."""
+
+
 @dataclass
 class SessionRecord:
     session_id: str
@@ -506,6 +510,39 @@ class SessionStore:
                 self._recorders[session_id] = recorder
             return recorder
 
+    def claim_for_resume(self, session_id: str, project_path: Path) -> SessionRecord:
+        """Validate a resume target while retaining exclusive ownership.
+
+        Lock before replay: even a load can repair a journal tail or metadata.
+        Successful callers keep the reservation through app teardown and the
+        next app's recorder acquisition, with no check-then-open race.
+        """
+        if not self.session_dir_for(session_id).exists() and not self.legacy_path_for(session_id).exists():
+            raise SessionStoreError(f"Session not found: {session_id}")
+        with self._lock_for(session_id):
+            self._acquire_session_lock(session_id)
+            try:
+                record = self.load(session_id)
+                if record.session_id != session_id:
+                    raise SessionStoreError("The saved session ID does not match its directory.")
+                if record.project_path != str(project_path.resolve()):
+                    raise SessionStoreError("This session belongs to a different project.")
+                return record
+            except BaseException as exc:
+                # Balance only this claim; don't release an earlier owner in
+                # the same store when validation fails.
+                self._session_lock_for(session_id).release()
+                if isinstance(exc, (KeyError, TypeError, ValueError)):
+                    raise SessionStoreError("The saved session metadata is invalid.") from exc
+                raise
+
+    def release_session_lock(self, session_id: str) -> None:
+        """Release one fully stopped session without releasing a resume target."""
+        with self._locks_guard:
+            lock = self._session_locks.get(session_id)
+        if lock is not None and lock.is_locked:
+            lock.release(force=True)
+
     def journal(self, session_id: str) -> SessionJournal:
         with self._locks_guard:
             journal = self._journals.get(session_id)
@@ -550,7 +587,7 @@ class SessionStore:
         try:
             lock.acquire(timeout=0)
         except Timeout as exc:
-            raise SessionStoreError(
+            raise SessionLockedError(
                 f"Session {session_id} is already open in another kolega-code instance; close it there before retrying."
             ) from exc
 
@@ -609,8 +646,13 @@ class SessionStore:
             self._journals.pop(session_id, None)
         shutil.rmtree(path)
 
-    def list(self, project_path: Optional[Path] = None) -> list[SessionRecord]:
-        records = list(self._iter_records())
+    def list(self, project_path: Optional[Path] = None, *, recover: bool = True) -> list[SessionRecord]:
+        """List metadata, optionally migrating legacy files and repairing projections.
+
+        ``recover=False`` never opens journals or writes session state, making it
+        safe for a picker even while another process owns a session.
+        """
+        records = list(self._iter_records(recover=recover))
         if project_path is not None:
             resolved = str(project_path.resolve())
             records = [record for record in records if record.project_path == resolved]
@@ -682,7 +724,7 @@ class SessionStore:
             artifact_manifest_json=json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         )
 
-    def _iter_records(self) -> Iterable[SessionRecord]:
+    def _iter_records(self, *, recover: bool = True) -> Iterable[SessionRecord]:
         if not self.sessions_dir.exists():
             return []
         identifiers = {
@@ -692,12 +734,19 @@ class SessionStore:
         records = []
         for session_id in identifiers:
             try:
-                self._ensure_migrated(session_id)
-                try:
+                if recover:
+                    self._ensure_migrated(session_id)
+                    try:
+                        metadata = self._read_metadata(session_id)
+                    except SessionStoreError:
+                        events = self.journal(session_id).read_events(repair_tail=True)
+                        metadata = self._metadata_projection(session_id, events)
+                elif self.session_dir_for(session_id).exists():
                     metadata = self._read_metadata(session_id)
-                except SessionStoreError:
-                    events = self.journal(session_id).read_events(repair_tail=True)
-                    metadata = self._metadata_projection(session_id, events)
+                else:
+                    metadata = json.loads(self.legacy_path_for(session_id).read_text(encoding="utf-8"))
+                if not isinstance(metadata, dict) or metadata.get("session_id") != session_id:
+                    continue
                 records.append(SessionRecord.from_dict({**metadata, "history": [], "compaction": {}}))
             except Exception:
                 continue
@@ -944,13 +993,14 @@ class SessionStore:
 
 
 def resolve_active_project(
-    session: SessionRecord, store: SessionStore, launch_path: Path
+    session: SessionRecord, store: SessionStore, launch_path: Path, *, persist_fallback: bool = True
 ) -> tuple[Path, Optional[str]]:
     """Validate and return a resumed session's durable active workspace.
 
     A saved active worktree that no longer resolves falls back to the launch
     checkout and clears the persisted selection; the returned warning says so.
-    Both checkouts being unavailable is a hard resume error.
+    Both checkouts being unavailable is a hard resume error. A resume preview
+    uses ``persist_fallback=False`` so cancelling cannot alter the saved session.
     """
     from kolega_code.worktrees import WorktreeError, resolve_worktree
 
@@ -967,12 +1017,13 @@ def resolve_active_project(
                 f"{session.active_project_path!r} is invalid ({active_error}), and launch checkout "
                 f"{launch_path} is unavailable ({launch_error})."
             ) from launch_error
-        session.active_project_path = None
-        try:
-            store.save(session)
-        except OSError:
-            # The journal is canonical: continue when only the derived
-            # metadata projection failed to refresh, else surface the error.
-            if store.load(session.session_id).active_project_path is not None:
-                raise
+        if persist_fallback:
+            session.active_project_path = None
+            try:
+                store.save(session)
+            except OSError:
+                # The journal is canonical: continue when only the derived
+                # metadata projection failed to refresh, else surface the error.
+                if store.load(session.session_id).active_project_path is not None:
+                    raise
         return fallback, f"Saved active worktree is unavailable ({active_error}); resuming in `{fallback}`."

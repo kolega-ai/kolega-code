@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from textual.css.query import NoMatches
 from textual.widget import Widget
 from rich.text import Text
-from textual.widgets import Button, Input, OptionList, Select, Static
+from textual.widgets import Button, Input, OptionList, Select, Static, Switch
 from textual.widgets.option_list import Option
 
 from kolega_code.auth import constants as chatgpt_constants
@@ -566,6 +566,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             if self.settings.active_theme in theme.available_themes()
             else theme.DEFAULT_THEME_NAME
         )
+        self._settings_query_one("#discovery_tips_switch", Switch).value = self.settings.discovery_tips
         self._populate_provider_rows()
         self._populate_endpoint_controls()
         self._populate_agent_model_rows()
@@ -2346,6 +2347,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             candidate.active_model = model
             candidate.active_thinking_effort = effort or default_ui_thinking_effort(provider, model)
             candidate.active_theme = str(self._settings_query_one("#theme_select", Select).value)
+            candidate.discovery_tips = self._settings_query_one("#discovery_tips_switch", Switch).value
             self._collect_agent_models_from_ui()
             self._collect_model_slots_from_ui()
             self._collect_web_search_from_ui()

@@ -104,10 +104,11 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
         assert app.query_one("#status_summary_section", Vertical) is not None
         assert app.query_one("#status_task_list_section", Vertical) is not None
         assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == "No plan captured yet."
-        assert app.query_one("#status_task_list_markdown", PlanningMarkdown).source == "No task list has been set."
+        assert app.query_one("#status_task_list_markdown", PlanningMarkdown).source == "Task List · Not set"
         assert app.conversation_entries[0].kind == "startup"
         startup = app.conversation_entries[0].content
-        assert "____          _" in startup
+        assert startup.startswith("Kolega Code v")
+        assert "____          _" not in startup
         assert f"Project: {project}" in startup
         assert f"Session: {session.session_id[:8]}" in startup
         assert "Mode: cli" in startup
@@ -172,10 +173,10 @@ async def test_textual_app_status_tab_is_default_dashboard(tmp_path: Path, monke
         assert f"{config.long_context_config.provider.value}/{config.long_context_config.model}" in dashboard
         assert "Build" in dashboard
         assert "Idle" in dashboard
-        assert "Waiting for first context count" in dashboard
+        assert "Context · Not measured" in dashboard
         assert str(dashboard_widget.styles.border) == "Edges()"
         assert str(app.query_one("#status_summary_section", Vertical).styles.border) != "Edges()"
-        assert str(app.query_one("#status_task_list_section", Vertical).styles.border) != "Edges()"
+        assert str(app.query_one("#status_task_list_section", Vertical).styles.border) == "Edges()"
         assert str(app.query_one("#terminal").styles.border) == "Edges()"
         assert list(app.query("#logs")) == []
         assert list(app.query("#status")) == []

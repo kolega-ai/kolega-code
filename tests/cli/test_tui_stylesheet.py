@@ -1,7 +1,10 @@
 # ruff: noqa: F401,F811,E402
 from pathlib import Path
+import time
+from typing import Callable
 
 import pytest
+from textual.pilot import Pilot
 
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.cli.config import config_summary
@@ -12,7 +15,16 @@ from kolega_code.config import ModelProvider
 EXPECTED_CSS_PATH = "tui/styles.tcss"
 
 
-from ._app_test_utils import FakeCoderAgent, build_test_config, install_fake_agents
+from ._app_test_utils import FakeCoderAgent, _build_sub_agent_test_app, build_test_config, install_fake_agents
+
+
+async def _wait_for_layout(pilot: Pilot, predicate: Callable[[], bool], *, timeout: float = 6.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        if predicate():
+            return
+    raise AssertionError(f"layout did not settle within {timeout}s")
 
 
 def test_tui_uses_external_textual_stylesheet(tmp_path: Path) -> None:
@@ -330,13 +342,16 @@ async def test_sidebar_tab_and_settings_planning_computed_styles_keep_contrast(
         assert app.query_one("#status_dashboard").styles.padding.top == 1
         assert app.query_one("#status_dashboard").styles.padding.bottom == 1
         task_list_markdown = app.query_one("#status_task_list_markdown")
-        assert task_list_markdown.styles.padding.bottom == 1
+        assert task_list_markdown.styles.padding.bottom == 0
 
         settings_background = app.query_one("#settings_summary_panel").styles.background
 
         for section in app.query(".status-section"):
             assert section.styles.background == app.query_one("#status_form").styles.background
-            assert str(section.styles.border) != "Edges()"
+            if section.id in {"status_usage_section", "status_task_list_section"}:
+                assert str(section.styles.border) == "Edges()"
+            else:
+                assert str(section.styles.border) != "Edges()"
         for section in app.query(".planning-section"):
             assert section.styles.background == app.query_one("#planning_form").styles.background
             assert str(section.styles.border) != "Edges()"
@@ -409,3 +424,94 @@ def test_tui_stylesheet_keeps_transcript_entry_bottom_gap() -> None:
     activity_block = css.split("ConversationEntryWidget.entry-progress,", 1)[1].split("}", 1)[0]
     assert "padding: 0 0 1 2" in activity_block
     assert "padding-left" not in activity_block
+
+    user_block = css.split("ConversationEntryWidget > .conversation-entry--user {", 1)[1].split("}", 1)[0]
+    assert "background: $foreground 5%" in user_block
+    assert "padding" not in user_block
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("truecolor", [False, True])
+@pytest.mark.parametrize("no_color", [False, True])
+@pytest.mark.parametrize("columns", [80, 120])
+async def test_user_message_background_is_subtle_across_themes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, truecolor: bool, no_color: bool, columns: int
+) -> None:
+    from textual.geometry import Region
+
+    from kolega_code.cli import theme
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ConversationEntryWidget
+
+    monkeypatch.setattr(theme, "supports_truecolor", lambda console=None: truecolor)
+    if no_color:
+        monkeypatch.setenv("NO_COLOR", "1")
+    else:
+        monkeypatch.delenv("NO_COLOR", raising=False)
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    try:
+        async with app.run_test(size=(columns, 60)) as pilot:
+            app.conversation_entries = [
+                ConversationEntry(kind="user", content="A single line."),
+                ConversationEntry(kind="user", content="A user message\n\nwith an intentional blank line."),
+                ConversationEntry(
+                    kind="user",
+                    content="A wrapped message with wide glyphs 界 🌍 and enough words to fill several lines. " * 2,
+                ),
+                ConversationEntry(kind="assistant", content="An assistant reply."),
+            ]
+            app._render_conversation()
+            await pilot.pause()
+
+            for theme_name in theme.available_themes():
+                app._apply_theme(theme_name)
+                await pilot.pause()
+                users = list(app.query(".entry-user").results(ConversationEntryWidget))
+                assistant = app.query_one(".entry-assistant", ConversationEntryWidget)
+                await _wait_for_layout(
+                    pilot,
+                    lambda: (
+                        all(user.content_region.height > 0 for user in users) and not app._conversation_anchor_pending
+                    ),
+                )
+                # Use the rendered parent surface, including terminal color filters.
+                surface_line = app._conversation.render_lines(Region(0, 0, 1, 1))[0]
+                surface_style = next(iter(surface_line)).style
+                assert surface_style is not None
+                surface = surface_style.bgcolor
+                for user in users:
+                    # A low-opacity theme overlay, not a hard-coded opaque panel.
+                    background = user.get_component_styles("conversation-entry--user").background
+                    assert 0 < background.a <= 0.1, theme_name
+                    if not truecolor:
+                        assert background.r == background.g == background.b, theme_name
+                    assert user.styles.background.a == 0
+                    assert tuple(user.styles.padding) == (0, 0, 1, 0)
+                    assert user.content_region.x == user.region.x
+
+                    strips = user.render_lines(user.region.reset_offset)
+                    assert len(strips) == user.content_region.height + 1
+                    for line in strips[:-1]:
+                        assert line.cell_length == user.content_region.width
+                        assert all(segment.style and segment.style.bgcolor != surface for segment in line), (
+                            f"{theme_name}: message rows, including internal blank lines, should stay tinted: {line!r}"
+                        )
+                    assert strips[-1].text.strip() == ""
+                    assert all(segment.style and segment.style.bgcolor == surface for segment in strips[-1]), (
+                        f"{theme_name}: the bottom padding should use the transcript background "
+                        f"{surface!r}: {strips[-1]!r}"
+                    )
+
+                assert users[0].content_region.height == 1
+                assert users[1].content_region.height == 3
+                assert users[2].content_region.height > 1
+                assert assistant.styles.background.a == 0
+                assert tuple(assistant.styles.padding) == (0, 0, 1, 0)
+                assert all(
+                    segment.style and segment.style.bgcolor == surface
+                    for line in assistant.render_lines(assistant.region.reset_offset)
+                    for segment in line
+                )
+    finally:
+        theme.apply_theme(theme.DEFAULT_THEME_NAME)

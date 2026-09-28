@@ -145,6 +145,9 @@ def test_tui_selected_worktree_is_effective_before_project_services(
         def save(self, session: SessionRecord) -> None:
             calls.append(("save_session", Path(session.project_path)))
 
+        def release_session_locks(self) -> None:
+            calls.append(("release_locks", None))
+
     session = SessionRecord.create(selected.resolve(), main_module.CLI_AGENT_MODE, {})
 
     def fake_build_config(path: Path, *args: Any, **kwargs: Any) -> object:
@@ -161,6 +164,7 @@ def test_tui_selected_worktree_is_effective_before_project_services(
         def __init__(self, **kwargs: Any) -> None:
             calls.append(("app", kwargs["project_path"]))
             assert kwargs["session"] is session
+            self.session = kwargs["session"]
 
         async def run_async(self) -> None:
             calls.append(("run", None))
@@ -191,6 +195,7 @@ def test_tui_selected_worktree_is_effective_before_project_services(
     assert calls[0] == ("resolve", source.resolve())
     for name in ("trust_hooks", "trust_mcp", "trust_lsp", "config", "session", "app"):
         assert (name, selected.resolve()) in calls
+    assert calls[-1] == ("release_locks", None)
 
 
 def test_ask_selected_worktree_flows_through_discovery_config_hooks_and_agent(

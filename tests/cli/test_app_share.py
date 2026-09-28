@@ -177,7 +177,7 @@ async def test_quitting_stops_sharing(share_app) -> None:
         url = share_app._clipboard[-1]
         assert await _get(url) == 200
 
-        share_app.on_unmount()
+        await share_app.on_unmount()
         await _wait_until_closed(url)
 
     assert share_app._share_server is None

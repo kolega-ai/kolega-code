@@ -34,10 +34,12 @@ async def test_retitle_command_with_explicit_title(tmp_path: Path, monkeypatch: 
         assert app.session.name == "worker-01"
         assert app.session.title == "Implement User OAuth Flow"
 
-        # Verify header reflects the title and name
-        meta_content = str(app.query_one("#session_meta", Static).render())
-        assert "Implement User OAuth Flow" in meta_content
-        assert "worker-01" in meta_content
+        # Compact metadata reserves space for mode/permissions; the full session
+        # title and name remain available in the Session card and startup details.
+        session_content = str(app.query_one("#status_session", Static).render())
+        assert "Implement User OAuth Flow" in session_content
+        assert "worker-01" in session_content
+        assert "Implement User OAuth Flow" in app.conversation_entries[0].content
 
         # Verify conversation entry
         assert any(

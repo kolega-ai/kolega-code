@@ -5,7 +5,9 @@ from __future__ import annotations
 import time
 from typing import Optional
 
+from rich.cells import cell_len
 from rich.markup import escape
+from rich.text import Text
 from textual.widgets import Static
 
 from kolega_code.agent import AgentEvent
@@ -14,6 +16,7 @@ from .. import messages, theme
 from ..theme import Color, Glyph
 from . import app_base as tui_app_base
 from . import state as tui_state
+from .turn_status import TurnStatus
 
 
 class StatusDashboardMixin(tui_app_base.KolegaAppBase):
@@ -26,14 +29,16 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         return self.query_one("#status_dashboard", Static)
 
     @property
-    def _turn_status(self) -> Static:
-        return self.query_one("#turn_status", Static)
+    def _turn_status(self) -> TurnStatus:
+        return self.query_one("#turn_status", TurnStatus)
 
     @property
     def _status_usage(self) -> Static:
         return self.query_one("#status_usage", Static)
 
     def _refresh_status_dashboard(self) -> None:
+        self._refresh_metadata()
+        self._refresh_shortcut_context()
         provider, model = self._startup_model()
         self._status_state.provider = provider
         self._status_state.model = model
@@ -46,7 +51,11 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         try:
             self._status_session.update(self._format_session_card())
             self._status_dashboard.update(self._format_status_dashboard())
-            self._status_usage.update(self._usage_summary_lines())
+            usage_lines = self._usage_summary_lines()
+            self._status_usage.update(usage_lines)
+            self.query_one("#status_usage_section").set_class(
+                usage_lines == messages.STATUS_USAGE_EMPTY_MESSAGE, "empty-state"
+            )
         except Exception:
             return
 
@@ -84,20 +93,20 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         if state.loop:
             loop_line = f"{label('Loop')} [bold]{escape(state.loop)}[/bold]\n"
         if state.usage_percentage is None:
-            context_lines = theme.styled("Waiting for first context count", Color.MUTED)
+            context_lines = label(f"Context · {messages.STATUS_CONTEXT_EMPTY_MESSAGE}")
         else:
             percentage = f"{state.usage_percentage:.1f}%"
             token_line = self._context_token_line(state.input_tokens, state.max_tokens)
             threshold = self._compression_threshold_line(state.compression_threshold)
             context_lines = (
-                f"[{context_style}]{self._context_bar(state.usage_percentage)}[/] "
+                f"{label('Context')}\n[{context_style}]{self._context_bar(state.usage_percentage)}[/] "
                 f"[bold {context_style}]{percentage}[/]\n"
                 f"{token_line}\n"
                 f"{theme.styled(threshold, Color.MUTED)}"
             )
-            if state.context_note:
-                note_style = self._context_note_style(state.alert_level)
-                context_lines += f"\n[{note_style}]{escape(state.context_note)}[/{note_style}]"
+        if state.context_note:
+            note_style = self._context_note_style(state.alert_level)
+            context_lines += f"\n[{note_style}]{escape(state.context_note)}[/{note_style}]"
 
         if state.is_compacting:
             indicator = escape(state.compaction_message or messages.COMPACTING)
@@ -122,7 +131,6 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             f"{loop_line}"
             f"{worktree_line}"
             f"{turn_line}\n\n"
-            f"{label('Context')}\n"
             f"{context_lines}\n\n"
             f"{label('Activity')}\n"
             f"{escape(messages.DISCONNECTED_ACTIVITY if disconnected else state.activity)}"
@@ -143,10 +151,28 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             base = baseline.get(key)
             return (base if isinstance(base, int) else 0) + getattr(live, key)
 
+        coverage = baseline.get("coverage") or {}
+        partial = isinstance(coverage, dict) and bool(coverage.get("pre_accounting_turns"))
+        # No requests is different from a request with zero/unreported tokens.
+        # Historical partial coverage must remain visible even with zero totals.
+        if not partial and not any(
+            combined(key)
+            for key in (
+                "requests",
+                "failed",
+                "total_tokens",
+                "input_tokens",
+                "output_tokens",
+                "cache_read_input_tokens",
+                "cache_write_input_tokens",
+                "reasoning_output_tokens",
+            )
+        ):
+            return messages.STATUS_USAGE_EMPTY_MESSAGE
+
         total = combined("total_tokens")
         session_line = f"Session: [bold]{self._format_token_count(total)}[/bold] tokens"
-        coverage = baseline.get("coverage") or {}
-        if isinstance(coverage, dict) and coverage.get("pre_accounting_turns"):
+        if partial:
             # Turns journaled before accounting existed: totals are a floor.
             session_line += theme.styled(" (partial)", Color.MUTED)
 
@@ -291,7 +317,7 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         self._turn_final_state = tui_state.TurnState.IDLE
         self._spinner_frame = 0
         self._turn_timer = self.set_interval(
-            theme.SPINNER_INTERVAL, self._refresh_turn_status_strip, name="turn-status"
+            theme.TURN_STATUS_SPINNER_INTERVAL, self._refresh_turn_status_strip, name="turn-status"
         )
         self._refresh_turn_status_strip()
 
@@ -332,12 +358,12 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             return
 
         self._spinner_frame += 1
-        content = self._turn_status_content()
+        content = self._turn_status_content(width=strip.content_size.width or None)
         strip.display = bool(content)
         if content != self._last_turn_status_content:
             self._last_turn_status_content = content
             # layout=False: the strip is a fixed one-line band (styles: height 1) and
-            # only its text changes, so a full-screen reflow per spinner frame (4Hz)
+            # only its text changes, so a full-screen reflow per spinner frame
             # is pure waste on large transcripts.
             strip.update(content, layout=False)
         # Tick elapsed time on running sub-agents at most once per second so the
@@ -348,16 +374,23 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             self._tick_running_sub_agents()
             self._tick_running_workflows()
 
-    def _turn_status_content(self) -> str:
+    def _turn_status_content(self, *, width: int | None = None) -> str:
         if self._turn_started_at is not None:
             elapsed = max(0.0, self._now() - self._turn_started_at)
             status = self._turn_status_text or messages.WORKING
             frames = theme.spinner_frames()
             frame = frames[self._spinner_frame % len(frames)]
-            return (
-                f"[{Color.ACCENT}]{frame}[/{Color.ACCENT}] {escape(status)} "
-                f"[dim]{theme.g(Glyph.BULLET_SEP)} {self._format_turn_duration(elapsed)}[/dim]"
-            )
+            separator = theme.g(Glyph.BULLET_SEP)
+            meta = f"{separator} {self._format_turn_duration(elapsed)} {separator} {messages.TURN_INTERRUPT_HINT}"
+            # Reserve room for the interrupt hint, even when activity text is long.
+            # Rich counts terminal cells correctly for wide Unicode characters.
+            label = Text(status.replace("\r", " ").replace("\n", " "))
+            if width is not None:
+                label.truncate(max(0, width - cell_len(f"{frame}  {meta}")), overflow="ellipsis")
+            # Reuse the existing 80 ms repaint cadence. Only the activity label
+            # shimmers; the elapsed time and interrupt hint remain steady.
+            label = self._turn_status.shimmer(label, elapsed)
+            return f"[{Color.ACCENT}]{frame}[/{Color.ACCENT}] {label.markup} [dim]{escape(meta)}[/dim]"
         if self._turn_final_text:
             if self._turn_final_state is tui_state.TurnState.ERROR:
                 glyph, color = Glyph.CROSS, Color.ERROR

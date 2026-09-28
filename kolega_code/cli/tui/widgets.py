@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Optional
 
+from rich.cells import cell_len
 from rich.markdown import Markdown as RichMarkdown
 from rich.segment import Segment
 from rich.style import Style
@@ -14,6 +15,7 @@ from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
+from textual.content import Content
 from textual.message import Message as TextualMessage
 from textual.selection import Selection
 from textual.strip import Strip
@@ -27,10 +29,14 @@ from ..prompt_history import PROMPT_HISTORY_MAX
 from ..slash_commands import SlashCommandEntry
 from .app_base import KolegaAppBase
 from .state import ConversationEntry
+from .task_list import TaskListMarkdown
+from .tool_presentation import command_preview, entry_command, entry_paths, tool_title
 
 
 class ConversationEntryWidget(Static):
     """Displays one ConversationEntry and is updated in place as the entry changes."""
+
+    COMPONENT_CLASSES: ClassVar[set[str]] = {"conversation-entry--user"}
 
     def __init__(self, entry: ConversationEntry, format_entry: Callable[[ConversationEntry], Any]) -> None:
         super().__init__("", markup=False)
@@ -69,13 +75,25 @@ class ConversationEntryWidget(Static):
             len(self.entry.content),
             self.entry.complete,
             self.entry.tool_name,
+            self.entry.tool_subject,
+            repr(self.entry.tool_display),
             self.entry.tone,
             len(self.entry.full_content),
             repr(self.entry.edit_preview),
         )
 
     def render_line(self, y: int) -> Strip:
-        strip = _with_selection_style(super().render_line(y), self.text_selection, y, self.selection_style)
+        strip = super().render_line(y)
+        if self.entry.kind == "user":
+            # Tint content only: padding stays on the transcript surface, and the
+            # existing gap remains inside the widget for mouse-selection hit tests.
+            background = self.get_component_rich_style("conversation-entry--user").bgcolor
+            strip = strip.adjust_cell_length(self.size.width)
+            strip = Strip(
+                Segment.apply_style(strip, post_style=Style.from_color(bgcolor=background)),
+                strip.cell_length,
+            )
+        strip = _with_selection_style(strip, self.text_selection, y, self.selection_style)
         return _with_selection_offsets(strip, y)
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
@@ -179,17 +197,30 @@ class PlanningMarkdown(Static):
     renderable and skipping identical updates entirely.
     """
 
+    COMPONENT_CLASSES: ClassVar[set[str]] = {"task-list--pending", "task-list--completed"}
+    DEFAULT_CSS = """
+    PlanningMarkdown .task-list--pending {
+        color: $accent;
+        text-style: bold;
+    }
+    PlanningMarkdown .task-list--completed {
+        color: $text-muted;
+    }
+    """
+
     def __init__(
         self,
         markdown: str = "",
         *,
         empty_source: str | None = None,
+        task_list: bool = False,
         **kwargs,
     ) -> None:
         classes = kwargs.pop("classes", None)
         combined_classes = "planning-markdown" if not classes else f"planning-markdown {classes}"
         self.source = ""
         self._empty_sources = {empty_source} if empty_source is not None else set()
+        self._task_list = task_list
         super().__init__("", markup=False, classes=combined_classes, **kwargs)
         self.update(markdown)
 
@@ -207,13 +238,35 @@ class PlanningMarkdown(Static):
         renderable: object
         if markdown in self._empty_sources or not markdown.strip():
             renderable = Text(markdown)
+        elif self._task_list:
+            renderable = TaskListMarkdown(markdown, code_theme=cli_theme.markdown_code_theme())
         else:
             renderable = RichMarkdown(markdown, code_theme=cli_theme.markdown_code_theme())
         super().update(renderable, layout=layout)
 
     def render_line(self, y: int) -> Strip:
-        strip = _with_selection_style(super().render_line(y), self.text_selection, y, self.selection_style)
+        strip = super().render_line(y)
+        if self._task_list:
+            pending = self.get_component_rich_style("task-list--pending")
+            completed = self.get_component_rich_style("task-list--completed")
+            segments: list[Segment] = []
+            for segment in strip:
+                style = segment.style
+                if style is not None and "task_checked" in style.meta:
+                    marker = bool(style.meta.get("task_marker"))
+                    if style.meta["task_checked"]:
+                        style += completed + Style(bold=False, strike=not marker)
+                    elif marker:
+                        style += pending
+                segments.append(Segment(segment.text, style, segment.control))
+            strip = Strip(segments, strip.cell_length)
+        strip = _with_selection_style(strip, self.text_selection, y, self.selection_style)
         return _with_selection_offsets(strip, y)
+
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        lines = [super(PlanningMarkdown, self).render_line(y).text.rstrip() for y in range(self.size.height)]
+        text = "\n".join(lines)
+        return (selection.extract(text), "\n") if text.strip() else None
 
 
 class SelectableCollapsibleTitle(CollapsibleTitle):
@@ -280,6 +333,9 @@ class ToolEntryWidget(Vertical):
         entry: ConversationEntry,
         title_factory: Callable[[ConversationEntry], str],
         preview_factory: Optional[Callable[[ConversationEntry], Any]] = None,
+        *,
+        title_for_width: Optional[Callable[[ConversationEntry, int], str]] = None,
+        preview_for_width: Optional[Callable[[ConversationEntry, int], Any]] = None,
     ) -> None:
         if entry.kind in {"tool_call", "tool_result", "tool_error"}:
             classes: Optional[str] = "agent-activity"
@@ -290,10 +346,17 @@ class ToolEntryWidget(Vertical):
         super().__init__(classes=classes)
         self.entry = entry
         self._title_factory = title_factory
+        self._title_for_width = title_for_width
+        self._preview_for_width = preview_for_width
         self._preview_factory = preview_factory
         self._collapsible: Optional[Collapsible] = None
         self._body: Optional[Static] = None
         self._preview: Optional[Static] = None
+        self._command_preview: Optional[Static] = None
+        self._details: Optional[Static] = None
+        self._details_text: str = ""
+        self._command_key: tuple[str, int, bool] | None = None
+        self._title_width: int | None = None
         self._title = ""
         self._body_content: object = None
         self._body_len = 0
@@ -306,17 +369,48 @@ class ToolEntryWidget(Vertical):
         # collapsible so collapsing only hides Contents, not the preview itself.
         self._preview = Static("", markup=False, classes="tool-preview")
         self._preview.display = False
+        self._command_preview = Static("", markup=False, classes="tool-command-preview")
+        self._command_preview.display = False
+        self._details = Static("", markup=False, classes="tool-details")
+        self._details.display = False
         self._body = Static("", markup=False, classes="tool-body")
         self._collapsible = SelectableCollapsible(
+            self._details,
             self._body,
             title=self._title_factory(self.entry),
             collapsed=True,
-            persistent_children=(self._preview,),
+            persistent_children=(self._command_preview, self._preview),
         )
         yield self._collapsible
 
     def on_mount(self) -> None:
         self.refresh_content()
+
+    def on_resize(self, event: events.Resize) -> None:
+        self.refresh_content()
+
+    def _refresh_title(self) -> None:
+        if self._collapsible is None:
+            return
+        if self._title_for_width is not None and self.content_size.width:
+            title_widget = self._collapsible.query_one(CollapsibleTitle)
+            # Use the parent's available width, not the auto-sized title's current
+            # width: the latter would prevent a shortened title growing on resize.
+            symbols = max(cell_len(title_widget.collapsed_symbol), cell_len(title_widget.expanded_symbol)) + 1
+            width = max(
+                0,
+                self.content_size.width
+                - self._collapsible.styles.gutter.width
+                - title_widget.styles.gutter.width
+                - symbols,
+            )
+            self._title_width = width
+            title = self._title_for_width(self.entry, width)
+        else:
+            title = self._title_factory(self.entry)
+        if title != self._title:
+            self._collapsible.title = title
+            self._title = title
 
     def on_collapsible_expanded(self, event: Collapsible.Expanded) -> None:
         # Thinking bodies are not updated while collapsed; sync on open.
@@ -330,10 +424,8 @@ class ToolEntryWidget(Vertical):
         # content once per flush (no-op for tool entries, which never stream here).
         self.entry.materialize()
 
-        title = self._title_factory(self.entry)
-        if title != self._title:
-            self._collapsible.title = title
-            self._title = title
+        self._refresh_title()
+        self._refresh_details()
 
         body_content = self.entry.full_content or self.entry.content
         if self.entry.kind == "thinking":
@@ -350,11 +442,18 @@ class ToolEntryWidget(Vertical):
             self._body_content = body_content
 
         if self._preview is not None:
-            preview_key = repr(self.entry.edit_preview)
+            width = max(0, self.content_size.width - (4 if self.has_class("agent-activity") else 2))
+            preview_key = repr((self.entry.edit_preview, self.entry.tool_display, width))
             if preview_key == self._preview_key:
                 return
             self._preview_key = preview_key
-            renderable = self._preview_factory(self.entry) if self._preview_factory else None
+            renderable = (
+                self._preview_for_width(self.entry, width)
+                if self._preview_for_width
+                else self._preview_factory(self.entry)
+                if self._preview_factory
+                else None
+            )
             if renderable is not None:
                 self._preview.update(renderable)
                 if not self._preview_visible:
@@ -367,6 +466,37 @@ class ToolEntryWidget(Vertical):
                     self._preview.display = False
                     self._preview_visible = False
                     self._preview.refresh(layout=True)
+
+    def _refresh_details(self) -> None:
+        """Expanded literal details are separate from the untouched tool result."""
+        if self._details is None or self._command_preview is None or self._collapsible is None:
+            return
+        command = entry_command(self.entry)
+        paths = entry_paths(self.entry)
+        separate = bool(command) and tool_title(self.entry, self._title_width)[1]
+        width = max(0, self.content_size.width - (4 if self.has_class("agent-activity") else 2))
+        title = Text.from_markup(self._title).plain
+        # Do not repeat a complete short path/command already visible above.
+        # Multi-file diff labels reserve room for their existing +/- counts.
+        clipped_paths = (
+            paths[0] not in title if len(paths) == 1 else any(cell_len(path) > max(0, width - 16) for path in paths)
+        )
+        details = command if separate else "\n".join(paths) if clipped_paths else ""
+        if details != self._details_text:
+            self._details.update(Content(details))
+            self._details_text = details
+        self._details.display = bool(details)
+        # Expansion replaces the clipped command with the complete safe command.
+        visible = separate and self._collapsible.collapsed
+        key = (command, width, visible)
+        if key != self._command_key:
+            self._command_key = key
+            self._command_preview.display = visible
+            if visible:
+                self._command_preview.update(Content.from_rich_text(command_preview(command, width)))
+
+    def on_collapsible_collapsed(self, event: Collapsible.Collapsed) -> None:
+        self._refresh_details()
 
 
 class ScrollbackWindow:
@@ -735,6 +865,9 @@ class CompletionDropdown(OptionList):
 
     can_focus = False
 
+    class StateChanged(TextualMessage):
+        """The dropdown opened or closed, including Escape without a text edit."""
+
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._items: list[CompletionItem] = []
@@ -744,17 +877,23 @@ class CompletionDropdown(OptionList):
         return self.display
 
     def open_with(self, items: list[CompletionItem]) -> None:
+        was_open = self.display
         self._items = list(items)
         self.clear_options()
         self.add_options([item.prompt for item in self._items])
         if self._items:
             self.highlighted = 0
         self.display = True
+        if not was_open:
+            self.post_message(self.StateChanged())
 
     def close(self) -> None:
+        was_open = self.display
         self.display = False
         self._items = []
         self.clear_options()
+        if was_open:
+            self.post_message(self.StateChanged())
 
     def highlighted_entry(self) -> Optional[IndexEntry | SlashCommandEntry]:
         if self.highlighted is None or not self._items:

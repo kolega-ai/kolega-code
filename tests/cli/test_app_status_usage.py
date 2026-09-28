@@ -40,19 +40,14 @@ def _settle(ledger, *, inp=0, out=0, cache_read=None, failed=False):
 
 
 @pytest.mark.asyncio
-async def test_fresh_session_renders_zero_usage_without_markers(tmp_path, monkeypatch):
+async def test_fresh_session_renders_compact_empty_usage(tmp_path, monkeypatch):
     app = _build_app(tmp_path, monkeypatch)
     async with app.run_test() as pilot:
         await pilot.pause()
         card = app._usage_summary_lines()
         dashboard = app._format_status_dashboard()
 
-    assert "Session: [bold]0[/bold] tokens" in card
-    assert "In 0 · Out 0" in card
-    assert "Requests: 0" in card
-    assert "(partial)" not in card
-    assert "failed" not in card
-    assert "In 0 · Out 0\nCache reads 0 · Cache hit 0.00%" in card
+    assert card == "Usage · None yet"
     # Usage lives in its own card, not folded into the Status section.
     assert "Session:" not in dashboard
 
@@ -170,3 +165,50 @@ def test_format_token_count_boundaries(tmp_path, monkeypatch):
     assert app._format_token_count(999) == "999"
     assert app._format_token_count(1_200) == "1.2k"
     assert app._format_token_count(2_000_000) == "2M"
+
+
+@pytest.mark.parametrize(
+    "baseline",
+    [
+        {"requests": 1},
+        {"failed": 1},
+        {"total_tokens": 12},
+        {"input_tokens": 12},
+        {"output_tokens": 12},
+        {"cache_read_input_tokens": 12},
+        {"cache_write_input_tokens": 12},
+        {"reasoning_output_tokens": 12},
+        {"coverage": {"pre_accounting_turns": 1}},
+    ],
+)
+def test_restored_usage_never_hides_recorded_activity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, baseline: dict
+) -> None:
+    app = _build_app(tmp_path, monkeypatch)
+    app.session.usage = baseline
+    card = app._usage_summary_lines()
+    assert "Session:" in card
+    assert "Requests:" in card
+    assert "None yet" not in card
+    if "coverage" in baseline:
+        assert "(partial)" in card
+    if "failed" in baseline:
+        assert "1 failed" in card
+
+
+@pytest.mark.parametrize("outcome", ["open", "failed", "unreported", "zero"])
+def test_live_request_without_tokens_still_has_full_usage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    app = _build_app(tmp_path, monkeypatch)
+    request_id = app._usage_ledger.begin("anthropic", "m")
+    if outcome == "failed":
+        app._usage_ledger.record_failure(request_id, "boom")
+    elif outcome != "open":
+        metadata = {} if outcome == "unreported" else {"input_tokens": 0, "output_tokens": 0}
+        app._usage_ledger.record_response(request_id, normalize_usage(metadata, "anthropic", "m"))
+    card = app._usage_summary_lines()
+    assert "Session: [bold]0[/bold] tokens" in card
+    assert "Requests: 1" in card
+    if outcome == "failed":
+        assert "1 failed" in card

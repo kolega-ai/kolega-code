@@ -174,7 +174,7 @@ async def test_textual_app_resumes_gigacode_enabled_across_mode_rebuilds(
         assert coder.gigacode_enabled is True
         assert extension_by_name(coder.prompt_extensions, "gigacode").title == "gigacode — workflow orchestration"
         assert "Gigacode: on" in app.conversation_entries[0].content
-        assert "gigacode on" in str(app.query_one("#session_meta", Static).render())
+        assert "Gigacode: enabled" in str(app.query_one("#session_meta", Static).tooltip)
         dashboard = str(app.query_one("#status_dashboard", Static).render())
         assert "Gigacode" in dashboard
         assert "On" in dashboard
@@ -252,7 +252,7 @@ async def test_textual_app_gigacode_command_persists_and_updates_status(
         assert FakeCoderAgent.instances[-1].apply_calls[-1] == (False, None)
         assert store.load(session.session_id).gigacode_enabled is False
         assert "Gigacode: off" in app.conversation_entries[0].content
-        assert "gigacode off" in str(app.query_one("#session_meta", Static).render())
+        assert "gigacode" not in str(app.query_one("#session_meta", Static).render())
 
 
 @pytest.mark.asyncio
@@ -655,8 +655,10 @@ async def test_textual_app_ctrl_p_toggles_permission_mode(tmp_path: Path, monkey
 
 
 @pytest.mark.asyncio
-async def test_footer_renders_ctrl_p_permissions_exactly_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Regression: "Ctrl+P Permissions" must appear once, not twice, in the footer.
+async def test_footer_omits_permissions_hint_without_disabling_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Context hints may omit Ctrl+P, but its real binding stays functional.
 
     Textual's command palette defaults to ctrl+p, which collided with the
     toggle_permission_mode binding and rendered "Ctrl+P Permissions" twice.
@@ -665,6 +667,7 @@ async def test_footer_renders_ctrl_p_permissions_exactly_once(tmp_path: Path, mo
     pytest.importorskip("textual")
 
     from textual.widgets import Footer
+    from textual.binding import Binding
     from textual.widgets._footer import FooterKey
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -699,9 +702,13 @@ async def test_footer_renders_ctrl_p_permissions_exactly_once(tmp_path: Path, mo
         footer = app.query_one(Footer)
         ctrl_p_keys = [key for key in footer.query(FooterKey) if key.key == "ctrl+p"]
 
-        assert len(ctrl_p_keys) == 1
-        assert ctrl_p_keys[0].key_display == "Ctrl+P"
-        assert ctrl_p_keys[0].description == "Permissions"
+        assert ctrl_p_keys == []
+        permissions = [binding for binding in app.BINDINGS if isinstance(binding, Binding) and binding.key == "ctrl+p"]
+        assert len(permissions) == 1
+        before = app.permission_mode
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+        assert app.permission_mode != before
 
 
 def test_app_ctrl_bindings_use_explicit_key_display() -> None:

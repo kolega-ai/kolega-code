@@ -239,6 +239,8 @@ class CliSettings:
     active_model: Optional[str] = None
     active_thinking_effort: Optional[str] = None
     active_theme: Optional[str] = None
+    # Opt-in local tips on fresh TUI sessions. Missing/invalid values stay off.
+    discovery_tips: bool = False
     api_keys: dict[str, str] = field(default_factory=dict)
     # Per-agent-role model overrides, keyed by AgentRole value (e.g. "investigation"),
     # each value a {provider, model, thinking_effort} dict. Empty = every role uses
@@ -331,6 +333,7 @@ class CliSettings:
             # Additive optional field; safe to read from any schema version
             # (absent in older files -> None -> default theme is applied).
             active_theme=data.get("active_theme"),
+            discovery_tips=_coerce_optional_bool(data.get("discovery_tips")) is True,
             api_keys={str(provider): str(key) for provider, key in api_keys.items() if key},
             # Additive optional field; absent in pre-v3 files -> empty mapping.
             agent_models=_coerce_model_entries(data.get("agent_models")),
@@ -382,6 +385,7 @@ class CliSettings:
             "active_model": self.active_model,
             "active_thinking_effort": self.active_thinking_effort,
             "active_theme": self.active_theme,
+            "discovery_tips": self.discovery_tips,
             "api_keys": self.api_keys,
             "agent_models": self.agent_models,
             "model_slots": self.model_slots,

@@ -20,6 +20,15 @@ location and the `KOLEGA_CODE_STATE_DIR` override.
 
 ## Resuming in the TUI
 
+On a fresh launch, the startup card shows up to three recent sessions from the
+same project. Click a title, or focus it with `Tab` and press `Enter`, to resume.
+An already-open session stays locked: close it in the other instance, then
+click again. Resuming asks for confirmation before discarding an unsent draft or
+attachments, or changing to the session's saved worktree. These choices disappear
+once you start a conversation and do not return when you clear the thread.
+
+You can also choose a session when launching:
+
 ```bash
 # Resume the most recent session for this project
 kolega-code . --resume
