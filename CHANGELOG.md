@@ -6,10 +6,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.41.1 - 2026-09-30
+
 ### Fixed
 
 - Discovery tips no longer reappear after `/clear` or `/reset`; the quick-tip
-  modal is offered once per launch.
+  modal is offered once per launch. Dismissing a tip now keeps it dismissed for
+  the rest of the run, and clearing the thread no longer brings it back.
 
 ## 0.41.0 - 2026-09-30
 
