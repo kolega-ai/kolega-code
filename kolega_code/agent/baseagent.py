@@ -2408,10 +2408,21 @@ class BaseAgent(LogMixin):
             except Exception:
                 # Disabled/unavailable memory is intentionally invisible to the model.
                 memory_body = ""
+        # A mid-session model switch restores the stale session-start block; this section
+        # re-identifies the live model on the next turn.
+        provider = getattr(self.primary_model_config.provider, "value", self.primary_model_config.provider)
+        model_body = "\n".join(
+            [
+                f"Active model: {provider}/{self.primary_model_config.model}",
+                f"Model supports vision: {str(self.supports_vision).lower()}",
+                "This supersedes the session-start Model line if they differ.",
+            ]
+        )
         sections = [
             VolatileSection("memory", memory_body),
             VolatileSection("guidance", guidance, guidance_file),
             VolatileSection("date", f"Today's date: {datetime.now().strftime('%Y-%m-%d')}"),
+            VolatileSection("model", model_body),
         ]
         for provider in self._extra_volatile_sections:
             try:
