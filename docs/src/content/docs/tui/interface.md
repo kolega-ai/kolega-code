@@ -104,15 +104,17 @@ choice; the full editor remains available for every advanced setting.
   a conversation; clearing the thread does not bring the choices back.
 - **Discovery tips** — optional, off by default. Enable **Discovery tips** in
   **Settings → Appearance** and Apply to show a compact **QUICK TIP** modal
-  once per fresh thread, after setup or Settings closes. Shortcuts are highlighted
-  and a counter shows your place in the tip list. Click **Next →** (or focus it
-  and press `Enter`) to cycle; tips never rotate automatically. **Got it** or
-  `Esc` closes the modal and returns focus to the conversation. Dismissed tips
-  stay dismissed until the thread is reset, and do not appear on resumed
-  conversations. The preference is saved, but cycling and dismissal are local;
-  tips are not sent to the agent. The catalogue covers planning, sub-agents,
-  file mentions, scheduled loops, rewind, Git worktrees, project memory,
-  handoff, skills, permissions, copying responses, and language-server status.
+  once per launch, at startup, after setup or Settings closes. Shortcuts are
+  highlighted and a counter shows your place in the tip list. Click **Next →**
+  (or focus it and press `Enter`) to cycle; tips never rotate automatically.
+  **Got it** or `Esc` closes the modal and returns focus to the conversation.
+  Dismissed tips stay dismissed for the rest of the run; clearing the thread with
+  `/clear` or `/reset` does not bring them back, and they do not appear on
+  resumed conversations. The preference is saved, but cycling and dismissal are
+  local; tips are not sent to the agent. The catalogue covers planning,
+  sub-agents, file mentions, scheduled loops, rewind, Git worktrees, project
+  memory, handoff, skills, permissions, copying responses, and language-server
+  status.
 - **Your messages** — a subtle background distinguishes your prompts from agent
   replies. The blank separator below each message stays unshaded.
 - **Streaming** — the view stays anchored to the bottom while the agent is

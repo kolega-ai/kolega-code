@@ -379,6 +379,9 @@ class KolegaCodeApp(
         self._onboarding_screen: Optional[tui_onboarding.OnboardingScreen] = None
         self._discovery_tip_screen: DiscoveryTip | None = None
         self._discovery_tips_ready: bool = False
+        # The tip is a startup-only, once-per-launch offer: once shown or once the
+        # thread is reset, it is never re-armed for this process.
+        self._discovery_tip_consumed: bool = False
         self._onboarding_skipped = False
         self._permission_lock = asyncio.Lock()
         self._persistence_lock = asyncio.Lock()
@@ -1651,7 +1654,7 @@ class KolegaCodeApp(
         self._push_fullscreen_modal(screen)
 
     async def _maybe_show_discovery_tip(self) -> None:
-        """Offer one tip per fresh thread, without covering setup or prompts."""
+        """Offer one tip per launch, without covering setup or prompts."""
         if not self._discovery_tips_ready:
             return
         startup = next((entry for entry in self.conversation_entries if entry.kind == "startup"), None)
@@ -1666,7 +1669,10 @@ class KolegaCodeApp(
                 self._discovery_tip_screen.action_close()
             return
         if (
-            not eligible
+            # The offer is spent for this launch: a thread reset rebuilds the startup
+            # entry but must never re-arm the tip.
+            self._discovery_tip_consumed
+            or not eligible
             or startup is None
             or startup.startup_tip_shown
             or self.config is None
@@ -1682,6 +1688,7 @@ class KolegaCodeApp(
         ):
             return
         startup.startup_tip_shown = True
+        self._discovery_tip_consumed = True
         self._discovery_tip_screen = DiscoveryTip()
         await self.push_screen(self._discovery_tip_screen, callback=self._on_discovery_tip_dismissed)
 
@@ -3144,6 +3151,9 @@ class KolegaCodeApp(
         self._turn_active = False
         self._restore_composer_placeholder()
         self._set_chat_enabled(self.agent is not None)
+        # A thread reset is not startup: the launch's one tip offer stays spent, so
+        # the rebuilt startup entry must not re-arm it.
+        self._discovery_tip_consumed = True
         self._ensure_startup_entry(render=False)
         self._add_conversation_entry(
             tui_state.ConversationEntry(kind="progress", content=messages.THREAD_RESET_MESSAGE, complete=True)
