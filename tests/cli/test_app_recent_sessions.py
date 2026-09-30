@@ -37,6 +37,24 @@ async def _wait(pilot: Pilot, predicate: Callable[[], bool]) -> None:
     raise AssertionError("recent-session state did not settle")
 
 
+def _recent_sessions_widget(app: KolegaCodeApp) -> RecentSessionsWidget | None:
+    """Return the startup card's recent-session list, or ``None`` while it is unmounted."""
+    widgets = app.query(RecentSessionsWidget)
+    return widgets.first() if len(widgets) else None
+
+
+def _recent_sessions_hidden(app: KolegaCodeApp) -> bool:
+    """Whether the recent-session list is mounted and hidden.
+
+    ``_reset_current_thread`` and a resumed startup rebuild the transcript, which unmounts
+    and remounts this widget inside the startup card. The rebuild is coalesced and its
+    mount pass spans event-loop turns, so the widget is briefly absent — poll with this
+    helper instead of querying it directly and racing that window.
+    """
+    widget = _recent_sessions_widget(app)
+    return widget is not None and not widget.display
+
+
 def _saved(store: SessionStore, project: Path, title: str = "Previous work") -> SessionRecord:
     record = store.create(project, "cli", {}, title=title)
     recorder = store.recorder(record.session_id)
@@ -115,7 +133,7 @@ async def test_no_recents_on_empty_or_resumed_startup_and_not_after_first_messag
         app.query_one(StartupEntryWidget).query_one(Collapsible).collapsed = False
         await app._reset_current_thread()
         assert not app._startup_recent_sessions()
-        assert not app.query_one(RecentSessionsWidget).display
+        await _wait(pilot, lambda: _recent_sessions_hidden(app))
     resumed = KolegaCodeApp(
         project_path=app.project_path,
         config=app.config,
@@ -127,7 +145,7 @@ async def test_no_recents_on_empty_or_resumed_startup_and_not_after_first_messag
     async with resumed.run_test() as pilot:
         await pilot.pause()
         assert not resumed._recent_sessions_available
-        assert not resumed.query_one(RecentSessionsWidget).display
+        await _wait(pilot, lambda: _recent_sessions_hidden(resumed))
 
 
 @pytest.mark.asyncio

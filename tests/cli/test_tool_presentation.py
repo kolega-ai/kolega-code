@@ -310,8 +310,20 @@ async def test_subagent_receives_command_details_and_accumulates_patch_files(
         app.action_open_sub_agent()
         screen = app._sub_agent_inspector
         assert screen is not None
-        await _wait_for_layout(pilot, lambda: len(screen.query(ToolEntryWidget)) == 2)
-        widget = next(widget for widget in screen.query(ToolEntryWidget) if widget.entry.tool_call_id == "child")
+
+        def child_entry() -> ToolEntryWidget | None:
+            return next((entry for entry in screen.query(ToolEntryWidget) if entry.entry.tool_call_id == "child"), None)
+
+        def child_preview_mounted() -> bool:
+            # Textual mounts a composed subtree over several event-loop turns, so the parent
+            # ToolEntryWidget is queryable before its ``.tool-command-preview`` child exists;
+            # cover the child in the wait instead of querying it once the parent appears.
+            entry = child_entry()
+            return entry is not None and bool(entry.query(".tool-command-preview"))
+
+        await _wait_for_layout(pilot, lambda: len(screen.query(ToolEntryWidget)) == 2 and child_preview_mounted())
+        widget = child_entry()
+        assert widget is not None
         assert widget.query_one(".tool-command-preview", Static).display
         await pilot.press("escape")
 
