@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.41.0 - 2026-09-30
+
 ### Added
 
 - **New model support.** OpenAI **GPT-6 Sol** (`gpt-6-sol`), **GPT-6 Luna**
@@ -13,7 +15,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   `openai_chatgpt` providers; Anthropic **Claude Opus 5.5** (`claude-opus-5-5`),
   **Claude Sonnet 5.5** (`claude-sonnet-5-5`) and **Claude Fable 5.1**
   (`claude-fable-5-1`); and Fireworks **Ember-1**
-  (`accounts/fireworks/models/ember-1`).
+  (`accounts/fireworks/models/ember-1`). Every model was exercised against its
+  live API, including the ChatGPT-subscription backend.
 
 ## 0.40.0 - 2026-09-18
 
