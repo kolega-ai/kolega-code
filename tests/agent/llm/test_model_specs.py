@@ -84,6 +84,48 @@ def test_openai_chatgpt_gpt55_context_length():
     assert specs["thinking_effort"].default == "medium"
 
 
+@pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna"])
+@pytest.mark.parametrize("provider,context_length", [("openai", 1050000), ("openai_chatgpt", 400000)])
+def test_gpt6_sol_luna_model_specs(provider: str, context_length: int, model: str) -> None:
+    specs = get_model_specs(provider, model)
+
+    assert specs["context_length"] == context_length
+    assert specs["max_completion_tokens"] == 128000
+    assert specs["default_temperature"] == 1.0
+    assert specs["supports_temperature"] is False
+    assert specs["supports_vision"] is True
+    assert specs["supports_hosted_web_search"] is True
+    assert specs["preferred_edit_protocol"] == "codex_apply_patch"
+    # GPT-6 Sol/Luna do accept `none` (unlike Astra and GPT-6.1 Sol).
+    assert specs["thinking_effort"].options == ("none", "low", "medium", "high", "xhigh", "max")
+    assert specs["thinking_effort"].default == "medium"
+    assert specs["thinking_effort"].mode == "openai_responses_reasoning"
+
+
+@pytest.mark.parametrize("provider,context_length", [("openai", 1050000), ("openai_chatgpt", 400000)])
+def test_gpt61_sol_model_specs(provider: str, context_length: int) -> None:
+    specs = get_model_specs(provider, "gpt-6.1-sol")
+
+    assert specs["context_length"] == context_length
+    assert specs["max_completion_tokens"] == 128000
+    assert specs["default_temperature"] == 1.0
+    assert specs["supports_temperature"] is False
+    assert specs["supports_vision"] is True
+    assert specs["supports_hosted_web_search"] is True
+    assert specs["preferred_edit_protocol"] == "codex_apply_patch"
+    # No `none`/`minimal`: the API rejects those on GPT-6.1 Sol.
+    assert specs["thinking_effort"].options == ("low", "medium", "high", "xhigh", "max")
+    assert specs["thinking_effort"].default == "medium"
+    assert specs["thinking_effort"].mode == "openai_responses_reasoning"
+
+
+@pytest.mark.parametrize("provider", ["openai", "openai_chatgpt"])
+@pytest.mark.parametrize("effort", ["none", "minimal"])
+def test_gpt61_sol_rejects_unsupported_efforts(provider: str, effort: str) -> None:
+    with pytest.raises(ValueError, match="Unsupported thinking effort"):
+        build_thinking_request_params(provider, "gpt-6.1-sol", effort)
+
+
 @pytest.mark.parametrize("provider", ["openai", "openai_chatgpt"])
 def test_gpt54_mini_thinking_efforts(provider):
     specs = get_model_specs(provider, "gpt-5.4-mini")
@@ -247,6 +289,21 @@ def test_fireworks_kimi_k3_model_specs():
     assert specs["thinking_effort"].mode == "openai_reasoning_effort"
 
 
+def test_fireworks_ember_1_model_specs():
+    """Ember-1 is a post-trained Kimi K3 on the same serverless stack, so it
+    mirrors K3's window, output ceiling and always-on max-effort reasoning."""
+    specs = get_model_specs("fireworks", "accounts/fireworks/models/ember-1")
+
+    assert specs["context_length"] == 1048576
+    assert specs["max_completion_tokens"] == 131072
+    assert specs["input_budget"] == "window_minus_output"
+    assert specs["default_temperature"] == 1.0
+    assert specs["supports_vision"] is True
+    assert specs["thinking_effort"].options == ("max",)
+    assert specs["thinking_effort"].default == "max"
+    assert specs["thinking_effort"].mode == "openai_reasoning_effort"
+
+
 def test_claude_fable_5_model_specs():
     specs = get_model_specs("anthropic", "claude-fable-5")
 
@@ -283,6 +340,29 @@ def test_claude_sonnet_5_model_specs():
     assert specs["supports_vision"] is True
     assert specs["thinking_effort"].options == ("low", "medium", "high", "xhigh", "max")
     assert specs["thinking_effort"].default == "medium"
+    assert specs["thinking_effort"].mode == "anthropic_adaptive_effort"
+
+
+@pytest.mark.parametrize(
+    "model,default_effort",
+    [
+        ("claude-fable-5-1", "high"),
+        ("claude-opus-5-5", "medium"),
+        ("claude-sonnet-5-5", "high"),
+    ],
+)
+def test_claude_51_55_model_specs(model: str, default_effort: str) -> None:
+    """The Sept 2026 Claude generation keeps 1M/128K with adaptive thinking that
+    cannot be disabled; only Opus 5.5 defaults to `medium` effort."""
+    specs = get_model_specs("anthropic", model)
+
+    assert specs["context_length"] == 1000000
+    assert specs["max_completion_tokens"] == 128000
+    assert specs["default_temperature"] == 1.0
+    assert specs["supports_temperature"] is False
+    assert specs["supports_vision"] is True
+    assert specs["thinking_effort"].options == ("low", "medium", "high", "xhigh", "max")
+    assert specs["thinking_effort"].default == default_effort
     assert specs["thinking_effort"].mode == "anthropic_adaptive_effort"
 
 

@@ -6,6 +6,15 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- **New model support.** OpenAI **GPT-6 Sol** (`gpt-6-sol`), **GPT-6 Luna**
+  (`gpt-6-luna`) and **GPT-6.1 Sol** (`gpt-6.1-sol`) on both the `openai` and
+  `openai_chatgpt` providers; Anthropic **Claude Opus 5.5** (`claude-opus-5-5`),
+  **Claude Sonnet 5.5** (`claude-sonnet-5-5`) and **Claude Fable 5.1**
+  (`claude-fable-5-1`); and Fireworks **Ember-1**
+  (`accounts/fireworks/models/ember-1`).
+
 ## 0.40.0 - 2026-09-18
 
 ### Added

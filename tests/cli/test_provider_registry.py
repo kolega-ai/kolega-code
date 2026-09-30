@@ -34,6 +34,18 @@ def test_opus_5_is_selectable_and_default_for_anthropic() -> None:
         ("Extra high", "xhigh"),
         ("Max", "max"),
     ]
+    # The Claude 5.1/5.5 generation is appended, so the provider-switch fallback
+    # (options[0]) stays on Claude Fable 5.
+    assert dict(options)["Claude Opus 5.5"] == "claude-opus-5-5"
+    assert dict(options)["Claude Sonnet 5.5"] == "claude-sonnet-5-5"
+    assert dict(options)["Claude Fable 5.1"] == "claude-fable-5-1"
+    assert ui_thinking_effort_options("anthropic", "claude-sonnet-5-5") == [
+        ("Low", "low"),
+        ("Medium", "medium"),
+        ("High", "high"),
+        ("Extra high", "xhigh"),
+        ("Max", "max"),
+    ]
 
 
 def test_kimi_coding_exposes_plan_specific_k3_models():
@@ -78,6 +90,29 @@ def test_astra_is_first_and_sol_is_default_for_openai_providers() -> None:
         ]
 
     assert ui_thinking_effort_options("openai", "gpt-5.6-sol") == [
+        ("None", "none"),
+        ("Low", "low"),
+        ("Medium", "medium"),
+        ("High", "high"),
+        ("Extra high", "xhigh"),
+        ("Max", "max"),
+    ]
+
+    # GPT-6 Sol / Luna / 6.1 Sol are appended, so the [:4] fallback head and the
+    # gpt-5.6-sol default above are unchanged.
+    for provider in (ModelProvider.OPENAI, ModelProvider.OPENAI_CHATGPT):
+        options = dict(ui_model_options(provider.value))
+        assert options["GPT-6 Sol"] == "gpt-6-sol"
+        assert options["GPT-6 Luna"] == "gpt-6-luna"
+        assert options["GPT-6.1 Sol"] == "gpt-6.1-sol"
+    assert ui_thinking_effort_options("openai", "gpt-6.1-sol") == [
+        ("Low", "low"),
+        ("Medium", "medium"),
+        ("High", "high"),
+        ("Extra high", "xhigh"),
+        ("Max", "max"),
+    ]
+    assert ui_thinking_effort_options("openai", "gpt-6-luna") == [
         ("None", "none"),
         ("Low", "low"),
         ("Medium", "medium"),
@@ -138,6 +173,7 @@ def test_fireworks_ui_model_options_include_serverless_catalog():
     assert options["DeepSeek V4 Flash"] == "accounts/fireworks/models/deepseek-v4-flash"
     assert options["MiniMax M3"] == "accounts/fireworks/models/minimax-m3"
     assert options["Qwen 3.7 Plus"] == "accounts/fireworks/models/qwen3p7-plus"
+    assert options["Ember-1"] == "accounts/fireworks/models/ember-1"
     assert "Gemma 4 31B IT" not in options
 
 
@@ -152,6 +188,7 @@ def test_vision_only_model_options_follow_catalog_capabilities():
         "Kimi K3": "accounts/fireworks/models/kimi-k3",
         "Kimi K2.7 Code": "accounts/fireworks/models/kimi-k2p7-code",
         "MiniMax M3": "accounts/fireworks/models/minimax-m3",
+        "Ember-1": "accounts/fireworks/models/ember-1",
     }
     assert dict(ui_model_options("deepseek", vision_only=True)) == {
         "DeepSeek V4.1 Flash": "deepseek-flash",

@@ -136,4 +136,54 @@ OPENAI_CHATGPT_SPECS = {
             mode="openai_responses_reasoning",
         ),
     },
+    # GPT-6 Sol / Luna / 6.1 Sol reach Codex and ChatGPT Work on the
+    # subscription backend (mirrored here so the /model picker matches the
+    # Codex model picker). Budgets stay at the conservative subscription value
+    # used by the rest of the GPT-6 family until the Codex backend's larger
+    # window is verified, as with gpt-6-astra.
+    ("openai_chatgpt", "gpt-6-sol"): {
+        "context_length": 400000,
+        "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "supports_hosted_web_search": True,
+        "preferred_edit_protocol": "codex_apply_patch",
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "xhigh", "max"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
+    ("openai_chatgpt", "gpt-6-luna"): {
+        "context_length": 400000,
+        "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "supports_hosted_web_search": True,
+        "preferred_edit_protocol": "codex_apply_patch",
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "xhigh", "max"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
+    ("openai_chatgpt", "gpt-6.1-sol"): {
+        "context_length": 400000,
+        "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "supports_hosted_web_search": True,
+        "preferred_edit_protocol": "codex_apply_patch",
+        "thinking_effort": ThinkingEffortSpec(
+            options=("low", "medium", "high", "xhigh", "max"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
 }

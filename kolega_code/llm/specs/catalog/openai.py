@@ -116,6 +116,59 @@ OPENAI_SPECS = {
             mode="openai_responses_reasoning",
         ),
     },
+    # GPT-6 Sol (2026-09-22) and GPT-6 Luna (2026-09-22) are the cheaper/faster
+    # members of the GPT-6 generation. Both support the `none` reasoning effort
+    # (unlike Astra and GPT-6.1 Sol) and share Astra's 1,050,000-token window and
+    # 128K output ceiling. Appended after the older entries on purpose: catalog
+    # insertion order drives the Settings provider-switch fallback.
+    ("openai", "gpt-6-sol"): {
+        "context_length": 1050000,
+        "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "supports_hosted_web_search": True,
+        "preferred_edit_protocol": "codex_apply_patch",
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "xhigh", "max"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
+    ("openai", "gpt-6-luna"): {
+        "context_length": 1050000,
+        "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "supports_hosted_web_search": True,
+        "preferred_edit_protocol": "codex_apply_patch",
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "xhigh", "max"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
+    # GPT-6.1 Sol (2026-09-29) is the near-Astra refresh: same window and output
+    # ceiling, but it does NOT accept `none`/`minimal` reasoning (a request with
+    # `none` is rejected — use `low` instead).
+    ("openai", "gpt-6.1-sol"): {
+        "context_length": 1050000,
+        "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "supports_hosted_web_search": True,
+        "preferred_edit_protocol": "codex_apply_patch",
+        "thinking_effort": ThinkingEffortSpec(
+            options=("low", "medium", "high", "xhigh", "max"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
     # Note: gpt-5.3-codex-spark is intentionally NOT on the API-key `openai`
     # provider — it's a Codex model that 404s on Chat Completions and is only
     # reachable through the ChatGPT-subscription backend (openai_chatgpt) below.

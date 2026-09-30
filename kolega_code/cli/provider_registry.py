@@ -88,6 +88,9 @@ MODEL_LABELS: dict[str, str] = {
     "claude-sonnet-4-5-20250929": "Claude Sonnet 4.5",
     "claude-opus-4-5-20251101": "Claude Opus 4.5",
     "claude-haiku-4-5-20251001": "Claude Haiku 4.5",
+    "claude-fable-5-1": "Claude Fable 5.1",
+    "claude-opus-5-5": "Claude Opus 5.5",
+    "claude-sonnet-5-5": "Claude Sonnet 5.5",
     # OpenAI (shared labels across the API and ChatGPT-subscription providers)
     "gpt-6-astra": "GPT-6 Astra",
     "gpt-5.6-sol": "GPT-5.6 Sol",
@@ -97,6 +100,9 @@ MODEL_LABELS: dict[str, str] = {
     "gpt-5.4": "GPT-5.4",
     "gpt-5.4-mini": "GPT-5.4 Mini",
     "gpt-5.3-codex-spark": "GPT-5.3 Codex Spark",
+    "gpt-6-sol": "GPT-6 Sol",
+    "gpt-6-luna": "GPT-6 Luna",
+    "gpt-6.1-sol": "GPT-6.1 Sol",
     # Google
     "gemini-3.8-flash": "Gemini 3.8 Flash",
     "gemini-3.7-flash": "Gemini 3.7 Flash",
@@ -118,6 +124,7 @@ MODEL_LABELS: dict[str, str] = {
     "accounts/fireworks/models/deepseek-v4-flash": "DeepSeek V4 Flash",
     "accounts/fireworks/models/minimax-m3": "MiniMax M3",
     "accounts/fireworks/models/qwen3p7-plus": "Qwen 3.7 Plus",
+    "accounts/fireworks/models/ember-1": "Ember-1",
     # Together
     "moonshotai/Kimi-K2.7-Code": "Kimi K2.7 Code",
     "zai-org/GLM-5.1": "GLM-5.1",

@@ -106,4 +106,22 @@ FIREWORKS_SPECS = {
             mode="openai_reasoning_effort",
         ),
     },
+    # Ember-1 (Fireworks Research research preview, 2026-09-22): a post-trained
+    # Kimi K3 that emits ~40% shorter reasoning traces at K3 quality. Served on
+    # the same serverless stack as K3, so it mirrors K3's surface: always-on
+    # reasoning that exposes only its maximum effort, and the same 1M window /
+    # 131072 output ceiling. Appended last on purpose: catalog insertion order
+    # drives the Settings provider-switch fallback.
+    ("fireworks", "accounts/fireworks/models/ember-1"): {
+        "context_length": 1048576,
+        "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_vision": True,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("max",),
+            default="max",
+            mode="openai_reasoning_effort",
+        ),
+    },
 }
