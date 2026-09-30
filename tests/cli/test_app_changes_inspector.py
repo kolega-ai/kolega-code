@@ -7,7 +7,13 @@ from textual.widgets import TextArea
 from kolega_code.events import AgentEvent
 from kolega_code.cli.tui.widgets import ChatComposer
 
-from ._app_test_utils import _build_sub_agent_test_app, _sub_agent_event, renderable_text, settle_changes_inspector
+from ._app_test_utils import (
+    _build_sub_agent_test_app,
+    _sub_agent_event,
+    renderable_text,
+    settle_changes_inspector,
+    wait_for_session_diff_baseline,
+)
 
 
 pytestmark = pytest.mark.usefixtures("hermetic_git_config")
@@ -176,6 +182,9 @@ async def test_changes_inspector_opens_and_renders_git_shell_changes(
     _init_git_project(app.project_path)
 
     async with app.run_test() as pilot:
+        # The baseline is captured by a startup worker; wait for it before editing, or the
+        # baseline can already contain these edits and the net diff comes back empty.
+        await wait_for_session_diff_baseline(app)
         (app.project_path / "src" / "a.py").write_text("new a\n", encoding="utf-8")
         (app.project_path / "src" / "b.py").unlink()
 
