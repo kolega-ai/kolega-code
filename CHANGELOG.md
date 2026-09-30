@@ -6,6 +6,11 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Discovery tips no longer reappear after `/clear` or `/reset`; the quick-tip
+  modal is offered once per launch.
+
 ## 0.41.0 - 2026-09-30
 
 ### Added

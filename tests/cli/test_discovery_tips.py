@@ -291,12 +291,12 @@ async def test_startup_tip_modal_is_opt_in_and_stays_dismissed_across_refresh_an
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("dismiss", ["escape", "enter", "click"])
-async def test_tip_dismissal_restores_focus_and_reset_starts_fresh(
+async def test_tip_dismissal_restores_focus_and_reset_never_reopens_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None, dismiss: str
 ) -> None:
     from textual.widgets import Button, Collapsible
 
-    from kolega_code.cli.tui.discovery import DISCOVERY_TIPS, DiscoveryTip
+    from kolega_code.cli.tui.discovery import DiscoveryTip
     from kolega_code.cli.tui.startup import StartupEntryWidget
     from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -329,14 +329,52 @@ async def test_tip_dismissal_restores_focus_and_reset_starts_fresh(
         await _wait_for_layout(pilot, lambda: app.query_one(StartupEntryWidget) is not card)
         assert not isinstance(app.screen, DiscoveryTip)
         await app._reset_current_thread()
+        # A thread reset is not startup: the dismissed tip must stay gone even
+        # after the rebuilt startup entry and its deferred refresh callbacks land.
+        for _ in range(3):
+            await pilot.pause()
+        assert app.screen_stack and len(app.screen_stack) == 1
+        assert not isinstance(app.screen, DiscoveryTip)
+
+
+@pytest.mark.asyncio
+async def test_clear_command_does_not_resurrect_dismissed_tip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    from kolega_code.cli.messages import THREAD_RESET_MESSAGE
+    from kolega_code.cli.tui.discovery import DiscoveryTip
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _configured_app(tmp_path, monkeypatch, True)
+    async with app.run_test(size=(120, 40)) as pilot:
         await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
-        assert isinstance(app.screen, DiscoveryTip)
-        assert app.screen.current_tip == DISCOVERY_TIPS[0]
+        await pilot.press("escape")
+        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
+
+        composer = app.query_one(ChatComposer)
+        composer.focus()
+        composer.load_text("inspect the workspace")
+        await pilot.press("enter")
+        await _wait_for_layout(pilot, lambda: app.agent_worker is None and bool(app.session.history))
+
+        # The real user path: typing /clear in the composer must not re-offer the tip.
+        composer.load_text("/clear")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        await _wait_for_layout(
+            pilot,
+            lambda: any(
+                entry.kind == "progress" and entry.content == THREAD_RESET_MESSAGE for entry in app.conversation_entries
+            ),
+        )
+        for _ in range(3):
+            await pilot.pause()
+        assert not isinstance(app.screen, DiscoveryTip)
+        assert composer.text == ""
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resuming,with_history", [(True, False), (True, True), (False, True)])
-async def test_discovery_never_appears_when_resuming_or_restoring_history(
+async def test_discovery_never_appears_when_resuming_restoring_history_or_after_thread_reset(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     isolated_cli_env: None,
@@ -355,7 +393,9 @@ async def test_discovery_never_appears_when_resuming_or_restoring_history(
         await pilot.pause()
         assert not isinstance(app.screen, DiscoveryTip)
         await app._reset_current_thread()
-        await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
+        for _ in range(3):
+            await pilot.pause()
+        assert not isinstance(app.screen, DiscoveryTip)
 
 
 @pytest.mark.asyncio
