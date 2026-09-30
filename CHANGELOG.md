@@ -6,6 +6,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.41.2 - 2026-09-30
+
+### Fixed
+
+- Switching models mid-session now correctly re-identifies the active model in
+  the agent's context, so subsequent turns report and use the newly selected
+  model instead of the session-start one.
+
 ## 0.41.1 - 2026-09-30
 
 ### Fixed
