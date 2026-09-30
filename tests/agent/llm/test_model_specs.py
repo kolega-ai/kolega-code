@@ -290,8 +290,8 @@ def test_fireworks_kimi_k3_model_specs():
 
 
 def test_fireworks_ember_1_model_specs():
-    """Ember-1 is a post-trained Kimi K3 on the same serverless stack, so it
-    mirrors K3's window, output ceiling and always-on max-effort reasoning."""
+    """Ember-1 is a post-trained Kimi K3 with K3's window and output ceiling, but
+    (unlike K3) it honors the full reasoning-effort ladder — verified live."""
     specs = get_model_specs("fireworks", "accounts/fireworks/models/ember-1")
 
     assert specs["context_length"] == 1048576
@@ -299,8 +299,8 @@ def test_fireworks_ember_1_model_specs():
     assert specs["input_budget"] == "window_minus_output"
     assert specs["default_temperature"] == 1.0
     assert specs["supports_vision"] is True
-    assert specs["thinking_effort"].options == ("max",)
-    assert specs["thinking_effort"].default == "max"
+    assert specs["thinking_effort"].options == ("none", "low", "medium", "high", "max")
+    assert specs["thinking_effort"].default == "medium"
     assert specs["thinking_effort"].mode == "openai_reasoning_effort"
 
 

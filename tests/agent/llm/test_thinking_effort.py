@@ -69,8 +69,14 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
         "max",
     )
     assert default_thinking_effort("fireworks", "accounts/fireworks/models/deepseek-v4-pro") == "medium"
-    assert thinking_effort_options("fireworks", "accounts/fireworks/models/ember-1") == ("max",)
-    assert default_thinking_effort("fireworks", "accounts/fireworks/models/ember-1") == "max"
+    assert thinking_effort_options("fireworks", "accounts/fireworks/models/ember-1") == (
+        "none",
+        "low",
+        "medium",
+        "high",
+        "max",
+    )
+    assert default_thinking_effort("fireworks", "accounts/fireworks/models/ember-1") == "medium"
 
 
 def test_anthropic_opus_effort_uses_adaptive_thinking_without_budget_tokens() -> None:

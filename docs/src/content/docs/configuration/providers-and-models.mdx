@@ -231,10 +231,10 @@ Fireworks model IDs use resource names such as `accounts/fireworks/models/glm-5p
 Kolega Code exposes Kimi K3, GLM-5.2, GLM-5.1, Kimi K2.7 Code, DeepSeek V4
 Pro/Flash, MiniMax M3, Qwen 3.7 Plus, and Ember-1 through the Settings UI and CLI.
 Fireworks reasoning models return `reasoning_content`. Kimi K3 always reasons and
-uses `max` effort; so does **Ember-1** (`accounts/fireworks/models/ember-1`),
-Fireworks Research's post-trained Kimi K3 that emits ~40% shorter reasoning traces.
-The other listed Fireworks models expose `none`, `low`, `medium`, `high`, and `max`
-as `reasoning_effort` values.
+uses `max` effort. **Ember-1** (`accounts/fireworks/models/ember-1`) is Fireworks
+Research's post-trained Kimi K3 that emits ~40% shorter reasoning traces; it does
+expose the full `none`, `low`, `medium`, `high`, `max` `reasoning_effort` ladder.
+The other listed Fireworks models expose the same five values.
 </Aside>
 
 <Aside type="note">
@@ -419,7 +419,8 @@ models in the TUI.
 | Z.AI `glm-5.2` | `high`, `max` | `max` |
 | Z.AI `glm-5.1` | `auto`, `none` | `auto` |
 | Fireworks serverless reasoning models | `none`, `low`, `medium`, `high`, `max` | `medium` |
-| Fireworks `kimi-k3`, `ember-1` | `max` | `max` |
+| Fireworks `ember-1` | `none`, `low`, `medium`, `high`, `max` | `medium` |
+| Fireworks `kimi-k3` | `max` | `max` |
 | Ollama Cloud thinking models | `none`, `low`, `medium`, `high`, `max` | `medium` |
 | Ollama Cloud `gpt-oss:*` | `low`, `medium`, `high` | `medium` |
 | Google `gemini-3.8-flash` | `low`, `medium`, `high` | `medium` |
