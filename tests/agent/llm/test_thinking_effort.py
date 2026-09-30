@@ -15,6 +15,12 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert default_thinking_effort("anthropic", "claude-opus-5") == "medium"
     assert thinking_effort_options("anthropic", "claude-sonnet-5") == ("low", "medium", "high", "xhigh", "max")
     assert default_thinking_effort("anthropic", "claude-sonnet-5") == "medium"
+    assert thinking_effort_options("anthropic", "claude-fable-5-1") == ("low", "medium", "high", "xhigh", "max")
+    assert default_thinking_effort("anthropic", "claude-fable-5-1") == "high"
+    assert thinking_effort_options("anthropic", "claude-opus-5-5") == ("low", "medium", "high", "xhigh", "max")
+    assert default_thinking_effort("anthropic", "claude-opus-5-5") == "medium"
+    assert thinking_effort_options("anthropic", "claude-sonnet-5-5") == ("low", "medium", "high", "xhigh", "max")
+    assert default_thinking_effort("anthropic", "claude-sonnet-5-5") == "high"
     assert thinking_effort_options("moonshot", "kimi-k3") == ("max",)
     assert default_thinking_effort("moonshot", "kimi-k3") == "max"
     assert thinking_effort_options("moonshot", "kimi-k2.7-code") == ("auto",)
@@ -63,6 +69,14 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
         "max",
     )
     assert default_thinking_effort("fireworks", "accounts/fireworks/models/deepseek-v4-pro") == "medium"
+    assert thinking_effort_options("fireworks", "accounts/fireworks/models/ember-1") == (
+        "none",
+        "low",
+        "medium",
+        "high",
+        "max",
+    )
+    assert default_thinking_effort("fireworks", "accounts/fireworks/models/ember-1") == "medium"
 
 
 def test_anthropic_opus_effort_uses_adaptive_thinking_without_budget_tokens() -> None:
