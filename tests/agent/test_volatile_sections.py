@@ -145,6 +145,38 @@ async def test_provider_error_is_skipped(tmp_path, caplog):
 
 
 @pytest.mark.asyncio
+async def test_model_section_is_injected_on_first_turn(tmp_path):
+    agent, _cm = build_agent(tmp_path, llm=FakeLLM())
+
+    _ = [chunk async for chunk in agent.process_message_stream("do the thing")]
+
+    text = agent.history[2].get_text_content()
+    assert 'source="model"' in text
+    assert "Active model: anthropic/claude-haiku-4-5-20251001" in text
+    assert f"Model supports vision: {str(agent.supports_vision).lower()}" in text
+
+
+@pytest.mark.asyncio
+async def test_model_switch_is_reinjected_alone(tmp_path):
+    agent, _cm = build_agent(tmp_path, llm=FakeLLM())
+
+    _ = [chunk async for chunk in agent.process_message_stream("turn one")]
+
+    agent.primary_model_config = agent.primary_model_config.model_copy(update={"model": "claude-opus-5"})
+    agent.supports_vision = False
+    _ = [chunk async for chunk in agent.process_message_stream("turn two")]
+
+    injected = agent.history[-2]
+    text = injected.get_text_content()
+    assert 'source="model"' in text
+    assert "Active model: anthropic/claude-opus-5" in text
+    assert "Model supports vision: false" in text
+    assert "claude-haiku-4-5-20251001" not in text
+    # Unchanged sections (memory/guidance/date) must not be re-sent alongside.
+    assert text.count("<system-reminder") == 1
+
+
+@pytest.mark.asyncio
 async def test_reset_volatile_context_public_wrapper(tmp_path):
     agent, _cm = build_agent(tmp_path, llm=FakeLLM())
     agent.add_volatile_section(_plan_provider())
