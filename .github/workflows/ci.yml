@@ -272,11 +272,19 @@ jobs:
           # transformers at 5.5.4), and the fix (5.10.0) lies outside that cap,
           # so a lock-level pin is unsatisfiable. Revisit when tinker raises
           # its transformers upper bound.
+          #
+          # Temporarily accepted (2026-10-05): transformers CVE-2026-80047
+          # (GHSA-x9r9-c232-4q39 / PYSEC-2026-4174), which downloads custom
+          # generation code before trust consent. The verified fix is 5.17.0
+          # (huggingface/transformers#48620), also outside the cookbook cap.
+          # This is accepted risk, not a fix or a package-wide exemption.
+          # Remove this exception when tinker-cookbook permits a fixed release.
           uv audit --locked --output-format json \
             --ignore PYSEC-2026-3552 --ignore GHSA-g6cj-pr64-35w5 --ignore CVE-2026-69247 \
             --ignore PYSEC-2026-3553 --ignore GHSA-jwv3-5hgf-82ww --ignore CVE-2026-69249 \
             --ignore PYSEC-2026-3554 --ignore GHSA-m2h6-j472-rp4c --ignore CVE-2026-69248 \
             --ignore GHSA-xrqw-3rrv-vx5w --ignore CVE-2026-9856 \
+            --ignore GHSA-x9r9-c232-4q39 --ignore PYSEC-2026-4174 --ignore CVE-2026-80047 \
             > /tmp/uv-audit.json
           audit_status=$?
           set -e
