@@ -6,6 +6,27 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.41.3 - 2026-10-05
+
+### Fixed
+
+- The Settings screen no longer loses unsaved work. Leaving a section or
+  closing Settings with pending MCP server edits now offers Save, Discard, or
+  Keep Editing, and a failed save or verification keeps the form exactly as
+  entered, including values the form does not expose (connection timeouts,
+  OAuth fields).
+- Scrolling inside a Settings dropdown no longer scrolls the page beneath it,
+  and choosing an option keeps the page position and focus stable.
+- Saving Settings or switching modes while an agent turn is running no longer
+  disrupts the active turn; queued turns are deferred and preserved.
+- Tool titles containing a trailing backslash or an unmatched square bracket no
+  longer crash the transcript renderer.
+
+### Security
+
+- Updated PyJWT to 2.15.0, urllib3 to 2.8.0, and virtualenv to 21.7.13 to
+  close known CVEs in those dependencies.
+
 ## 0.41.2 - 2026-09-30
 
 ### Fixed
