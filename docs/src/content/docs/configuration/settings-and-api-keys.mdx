@@ -44,6 +44,12 @@ the previous settings remain saved and the draft stays open for correction. Clos
 a changed draft asks before discarding it. Theme changes preview immediately but
 follow the same Apply/discard behavior.
 
+In an open dropdown, use the arrow keys or type to find an option, then press
+**Enter** to select it. **Escape** closes the dropdown first; press it again to
+close Settings (with a discard confirmation if the draft has changes).
+Scrolling over an open dropdown stays inside the menu, even at its first or
+last option. Scroll outside the menu to move the settings page.
+
 **Providers** lists every model provider with its current credential status —
 `present via <ENV_VAR>`, `present in local settings`, `signed in as …`, or `missing` —
 so you can see at a glance what you are set up for. Select a provider to edit its
@@ -64,9 +70,24 @@ that provider's configured model where there is one and its default otherwise �
 can check a credential for a provider you are not currently running on. It has the same
 small, potentially billable request behavior as the onboarding test.
 
-MCP actions are the exception to the global Apply button: their server config,
-verification, enable/disable state, trust, and OAuth actions save immediately.
-Settings labels this explicitly and confirms trust, deletion, and token removal.
+**MCP Servers** has its own draft, separate from **Apply Changes**. Changing a
+server's fields (including Enabled) does not save them. Use **Save Server** to
+write the configuration without testing it, or **Save & Verify** to save the
+displayed configuration first and then test it. For an unchanged, saved server,
+**Verify Saved** tests that saved configuration. Verification can start a local
+command or open an OAuth sign-in flow.
+
+Switching servers, reloading the MCP configuration, or closing Settings with MCP
+edits offers **Save / Discard / Keep Editing**. A failed save keeps the draft
+open. A failed verification leaves the configuration saved and the entered values
+intact; the result explicitly distinguishes saved from verified. MCP saves preserve
+connection timeouts and OAuth metadata that are not exposed in the form.
+
+The global Apply button is hidden on the MCP page; applying other settings neither
+saves nor discards an MCP draft. If both drafts have changes, closing Settings
+resolves the MCP draft first, then asks about discarding the ordinary settings
+draft. Trust, deletion, and OAuth token removal remain immediate, confirmed
+actions. Trusted-project servers are read-only here.
 
 When you switch models, the thinking effort resets to the new model's default.
 

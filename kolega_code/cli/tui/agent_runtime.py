@@ -926,6 +926,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._maybe_start_queued_message()
 
     def _maybe_start_queued_message(self) -> bool:
+        settings_screen = getattr(self, "_settings_screen", None)
+        if settings_screen is not None and settings_screen.mcp_busy:
+            return False
         if self._startup_pending or not self._queued_messages or self.agent is None:
             return False
         if self._turn_active or self.agent_worker is not None:
@@ -1238,7 +1241,14 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         self.session.config = config_summary(config)
         await self._save_session_async()
         try:
-            await self._build_agent(config, rebuild=rebuild)
+            settings_screen = getattr(self, "_settings_screen", None)
+            await self._build_agent(
+                config,
+                rebuild=rebuild,
+                # Peer messages may arrive while an MCP operation awaits OAuth
+                # or a remote server. Resume them against the rebuilt agent.
+                preserve_queued=settings_screen is not None and settings_screen.mcp_busy,
+            )
         except KolegaExtensionLoadError as exc:
             # The failed generation was already reclaimed by _build_agent; there
             # is no live agent, so surface the error instead of crashing the
