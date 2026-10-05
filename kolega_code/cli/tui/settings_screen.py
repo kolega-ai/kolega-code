@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -10,7 +11,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, OptionList, Select, Static, Switch
+from textual.widgets import Button, Input, Label, OptionList, Static, Switch
 from textual.widgets.option_list import Option
 
 from kolega_code.agent.tool_backend.search_backends import (
@@ -33,6 +34,7 @@ from ..provider_registry import (
     ui_thinking_effort_options,
 )
 from . import custom_model, settings_panel
+from .settings_widgets import SettingsSelect as Select
 
 if TYPE_CHECKING:
     from ..app import KolegaCodeApp
@@ -135,11 +137,40 @@ class ConfirmSettingsActionScreen(ModalScreen[bool]):
             self.dismiss(True)
 
 
+class ConfirmMCPDraftScreen(ModalScreen[str]):
+    """Resolve only the MCP draft; ordinary settings keep their own lifecycle."""
+
+    AUTO_FOCUS = "#mcp_draft_keep_editing"
+    BINDINGS = [Binding("escape", "keep_editing", "Keep editing", show=False, priority=True)]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="modal-dialog"):
+            yield Static("Unsaved MCP server changes", id="mcp_draft_title")
+            yield Static(
+                "Save this server before continuing, discard its edits, or keep editing. "
+                "Save writes the configuration without connecting or verifying it.",
+                id="mcp_draft_copy",
+            )
+            with Horizontal(id="mcp_draft_actions"):
+                yield Button("Save", id="mcp_draft_save", classes="quiet")
+                yield Button("Discard", id="mcp_draft_discard", classes="quiet danger")
+                yield Button("Keep Editing", id="mcp_draft_keep_editing", classes="solid-primary")
+
+    def action_keep_editing(self) -> None:
+        self.dismiss("keep_editing")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id and event.button.id.startswith("mcp_draft_"):
+            event.stop()
+            self.dismiss(event.button.id.removeprefix("mcp_draft_"))
+
+
 class SettingsScreen(ModalScreen[None]):
     """Categorized settings editor with a fixed action footer."""
 
     BINDINGS = [
-        Binding("escape", "close", "Close", show=True, priority=True),
+        # Let the focused dropdown dismiss itself before closing Settings.
+        Binding("escape", "close", "Close", show=True),
     ]
 
     def __init__(self, owner: "KolegaCodeApp", category: str = "model") -> None:
@@ -148,6 +179,12 @@ class SettingsScreen(ModalScreen[None]):
         self.category = category if category in {value for _, value in SETTINGS_CATEGORIES} else "model"
         self._initializing = True
         self._baseline: tuple[tuple[str, Any], ...] = ()
+        self._mcp_baseline: tuple[tuple[str, Any], ...] = ()
+        self.mcp_server_id = settings_panel.MCP_NEW_SERVER_VALUE
+        self.mcp_busy = False
+        self._mcp_read_only = False
+        self._mcp_navigation_pending = False
+        self._mcp_feedback = ""
         self._original_theme = owner.settings.active_theme or theme.DEFAULT_THEME_NAME
         self.pending_oauth_tokens = deepcopy(owner.settings.oauth_tokens)
         self._oauth_baseline = deepcopy(self.pending_oauth_tokens)
@@ -544,7 +581,11 @@ class SettingsScreen(ModalScreen[None]):
         with VerticalScroll(id="settings_page_mcp", classes="settings-page"):
             with Vertical(classes="settings-section", id="settings_mcp") as section:
                 section.border_title = "MCP Servers"
-                yield Static("MCP actions save immediately.", classes="settings-hint")
+                yield Static(
+                    "MCP server edits are separate from Apply Changes. Save Server writes without testing; "
+                    "Save & Verify writes first, then connects. Verification may launch a local command or OAuth sign-in.",
+                    classes="settings-hint",
+                )
                 yield Static("", id="mcp_status")
                 yield Label("Server")
                 yield Select(
@@ -554,6 +595,7 @@ class SettingsScreen(ModalScreen[None]):
                     value=settings_panel.MCP_NEW_SERVER_VALUE,
                 )
                 yield Static("", id="mcp_source_hint", classes="settings-hint")
+                yield Static("", id="mcp_draft_status", markup=False)
                 with Horizontal(classes="settings-button-row"):
                     yield Button("Reload", id="mcp_refresh", classes="quiet")
                     yield Button(
@@ -618,7 +660,8 @@ class SettingsScreen(ModalScreen[None]):
                 yield Input(id="mcp_cwd_input", placeholder="optional project-relative path")
                 with Horizontal(classes="settings-button-row"):
                     yield Button("Save Server", id="mcp_save_server", classes="quiet")
-                    yield Button("Verify", id="mcp_verify_server", classes="quiet")
+                    yield Button("Save & Verify", id="mcp_save_verify_server", classes="solid-primary")
+                    yield Button("Verify Saved", id="mcp_verify_server", classes="quiet")
                 with Horizontal(classes="settings-button-row"):
                     yield Button("Delete", id="mcp_delete_server", classes="quiet danger")
                     yield Button("Clear OAuth", id="mcp_clear_tokens", classes="quiet danger")
@@ -773,6 +816,7 @@ class SettingsScreen(ModalScreen[None]):
                     self.query_one("#settings_categories", OptionList).highlighted = index
                 except Exception:
                     pass
+        self._refresh_apply_label()
 
     def _show_agent_role(self, role: str) -> None:
         for _, value in agent_role_options():
@@ -802,6 +846,117 @@ class SettingsScreen(ModalScreen[None]):
             self._reset_connection_status()
             self.owner._commit_visible_api_key()
         self.call_after_refresh(self._refresh_apply_label)
+
+    def _mcp_snapshot(self) -> tuple[tuple[str, Any], ...]:
+        return tuple(
+            sorted(
+                (widget.id, None if widget.value is Select.NULL else widget.value)
+                for widget in self.query("Input, Select")
+                if isinstance(widget, (Input, Select))
+                and widget.id
+                and widget.id.startswith("mcp_")
+                and widget.id != "mcp_server_select"
+            )
+        )
+
+    @property
+    def mcp_dirty(self) -> bool:
+        return not self._initializing and self._mcp_snapshot() != self._mcp_baseline
+
+    def mark_mcp_clean(self, server_id: str, *, read_only: bool = False, message: str = "") -> None:
+        self.mcp_server_id = server_id
+        self._mcp_read_only = read_only
+        self._mcp_baseline = self._mcp_snapshot()
+        self._mcp_feedback = message
+        self._refresh_mcp_actions()
+
+    def set_mcp_feedback(self, message: str) -> None:
+        self._mcp_feedback = message
+        self._refresh_mcp_actions()
+
+    def _refresh_mcp_actions(self) -> None:
+        if not self.is_mounted:
+            return
+        new = self.mcp_server_id == settings_panel.MCP_NEW_SERVER_VALUE
+        dirty = self.mcp_dirty
+        feedback = self._mcp_feedback
+        if dirty:
+            feedback = "Unsaved server changes — use Save Server or Save & Verify."
+            # Results describe the saved version, never later edits.
+            self._mcp_feedback = ""
+        self.query_one("#mcp_draft_status", Static).update(
+            feedback or ("New server — not saved or verified." if new else "No unsaved server changes.")
+        )
+        for widget in self.query("#settings_page_mcp Input, #settings_page_mcp Select"):
+            widget.disabled = self.mcp_busy or (self._mcp_read_only and widget.id != "mcp_server_select")
+        for button in self.query("#settings_page_mcp Button"):
+            button.disabled = self.mcp_busy
+        self.query_one("#mcp_save_server", Button).disabled = self.mcp_busy or self._mcp_read_only
+        self.query_one("#mcp_save_verify_server", Button).display = (new or dirty) and not self._mcp_read_only
+        self.query_one("#mcp_verify_server", Button).display = not new and not dirty
+        self.query_one("#mcp_delete_server", Button).disabled = self.mcp_busy or new or self._mcp_read_only
+        self.query_one("#mcp_clear_tokens", Button).disabled = self.mcp_busy or new
+
+    def request_mcp_selection(self, server_id: str) -> None:
+        if server_id == self.mcp_server_id:
+            return
+        # Changed is queued; restore the picker before asking so the visible form
+        # and every action still refer to the draft's original server.
+        self.query_one("#mcp_server_select", Select).value = self.mcp_server_id
+
+        def select_server() -> None:
+            self.query_one("#mcp_server_select", Select).value = server_id
+            self.owner._populate_mcp_server_form(server_id)
+
+        self.request_mcp_navigation(select_server)
+
+    def request_mcp_navigation(self, proceed: Callable[[], object]) -> None:
+        if self.mcp_busy or self._mcp_navigation_pending:
+            return
+        if not self.mcp_dirty:
+            proceed()
+            return
+        self._mcp_navigation_pending = True
+
+        def decide(decision: str | None) -> None:
+            self._mcp_navigation_pending = False
+            if decision == "discard":
+                self.owner._populate_mcp_controls()
+                proceed()
+            elif decision == "save":
+
+                async def save_and_continue() -> None:
+                    if await self.owner._save_mcp_server_from_ui() and not self.mcp_dirty:
+                        # A nested browser/inspector may have opened during the
+                        # rebuild. Never navigate or pop its screen on completion.
+                        if self.app.screen is self:
+                            proceed()
+                        else:
+                            self.owner._notify_user("MCP server saved. Return to Settings to continue.")
+                    else:
+                        self._show_category("mcp")
+
+                self._start_mcp_action(save_and_continue)
+
+        self.app.push_screen(ConfirmMCPDraftScreen(), callback=decide)
+
+    def _start_mcp_action(self, action: Callable[[], Awaitable[object]]) -> None:
+        if self.mcp_busy:
+            return
+        self.mcp_busy = True
+        self._refresh_apply_label()
+
+        async def run() -> None:
+            try:
+                await action()
+            finally:
+                self.mcp_busy = False
+                if self.is_mounted:
+                    self._refresh_apply_label()
+                self.owner._schedule_maybe_start_queued_message()
+
+        # Keep network/OAuth waits off the app's message pump.
+        self.run_worker(run(), name="settings-mcp-action", group="settings-mcp-actions")
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
         self.call_after_refresh(self._refresh_apply_label)
@@ -863,10 +1018,13 @@ class SettingsScreen(ModalScreen[None]):
             return
         try:
             button = self.query_one("#save_settings", Button)
+            button.display = self.category != "mcp"
             button.label = "Apply Changes" if self.dirty else "Applied"
-            button.disabled = not self.dirty
+            button.disabled = not self.dirty or self.mcp_busy
+            self.query_one("#close_settings", Button).disabled = self.mcp_busy
         except Exception:
             pass
+        self._refresh_mcp_actions()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "close_settings":
@@ -886,9 +1044,19 @@ class SettingsScreen(ModalScreen[None]):
         elif event.button.id in {"ep_save", "ep_delete"}:
             event.stop()
             self.owner._handle_endpoint_settings_button(event.button.id)
-        elif event.button.id in {"mcp_delete_server", "mcp_clear_tokens", "mcp_trust_project"}:
-            if self._confirm_immediate_action(event.button.id):
-                event.stop()
+        elif event.button.id and event.button.id.startswith("mcp_"):
+            event.stop()
+            button_id = event.button.id
+            if self.mcp_busy:
+                return
+            if button_id == "mcp_refresh":
+                self.request_mcp_navigation(self.owner._populate_mcp_controls)
+            elif button_id in {"mcp_delete_server", "mcp_trust_project"}:
+                self.request_mcp_navigation(lambda: self._confirm_immediate_action(button_id))
+            elif button_id == "mcp_clear_tokens":
+                self._confirm_immediate_action(button_id)
+            else:
+                self._start_mcp_action(lambda: self.owner._handle_mcp_settings_button(button_id))
 
     async def _refresh_memory_controls(self, *, update_draft: bool = True) -> None:
         try:
@@ -1009,13 +1177,12 @@ class SettingsScreen(ModalScreen[None]):
 
     def _on_immediate_action_decision(self, button_id: str, confirmed: bool | None) -> None:
         if confirmed:
-            self.run_worker(
-                self.owner._handle_mcp_settings_button(button_id),
-                name=f"settings-{button_id}",
-                exclusive=True,
-            )
+            self._start_mcp_action(lambda: self.owner._handle_mcp_settings_button(button_id))
 
     def action_close(self) -> None:
+        self.request_mcp_navigation(self._close_after_mcp_draft)
+
+    def _close_after_mcp_draft(self) -> None:
         if not self.dirty:
             self._dismiss_settings()
             return
@@ -1027,6 +1194,8 @@ class SettingsScreen(ModalScreen[None]):
             self._dismiss_settings()
 
     def _dismiss_settings(self) -> None:
+        if self.app.screen is not self:
+            return
         self.owner._settings_screen = None
         self.dismiss()
         self.owner._schedule_primary_focus_restore()

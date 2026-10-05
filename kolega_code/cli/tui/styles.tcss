@@ -275,7 +275,8 @@ ToolEntryWidget.thinking-entry .tool-body {
     color: $text-muted;
 }
 
-#mcp_status {
+#mcp_status,
+#mcp_draft_status {
     height: auto;
     margin-bottom: 1;
 }
@@ -554,7 +555,8 @@ SettingsScreen #provider_list {
 }
 
 ConfirmDiscardSettingsScreen,
-ConfirmSettingsActionScreen {
+ConfirmSettingsActionScreen,
+ConfirmMCPDraftScreen {
     align: center middle;
     background: $background 80%;
 }
@@ -571,18 +573,21 @@ ConfirmSettingsActionScreen {
 }
 
 #settings_discard_title,
+#mcp_draft_title,
 #settings_action_title {
     height: auto;
     text-style: bold;
 }
 
 #settings_discard_copy,
+#mcp_draft_copy,
 #settings_action_copy {
     height: auto;
     margin-top: 1;
 }
 
 #settings_discard_actions,
+#mcp_draft_actions,
 #settings_action_buttons,
 #onboarding_actions {
     height: auto;
@@ -591,6 +596,7 @@ ConfirmSettingsActionScreen {
 }
 
 #settings_discard_actions Button,
+#mcp_draft_actions Button,
 #settings_action_buttons Button,
 #onboarding_actions Button {
     width: auto;

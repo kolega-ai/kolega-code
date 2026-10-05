@@ -216,8 +216,10 @@ class LoopRuntimeMixin(tui_app_base.KolegaAppBase):
 
     def _loop_ready_to_fire(self) -> bool:
         """Whether the app is idle enough to start a scheduled iteration."""
+        settings_screen = getattr(self, "_settings_screen", None)
         return (
             self.agent is not None
+            and not (settings_screen is not None and settings_screen.mcp_busy)
             and not self._loop_iteration_active
             and not self._turn_active
             and self.agent_worker is None

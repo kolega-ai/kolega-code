@@ -1373,7 +1373,11 @@ class KolegaCodeApp(
         event.composer.load_text("")
         self._pending_image_attachments.clear()
         self._clear_composer_hint()
-        if self._turn_active or self.agent_worker is not None:
+        if (
+            self._turn_active
+            or self.agent_worker is not None
+            or (self._settings_screen is not None and self._settings_screen.mcp_busy)
+        ):
             self._queue_user_message(text, attachments)
             return
         self._add_conversation_entry(tui_state.ConversationEntry(kind="user", content=text))
@@ -1559,6 +1563,9 @@ class KolegaCodeApp(
                 pass
 
     def _mode_switch_blocked(self) -> bool:
+        if self._settings_screen is not None and self._settings_screen.mcp_busy:
+            self._notify_user("Wait for the MCP operation to finish before switching modes.", severity="warning")
+            return True
         if self._pending_approval is not None:
             self._set_composer_status(messages.APPROVAL_PLACEHOLDER)
             self._notify_user(messages.BLOCK_PENDING_APPROVAL, severity="warning")
