@@ -279,7 +279,7 @@ class SelectableCollapsibleTitle(CollapsibleTitle):
 
 
 class SelectableCollapsible(Collapsible):
-    """Collapsible with a selectable title and optional always-visible content."""
+    """Collapsible with a selectable Rich-markup title and always-visible content."""
 
     class Contents(Collapsible.Contents):
         """Selectable padding/content wrapper so drags can start in the expanded tool indent."""
@@ -304,7 +304,9 @@ class SelectableCollapsible(Collapsible):
     ) -> None:
         super().__init__(
             *children,
-            title=title,
+            # Rich and Textual markup have different escaping rules. Do not let
+            # the base constructor parse our Rich-generated title as Textual.
+            title="",
             collapsed=collapsed,
             collapsed_symbol=collapsed_symbol,
             expanded_symbol=expanded_symbol,
@@ -312,11 +314,15 @@ class SelectableCollapsible(Collapsible):
         )
         self._persistent_children = list(persistent_children)
         self._title = SelectableCollapsibleTitle(
-            label=title,
+            label=Content.from_rich_text(Text.from_markup(title, emoji=False)),
             collapsed_symbol=collapsed_symbol,
             expanded_symbol=expanded_symbol,
             collapsed=collapsed,
         )
+        self.title = title
+
+    def _watch_title(self, title: str) -> None:
+        self._title.label = Content.from_rich_text(Text.from_markup(title, emoji=False))
 
     def compose(self) -> ComposeResult:
         yield self._title
