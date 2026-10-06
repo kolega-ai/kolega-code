@@ -6,6 +6,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.41.4 - 2026-10-06
+
+### Security
+
+- Updated multidict to 6.9.1, closing a reference-leak vulnerability
+  (GHSA-54p9-h82j-f925) in the aiohttp stack used by the Telegram gateway
+  adapter, where remote input could drive unreclaimable memory growth.
+- Updated the documentation site's dependencies (devalue,
+  http-cache-semantics, postcss-selector-parser, smol-toml, source-map-js) to
+  close all known advisories in its dependency tree.
+
 ## 0.41.3 - 2026-10-05
 
 ### Fixed
