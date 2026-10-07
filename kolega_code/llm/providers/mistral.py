@@ -634,6 +634,9 @@ class MistralProvider(BaseLLMProvider):
             raise LLMInvalidRequestError("Mistral requires a model identifier", provider="mistral")
         spec = MODEL_SPECS.get(("mistral", model), {})
         request.setdefault("temperature", spec.get("default_temperature", 1.0))
+        if request["temperature"] == 0:
+            # Native greedy sampling rejects the server's default top_p.
+            request.setdefault("top_p", 1.0)
         # This is our reserved-output default, NOT a hard native output ceiling.
         request.setdefault("max_tokens", spec.get("max_completion_tokens", 32768))
         if params is not None:

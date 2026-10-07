@@ -266,6 +266,40 @@ async def test_native_request_schema_auth_and_parallel_tools(wire: MistralWire, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize(
+    "params, overrides, expected_top_p",
+    [
+        (GenerationParams(temperature=0), {}, 1.0),
+        (None, {"temperature": 0}, 1.0),
+        (GenerationParams(temperature=0.5), {"temperature": 0}, 1.0),
+        (GenerationParams(temperature=0), {"top_p": 1.0}, 1.0),
+        (GenerationParams(temperature=0.5), {}, None),
+        (GenerationParams(temperature=0.5), {"top_p": 0.8}, 0.8),
+        (None, {}, None),
+    ],
+)
+async def test_greedy_sampling_defaults_top_p_without_changing_other_sampling(
+    wire: MistralWire,
+    streaming: bool,
+    params: GenerationParams | None,
+    overrides: dict[str, Any],
+    expected_top_p: float | None,
+) -> None:
+    if streaming:
+        wire.stream(_sse(_event({"content": "ok"}, finish="stop"), _event(usage=USAGE)))
+        await _consume(wire.provider, params=params, **overrides)
+    else:
+        wire.completion()
+        await wire.provider.generate(_history(), params=params, model=MODEL, **overrides)
+    payload = wire.bodies[0]
+    if expected_top_p is None:
+        assert "top_p" not in payload
+    else:
+        assert payload["top_p"] == expected_top_p
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "content, expected", [("answer", "answer"), ([{"type": "text", "text": "answer"}], "answer"), (None, "")]
 )

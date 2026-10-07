@@ -35,6 +35,7 @@ from kolega_code.llm.providers.mistral import MistralProvider
 pytestmark = [pytest.mark.integration, pytest.mark.live_api]
 
 MODEL_REASONING = "mistral-medium-3-5"
+MODELS_REASONING = (MODEL_REASONING, "mistral-small-2603", "mistral-large-4")
 MODEL_FAST = "ministral-3b-2512"
 MAX_TOKENS_SMALL = 512
 MAX_TOKENS_REASONING = 2048
@@ -115,7 +116,7 @@ def _assert_usage(message: Message) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("thinking", ["none", "high"])
-@pytest.mark.parametrize("model", [MODEL_REASONING, "mistral-small-2603"])
+@pytest.mark.parametrize("model", MODELS_REASONING)
 async def test_live_native_generate_reasoning_none_and_high(
     thinking: str, model: str, client_factory: Callable[[str], LLMClient]
 ) -> None:
@@ -140,14 +141,14 @@ async def test_live_native_generate_reasoning_none_and_high(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("thinking", ["none", "high"])
-@pytest.mark.parametrize("model", [MODEL_REASONING, "mistral-small-2603"])
+@pytest.mark.parametrize("model", MODELS_REASONING)
 async def test_live_native_stream_reasoning_none_and_high(
     thinking: str, model: str, client_factory: Callable[[str], LLMClient]
 ) -> None:
     client = client_factory(model)
     response = await _live_stream(
         client,
-        messages=_history("Reply with the word stream-ok and no punctuation."),
+        messages=_history("Reply with exactly: stream-ok"),
         model=model,
         max_completion_tokens=MAX_TOKENS_REASONING if thinking == "high" else MAX_TOKENS_SMALL,
         thinking=thinking,
@@ -173,13 +174,13 @@ def _calc_tool() -> ToolDefinition:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", [MODEL_REASONING, "mistral-small-2603", "ministral-8b-2512", "codestral-2508"])
+@pytest.mark.parametrize("model", [*MODELS_REASONING, "ministral-8b-2512", "codestral-2508"])
 async def test_live_streaming_tool_cycle_then_second_round_native_reasoning_replay(
     model: str,
     client_factory: Callable[[str], LLMClient],
 ) -> None:
     client = client_factory(model)
-    thinking = "high" if model in (MODEL_REASONING, "mistral-small-2603") else None
+    thinking = "high" if model in MODELS_REASONING else None
     tools = [_calc_tool()]
     history = MessageHistory(
         [Message("user", [TextBlock("Use the tool to add 17 and 25, then answer with only the sum.")])]
@@ -289,9 +290,7 @@ def _red_blue_png_b64() -> str:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "model", [MODEL_REASONING, "mistral-small-2603", MODEL_FAST, "ministral-8b-2512", "ministral-14b-2512"]
-)
+@pytest.mark.parametrize("model", [*MODELS_REASONING, MODEL_FAST, "ministral-8b-2512", "ministral-14b-2512"])
 async def test_live_vision_generated_local_png_exact_red_blue_content(
     model: str,
     client_factory: Callable[[str], LLMClient],
@@ -305,7 +304,7 @@ async def test_live_vision_generated_local_png_exact_red_blue_content(
         ),
         model=model,
         max_completion_tokens=MAX_TOKENS_SMALL,
-        thinking="none" if model in (MODEL_REASONING, "mistral-small-2603") else None,
+        thinking="none" if model in MODELS_REASONING else None,
         temperature=0,
     )
     answer = response.get_text_content().lower()
@@ -314,12 +313,12 @@ async def test_live_vision_generated_local_png_exact_red_blue_content(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", [MODEL_REASONING, "ministral-8b-2512"])
+@pytest.mark.parametrize("model", [MODEL_REASONING, "mistral-large-4", "ministral-8b-2512"])
 async def test_live_tool_image_result_native_replay_if_supported(
     model: str, client_factory: Callable[[str], LLMClient]
 ) -> None:
     client = client_factory(model)
-    thinking = "high" if model == MODEL_REASONING else None
+    thinking = "high" if model in MODELS_REASONING else None
     image_tool = ToolDefinition(
         name="make_reference_image",
         description="Return a PNG reference image.",
