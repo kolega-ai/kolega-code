@@ -6,6 +6,22 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.42.0 - 2026-10-07
+
+### Added
+
+- **Native Mistral AI support.** Use Mistral's own API with `MISTRAL_API_KEY`
+  or a key saved in Settings. The model picker defaults to Mistral Medium 3.5
+  and also includes Mistral Small 4, Mistral Large 4 **preview**, Ministral,
+  and Codestral, with streaming, tool calls, usage reporting, and vision and
+  reasoning where supported.
+
+### Changed
+
+- Refreshed the OpenRouter, Ollama Cloud, and Perplexity Agent model catalogs
+  with newly available models, removal of retired entries, updated model
+  limits and capabilities, and a refreshed OpenRouter featured ordering.
+
 ## 0.41.4 - 2026-10-06
 
 ### Security
