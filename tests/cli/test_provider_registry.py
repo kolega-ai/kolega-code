@@ -2,13 +2,65 @@ from kolega_code.cli.provider_registry import (
     DEEPSEEK_DEFAULT_MODEL,
     UI_DEFAULT_MODEL,
     UI_DEFAULT_PROVIDER,
+    agent_role_provider_options,
     default_model_for_provider,
     get_ui_model,
     ui_model_options,
+    ui_provider_options,
     ui_thinking_effort_options,
 )
 from kolega_code.config import ModelProvider
-from kolega_code.llm.specs import get_model_specs
+from kolega_code.llm.specs import MODEL_SPECS, get_model_specs
+
+
+def test_mistral_native_models_are_discoverable_and_medium_35_is_default() -> None:
+    assert ("Mistral AI", "mistral") in ui_provider_options()
+    assert ("Mistral AI", "mistral") in agent_role_provider_options()
+    options = ui_model_options("mistral")
+    assert options[0] == ("Mistral Medium 3.5", "mistral-medium-3-5")
+    assert default_model_for_provider(ModelProvider.MISTRAL) == "mistral-medium-3-5"
+    assert {
+        ("Mistral Medium 3.5", "mistral-medium-3-5"),
+        ("Mistral Small 4", "mistral-small-2603"),
+        ("Mistral Large 4 (Preview)", "mistral-large-4"),
+    } <= set(options)
+    assert [model for _label, model in options] == [model for provider, model in MODEL_SPECS if provider == "mistral"]
+    assert len(options) == 18
+    assert len({label for label, _model in options}) == len(options)
+
+    for label, model in options:
+        assert label != model
+        option = get_ui_model("mistral", model)
+        assert option is not None
+        assert option.provider_label == "Mistral AI"
+        assert option.api_key_env == "MISTRAL_API_KEY"
+        assert option.context_length == get_model_specs("mistral", model)["context_length"]
+        assert option.max_completion_tokens > 0
+        assert option.model_label == label
+    assert get_ui_model("mistral", "not-a-catalog-model") is None
+
+
+def test_mistral_thinking_and_vision_selectors_follow_native_capabilities() -> None:
+    assert ui_thinking_effort_options("mistral", "mistral-medium-3-5") == [("None", "none"), ("High", "high")]
+    options = ui_model_options("mistral")
+    vision_options = ui_model_options("mistral", vision_only=True)
+    assert ("Mistral Medium 3.5", "mistral-medium-3-5") in vision_options
+    assert vision_options == [
+        (label, model) for label, model in options if get_model_specs("mistral", model).get("supports_vision")
+    ]
+    assert {model for _label, model in options} - {model for _label, model in vision_options} == {
+        "codestral-2508",
+        "codestral-latest",
+    }
+    for _label, model in options:
+        option = get_ui_model("mistral", model)
+        assert option is not None
+        if model.startswith(("mistral-medium", "mistral-small", "mistral-large")):
+            assert ui_thinking_effort_options("mistral", model) == [("None", "none"), ("High", "high")]
+            assert option.default_thinking_effort == "none"
+        else:
+            assert ui_thinking_effort_options("mistral", model) == []
+            assert option.default_thinking_effort is None
 
 
 def test_kimi_k3_is_first_and_default_for_moonshot():

@@ -24,6 +24,7 @@ class ModelProvider(str, Enum):
     OPENAI = "openai"
     OPENAI_CHATGPT = "openai_chatgpt"  # OpenAI via ChatGPT-subscription OAuth (Responses API)
     GOOGLE = "google"
+    MISTRAL = "mistral"
     GROQ = "groq"
     TOGETHER = "together"
     FIREWORKS = "fireworks"
@@ -205,6 +206,7 @@ class AgentConfig(BaseModel):
     anthropic_api_key: Optional[str] = Field(default=None, description="API key for Anthropic")
     openai_api_key: Optional[str] = Field(default=None, description="API key for OpenAI")
     google_api_key: Optional[str] = Field(default=None, description="API key for Google")
+    mistral_api_key: Optional[str] = Field(default=None, description="API key for Mistral AI")
     groq_api_key: Optional[str] = Field(default=None, description="API key for Groq")
     together_api_key: Optional[str] = Field(default=None, description="API key for Together.ai")
     fireworks_api_key: Optional[str] = Field(default=None, description="API key for Fireworks.ai")
@@ -416,6 +418,7 @@ class AgentConfig(BaseModel):
                 self.openai_chatgpt_tokens.access_token if self.openai_chatgpt_tokens else None
             ),
             ModelProvider.GOOGLE: self.google_api_key,
+            ModelProvider.MISTRAL: self.mistral_api_key,
             ModelProvider.GROQ: self.groq_api_key,
             ModelProvider.TOGETHER: self.together_api_key,
             ModelProvider.FIREWORKS: self.fireworks_api_key,

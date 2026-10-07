@@ -2,13 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from kolega_code.config import EditProtocol, ModelProvider
+from kolega_code.config import AgentConfig, EditProtocol, ModelConfig, ModelProvider
 from kolega_code.cli.config import (
     CliConfigError,
     CliConfigOverrides,
     build_agent_config,
     config_summary,
     key_status,
+    resolved_api_key,
 )
 from kolega_code.cli.provider_registry import (
     DEEPSEEK_DEFAULT_MODEL,
@@ -36,6 +37,7 @@ OLLAMA_CLOUD_THINKING_MODEL = next(
         ("ANTHROPIC_API_KEY", "anthropic-key"),
         ("MOONSHOT_API_KEY", "moonshot-key"),
         ("DEEPSEEK_API_KEY", "deepseek-key"),
+        ("MISTRAL_API_KEY", "fake-mistral-key"),
     ],
 )
 def test_build_agent_config_requires_model_selection_even_with_api_key(
@@ -228,6 +230,138 @@ def test_build_agent_config_rejects_invalid_thinking_effort(tmp_path: Path) -> N
 def test_build_agent_config_requires_api_key(tmp_path: Path) -> None:
     with pytest.raises(CliConfigError, match="ANTHROPIC_API_KEY"):
         build_agent_config(tmp_path, CliConfigOverrides(provider="anthropic", model=ANTHROPIC_DEFAULT_MODEL), env={})
+
+
+def test_agent_config_resolves_native_mistral_key() -> None:
+    model = ModelConfig(provider=ModelProvider.MISTRAL, model="mistral-medium-3-5")
+    config = AgentConfig(mistral_api_key="fake-mistral-key", long_context_config=model, fast_config=model)
+
+    assert ModelProvider("mistral") == ModelProvider.MISTRAL
+    assert config.get_api_key(ModelProvider.MISTRAL) == "fake-mistral-key"
+
+    with pytest.raises(ValueError, match="API key"):
+        AgentConfig(long_context_config=model, fast_config=model)
+
+
+@pytest.mark.parametrize("env_key", [None, "fake-env-mistral-key"])
+def test_build_agent_config_mistral_credentials_and_fast_inheritance(tmp_path: Path, env_key: str | None) -> None:
+    settings = CliSettings(active_provider="mistral", active_model="mistral-medium-3-5")
+    settings.set_api_key("mistral", "fake-settings-mistral-key")
+    store = SettingsStore(tmp_path / "state")
+    store.save(settings)
+    settings = store.load()
+
+    config = build_agent_config(
+        tmp_path, settings=settings, env={"MISTRAL_API_KEY": env_key} if env_key is not None else {}
+    )
+
+    assert config.long_context_config.provider == ModelProvider.MISTRAL
+    assert config.long_context_config.model == "mistral-medium-3-5"
+    assert config.fast_config.provider == ModelProvider.MISTRAL
+    assert config.fast_config.model == "mistral-medium-3-5"
+    assert config.mistral_api_key == (env_key or "fake-settings-mistral-key")
+    assert config.get_api_key(ModelProvider.MISTRAL) == config.mistral_api_key
+    assert config.anthropic_api_key is None
+    assert config.openai_api_key is None
+    assert config.mistral_api_key is not None
+    assert config.mistral_api_key not in str(config_summary(config))
+
+
+def test_mistral_key_status_and_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    settings = CliSettings(active_provider="mistral", active_model="mistral-medium-3-5")
+    assert key_status("mistral", tmp_path, settings) == "missing"
+    assert resolved_api_key("mistral", tmp_path, settings) is None
+
+    settings.set_api_key("mistral", "fake-settings-mistral-key")
+    assert key_status("mistral", tmp_path, settings) == "present in local settings"
+    assert resolved_api_key("mistral", tmp_path, settings) == "fake-settings-mistral-key"
+
+    monkeypatch.setenv("MISTRAL_API_KEY", "fake-env-mistral-key")
+    assert key_status("mistral", tmp_path, settings) == "present via MISTRAL_API_KEY"
+    assert resolved_api_key("mistral", tmp_path, settings) == "fake-env-mistral-key"
+
+
+@pytest.mark.parametrize("thinking_effort", ["none", "high"])
+def test_build_agent_config_mistral_explicit_model_and_thinking(tmp_path: Path, thinking_effort: str) -> None:
+    config = build_agent_config(
+        tmp_path,
+        CliConfigOverrides(provider="mistral", model="mistral-medium-3-5", thinking_effort=thinking_effort),
+        env={"MISTRAL_API_KEY": "fake-mistral-key"},
+    )
+
+    assert config.long_context_config.provider == ModelProvider.MISTRAL
+    assert config.long_context_config.thinking_effort == thinking_effort
+
+
+def test_saved_mistral_model_falls_back_to_explicit_provider_default(tmp_path: Path) -> None:
+    settings = CliSettings(active_provider="mistral", active_model="removed-mistral-model")
+    settings.set_api_key("mistral", "fake-mistral-key")
+
+    config = build_agent_config(tmp_path, settings=settings, env={})
+
+    assert config.long_context_config.model == "mistral-medium-3-5"
+    assert config.fast_config.model == "mistral-medium-3-5"
+
+
+@pytest.mark.parametrize("source", ["settings", "env"])
+@pytest.mark.parametrize(
+    ("role", "agent_name"),
+    [
+        ("planning", "planning-agent"),
+        ("building", "coder"),
+        ("investigation", "investigation-agent"),
+        ("browser", "browser-agent"),
+    ],
+)
+def test_mistral_fast_slot_and_role_selection(tmp_path: Path, source: str, role: str, agent_name: str) -> None:
+    settings = CliSettings(active_provider="anthropic", active_model=ANTHROPIC_DEFAULT_MODEL)
+    settings.set_api_key("anthropic", "fake-anthropic-key")
+    env = {"MISTRAL_API_KEY": "fake-mistral-key"}
+    if source == "settings":
+        settings.set_model_slot("fast", "mistral", "mistral-small-2603")
+        settings.set_agent_model(role, "mistral", "mistral-medium-3-5", "high")
+        store = SettingsStore(tmp_path / "state")
+        store.save(settings)
+        settings = store.load()
+    else:
+        env.update(
+            {
+                "KOLEGA_CODE_FAST_PROVIDER": "mistral",
+                "KOLEGA_CODE_FAST_MODEL": "mistral-small-2603",
+                f"KOLEGA_CODE_{role.upper()}_PROVIDER": "mistral",
+                f"KOLEGA_CODE_{role.upper()}_MODEL": "mistral-medium-3-5",
+                f"KOLEGA_CODE_{role.upper()}_EFFORT": "high",
+            }
+        )
+
+    config = build_agent_config(tmp_path, settings=settings, env=env)
+
+    assert config.long_context_config.provider == ModelProvider.ANTHROPIC
+    assert config.fast_config.provider == ModelProvider.MISTRAL
+    assert config.fast_config.model == "mistral-small-2603"
+    selected = config.model_config_for_agent(agent_name)
+    assert selected.provider == ModelProvider.MISTRAL
+    assert selected.model == "mistral-medium-3-5"
+    assert selected.thinking_effort == "high"
+    assert config.model_config_for_agent("general-agent").provider == ModelProvider.ANTHROPIC
+
+
+@pytest.mark.parametrize("selection", ["active", "fast", "planning", "building", "investigation"])
+def test_mistral_requires_its_own_key_in_every_slot(tmp_path: Path, selection: str) -> None:
+    settings = CliSettings(active_provider="anthropic", active_model=ANTHROPIC_DEFAULT_MODEL)
+    settings.set_api_key("anthropic", "fake-anthropic-key")
+    if selection == "active":
+        settings.active_provider = "mistral"
+        settings.active_model = "mistral-medium-3-5"
+    elif selection == "fast":
+        settings.set_model_slot("fast", "mistral", "mistral-small-2603")
+    else:
+        settings.set_agent_model(selection, "mistral", "mistral-medium-3-5")
+
+    with pytest.raises(CliConfigError, match="MISTRAL_API_KEY"):
+        build_agent_config(tmp_path, settings=settings, env={"OPENAI_API_KEY": "fake-unrelated-key"})
 
 
 def test_build_agent_config_rejects_unknown_model(tmp_path: Path) -> None:

@@ -216,6 +216,97 @@ async def test_settings_screen_retains_active_model_and_effort(
 
 
 @pytest.mark.asyncio
+async def test_settings_mistral_provider_changes_default_and_save_all_model_slots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Select
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+    from kolega_code.config import ModelProvider
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch, extra_key_providers=("mistral",))
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        await _wait_for_select_values(pilot, screen, {"provider_select": UI_DEFAULT_PROVIDER})
+
+        screen.query_one("#provider_select", Select).value = "mistral"
+        await _wait_for_select_values(
+            pilot,
+            screen,
+            {
+                "provider_select": "mistral",
+                "model_select": "mistral-medium-3-5",
+                "thinking_effort_select": "none",
+            },
+        )
+        assert str(screen.query_one("#model_select", Select).value) == "mistral-medium-3-5"
+        assert str(screen.query_one("#thinking_effort_select", Select).value) == "none"
+
+        screen.query_one("#model_select", Select).value = "mistral-small-2603"
+        await _wait_for_select_values(pilot, screen, {"model_select": "mistral-small-2603"})
+        screen.query_one("#thinking_effort_select", Select).value = "high"
+        screen.query_one("#slot_provider_fast", Select).value = "mistral"
+        await _wait_for_select_values(pilot, screen, {"slot_model_fast": "mistral-medium-3-5"})
+        assert str(screen.query_one("#slot_model_fast", Select).value) == "mistral-medium-3-5"
+        screen.query_one("#slot_model_fast", Select).value = "ministral-3b-latest"
+
+        screen._show_category("agents")
+        for role in ("planning", "building", "investigation"):
+            screen.query_one(f"#am_provider_{role}", Select).value = "mistral"
+            await _wait_for_select_values(
+                pilot,
+                screen,
+                {f"am_model_{role}": "mistral-medium-3-5", f"am_effort_{role}": "none"},
+            )
+            assert str(screen.query_one(f"#am_model_{role}", Select).value) == "mistral-medium-3-5"
+            assert str(screen.query_one(f"#am_effort_{role}", Select).value) == "none"
+            screen.query_one(f"#am_model_{role}", Select).value = "mistral-medium-latest"
+            await _wait_for_select_values(pilot, screen, {f"am_model_{role}": "mistral-medium-latest"})
+            screen.query_one(f"#am_effort_{role}", Select).value = "high"
+
+        await _wait_for_select_values(
+            pilot,
+            screen,
+            {
+                "slot_model_fast": "ministral-3b-latest",
+                "thinking_effort_select": "high",
+                **{f"am_effort_{role}": "high" for role in ("planning", "building", "investigation")},
+            },
+        )
+        await app._save_settings_from_ui()
+
+        saved = settings_store.load()
+        assert saved.active_provider == "mistral"
+        assert saved.active_model == "mistral-small-2603"
+        assert saved.active_thinking_effort == "high"
+        assert saved.get_api_key("mistral") == "stored-key"
+        assert saved.get_api_key(UI_DEFAULT_PROVIDER) == "stored-key"
+        assert saved.get_model_slot("fast") == {"provider": "mistral", "model": "ministral-3b-latest"}
+        assert app.config is not None
+        for role, agent_name in (
+            ("planning", "planning-agent"),
+            ("building", "coder"),
+            ("investigation", "investigation-agent"),
+        ):
+            assert saved.get_agent_model(role) == {
+                "provider": "mistral",
+                "model": "mistral-medium-latest",
+                "thinking_effort": "high",
+            }
+            selected = app.config.model_config_for_agent(agent_name)
+            assert selected.provider == ModelProvider.MISTRAL
+            assert selected.model == "mistral-medium-latest"
+            assert selected.thinking_effort == "high"
+        assert app.config.fast_config.provider == ModelProvider.MISTRAL
+        assert app.config.fast_config.model == "ministral-3b-latest"
+        assert screen.dirty is False
+
+
+@pytest.mark.asyncio
 async def test_settings_layout_uses_uniform_controls_and_quiet_actions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -359,18 +359,29 @@ class ThinkingBlock(ContentBlock):
 
     TYPE_NAME = "thinking"
 
-    def __init__(self, thinking: str, cache_checkpoint: bool = False, signature: Optional[str] = None):
+    def __init__(
+        self,
+        thinking: str,
+        cache_checkpoint: bool = False,
+        signature: Optional[str] = None,
+        provider_metadata: Optional[Dict[str, Any]] = None,
+    ):
         super().__init__(type=self.TYPE_NAME, cache_checkpoint=cache_checkpoint)
         self.thinking = thinking
         self.signature = signature
+        # Preserve replay-critical native structure without changing how other
+        # providers serialize this block (e.g. Mistral nested chunks/closed).
+        self.provider_metadata = provider_metadata or {}
 
     def to_dict(self) -> Dict[str, Any]:
-        result = {
+        result: Dict[str, Any] = {
             "type": self.type,
             "thinking": self.thinking,
         }
-        if self.signature:
+        if self.signature or "signature" in self.provider_metadata:
             result["signature"] = self.signature
+        if self.provider_metadata:
+            result["provider_metadata"] = self.provider_metadata
         return result
 
     @classmethod
@@ -378,6 +389,7 @@ class ThinkingBlock(ContentBlock):
         return cls(
             thinking=data["thinking"],
             signature=data.get("signature"),
+            provider_metadata=data.get("provider_metadata"),
         )
 
     def to_anthropic(self) -> Dict[str, Any]:
@@ -1544,7 +1556,32 @@ class Message:
                 if thinking_blocks and (rest_blocks or has_tool_calls):
                     reasoning_text = "\n\n".join(b.thinking for b in thinking_blocks)
                     non_tool_blocks = rest_blocks
-            content = [item.to_openai() for item in non_tool_blocks]
+            if provider and _provider_value(provider) == "mistral":
+                content = []
+                for item in non_tool_blocks:
+                    if isinstance(item, ThinkingBlock):
+                        if (
+                            self.role != "assistant"
+                            or source_provider is None
+                            or _provider_value(source_provider) != "mistral"
+                        ):
+                            continue
+                        native = item.provider_metadata
+                        thinking_chunk: Dict[str, Any] = {
+                            "type": "thinking",
+                            "thinking": native.get("thinking", [{"type": "text", "text": item.thinking}]),
+                        }
+                        if "closed" in native:
+                            thinking_chunk["closed"] = native["closed"]
+                        if "signature" in native:
+                            thinking_chunk["signature"] = native["signature"]
+                        if item.signature is not None:
+                            thinking_chunk["signature"] = item.signature
+                        content.append(thinking_chunk)
+                    elif not isinstance(item, RedactedThinkingBlock):
+                        content.append(item.to_openai())
+            else:
+                content = [item.to_openai() for item in non_tool_blocks]
             # Strict OpenAI-compatible servers (e.g. DeepSeek) prefer an empty
             # string over an empty list when an assistant message carries only
             # tool_calls and/or native reasoning.

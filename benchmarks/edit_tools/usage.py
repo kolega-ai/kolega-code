@@ -20,6 +20,7 @@ OPENAI_SHAPED = {
     "deepseek",
     "ollama_cloud",
     "openrouter",
+    "mistral",
 }
 
 

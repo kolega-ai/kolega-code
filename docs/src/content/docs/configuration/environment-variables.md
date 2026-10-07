@@ -41,6 +41,7 @@ provider or model.
 | `ANTHROPIC_API_KEY` | Anthropic |
 | `OPENAI_API_KEY` | OpenAI |
 | `GOOGLE_API_KEY` | Google |
+| `MISTRAL_API_KEY` | Mistral AI (native API) |
 | `GROQ_API_KEY` | Groq |
 | `TOGETHER_API_KEY` | Together.ai |
 | `FIREWORKS_API_KEY` | Fireworks.ai |
@@ -63,6 +64,17 @@ standard Moonshot API used by the `moonshot` provider.
 The `OLLAMA_API_KEY` key authenticates against Ollama Cloud's direct API (`https://ollama.com/v1` for OpenAI-compatible requests).
 The `OPENROUTER_API_KEY` key authenticates against the OpenRouter gateway (`https://openrouter.ai/api/v1`).
 The `PERPLEXITY_API_KEY` key authenticates against the Perplexity Agent API (`https://api.perplexity.ai/v1`).
+The `MISTRAL_API_KEY` key authenticates against Mistral's own native Chat
+Completions API (`https://api.mistral.ai/v1`). Select `mistral` together with a
+model such as `mistral-medium-3-5`; the key alone does not select a model.
+This is a native Mistral key, not an OpenRouter or other gateway key. As with
+other provider keys, an exported `MISTRAL_API_KEY` takes precedence over a saved
+Settings key. On Medium 3.5, Small 4, and Large 4,
+`KOLEGA_CODE_THINKING_EFFORT` accepts `none` (default) or `high`; Ministral 3 and
+Codestral do not expose this control. Large 4 is an account/subscription-dependent
+preview, and `latest` aliases can change. See
+[Providers and Models](../providers-and-models/) for image support and local
+token-budgeting limitations.
 
 ### Ollama Cloud catalog
 
