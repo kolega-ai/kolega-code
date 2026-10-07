@@ -554,9 +554,9 @@ def test_catalog_efforts_come_from_the_probed_vocabulary():
         assert spec["thinking_effort"].options == catalog.AGENT_EFFORT_OPTIONS
         assert "none" not in spec["thinking_effort"].options
 
-    agent_spec = get_model_specs("perplexity_agent", "perplexity/glm-5.2")
+    agent_spec = get_model_specs("perplexity_agent", "perplexity/glm-5.3-flash")
     assert agent_spec["thinking_effort"].options == catalog.AGENT_EFFORT_OPTIONS
-    params = build_thinking_request_params("perplexity_agent", "perplexity/glm-5.2", "high")
+    params = build_thinking_request_params("perplexity_agent", "perplexity/glm-5.3-flash", "high")
     assert params == {"reasoning": {"effort": "high", "summary": "auto"}}
 
 
