@@ -97,6 +97,12 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
         # endpoint, so use the Anthropic SDK's passthrough body for the field.
         return {"extra_body": {"reasoning_effort": normalized}}
 
+    if spec.mode == "mistral_effort":
+        # Native Mistral Chat Completions accepts a flat top-level
+        # reasoning_effort field. Do not add Mistral to reasoning replay below:
+        # there is no catalog-backed flat assistant reasoning field to echo.
+        return {"reasoning_effort": normalized}
+
     if spec.mode == "kimi_coding_effort":
         # Kimi Coding Plan exposes K3 through its Anthropic-compatible endpoint
         # and accepts Claude's output_config effort shape. Deep thinking is

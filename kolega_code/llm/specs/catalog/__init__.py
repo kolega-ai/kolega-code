@@ -1,6 +1,7 @@
 from typing import Any, Dict, Tuple
 
 from .anthropic import ANTHROPIC_SPECS
+from .mistral import MISTRAL_SPECS
 from .moonshot import MOONSHOT_SPECS
 from .kimi_coding import KIMI_CODING_SPECS
 from .deepseek import DEEPSEEK_SPECS
@@ -31,6 +32,7 @@ from .openrouter import OPENROUTER_SPECS
 # DeepSeek guard), and the ``read_image`` tool gate.
 MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
     **ANTHROPIC_SPECS,
+    **MISTRAL_SPECS,
     **MOONSHOT_SPECS,
     **KIMI_CODING_SPECS,
     **DEEPSEEK_SPECS,

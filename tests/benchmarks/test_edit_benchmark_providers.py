@@ -4,7 +4,9 @@ import tomllib
 import pytest
 
 from benchmarks.edit_tools.__main__ import _catalog_smoke_matrix
+from benchmarks.edit_tools.models import UsageTotals
 from benchmarks.edit_tools.protocols import create_tool_collection, get_protocol
+from benchmarks.edit_tools.usage import add_usage
 from kolega_code.config import AgentConfig, EditProtocol, ModelConfig, ModelProvider
 from kolega_code.llm.providers.models import GenerationParams
 from kolega_code.llm.providers.responses_common import responses_tools
@@ -31,11 +33,41 @@ def test_provider_smoke_matrix_covers_every_catalog_provider() -> None:
     matrix = _catalog_smoke_matrix()
 
     assert [item.provider for item in matrix.models] == catalog_providers()
-    assert len(matrix.models) == 18
+    assert len(matrix.models) == len(set(catalog_providers()))
+    assert "mistral" in {item.provider for item in matrix.models}
+    for item in matrix.models:
+        assert (item.provider, item.model) in MODEL_SPECS
+    assert next(item.model for item in matrix.models if item.provider == "mistral") == "mistral-medium-3-5"
     assert all(
         item.protocols == ["search_replace", "codex_apply_patch", "claude_code", "hashline_v2"]
         for item in matrix.models
     )
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"prompt_tokens": 23, "completion_tokens": 7, "total_tokens": 30},
+        {"input_tokens": 23, "output_tokens": 7},
+        {"provider": "mistral", "prompt_tokens": 23, "completion_tokens": 7},
+    ],
+)
+def test_mistral_benchmark_usage_accepts_native_and_normalized_counts(metadata: dict[str, object]) -> None:
+    total = UsageTotals()
+    add_usage(total, metadata, provider="mistral")
+
+    assert total.input_tokens == 23
+    assert total.output_tokens == 7
+    assert total.requests == 1
+    assert total.cache_read_input_tokens == 0
+    assert total.cache_write_input_tokens == 0
+
+
+def test_mistral_benchmark_usage_uses_metadata_provider_when_routing_changes() -> None:
+    total = UsageTotals()
+    add_usage(total, {"provider": "mistral", "prompt_tokens": 23, "completion_tokens": 7}, provider="anthropic")
+
+    assert (total.input_tokens, total.output_tokens, total.requests) == (23, 7, 1)
 
 
 @pytest.mark.parametrize("provider", catalog_providers())

@@ -24,6 +24,7 @@ Anthropic-compatible):
 | OpenAI | `openai` | `OPENAI_API_KEY` |
 | OpenAI (ChatGPT subscription) | `openai_chatgpt` | _none — [sign in with ChatGPT](../sign-in-with-chatgpt/)_ |
 | Google | `google` | `GOOGLE_API_KEY` |
+| Mistral AI | `mistral` | `MISTRAL_API_KEY` |
 | Groq | `groq` | `GROQ_API_KEY` |
 | Together.ai | `together` | `TOGETHER_API_KEY` |
 | Fireworks.ai | `fireworks` | `FIREWORKS_API_KEY` |
@@ -56,6 +57,58 @@ Luna are the cheaper/faster members and accept the full `none`, `low`, `medium`,
 `none` and `minimal` (use `low`). All three keep Astra's 1,050,000-token window and
 128K output reservation on the API provider and the same conservative 400,000-token
 budget on the ChatGPT provider.
+
+<Aside type="tip">
+**Mistral AI (native API).** The `mistral` provider calls Mistral's own Chat
+Completions API at `https://api.mistral.ai/v1/chat/completions`, using
+`MISTRAL_API_KEY`. It is a dedicated native adapter, not an OpenRouter route or
+a custom OpenAI-compatible endpoint.
+
+The picker defaults to **Mistral Medium 3.5** (`mistral-medium-3-5`). The native
+catalog includes these chat/function-calling families and eligible aliases:
+
+| Family / primary model ID | Context window (tokens) | Image input | Thinking efforts |
+| --- | ---: | --- | --- |
+| Medium 3.5 / `mistral-medium-3-5` | 262,144 | Yes | `none`, `high` |
+| Small 4 / `mistral-small-2603` | 262,144 | Yes | `none`, `high` |
+| Large 4 **preview** / `mistral-large-4` | 524,288 | Yes | `none`, `high` |
+| Ministral 3 3B / `ministral-3b-2512` | 131,072 | Yes | No control |
+| Ministral 3 8B / `ministral-8b-2512` | 262,144 | Yes | No control |
+| Ministral 3 14B / `ministral-14b-2512` | 262,144 | Yes | No control |
+| Codestral / `codestral-2508` | 256,000 | No | No control |
+
+**Large 4 preview access depends on the account/subscription.** Its authenticated
+model metadata advertises vision, reasoning, and function calling, but catalog
+visibility does not guarantee successful inference. The current picker also
+accepts `mistral-large-4-0`. Eligible aliases such as `mistral-medium-latest`,
+`mistral-small-latest`, the Ministral `*-latest` IDs, and `codestral-latest` are
+mutable: their target and capabilities may change. Catalog metadata is not a
+live access check.
+
+As with every provider, CLI flags must name both provider and model:
+
+```bash
+kolega-code . --provider mistral --model mistral-medium-3-5
+kolega-code models list --provider mistral
+```
+
+Image input is enabled only on vision-capable catalog models, including Ministral
+3; Codestral is text-only. Medium/Small/Large expose `none` (thinking off, the
+default) and `high` (thinking on), rather than the OpenAI effort ladder.
+Same-provider reasoning is replayed in Mistral's native structured content
+format, preserving replay metadata rather than turning thinking into visible
+answer text. Models and their capabilities come from the shared catalog used by
+the main, Fast, per-agent model selectors, and subagent discovery.
+
+Token counting is a conservative local estimate with a safety margin, not an
+exact Mistral tokenizer or a hosted count-tokens endpoint. It cannot guarantee an
+exact fit. Input and the requested output reservation share the model's context
+window. The catalog reserves **32,768 output tokens** for these models as
+**Kolega's budgeting policy**, not a verified hard native maximum-output ceiling;
+that reservation reduces the input budget. Kolega Code owns the local
+function-tool loop; Mistral-hosted server tools are not enabled. A native
+`MISTRAL_API_KEY` is separate from OpenRouter/gateway credentials.
+</Aside>
 
 <Aside type="tip">
 **Z.AI GLM Coding Plan.** The `zai` provider targets Z.AI's Anthropic-compatible

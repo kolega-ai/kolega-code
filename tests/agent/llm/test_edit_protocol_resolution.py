@@ -87,3 +87,13 @@ def test_direct_deepseek_models_prefer_claude_code() -> None:
         ("deepseek", "deepseek-flash"): EditProtocol.CLAUDE_CODE.value,
         ("deepseek", "deepseek-v4-pro"): EditProtocol.CLAUDE_CODE.value,
     }
+
+
+def test_native_mistral_defaults_do_not_inherit_openai_edit_protocol() -> None:
+    model = ModelConfig(provider=ModelProvider.MISTRAL, model="mistral-medium-3-5")
+    value = AgentConfig(mistral_api_key="fake-mistral-key", long_context_config=model, fast_config=model)
+
+    assert preferred_edit_protocol("mistral", model.model) is None
+    assert value.resolve_edit_protocol_with_source() == (EditProtocol.CLAUDE_CODE, "default")
+    explicit = value.model_copy(update={"edit_protocol": EditProtocol.CODEX_APPLY_PATCH})
+    assert explicit.resolve_edit_protocol_with_source() == (EditProtocol.CODEX_APPLY_PATCH, "session_override")

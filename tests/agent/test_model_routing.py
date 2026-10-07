@@ -13,6 +13,7 @@ from kolega_code.agent.model_routing import (
 )
 from kolega_code.auth.tokens import OAuthTokens
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider
+from kolega_code.llm.specs import MODEL_SPECS
 
 
 def _config() -> AgentConfig:
@@ -310,3 +311,96 @@ def test_catalog_notes_the_sibling_preference_only_when_both_are_configured() ->
 
     assert "Prefer `openai_chatgpt` when configured." in with_both
     assert "Prefer `openai_chatgpt` when configured." not in with_one
+
+
+def test_native_mistral_discovery_requires_its_own_key_and_redacts_it() -> None:
+    config = _config()
+    assert "mistral" not in configured_provider_names(config)
+    assert "mistral" not in {entry["provider"] for entry in subagent_model_catalog(config)["providers"]}
+    with pytest.raises(ValueError, match="not configured"):
+        subagent_model_catalog(config, "mistral")
+
+    config = config.model_copy(update={"mistral_api_key": "fake-native-mistral-key"})
+    catalog = subagent_model_catalog(config, "mistral")
+    assert "mistral" in configured_provider_names(config)
+    assert [entry["provider"] for entry in catalog["providers"]] == ["mistral"]
+    models = {entry["model"]: entry for entry in catalog["providers"][0]["models"]}
+    assert set(models) == {model for provider, model in MODEL_SPECS if provider == "mistral"}
+    assert len(models) == 18
+    for model in ("mistral-medium-3-5", "mistral-small-2603", "mistral-large-4", "mistral-large-4-0"):
+        assert models[model]["thinking_efforts"] == ["none", "high"]
+        assert models[model]["default_thinking_effort"] == "none"
+        assert models[model]["override_effort"] == "string"
+        assert models[model]["supports_vision"] is True
+    for model, vision in (("ministral-3b-2512", True), ("codestral-2508", False)):
+        assert models[model]["thinking_efforts"] == []
+        assert models[model]["override_effort"] == "null"
+        assert models[model]["supports_vision"] is vision
+
+    rendered = render_subagent_model_catalog(catalog)
+    assert "mistral/mistral-medium-3-5" in rendered
+    assert "fake-native-mistral-key" not in rendered
+    assert "fake-native-mistral-key" not in json.dumps(catalog)
+
+
+@pytest.mark.parametrize("agent_name", ["planning-agent", "coder", "investigation-agent"])
+@pytest.mark.parametrize(
+    ("model", "effort"),
+    [
+        ("mistral-medium-3-5", "none"),
+        ("mistral-medium-latest", "high"),
+        ("mistral-small-2603", "high"),
+        ("mistral-large-4", "high"),
+        ("mistral-large-4-0", "none"),
+        ("ministral-3b-2512", None),
+        ("ministral-8b-latest", None),
+        ("ministral-14b-2512", None),
+        ("codestral-latest", None),
+    ],
+)
+def test_native_mistral_override_routes_only_the_target_role(agent_name: str, model: str, effort: str | None) -> None:
+    config = _config().model_copy(update={"mistral_api_key": "fake-native-mistral-key"})
+    inherited = config.model_config_for_agent(agent_name)
+    resolved = resolve_subagent_model(
+        config,
+        agent_name,
+        {"provider": "mistral", "model": model, "thinking_effort": effort},
+        effort_key="thinking_effort",
+    )
+
+    assert resolved.metadata == {"provider": "mistral", "model": model, "thinking_effort": effort}
+    assert resolved.config.model_config_for_agent(agent_name) == resolved.model_config
+    assert resolved.config.model_config_for_agent("general-agent") == config.long_context_config
+    assert resolved.config.fast_config == config.fast_config
+    assert resolved.model_config.rate_limits == inherited.rate_limits
+    assert resolved.config.get_api_key(ModelProvider.MISTRAL) == "fake-native-mistral-key"
+    assert config.agent_models == {}
+
+
+@pytest.mark.parametrize(
+    ("model", "effort", "message"),
+    [
+        ("mistral-medium-3-5", None, "effort must be a string"),
+        ("mistral-small-2603", "low", "Unsupported thinking effort"),
+        ("codestral-2508", "high", "does not support thinking effort"),
+        ("ministral-3b-2512", "none", "does not support thinking effort"),
+    ],
+)
+def test_native_mistral_override_validates_model_specific_effort(model: str, effort: str | None, message: str) -> None:
+    config = _config().model_copy(update={"mistral_api_key": "fake-native-mistral-key"})
+    with pytest.raises(ValueError, match=message):
+        resolve_subagent_model(
+            config,
+            "general-agent",
+            {"provider": "mistral", "model": model, "thinking_effort": effort},
+            effort_key="thinking_effort",
+        )
+    assert config.agent_models == {}
+
+
+def test_gateway_key_does_not_authorize_native_mistral_override() -> None:
+    config = _config().model_copy(update={"openrouter_api_key": "fake-gateway-key"})
+    message = _override_error(config, {"provider": "mistral", "model": "mistral-medium-3-5", "thinking_effort": "high"})
+    assert "Provider 'mistral' is not configured." in message
+    assert "fake-gateway-key" not in message
+    assert "mistral" not in configured_provider_names(config)

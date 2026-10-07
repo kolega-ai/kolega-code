@@ -172,6 +172,7 @@ Supported model providers:
 - OpenAI API
 - OpenAI via ChatGPT subscription sign-in
 - Google
+- Mistral AI (native API)
 - Groq
 - Together.ai
 - Fireworks.ai
@@ -212,6 +213,29 @@ or save them in Settings. Local session state lives under your platform's state
 directory unless `KOLEGA_CODE_STATE_DIR` is set. See the
 [Configuration docs](https://kolega-ai.github.io/kolega-code/configuration/settings-and-api-keys/)
 for the full story.
+
+For Mistral's own API, save a key under **Mistral AI** in Settings or export
+`MISTRAL_API_KEY`, then select a model explicitly:
+
+```bash
+export MISTRAL_API_KEY=your-mistral-api-key
+kolega-code . --provider mistral --model mistral-medium-3-5
+```
+
+The picker defaults to Mistral Medium 3.5 and includes Mistral Small 4
+(`mistral-small-2603`), Mistral Large 4 **preview** (`mistral-large-4`),
+Ministral 3 (3B/8B/14B), Codestral, and eligible native aliases. Large 4 access
+depends on the account/subscription; a catalog entry does not guarantee access.
+Aliases, especially `latest`, can change their target and capabilities.
+
+Medium 3.5, Small 4, Large 4, and Ministral 3 support image input; Codestral is
+text-only. Medium/Small/Large expose `none` (default) or `high` thinking, with
+same-provider reasoning replayed in Mistral's native format. Token counting is
+a conservative local estimate with a safety margin, not an exact Mistral
+tokenizer. The catalog's 32,768-token output reservation is Kolega's budgeting
+policy, not a verified native maximum-output ceiling. Kolega Code runs the local
+function-tool loop; Mistral-hosted server tools are not enabled. Native Mistral
+keys and model IDs are separate from gateway credentials and routes.
 
 ## Requirements
 

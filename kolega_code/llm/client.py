@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     # module imports its own SDK at module load).
     from .providers.anthropic import AnthropicProvider
     from .providers.google import GoogleProvider
+    from .providers.mistral import MistralProvider
     from .providers.openai import OpenAIProvider
     from .providers.tinker import TinkerProvider
 
@@ -158,6 +159,10 @@ class LLMClient:
             from .providers.google import GoogleProvider
 
             return GoogleProvider
+        if p == "mistral":
+            from .providers.mistral import MistralProvider
+
+            return MistralProvider
         if p == "tinker":
             from .providers.tinker import TinkerProvider
 
@@ -172,7 +177,7 @@ class LLMClient:
         tokens_per_minute: Optional[int] = None,
         base_url: Optional[str] = None,
         api_style: Optional[str] = None,
-    ) -> "Union[AnthropicProvider, OpenAIProvider, GoogleProvider, TinkerProvider]":
+    ) -> "Union[AnthropicProvider, OpenAIProvider, GoogleProvider, MistralProvider, TinkerProvider]":
         """Initialize the appropriate LLM provider based on the provider name.
 
         Args:
@@ -235,6 +240,7 @@ class LLMClient:
                 "fireworks": "https://api.fireworks.ai/inference/v1",
                 "llama": "http://localhost:8000/v1",
                 "google": "https://generativelanguage.googleapis.com",
+                "mistral": "https://api.mistral.ai/v1/",
                 "xai": "https://api.x.ai/v1",
                 "dashscope": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
                 "moonshot": "https://api.moonshot.ai/anthropic",

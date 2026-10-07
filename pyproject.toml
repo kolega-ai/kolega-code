@@ -170,6 +170,7 @@ asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
     "integration: marks tests as integration tests",
+    "live_api: marks explicitly opt-in tests that make real provider API requests",
     "slow: marks tests as slow running tests",
     "e2e: marks tests as end-to-end tests",
 ]
