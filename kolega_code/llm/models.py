@@ -776,6 +776,7 @@ class ToolDefinition(ContentBlock):
         input_kind: ToolInputKind = "json",
         freeform_format: Optional[Dict[str, str]] = None,
         cache_ttl: Optional[str] = None,
+        strict: bool = False,
     ):
         super().__init__(type="tool_definition", cache_checkpoint=cache_checkpoint, cache_ttl=cache_ttl)
         self.name = name
@@ -790,6 +791,8 @@ class ToolDefinition(ContentBlock):
         # Provider-native constraint for a freeform tool. OpenAI Responses accepts
         # {type: "grammar", syntax: "lark"|"regex", definition: "..."}.
         self.freeform_format = freeform_format
+        # Sent by the Responses providers; the schema must meet the provider's strict rules.
+        self.strict = strict
 
     def _object_schema(self) -> Dict[str, Any]:
         """The JSON-schema object describing this tool's input."""
@@ -830,6 +833,8 @@ class ToolDefinition(ContentBlock):
             public["input_kind"] = self.input_kind
         if self.freeform_format:
             public["freeform_format"] = dict(self.freeform_format)
+        if self.strict:
+            public["strict"] = True
         return public
 
     @classmethod

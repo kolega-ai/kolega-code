@@ -9,7 +9,7 @@ other providers (Fireworks/OpenRouter/Ollama-Cloud) still use Chat Completions v
 Request building, streaming, and token counting are shared with the OpenAI
 Responses providers via
 :class:`~kolega_code.llm.providers.responses_common.ResponsesProviderBase`; only the
-transport differs — a plain api key against ``api.deepseek.com``.
+transport differs — a plain api key against ``api.deepseek.com/beta``.
 
 Reasoning continuity: DeepSeek returns no ``reasoning.encrypted_content`` (the
 ``include`` param the shared builder sends is silently ignored) but exposes the raw
@@ -31,8 +31,9 @@ back to the API" (findings/flash-output-token-efficiency-levers.md), while a
 minimal single-round history with a foreign call_id — fabricated or a genuine
 flash id from another conversation — is simply tolerated (probed 2026-08-04).
 
-The base URL is the bare host — DeepSeek's Responses guide uses
-``https://api.deepseek.com`` (no ``/v1``).
+The base URL is DeepSeek's beta endpoint, ``https://api.deepseek.com/beta`` (no
+``/v1``): strict tool schemas are enforced only there, and the bare host silently
+ignores ``strict: true`` (probed live 2026-10-12).
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ from .base import BaseLLMProvider
 from .models import GenerationParams
 from .responses_common import ResponsesProviderBase
 
-DEFAULT_BASE_URL = "https://api.deepseek.com"
+DEFAULT_BASE_URL = "https://api.deepseek.com/beta"
 DEFAULT_MODEL = "deepseek-flash"
 
 

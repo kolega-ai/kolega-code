@@ -405,6 +405,20 @@ active model**. Each override's provider must have an API key, exactly like the 
 roles. (Inside a `run_workflow` script, an explicit `model=`/`effort=` on an `agent()`
 call still takes precedence over these per-role defaults.)
 
+### Strict tool schemas on DeepSeek
+
+Code that calls Kolega's LLM client directly can mark a tool definition
+`strict=True`. The Responses providers then send `"strict": true` with that
+function tool, which asks the provider to hold the tool call to the schema
+exactly: every required field present and nothing extra.
+
+DeepSeek enforces this only under its beta base URL
+(`https://api.deepseek.com/beta`) and silently ignores the flag on the normal
+one, so Kolega sends all DeepSeek requests to the beta URL. A strict schema must
+list every property in `required` and set `additionalProperties: false` on each
+object, or DeepSeek rejects the request with a 400. Tools that are not marked
+strict behave as before.
+
 ## Thinking effort
 
 ### DeepSeek V4.1 Flash

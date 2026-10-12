@@ -3,7 +3,7 @@
 The first-party ``deepseek`` provider (``deepseek-flash`` and ``deepseek-v4-pro``,
 the only two models DeepSeek still lists) routes to the Responses API (see
 DeepSeekResponsesProvider); DeepSeek models on other providers stay on Chat
-Completions. These tests hit the real ``https://api.deepseek.com`` Responses
+Completions. These tests hit the real ``https://api.deepseek.com/beta`` Responses
 endpoint, so they are marked ``slow``/``integration`` and skip when
 ``DEEPSEEK_API_KEY`` is unset. Run with:
 
@@ -57,7 +57,7 @@ def test_flash_client_routes_to_responses_provider(deepseek_flash_client):
     # otherwise the tests below would silently exercise Chat Completions instead.
     provider = deepseek_flash_client.provider
     assert isinstance(provider, DeepSeekResponsesProvider)
-    assert provider.base_url == "https://api.deepseek.com"
+    assert provider.base_url == "https://api.deepseek.com/beta"
     assert provider.provider_name == "deepseek"
 
 
@@ -136,7 +136,7 @@ def test_vision_client_routes_to_responses_provider(deepseek_vision_client):
     # The live client must actually be on the Responses transport (bare host, no /v1).
     provider = deepseek_vision_client.provider
     assert isinstance(provider, DeepSeekResponsesProvider)
-    assert provider.base_url == "https://api.deepseek.com"
+    assert provider.base_url == "https://api.deepseek.com/beta"
     assert provider.provider_name == "deepseek"
 
 
