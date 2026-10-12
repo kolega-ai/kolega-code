@@ -100,6 +100,7 @@ def safe_parse_tool_arguments(raw: str) -> Dict[str, Any]:
     """Parse OpenAI tool function.arguments into a dict safely.
 
     - Tries strict json.loads first
+    - Accepts raw control characters inside strings (a literal tab or newline)
     - Applies minimal, conservative repairs (trim, remove trailing commas, balance one missing brace)
     - Returns a fallback dict with _raw_arguments and _parse_error on failure
     """
@@ -108,11 +109,16 @@ def safe_parse_tool_arguments(raw: str) -> Dict[str, Any]:
             return {}
         return json.loads(raw)
     except Exception as first_err:
+        # Models sometimes leave a raw tab or newline inside a string.
+        try:
+            return json.loads(raw, strict=False)
+        except Exception:
+            pass
         repaired = raw.strip()
         repaired = _remove_trailing_commas(repaired)
         repaired = _balance_brackets(repaired)
         try:
-            return json.loads(repaired)
+            return json.loads(repaired, strict=False)
         except Exception as second_err:
             # Last resort: do not crash; surface raw args for downstream handling
             snippet = raw if len(raw) <= 200 else raw[:200] + "..."
