@@ -6,6 +6,28 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.43.0 - 2026-10-13
+
+### Added
+
+- **Strict tool schemas.** Code that drives Kolega's LLM client directly can
+  mark a tool definition `strict=True`. The Responses providers then ask the
+  provider to hold the tool call to the schema exactly — every required field
+  present and nothing extra. Tools that are not marked strict behave as before.
+
+### Changed
+
+- DeepSeek requests now use `https://api.deepseek.com/beta`. DeepSeek enforces
+  strict tool schemas only on that endpoint and silently ignores the flag on the
+  bare host, so models that required a field could previously return a tool call
+  without it.
+
+### Fixed
+
+- A tool call whose arguments contain a raw control character — an unescaped tab
+  or newline copied into a JSON string — is now kept instead of degrading to an
+  empty call. Observed live with `deepseek-flash`.
+
 ## 0.42.0 - 2026-10-07
 
 ### Added
