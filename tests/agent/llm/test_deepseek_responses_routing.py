@@ -18,13 +18,13 @@ class TestDeepSeekModelRouting:
     def test_flash_routes_to_responses_provider(self):
         provider = LLMClient(provider="deepseek", api_key="sk-test", model="deepseek-flash").provider
         assert isinstance(provider, DeepSeekResponsesProvider)
-        assert provider.base_url == "https://api.deepseek.com"
+        assert provider.base_url == "https://api.deepseek.com/beta"
         assert provider.provider_name == "deepseek"
 
     def test_pro_routes_to_responses_provider(self):
         provider = LLMClient(provider="deepseek", api_key="sk-test", model="deepseek-v4-pro").provider
         assert isinstance(provider, DeepSeekResponsesProvider)
-        assert provider.base_url == "https://api.deepseek.com"
+        assert provider.base_url == "https://api.deepseek.com/beta"
         assert provider.provider_name == "deepseek"
 
     def test_missing_model_defaults_to_responses(self):

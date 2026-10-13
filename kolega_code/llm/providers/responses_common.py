@@ -332,14 +332,15 @@ def responses_tools(params: Optional[GenerationParams]) -> Optional[List[Dict[st
             continue
         chat_shape = definition.to_openai()
         fn = chat_shape.get("function", chat_shape)
-        tools.append(
-            {
-                "type": "function",
-                "name": fn.get("name"),
-                "description": fn.get("description"),
-                "parameters": fn.get("parameters"),
-            }
-        )
+        function_tool: Dict[str, Any] = {
+            "type": "function",
+            "name": fn.get("name"),
+            "description": fn.get("description"),
+            "parameters": fn.get("parameters"),
+        }
+        if definition.strict:
+            function_tool["strict"] = True
+        tools.append(function_tool)
     server_tools: List[str] = []
     if params.hosted_web_search:
         server_tools.append("web_search")

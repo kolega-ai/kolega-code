@@ -100,6 +100,7 @@ def safe_parse_tool_arguments(raw: str) -> Dict[str, Any]:
     """Parse OpenAI tool function.arguments into a dict safely.
 
     - Tries strict json.loads first
+    - Accepts raw control characters inside strings (a literal tab or newline)
     - Applies minimal, conservative repairs (trim, remove trailing commas, balance one missing brace)
     - Returns a fallback dict with _raw_arguments and _parse_error on failure
     """
@@ -108,11 +109,16 @@ def safe_parse_tool_arguments(raw: str) -> Dict[str, Any]:
             return {}
         return json.loads(raw)
     except Exception as first_err:
+        # Models sometimes leave a raw tab or newline inside a string.
+        try:
+            return json.loads(raw, strict=False)
+        except Exception:
+            pass
         repaired = raw.strip()
         repaired = _remove_trailing_commas(repaired)
         repaired = _balance_brackets(repaired)
         try:
-            return json.loads(repaired)
+            return json.loads(repaired, strict=False)
         except Exception as second_err:
             # Last resort: do not crash; surface raw args for downstream handling
             snippet = raw if len(raw) <= 200 else raw[:200] + "..."
@@ -776,6 +782,7 @@ class ToolDefinition(ContentBlock):
         input_kind: ToolInputKind = "json",
         freeform_format: Optional[Dict[str, str]] = None,
         cache_ttl: Optional[str] = None,
+        strict: bool = False,
     ):
         super().__init__(type="tool_definition", cache_checkpoint=cache_checkpoint, cache_ttl=cache_ttl)
         self.name = name
@@ -790,6 +797,8 @@ class ToolDefinition(ContentBlock):
         # Provider-native constraint for a freeform tool. OpenAI Responses accepts
         # {type: "grammar", syntax: "lark"|"regex", definition: "..."}.
         self.freeform_format = freeform_format
+        # Sent by the Responses providers; the schema must meet the provider's strict rules.
+        self.strict = strict
 
     def _object_schema(self) -> Dict[str, Any]:
         """The JSON-schema object describing this tool's input."""
@@ -830,6 +839,8 @@ class ToolDefinition(ContentBlock):
             public["input_kind"] = self.input_kind
         if self.freeform_format:
             public["freeform_format"] = dict(self.freeform_format)
+        if self.strict:
+            public["strict"] = True
         return public
 
     @classmethod

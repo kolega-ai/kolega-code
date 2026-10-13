@@ -245,11 +245,22 @@ async def wait_for_session_diff_baseline(app, timeout: float = 5.0) -> None:
 
 
 async def settle_changes_inspector(app, pilot, timeout: float = 5.0) -> None:
+    """Wait until the session diff is refreshed and the open inspector has repainted."""
+
+    def settled() -> bool:
+        inspector = getattr(app, "_changes_inspector", None)
+        return (
+            not app._session_diff_refresh_running
+            and app._session_diff_timer is None
+            and not getattr(inspector, "_flush_pending", False)
+        )
+
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not app._session_diff_refresh_running and app._session_diff_timer is None:
+        if settled():
             await pilot.pause(0.1)
-            return
+            if settled():
+                return
         await pilot.pause(0.01)
     raise AssertionError("Timed out waiting for changes inspector refresh to settle")
 

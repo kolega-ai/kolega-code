@@ -36,7 +36,7 @@ def test_llm_client_maps_zai_to_anthropic_provider():
 def test_llm_client_maps_deepseek_to_responses_provider():
     client = LLMClient(provider="deepseek", api_key="sk-test")
     assert isinstance(client.provider, DeepSeekResponsesProvider)
-    assert client.provider.base_url == "https://api.deepseek.com"
+    assert client.provider.base_url == "https://api.deepseek.com/beta"
     assert client.provider.provider_name == "deepseek"
 
     thinking = client._prepare_thinking_param("max", model="deepseek-v4-pro")
