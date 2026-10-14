@@ -177,7 +177,7 @@ class StartupEntryWidget(ToolEntryWidget):
         yield self._collapsible
 
     def refresh_content(self) -> None:
-        if self._collapsible is None:
+        if self._collapsible is None or self._pruning or self._collapsible._pruning:
             return
         self._collapsible.collapsed = self.entry.startup_collapsed
         self._refresh_title()
