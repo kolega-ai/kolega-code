@@ -39,6 +39,7 @@ def test_supports_vision_flag_present_on_every_entry():
         ("openai_chatgpt", "gpt-5.3-codex-spark", True),
         ("google", "gemini-3.5-flash", True),
         ("google", "gemini-3.1-pro-preview", True),
+        ("google", "gemini-4-argon", True),
         ("moonshot", "kimi-k3", True),
         ("moonshot", "kimi-k2.7-code", True),
         ("moonshot", "kimi-k2.6", True),
@@ -49,6 +50,7 @@ def test_supports_vision_flag_present_on_every_entry():
         # Native multimodal GLM-5 series model (image/video/file input).
         ("zai", "glm-5.3-flash", True),
         ("xai", "grok-4.6", True),
+        ("xai", "grok-4.7", True),
         ("xai", "grok-4.5", True),
         ("xai", "grok-4.3", True),
         ("fireworks", "accounts/fireworks/models/minimax-m3", True),

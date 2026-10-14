@@ -47,4 +47,20 @@ XAI_SPECS = {
         "default_temperature": 0.6,
         "supports_vision": False,
     },
+    ("xai", "grok-4.7"): {
+        # https://docs.x.ai/developers/models/grok-4.7
+        "context_length": 500000,
+        # xAI publishes no separate output ceiling. This is Kolega's output
+        # reservation, matching the other 500K Grok models, not a native limit.
+        "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
+        "default_temperature": 0.7,
+        "supports_vision": True,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("low", "medium", "high", "xhigh"),
+            # Keep Kolega's medium default; xAI's omitted-effort default is high.
+            default="medium",
+            mode="openai_reasoning_effort",
+        ),
+    },
 }

@@ -396,7 +396,7 @@ class ToolEntryWidget(Vertical):
         self.refresh_content()
 
     def _refresh_title(self) -> None:
-        if self._collapsible is None:
+        if self._collapsible is None or self._pruning or self._collapsible._pruning:
             return
         if self._title_for_width is not None and self.content_size.width:
             title_widget = self._collapsible.query_one(CollapsibleTitle)
@@ -423,7 +423,7 @@ class ToolEntryWidget(Vertical):
         self.refresh_content()
 
     def refresh_content(self) -> None:
-        if self._collapsible is None or self._body is None:
+        if self._collapsible is None or self._body is None or self._pruning or self._collapsible._pruning:
             return
 
         # Thinking entries stream through stream_parts; fold pending deltas into
@@ -541,6 +541,12 @@ class ScrollbackWindow:
 
     # ---- incremental maintenance --------------------------------------------
 
+    @property
+    def _can_render(self) -> bool:
+        # is_attached remains true during Textual's child-first DOM teardown.
+        # _pruning is set on the entire subtree before any child can disappear.
+        return self._view.is_attached and not self._view._pruning
+
     def sync(self, entries: list[ConversationEntry], dirty_ids: set[str], *, follow_bottom: bool) -> None:
         """Refresh dirty widgets, mount appended entries, trim while following.
 
@@ -548,7 +554,7 @@ class ScrollbackWindow:
         rebuild when the mounted span no longer aligns with the entries list or
         when the unmounted tail grew implausibly large (defensive burst guard).
         """
-        if not self._view.is_attached:
+        if not self._can_render:
             dirty_ids.clear()
             return
         unmounted_tail = len(entries) - (self.mounted_start + len(self.widgets))
@@ -564,7 +570,7 @@ class ScrollbackWindow:
 
     def rebuild(self, entries: list[ConversationEntry]) -> None:
         """Re-mount only the trailing window of ``entries`` (restore, reset, structural edits)."""
-        if not self._view.is_attached:
+        if not self._can_render:
             return
         self._view.remove_children()
         self.widgets = {}
@@ -573,6 +579,9 @@ class ScrollbackWindow:
 
     def refresh_dirty(self, dirty_ids: set[str]) -> None:
         """Re-render mounted widgets for ``dirty_ids`` (skipping unmounted) and consume the set."""
+        if not self._can_render:
+            dirty_ids.clear()
+            return
         for entry_id in dirty_ids:
             widget = self.widgets.get(entry_id)
             if widget is not None:
@@ -581,6 +590,8 @@ class ScrollbackWindow:
 
     def refresh_all(self) -> None:
         """Re-render every mounted widget (cheap: unchanged widgets early-return on a snapshot)."""
+        if not self._can_render:
+            return
         for widget in self.widgets.values():
             widget.refresh_content()
 
@@ -595,7 +606,7 @@ class ScrollbackWindow:
         """
         if self._expand_pending or self.mounted_start <= 0 or not self.widgets:
             return False
-        if not self._view.is_attached:
+        if not self._can_render:
             return False
         new_start = max(0, self.mounted_start - self.expand_chunk)
         chunk = entries[new_start : self.mounted_start]
@@ -631,7 +642,7 @@ class ScrollbackWindow:
         def compensate() -> None:
             self._expand_pending = False
             try:
-                if not view.is_attached:
+                if not self._can_render:
                     return
                 added = view.virtual_size.height - old_virtual_height
                 if added > 0:

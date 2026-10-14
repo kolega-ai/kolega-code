@@ -146,6 +146,27 @@ def test_grok_46_model_specs():
     assert specs["thinking_effort"].mode == "openai_reasoning_effort"
 
 
+def test_grok_47_model_specs() -> None:
+    specs = get_model_specs("xai", "grok-4.7")
+
+    assert specs["context_length"] == 500000
+    # This is the application output reservation, not a published xAI hard cap.
+    assert specs["max_completion_tokens"] == 32768
+    assert specs["input_budget"] == "window_minus_output"
+    assert resolve_max_input_tokens(specs) == 467232
+    assert specs["default_temperature"] == 0.7
+    assert specs["supports_vision"] is True
+    assert specs["thinking_effort"].options == ("low", "medium", "high", "xhigh")
+    assert specs["thinking_effort"].default == "medium"
+    assert specs["thinking_effort"].mode == "openai_reasoning_effort"
+
+
+@pytest.mark.parametrize("effort", ["none", "minimal", "max"])
+def test_grok_47_rejects_unsupported_efforts(effort: str) -> None:
+    with pytest.raises(ValueError, match="Unsupported thinking effort"):
+        build_thinking_request_params("xai", "grok-4.7", effort)
+
+
 def test_grok_45_model_specs():
     specs = get_model_specs("xai", "grok-4.5")
 

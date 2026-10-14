@@ -1446,9 +1446,9 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             # A coalesced flush can fire after the widget is unmounted (e.g. on exit).
             self._dirty_entry_ids.clear()
             return
-        if not view.is_attached:
-            # During teardown the view detaches before it is flagged closing, so query_one
-            # still resolves it but mounting into it raises MountError.
+        if not view.is_attached or view._pruning:
+            # Textual marks the subtree pruning before removing its children.
+            # The view can still be attached while entry titles are already gone.
             self._dirty_entry_ids.clear()
             return
 
@@ -1487,7 +1487,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             view = self._conversation
         except Exception:
             return
-        if not view.is_attached:
+        if not view.is_attached or view._pruning:
             return
         had_rendered_entries = bool(self._entry_widgets)
         should_follow = (

@@ -78,4 +78,19 @@ GOOGLE_SPECS = {
             mode="google_thinking_level",
         ),
     },
+    ("google", "gemini-4-argon"): {
+        # Input, thinking, and output share one window (unlike Gemini 3).
+        # Keep the synchronous limit; long decode is not used by this provider.
+        "context_length": 1048576,
+        "max_completion_tokens": 65536,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("low", "medium", "high"),
+            default="medium",
+            mode="google_thinking_level",
+        ),
+    },
 }

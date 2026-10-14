@@ -39,6 +39,10 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert default_thinking_effort("google", "gemini-3.5-flash-lite") == "minimal"
     assert thinking_effort_options("google", "gemini-3.1-pro-preview") == ("low", "medium", "high")
     assert default_thinking_effort("google", "gemini-3.1-pro-preview") == "high"
+    assert thinking_effort_options("google", "gemini-4-argon") == ("low", "medium", "high")
+    assert default_thinking_effort("google", "gemini-4-argon") == "medium"
+    assert thinking_effort_options("xai", "grok-4.7") == ("low", "medium", "high", "xhigh")
+    assert default_thinking_effort("xai", "grok-4.7") == "medium"
     assert thinking_effort_options("zai", "glm-5.3") == ("high", "max")
     assert default_thinking_effort("zai", "glm-5.3") == "max"
     assert thinking_effort_options("zai", "glm-5.2") == ("high", "max")
