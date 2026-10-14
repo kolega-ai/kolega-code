@@ -4,7 +4,6 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from google import genai
 from google.genai import types as genai_types
 
 from kolega_code.llm.models import (
@@ -44,6 +43,9 @@ class _FakeGoogleModels:
 @pytest.mark.parametrize(
     "model,thinking,expected_temperature",
     [
+        ("gemini-4-argon", "low", None),
+        ("gemini-4-argon", "medium", None),
+        ("gemini-4-argon", "high", None),
         ("gemini-3.8-flash", "medium", None),
         ("gemini-3.7-flash", "medium", None),
         ("gemini-3.6-flash", "medium", None),
@@ -84,11 +86,14 @@ async def test_google_request_config_respects_model_temperature_support(
     assert fake_models.calls[0][:2] == (method, model)
     config = cast(Any, fake_models.calls[0][2])
     serialized = config.model_dump(exclude_none=True)
+    assert serialized["system_instruction"] == "Be concise"
+    assert serialized["max_output_tokens"] == 1024
     if expected_temperature is None:
         assert "temperature" not in serialized
     else:
         assert serialized["temperature"] == expected_temperature
     assert serialized["thinking_config"]["thinking_level"].lower() == thinking
+    assert "thinking_budget" not in serialized["thinking_config"]
     assert config.tools is not None
     assert config.tools[0].function_declarations is not None
     declaration = config.tools[0].function_declarations[0]
@@ -105,8 +110,10 @@ async def test_google_request_config_respects_model_temperature_support(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["gemini-3.8-flash", "gemini-4-argon"])
 async def test_google_mldev_serializes_function_response_as_user_turn(
     monkeypatch: pytest.MonkeyPatch,
+    model: str,
 ) -> None:
     """Exercise the real 2.12.1 ML Dev request path for a complete tool-use round trip."""
 
@@ -140,14 +147,21 @@ async def test_google_mldev_serializes_function_response_as_user_turn(
         ]
     )
 
-    client = genai.Client(api_key="test-key")
+    provider = GoogleProvider(api_key="test-key")
+    client = provider.async_client
+    config = provider._prepare_generation_config(
+        model,
+        Message(role="system", content=[TextBlock(text="Be concise")]),
+        GenerationParams(temperature=0.7, max_completion_tokens=65536, thinking="medium"),
+    )
     request = AsyncMock(return_value=genai_types.HttpResponse(headers={}, body="{}"))
     monkeypatch.setattr(client._api_client, "async_request", request)
 
     try:
         await client.aio.models.generate_content(
-            model="gemini-test",
+            model=model,
             contents=history.to_google(),
+            config=config,
         )
     finally:
         await client.aio.aclose()
@@ -155,7 +169,13 @@ async def test_google_mldev_serializes_function_response_as_user_turn(
 
     request_call = request.await_args
     assert request_call is not None
+    assert request_call.args[1] == f"models/{model}:generateContent"
     request_payload = cast(dict[str, Any], request_call.args[2])
+    assert request_payload["generationConfig"] == {
+        "maxOutputTokens": 65536,
+        # The pinned SDK retains this nested protobuf field's snake_case spelling.
+        "thinkingConfig": {"thinking_level": genai_types.ThinkingLevel.MEDIUM},
+    }
     contents = cast(list[dict[str, Any]], request_payload["contents"])
 
     assert [content["role"] for content in contents] == ["user", "model", "user"]

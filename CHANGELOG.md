@@ -6,6 +6,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- Added native Google Gemini 4 Argon (`gemini-4-argon`) and xAI Grok 4.7
+  (`grok-4.7`) support, including model selectors, image input, streaming, tool
+  calling, and named reasoning efforts. Argon uses a shared 1,048,576-token
+  input/thinking/output window; Grok 4.7 uses 500,000 tokens and supports `xhigh`
+  effort. Existing provider defaults remain unchanged.
+
 ## 0.43.0 - 2026-10-13
 
 ### Added

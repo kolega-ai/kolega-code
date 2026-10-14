@@ -111,6 +111,7 @@ MODEL_LABELS: dict[str, str] = {
     "gemini-3.5-flash-lite": "Gemini 3.5 Flash-Lite",
     "gemini-3.1-pro-preview": "Gemini 3.1 Pro",
     "gemini-3.5-flash": "Gemini 3.5 Flash",
+    "gemini-4-argon": "Gemini 4 Argon",
     # Mistral (native API)
     "mistral-medium-3-5": "Mistral Medium 3.5",
     "mistral-medium-latest": "Mistral Medium (latest alias)",
@@ -135,6 +136,7 @@ MODEL_LABELS: dict[str, str] = {
     "grok-4.5": "Grok 4.5",
     "grok-4.3": "Grok 4.3",
     "grok-build-0.1": "Grok Build 0.1",
+    "grok-4.7": "Grok 4.7",
     # Fireworks
     "accounts/fireworks/models/glm-5p2": "GLM-5.2",
     "accounts/fireworks/models/glm-5p1": "GLM-5.1",
