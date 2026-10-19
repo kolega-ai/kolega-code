@@ -6,13 +6,41 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.44.0 - 2026-10-19
+
 ### Added
 
+- **Background sub-agents.** The agent can delegate with
+  `dispatch_agent(..., background=True)` and keep working while the child runs;
+  foreground dispatch remains the default. Jobs belong to the session in the
+  TUI, `ask`, `--loop`, goal runs, editor (ACP) sessions, and gateway chats.
+  Completion reports arrive automatically and normally start a continuation
+  instead of becoming extra prompts. The new `agent_job` tool lists, inspects,
+  or cancels jobs, with reports retained after completion, failure, or
+  cancellation. Persisted outcomes can be recovered when a session resumes, and
+  reported background usage is attributed to the session. Jobs survive turns,
+  not process exit; cancelling a main turn does not discard child results.
+- The TUI shows a persistent background-agent indicator above the composer,
+  distinguishing running, queued, undelivered, and failed work, and lists
+  retained jobs in the `Ctrl+G` sub-agent inspector. Delivered reports appear as
+  collapsed rows that expand on click or `Enter`, including after a session is
+  restored.
 - Added native Google Gemini 4 Argon (`gemini-4-argon`) and xAI Grok 4.7
   (`grok-4.7`) support, including model selectors, image input, streaming, tool
   calling, and named reasoning efforts. Argon uses a shared 1,048,576-token
   input/thinking/output window; Grok 4.7 uses 500,000 tokens and supports `xhigh`
   effort. Existing provider defaults remain unchanged.
+
+### Fixed
+
+- Late transcript updates during screen teardown no longer raise while the
+  conversation is being pruned, so exiting or switching sessions can no longer
+  fail on a stale render.
+
+### Security
+
+- Updated mcp to 1.30.0, closing CVE-2026-59951 (GHSA-84m7-p3x7-pcfv), a
+  streamable-HTTP session exhaustion issue in the MCP client.
 
 ## 0.43.0 - 2026-10-13
 
