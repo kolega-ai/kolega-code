@@ -124,6 +124,10 @@ async def test_full_loop_zero_tail_fallback_when_retained_tail_too_large(tmp_pat
     fake = FakeLLM(token_script=[900, 800, 1100, 1100, 800, 400])
     agent, _cm = build_agent(tmp_path, llm=fake)
     agent.session_recorder = MagicMock()
+    # This spy has no retained writes to project at turn/iteration boundaries.
+    agent.session_recorder.retry_pending_assistant.return_value = None
+    agent.session_recorder.retry_pending_tool_results.return_value = None
+    agent.session_recorder.repair_interrupted_tool_results.return_value = None
     agent.history = long_history(6)
     original = list(agent.history)
     fired = _hook_payload_spy(agent)

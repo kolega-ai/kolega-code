@@ -224,6 +224,7 @@ class SubAgentActivity:
     entry: ConversationEntry  # kind="sub_agent", updated in place
     task_full: str = ""  # untruncated task, shown as the first step in the inspector
     status: str = "running"  # running | completed | failed | stopped
+    background: bool = False
     tool_calls: int = 0
     last_activity: str = ""
     started_at: float = 0.0

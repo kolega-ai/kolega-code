@@ -343,10 +343,12 @@ def test_planning_agent_hides_dispatch_when_no_definition_opts_into_plan(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("background", [False, True])
 async def test_dispatch_rejects_tools_outside_callers_capability_ceiling(
     tmp_path: Path,
     mock_connection_manager,
     agent_config,
+    background: bool,
 ) -> None:
     _write_agent(
         tmp_path,
@@ -365,7 +367,9 @@ async def test_dispatch_rejects_tools_outside_callers_capability_ceiling(
     )
 
     with pytest.raises(ValueError, match="requests unavailable tool.*write"):
-        await planning.tool_collection.agent_tool.dispatch_custom_agent("editor", "Edit the file")
+        await planning.tool_collection.agent_tool.dispatch_custom_agent(
+            "editor", "Edit the file", background=background
+        )
 
 
 @pytest.mark.asyncio

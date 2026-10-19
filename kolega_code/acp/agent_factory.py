@@ -139,6 +139,15 @@ class AgentFactory:
             return
         self.persist(session)
         try:
+            jobs = getattr(session.agent, "background_jobs", None)
+            if jobs is not None:
+                jobs.set_callbacks(on_ready=None, on_delivered=None)
+                await jobs.close()
+                await jobs.deliver(session.agent)
+            self.persist(session)
+            for old in session.retired_agents:
+                await old.cleanup()
+            session.retired_agents.clear()
             await session.agent.cleanup()
         except Exception:  # noqa: BLE001 — closing must not mask the primary outcome
             logger.exception("acp session close: agent cleanup failed (session=%s)", session_id)
@@ -315,10 +324,24 @@ class AgentFactory:
             permission_mode=old.permission_mode,
             question_state=session.question_state,
         )
+        # New generations must keep publishing into the session-lifetime event
+        # consumer, including children still using the previous generation.
+        if manager is not session.manager:
+            raise RuntimeError("ACP rebuild must preserve the session connection manager")
         session.agent = agent
-        session.manager = manager
+        jobs = getattr(old, "background_jobs", None)
+        if jobs is not None and agent is not old:
+            agent.background_jobs = jobs
+            agent.background_needs_turn = getattr(old, "background_needs_turn", False)
+            old.background_jobs = None
+        if jobs is not None and jobs.active_count and agent is not old:
+            # Children borrow this generation's terminal/browser/extensions.
+            # Keep it alive until the supervisor has joined them.
+            session.retired_agents.append(old)
+            return
         try:
-            await old.cleanup()
+            if agent is not old:
+                await old.cleanup()
         except Exception:  # noqa: BLE001
             logger.exception("acp model switch: old agent cleanup failed (session=%s)", session.session_id)
 
@@ -369,7 +392,8 @@ class AgentFactory:
     ) -> tuple[CoderAgent, CliConnectionManager]:
         journal = self._store.journal(record.session_id)
         recorder = self._store.recorder(record.session_id)
-        manager = CliConnectionManager()
+        existing = self._acp_sessions.get(record.session_id)
+        manager = existing.manager if existing is not None else CliConnectionManager()
         recording = RecordingConnectionManager(
             manager,
             FileSessionEventStore(journal),

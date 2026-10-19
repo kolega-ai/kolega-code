@@ -41,11 +41,13 @@ class SessionRegistry:
         max_sessions: int = 50,
         idle_ttl_seconds: Optional[float] = 3600.0,
         on_evict: Optional[EvictCallback] = None,
+        is_pinned: Optional[Callable[[Any], bool]] = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._max_sessions = max_sessions
         self._idle_ttl_seconds = idle_ttl_seconds
         self._on_evict = on_evict
+        self._is_pinned = is_pinned or (lambda payload: False)
         self._clock = clock
         self._entries: OrderedDict[str, SessionEntry] = OrderedDict()
 
@@ -77,13 +79,17 @@ class SessionRegistry:
         now = self._clock()
         if self._idle_ttl_seconds and self._idle_ttl_seconds > 0:
             expired_keys = [
-                key for key, entry in self._entries.items() if now - entry.last_active > self._idle_ttl_seconds
+                key
+                for key, entry in self._entries.items()
+                if now - entry.last_active > self._idle_ttl_seconds and not self._is_pinned(entry.payload)
             ]
             for key in expired_keys:
                 evicted.append(self._entries.pop(key))
         while len(self._entries) > self._max_sessions:
-            _, entry = self._entries.popitem(last=False)
-            evicted.append(entry)
+            candidate = next((key for key, entry in self._entries.items() if not self._is_pinned(entry.payload)), None)
+            if candidate is None:
+                break  # temporary over-capacity is safer than cancelling owned work
+            evicted.append(self._entries.pop(candidate))
         for entry in evicted:
             await self._notify_evict(entry)
         return evicted

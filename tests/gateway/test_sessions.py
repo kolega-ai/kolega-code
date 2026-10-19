@@ -377,15 +377,49 @@ async def test_session_cap_evicts_the_oldest_chat(tmp_path: Path) -> None:
     handler, adapter, config = make_handler(tmp_path, max_sessions=1)
     await handler.handle(chat_ref("1"), inbound("one", message_id="m-1", chat_id="1"))
     assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+    # A visible reply precedes the final journal write. The session is pinned
+    # until its turn settles, so only an idle chat is eligible for eviction.
+    await wait_for_turn_done(handler, chat_ref("1"))
 
     # Opening a second chat evicts the first (persisted, then cleaned up).
     await handler.handle(chat_ref("2"), inbound("two", message_id="m-2", chat_id="2"))
-    assert await wait_for(lambda: len(handler.status().keys()) >= 0)
     assert handler.status()["active_sessions"] == 1
+    assert handler._registry.get(chat_ref("1")) is None
+    assert handler._registry.get(chat_ref("2")) is not None
     first_session_id = session_map(config.state_dir)[chat_ref("1").key]
     record = SessionStore(root=config.state_dir).load(first_session_id)
-    assert record.history  # still durable on disk
+    history_texts = [block.get("text", "") for message in record.history for block in message.get("content", [])]
+    assert "one" in history_texts
+    assert "hello from the scripted model" in history_texts
     await handler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_session_cap_preserves_active_parent_until_it_settles(tmp_path: Path) -> None:
+    release = asyncio.Event()
+    handler, adapter, _ = make_handler(tmp_path, max_sessions=1, llm=ScriptedLLM(block=release))
+    try:
+        await handler.handle(chat_ref("1"), inbound("one", message_id="m-1", chat_id="1"))
+        assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+        first = handler._registry.get(chat_ref("1"))
+        assert first is not None
+        assert first.payload.turn_task is not None
+        await handler.handle(chat_ref("2"), inbound("two", message_id="m-2", chat_id="2"))
+        assert handler.status()["active_sessions"] == 2
+        assert handler._registry.get(chat_ref("1")) is first
+        assert first.payload.runtime.agent is not None
+        assert not first.payload.turn_task.done()
+        assert await wait_for(lambda: all_sent_texts(adapter).count("hello from the scripted model") == 2)
+        release.set()
+        await wait_for_turn_done(handler, chat_ref("1"))
+        await wait_for_turn_done(handler, chat_ref("2"))
+        await handler._registry.prune()
+        assert handler.status()["active_sessions"] == 1
+        assert handler._registry.get(chat_ref("1")) is None
+        assert handler._registry.get(chat_ref("2")) is not None
+    finally:
+        release.set()
+        await handler.shutdown()
 
 
 @pytest.mark.asyncio

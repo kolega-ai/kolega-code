@@ -169,6 +169,44 @@ class SessionEvent:
         )
 
 
+def archived_background_completion_ids(events: Iterable[SessionEvent]) -> set[str]:
+    """Project irreversible archive dispositions, including interrupted workspace retirement.
+
+    The committed workspace switch is the fence, even when the process exits
+    before the old manager can settle. Reports acknowledged before that fence
+    are ordinary conversation; undelivered or newly inserted predecessor jobs
+    belong only to the originating workspace's report archive.
+    """
+    archived: set[str] = set()
+    submitted: set[str] = set()
+    inserted: set[str] = set()
+    workspace = ""
+    for event in events:
+        if event.depth:
+            continue
+        payload = event.payload
+        if event.event_type == "context.epoch_started":
+            archived, submitted, inserted = set(), set(), set()
+            workspace = ""
+        elif event.event_type == "background.job.submitted":
+            completion_id = str(payload["completion_id"])
+            submitted.add(completion_id)
+            project_path = str(payload.get("metadata", {}).get("project_path", ""))
+            if workspace and project_path and project_path != workspace:
+                archived.add(completion_id)
+        elif event.event_type == "context.message" and payload.get("completion_id"):
+            completion_id = str(payload["completion_id"])
+            inserted.add(completion_id)
+            if payload.get("archived"):
+                archived.add(completion_id)
+        elif event.event_type == "context.message_archived":
+            archived.add(str(payload["completion_id"]))
+        elif event.event_type == "session.workspace_switched":
+            workspace = str(payload.get("new_root", ""))
+            archived.update(submitted - inserted)
+    return archived
+
+
 @dataclass(frozen=True)
 class TurnSummary:
     """One recorded turn in the current context epoch."""
@@ -732,6 +770,33 @@ class SessionJournal:
         return events
 
 
+@dataclass
+class _PendingToolResults:
+    batch_id: str
+    epoch_id: str
+    turn_id: str
+    results: list[ToolResult]
+    committed: bool = False
+
+
+@dataclass
+class _PendingAssistant:
+    message_id: str
+    epoch_id: str
+    turn_id: str
+    message: Message
+    reasoning_effort: Optional[str]
+    committed: bool = False
+
+
+@dataclass(frozen=True)
+class _PendingTurnTerminal:
+    epoch_id: str
+    turn_id: str
+    event_type: str
+    payload: dict[str, Any]
+
+
 class SessionRecorder:
     """Semantic recorder for one agent's events in a shared session journal.
 
@@ -757,6 +822,9 @@ class SessionRecorder:
         self._turn_started_at: Optional[str] = None
         self._assistant_count = 0
         self._tool_batches = 0
+        self._pending_tool_results: Optional[_PendingToolResults] = None
+        self._pending_assistant: Optional[_PendingAssistant] = None
+        self._pending_turn_terminal: Optional[_PendingTurnTerminal] = None
         self._run_terminal_recorded = False
         if recover:
             self.recover_interrupted_turn()
@@ -809,6 +877,7 @@ class SessionRecorder:
 
     def start_turn(self, message: Message) -> str:
         with self._lock:
+            self._require_settled_context()
             if self.current_turn_id is not None:
                 raise SessionJournalError("Cannot start a session turn while another turn is open")
             stored, artifacts = self.journal.prepare_message(message.to_dict())
@@ -822,6 +891,7 @@ class SessionRecorder:
         consumers must not synthesize a user step for it.
         """
         with self._lock:
+            self._require_settled_context()
             if self.current_turn_id is not None:
                 raise SessionJournalError("Cannot start a session turn while another turn is open")
             return self._open_turn_locked(actor="system", payload={"continuation": True}, artifacts=None)
@@ -843,10 +913,47 @@ class SessionRecorder:
         self._tool_batches = 0
         return turn_id
 
-    def record_assistant(self, message: Message, *, reasoning_effort: Optional[str] = None) -> None:
+    def record_assistant(
+        self, message: Message, *, reasoning_effort: Optional[str] = None, defer_projection: bool = False
+    ) -> None:
         with self._lock:
+            self._require_settled_context()
             turn_id = self._require_turn()
-            stored, artifacts = self.journal.prepare_message(message.to_dict())
+            self._pending_assistant = _PendingAssistant(
+                message_id=str(uuid.uuid4()),
+                epoch_id=self.journal.epoch_id,
+                turn_id=turn_id,
+                message=copy.deepcopy(message),
+                reasoning_effort=reasoning_effort,
+            )
+            self._commit_pending_assistant(retry=False, defer_projection=defer_projection)
+
+    def retry_pending_assistant(self, *, defer_projection: bool = False) -> Optional[Message]:
+        """Retry the original response, including an ambiguously committed write."""
+        with self._lock:
+            if self._pending_assistant is None:
+                return None
+            return self._commit_pending_assistant(retry=True, defer_projection=defer_projection)
+
+    def acknowledge_assistant(self) -> None:
+        """Release a retained response only after its live projection succeeds."""
+        with self._lock:
+            if self._pending_assistant is None or not self._pending_assistant.committed:
+                raise SessionJournalError("Cannot acknowledge an assistant message before its commit")
+            self._pending_assistant = None
+
+    def _commit_pending_assistant(self, *, retry: bool, defer_projection: bool) -> Optional[Message]:
+        pending = self._pending_assistant
+        assert pending is not None
+        event = None
+        if retry:
+            events = self._read_pending_turn(pending.epoch_id, pending.turn_id)
+            if events is None:
+                self._pending_assistant = None
+                return None
+            event = self._find_pending_event(events, "assistant.message", "message_id", pending.message_id)
+        if event is None:
+            stored, artifacts = self.journal.prepare_message(pending.message.to_dict())
             llm_call = None
             metadata = stored.get("usage_metadata")
             if isinstance(metadata, dict):
@@ -855,11 +962,12 @@ class SessionRecorder:
                     stored.pop("usage_metadata", None)
             payload: dict[str, Any] = {
                 "message": stored,
+                "message_id": pending.message_id,
                 "origin_type": "llm",
                 "llm_call_id": None,
                 "provider": None,
                 "model": None,
-                "reasoning_effort": reasoning_effort,
+                "reasoning_effort": pending.reasoning_effort,
                 "llm_call_count": 1,
             }
             if isinstance(llm_call, dict):
@@ -867,18 +975,53 @@ class SessionRecorder:
                 payload["run_id"] = llm_call.get("run_id")
                 payload["provider"] = llm_call.get("provider")
                 payload["model"] = llm_call.get("model")
-            self._append(
+            event = self._append(
                 "assistant.message",
                 actor="assistant",
                 payload=payload,
-                turn_id=turn_id,
+                turn_id=pending.turn_id,
+                epoch_id=pending.epoch_id,
                 artifacts=artifacts,
             )
+        if not pending.committed and self.current_turn_id == pending.turn_id:
             self._assistant_count += 1
+        pending.committed = True
+        replayed = Message.from_dict(self.journal.hydrate_message(event.payload["message"]))
+        if not defer_projection:
+            self._pending_assistant = None
+        return replayed
+
+    def _read_pending_turn(self, epoch_id: str, turn_id: str) -> Optional[list[SessionEvent]]:
+        """Fence retries before even returning a commit that a rewind removed."""
+        events = self.journal.read_events(repair_tail=True)
+        if epoch_id != self.journal.epoch_id:
+            raise SessionJournalError("Cannot retry pending messages into a different context epoch")
+        if not self.agent_stamp.depth and not any(
+            turn.turn_id == turn_id for turn in collect_epoch_turns(events, epoch_id)
+        ):
+            return None
+        if self.current_turn_id not in (None, turn_id):
+            raise SessionJournalError("Cannot retry pending messages during another turn")
+        return [event for event in events if event.epoch_id == epoch_id and event.turn_id == turn_id]
+
+    def _find_pending_event(
+        self, events: list[SessionEvent], event_type: str, id_key: str, payload_id: str
+    ) -> Optional[SessionEvent]:
+        return next(
+            (
+                event
+                for event in events
+                if event.event_type == event_type
+                and event.agent_id == self.agent_stamp.agent_id
+                and event.payload.get(id_key) == payload_id
+            ),
+            None,
+        )
 
     def record_synthetic_assistant(self, text: str, *, notice_code: str) -> None:
         """A deterministic assistant notice that did not come from an LLM call."""
         with self._lock:
+            self._require_settled_context()
             payload = {
                 "message": {
                     "role": "assistant",
@@ -903,6 +1046,7 @@ class SessionRecorder:
         """Record the rendered provider-facing system context when it changes."""
         fingerprint = hashlib.sha256(text.encode("utf-8")).hexdigest()
         with self._lock:
+            self._require_settled_context()
             if fingerprint == self._last_system_fingerprint:
                 return False
             message = {"role": "system", "content": [{"type": "text", "text": text}]}
@@ -923,11 +1067,12 @@ class SessionRecorder:
         Fingerprinted like the system context so only changes are journaled;
         an empty toolset records nothing.
         """
-        if not tools:
-            return False
         canonical = json.dumps(tools, sort_keys=True, separators=(",", ":"), default=str)
         fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         with self._lock:
+            self._require_settled_context()
+            if not tools:
+                return False
             if fingerprint == self._last_tools_fingerprint:
                 return False
             self._append(
@@ -939,28 +1084,83 @@ class SessionRecorder:
             self._last_tools_fingerprint = fingerprint
             return True
 
-    def record_tool_results(self, results: list[ToolResult]) -> list[ToolResult]:
+    def record_tool_results(self, results: list[ToolResult], *, defer_projection: bool = False) -> list[ToolResult]:
+        """Retain original outputs through commit and, optionally, live projection."""
         with self._lock:
+            self._require_settled_context()
             turn_id = self._require_turn()
-            message = Message(role="user", content=cast(list[ContentBlock], results))
+            self._pending_tool_results = _PendingToolResults(
+                batch_id=str(uuid.uuid4()),
+                epoch_id=self.journal.epoch_id,
+                turn_id=turn_id,
+                results=copy.deepcopy(results),
+            )
+            replayed = self._commit_pending_tool_results(retry=False, defer_projection=defer_projection)
+            assert replayed is not None
+            return replayed
+
+    def retry_pending_tool_results(self, *, defer_projection: bool = False) -> Optional[list[ToolResult]]:
+        """Repair a failed batch, even after its originating turn was closed.
+
+        The recorder, not a replaceable root agent, owns the full original
+        outputs. A stable batch ID makes an ambiguous write retry idempotent.
+        Callers must project the returned results into live history before
+        admitting new model input or acknowledging a background completion.
+        """
+        with self._lock:
+            if self._pending_tool_results is None:
+                return None
+            return self._commit_pending_tool_results(retry=True, defer_projection=defer_projection)
+
+    def acknowledge_tool_results(self) -> None:
+        """Release a committed batch only after its live projection succeeds."""
+        with self._lock:
+            if self._pending_tool_results is None or not self._pending_tool_results.committed:
+                raise SessionJournalError("Cannot acknowledge tool results before their commit")
+            self._pending_tool_results = None
+
+    def _commit_pending_tool_results(self, *, retry: bool, defer_projection: bool) -> Optional[list[ToolResult]]:
+        pending = self._pending_tool_results
+        assert pending is not None
+        event = None
+        if retry:
+            events = self._read_pending_turn(pending.epoch_id, pending.turn_id)
+            if events is None:
+                self._pending_tool_results = None
+                return None
+            event = self._find_pending_event(events, "tool.results", "batch_id", pending.batch_id)
+        if event is None:
+            message = Message(role="user", content=cast(list[ContentBlock], pending.results))
             stored, artifacts = self.journal.prepare_message(message.to_dict())
-            self._append(
+            event = self._append(
                 "tool.results",
                 actor="tool",
-                payload={"message": stored},
-                turn_id=turn_id,
+                payload={"message": stored, "batch_id": pending.batch_id},
+                turn_id=pending.turn_id,
+                epoch_id=pending.epoch_id,
                 artifacts=artifacts,
             )
+        if not pending.committed and self.current_turn_id == pending.turn_id:
             self._tool_batches += 1
-            replayed = Message.from_dict(self.journal.hydrate_message(stored))
-            if not isinstance(replayed.content, list) or not all(
-                isinstance(item, ToolResult) for item in replayed.content
-            ):
-                raise SessionJournalError("Prepared tool result event did not replay as tool results")
-            return cast(list[ToolResult], list(replayed.content))
+        pending.committed = True
+        replayed = Message.from_dict(self.journal.hydrate_message(event.payload["message"]))
+        if not isinstance(replayed.content, list) or not all(isinstance(item, ToolResult) for item in replayed.content):
+            raise SessionJournalError("Prepared tool result event did not replay as tool results")
+        if not defer_projection:
+            self._pending_tool_results = None
+        return cast(list[ToolResult], list(replayed.content))
+
+    def _require_settled_context(self) -> None:
+        if self._pending_tool_results is not None:
+            raise SessionJournalError("Unsettled tool results must be retried before adding session context")
+        if self._pending_assistant is not None:
+            raise SessionJournalError("Unsettled assistant message must be retried before adding session context")
+        if self._pending_turn_terminal is not None:
+            raise SessionJournalError("Unsettled turn terminal must be retried before adding session context")
 
     def record_context_message(self, message: Message, *, actor: Optional[str] = None) -> None:
         with self._lock:
+            self._require_settled_context()
             stored, artifacts = self.journal.prepare_message(message.to_dict())
             self._append(
                 "context.message",
@@ -969,6 +1169,158 @@ class SessionRecorder:
                 turn_id=self.current_turn_id,
                 artifacts=artifacts,
             )
+
+    def read_background_jobs(self, *, epoch_id: str) -> list[dict[str, Any]]:
+        """Recover root jobs; a committed context message is the delivery acknowledgment.
+
+        Rewind removes active context, not acknowledgments: discarded reports
+        remain inspectable but must never be resurrected on the next attachment.
+        """
+        self._require_root("Background jobs")
+        with self._lock, self.journal._lock:
+            jobs: dict[str, dict[str, Any]] = {}
+            delivered: set[str] = set()
+            events = self.journal.read_events()
+            archived = archived_background_completion_ids(event for event in events if event.epoch_id == epoch_id)
+            for event in events:
+                if event.epoch_id != epoch_id or event.depth:
+                    continue
+                if event.event_type in {"background.job.submitted", "background.job.terminal"}:
+                    job = copy.deepcopy(event.payload)
+                    job_id = str(job["job_id"])
+                    jobs.setdefault(job_id, {}).update(job)
+                elif event.event_type == "context.message" and event.payload.get("completion_id"):
+                    delivered.add(str(event.payload["completion_id"]))
+            for job in jobs.values():
+                ref = job.get("result_artifact")
+                if ref is not None:
+                    job["result"] = self.journal.read_artifact(ref).decode("utf-8")
+                job["delivered"] = job["completion_id"] in delivered
+                job["archived"] = job["completion_id"] in archived
+            return list(jobs.values())
+
+    def read_archived_background_messages(self) -> list[dict[str, Any]]:
+        """UI-only reports in the current epoch, honoring intentional rewind removal."""
+        self._require_root("Archived background reports")
+        with self._lock, self.journal._lock:
+            events = [
+                event
+                for event in self.journal.read_events()
+                if event.epoch_id == self.journal.epoch_id and not event.depth
+            ]
+            archived = archived_background_completion_ids(events)
+            messages: list[tuple[int, dict[str, Any]]] = []
+            for event in events:
+                if event.event_type == "context.message" and event.payload.get("completion_id") in archived:
+                    messages.append((event.seq, self.journal.hydrate_message(event.payload["message"])))
+                elif event.event_type == "context.rewound":
+                    messages = [(seq, message) for seq, message in messages if seq < event.payload["boundary_seq"]]
+            return [message for _, message in messages]
+
+    def record_background_job_submitted(self, job: dict[str, Any], *, epoch_id: str) -> None:
+        """Durably admit a job, idempotently within its originating epoch."""
+        self._require_root("Background jobs")
+        with self._lock, self.journal._lock:
+            if self.journal.epoch_id != epoch_id:
+                raise SessionJournalError("Cannot admit a background job into an inactive epoch")
+            for event in self.journal.read_events():
+                if (
+                    event.epoch_id == epoch_id
+                    and not event.depth
+                    and event.event_type == "background.job.submitted"
+                    and event.payload.get("job_id") == job["job_id"]
+                ):
+                    if event.payload != job:
+                        raise SessionJournalError(f"Conflicting background job: {job['job_id']}")
+                    return
+            self._append(
+                "background.job.submitted",
+                actor="system",
+                payload=copy.deepcopy(job),
+                epoch_id=epoch_id,
+                turn_id=self.current_turn_id,
+            )
+
+    def record_background_job_terminal(self, job: dict[str, Any], *, epoch_id: str) -> None:
+        """Keep the complete outcome, even if the root has since changed epoch."""
+        self._require_root("Background jobs")
+        if job.get("status") not in {"completed", "failed", "cancelled", "interrupted"}:
+            raise ValueError(f"Unknown background terminal status: {job.get('status')}")
+        with self._lock, self.journal._lock:
+            for existing in self.read_background_jobs(epoch_id=epoch_id):
+                if existing["job_id"] == job["job_id"] and existing["status"] != "queued":
+                    if existing["status"] != job["status"] or existing.get("result") != job.get("result"):
+                        raise SessionJournalError(f"Conflicting background outcome: {job['job_id']}")
+                    return
+            payload = copy.deepcopy(job)
+            payload.pop("delivered", None)
+            payload.pop("text", None)
+            result = str(payload.get("result", ""))
+            artifacts: list[dict[str, Any]] = []
+            if len(result) > TOOL_RESULT_PREVIEW_CHARS:
+                ref = self.journal.put_artifact(
+                    result.encode("utf-8"),
+                    media_type="text/plain; charset=utf-8",
+                    purpose="background_result",
+                    encoding="utf-8",
+                    chars=len(result),
+                )
+                payload["result_artifact"] = ref
+                payload.pop("result", None)
+                artifacts.append(ref)
+            self._append(
+                "background.job.terminal", actor="system", payload=payload, epoch_id=epoch_id, artifacts=artifacts
+            )
+
+    def record_background_completion(self, completion: dict[str, Any], message: Message, *, epoch_id: str) -> bool:
+        """Commit one root insertion, returning False if its completion ID already exists.
+
+        Callers must settle an outstanding threaded invocation before releasing
+        delivery ownership. The context event itself, not a second delivered
+        flag, acknowledges delivery across process restarts.
+        """
+        self._require_root("Background completions")
+        with self._lock, self.journal._lock:
+            self._require_settled_context()
+            if self.journal.epoch_id != epoch_id:
+                raise SessionJournalError("Cannot deliver a background completion into an inactive epoch")
+            completion_id = completion["completion_id"]
+            for event in self.journal.read_events():
+                if (
+                    event.epoch_id == epoch_id
+                    and not event.depth
+                    and event.event_type == "context.message"
+                    and event.payload.get("completion_id") == completion_id
+                ):
+                    if completion.get("archived") and not event.payload.get("archived"):
+                        if completion_id not in archived_background_completion_ids(self.journal.read_events()):
+                            self._append(
+                                "context.message_archived",
+                                actor="system",
+                                payload={"completion_id": completion_id},
+                                epoch_id=epoch_id,
+                            )
+                    return False
+            stored, artifacts = self.journal.prepare_message(message.to_dict())
+            self._append(
+                "context.message",
+                actor="system",
+                payload={
+                    "message": stored,
+                    "completion_id": completion_id,
+                    "job_id": completion["job_id"],
+                    "agent_type": completion["agent_type"],
+                    "task": completion.get("task", ""),
+                    "status": completion["status"],
+                    "archived": bool(completion.get("archived")),
+                    "metadata": copy.deepcopy(completion.get("metadata", {})),
+                    "origin": {"kind": "subagent_completion"},
+                },
+                epoch_id=epoch_id,
+                turn_id=self.current_turn_id,
+                artifacts=artifacts,
+            )
+            return True
 
     def record_workspace_switched(
         self,
@@ -982,6 +1334,7 @@ class SessionRecorder:
     ) -> None:
         """Record a durable, additive active-workspace boundary."""
         with self._lock:
+            self._require_settled_context()
             self._append(
                 "session.workspace_switched",
                 actor="system",
@@ -998,6 +1351,7 @@ class SessionRecorder:
 
     def record_compaction(self, compaction: dict[str, Any], *, info: Optional[dict[str, Any]] = None) -> None:
         with self._lock:
+            self._require_settled_context()
             payload: dict[str, Any] = {"compaction": copy.deepcopy(compaction)}
             if info:
                 payload.update(copy.deepcopy(info))
@@ -1012,6 +1366,9 @@ class SessionRecorder:
         if status not in {"completed", "failed", "cancelled"}:
             raise ValueError(f"Unknown terminal turn status: {status}")
         with self._lock:
+            if self._pending_turn_terminal is not None:
+                self.retry_pending_turn_terminal()
+                return
             turn_id = self._require_turn()
             payload: dict[str, Any] = {
                 "assistant_messages": self._assistant_count,
@@ -1028,14 +1385,36 @@ class SessionRecorder:
                 payload["error"] = error[:2000]
             if reason:
                 payload["reason"] = reason
-            self._append(
-                f"turn.{status}",
-                actor="system",
-                payload=payload,
+            self._pending_turn_terminal = _PendingTurnTerminal(
+                epoch_id=self.journal.epoch_id,
                 turn_id=turn_id,
+                event_type=f"turn.{status}",
+                payload=payload,
             )
-            self.current_turn_id = None
-            self._turn_started_at = None
+            self.retry_pending_turn_terminal()
+
+    def retry_pending_turn_terminal(self) -> None:
+        """Settle the original terminal intent without duplicating ambiguous writes."""
+        with self._lock:
+            pending = self._pending_turn_terminal
+            if pending is None:
+                return
+            events = self._read_pending_turn(pending.epoch_id, pending.turn_id)
+            if events is not None and not any(
+                event.event_type in TERMINAL_TURN_EVENTS and event.agent_id == self.agent_stamp.agent_id
+                for event in events
+            ):
+                self._append(
+                    pending.event_type,
+                    actor="system",
+                    payload=pending.payload,
+                    turn_id=pending.turn_id,
+                    epoch_id=pending.epoch_id,
+                )
+            self._pending_turn_terminal = None
+            if self.current_turn_id == pending.turn_id:
+                self.current_turn_id = None
+                self._turn_started_at = None
 
     def record_run_terminal(self, status: str, payload: dict[str, Any]) -> None:
         """Record the run's terminal state; at most one per recorder, root only."""
@@ -1091,6 +1470,7 @@ class SessionRecorder:
     def start_epoch(self, reason: str) -> str:
         self._require_root("A context epoch reset")
         with self._lock:
+            self._require_settled_context()
             if self.current_turn_id is not None:
                 raise SessionJournalError("Cannot reset context while a session turn is open")
             self._last_system_fingerprint = None
@@ -1106,6 +1486,8 @@ class SessionRecorder:
         """Append the rewind event truncating the target turn and everything after it."""
         self._require_root("A context rewind")
         with self._lock:
+            if self._pending_turn_terminal is not None:
+                raise SessionJournalError("Unsettled turn terminal must be retried before rewinding session context")
             if self.current_turn_id is not None:
                 raise SessionJournalError("Cannot rewind while a session turn is open")
             events = self.journal.read_events(repair_tail=True)
@@ -1123,6 +1505,10 @@ class SessionRecorder:
                     "rewound_turn_ids": rewound,
                 },
             )
+            if self._pending_tool_results is not None and self._pending_tool_results.turn_id in rewound:
+                self._pending_tool_results = None
+            if self._pending_assistant is not None and self._pending_assistant.turn_id in rewound:
+                self._pending_assistant = None
             return RewindOutcome(
                 target_turn_id=target.turn_id,
                 boundary_seq=target.boundary_seq,
@@ -1130,75 +1516,109 @@ class SessionRecorder:
                 user_message_text=target.user_text,
             )
 
-    def recover_interrupted_turn(self) -> bool:
-        """Close one interrupted turn without re-running tools or continuing it."""
-        with self._lock:
-            events = self.journal.read_events(repair_tail=True)
-            if not events:
-                return False
-            current_epoch = self.journal.epoch_id
-            open_turn: Optional[str] = None
-            turn_events: list[SessionEvent] = []
-            for event in events:
-                if event.epoch_id != current_epoch:
-                    continue
-                if event.depth:
-                    # Recovery closes root turns only; a subagent's interrupted
-                    # turn is surfaced by export, not auto-closed here.
-                    continue
-                if event.event_type == "turn.started":
-                    open_turn = event.turn_id
-                    turn_events = [event]
-                elif open_turn and event.turn_id == open_turn:
-                    turn_events.append(event)
-                    if event.event_type in TERMINAL_TURN_EVENTS:
-                        open_turn = None
-                        turn_events = []
-            if not open_turn:
-                return False
-
-            assistant_messages = [
-                event.payload.get("message")
-                for event in turn_events
-                if event.event_type == "assistant.message" and isinstance(event.payload.get("message"), dict)
-            ]
-            result_ids: set[str] = set()
-            for event in turn_events:
-                if event.event_type != "tool.results":
-                    continue
-                message = event.payload.get("message")
-                for block in _message_blocks(message):
-                    if block.get("type") == "tool_result" and block.get("tool_use_id"):
-                        result_ids.add(str(block["tool_use_id"]))
-
-            last_assistant = assistant_messages[-1] if assistant_messages else None
-            missing: list[ToolResult] = []
-            for block in _message_blocks(last_assistant):
-                if block.get("type") != "tool_call" or not block.get("id") or str(block["id"]) in result_ids:
-                    continue
-                missing.append(
-                    ToolResult(
-                        tool_use_id=str(block["id"]),
-                        content=(
-                            "Tool execution was interrupted before a durable result was recorded. "
-                            "The tool was not re-run."
-                        ),
-                        name=str(block.get("name") or "unknown_tool"),
-                        is_error=True,
-                        execution_id=block.get("execution_id"),
-                        input_kind=block.get("input_kind", "json"),
-                    )
+    def _latest_root_turn(
+        self, events: list[SessionEvent]
+    ) -> Optional[tuple[TurnSummary, Optional[dict[str, Any]], list[ToolResult]]]:
+        """Inspect only the latest surviving root turn, never discarded rewind branches."""
+        current_epoch = self.journal.epoch_id
+        turns = collect_epoch_turns(events, current_epoch)
+        if not turns:
+            return None
+        last_turn = turns[-1]
+        turn_events = [
+            event
+            for event in events
+            if event.epoch_id == current_epoch
+            and not event.depth
+            and event.turn_id == last_turn.turn_id
+            and event.seq >= last_turn.boundary_seq
+        ]
+        assistant_messages = [
+            event.payload["message"]
+            for event in turn_events
+            if event.event_type == "assistant.message" and isinstance(event.payload.get("message"), dict)
+        ]
+        result_blocks = [
+            block
+            for event in turn_events
+            if event.event_type == "tool.results"
+            for block in _message_blocks(event.payload.get("message"))
+            if block.get("type") == "tool_result" and block.get("tool_use_id")
+        ]
+        last_assistant = assistant_messages[-1] if assistant_messages else None
+        missing: list[ToolResult] = []
+        for block in _message_blocks(last_assistant):
+            if (
+                block.get("type") != "tool_call"
+                or not block.get("id")
+                or any(
+                    result.get("execution_id") == block["execution_id"]
+                    if result.get("execution_id") and block.get("execution_id")
+                    else result["tool_use_id"] == block["id"]
+                    for result in result_blocks
                 )
-            self.current_turn_id = open_turn
-            if missing:
-                self.record_tool_results(missing)
+            ):
+                continue
+            missing.append(
+                ToolResult(
+                    tool_use_id=str(block["id"]),
+                    content=(
+                        "Tool execution was interrupted before a durable result was recorded. The tool was not re-run."
+                    ),
+                    name=str(block.get("name") or "unknown_tool"),
+                    is_error=True,
+                    execution_id=block.get("execution_id"),
+                    input_kind=block.get("input_kind", "json"),
+                )
+            )
+        return last_turn, last_assistant, missing
 
-            last_blocks = _message_blocks(last_assistant)
-            has_tool_calls = any(block.get("type") == "tool_call" for block in last_blocks)
-            if last_assistant is not None and not has_tool_calls:
-                self.finish_turn("completed")
-            else:
-                self.finish_turn("failed", error="Process exited before the turn reached a durable terminal marker")
+    def repair_interrupted_tool_results(self, *, defer_projection: bool = False) -> Optional[list[ToolResult]]:
+        """Pair unanswered root tools at a safe boundary, without closing an active turn.
+
+        Retained successful output always wins over a synthetic interruption.
+        Unlike startup recovery, this operation leaves turn ownership unchanged.
+        """
+        self._require_root("Interrupted tool-result repair")
+        with self._lock:
+            if self._pending_assistant is not None:
+                raise SessionJournalError("Unsettled assistant message must be projected before repairing tool results")
+            if self._pending_tool_results is not None:
+                return self.retry_pending_tool_results(defer_projection=defer_projection)
+            latest = self._latest_root_turn(self.journal.read_events(repair_tail=True))
+            if latest is None:
+                return None
+            last_turn, _, missing = latest
+            if not missing:
+                return None
+            self._pending_tool_results = _PendingToolResults(
+                batch_id=str(uuid.uuid4()),
+                epoch_id=self.journal.epoch_id,
+                turn_id=last_turn.turn_id,
+                results=missing,
+            )
+            return self.retry_pending_tool_results(defer_projection=defer_projection)
+
+    def recover_interrupted_turn(self) -> bool:
+        """Repair unanswered root tools and close an open turn without re-running it."""
+        if self.agent_stamp.depth:
+            return False
+        with self._lock:
+            latest = self._latest_root_turn(self.journal.read_events(repair_tail=True))
+            if latest is None:
+                return False
+            last_turn, last_assistant, missing = latest
+            if last_turn.status != "open" and not missing:
+                return False
+            if last_turn.status == "open":
+                self.current_turn_id = last_turn.turn_id
+            self.repair_interrupted_tool_results()
+            if last_turn.status == "open":
+                has_tool_calls = any(block.get("type") == "tool_call" for block in _message_blocks(last_assistant))
+                if last_assistant is not None and not has_tool_calls:
+                    self.finish_turn("completed")
+                else:
+                    self.finish_turn("failed", error="Process exited before the turn reached a durable terminal marker")
             return True
 
     def _require_turn(self) -> str:

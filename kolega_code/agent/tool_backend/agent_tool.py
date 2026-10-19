@@ -2,10 +2,14 @@ import asyncio
 import uuid
 import inspect
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Union, Optional, cast
 from datetime import datetime, timezone
 import time
+from copy import copy, deepcopy
+from dataclasses import replace
+from types import SimpleNamespace
 
 from kolega_code.config import AgentConfig, ModelConfig
 from kolega_code.events import AgentEvent
@@ -13,7 +17,13 @@ from kolega_code.hooks import HookDispatcher, HookEvent
 from kolega_code.llm.specs import supports_vision
 from kolega_code.permissions import PermissionMode, auto_allow_permission_callback
 from kolega_code.services.base import BrowserManager, browser_manager_agent_lock
-from ..model_routing import render_subagent_model_catalog, resolve_subagent_model, subagent_model_catalog
+from kolega_code.cli.session_usage import current_session_usage_scope, session_usage_scope
+from ..model_routing import (
+    ModelRoutingResolution,
+    render_subagent_model_catalog,
+    resolve_subagent_model,
+    subagent_model_catalog,
+)
 from ..orchestration.accounting import AgentReservation, WorkflowRunAccounting
 from ..orchestration.context import has_workflow_context_marker, validated_workflow_depth
 from .base_tool import BaseTool
@@ -191,6 +201,7 @@ class AgentTool(BaseTool):
         routing_agent_name: Optional[str] = None,
         inherited_model: Optional[ModelConfig] = None,
         browser_manager_override: BrowserManager | None = None,
+        background: bool = False,
     ) -> str:
         """
         Generic method to dispatch any agent type.
@@ -202,7 +213,11 @@ class AgentTool(BaseTool):
         Returns:
             The agent's recap of its work
         """
+        if not isinstance(background, bool):
+            raise ValueError("background must be a boolean.")
         parent_context = getattr(self.caller, "sub_agent_context", None)
+        if background and (getattr(self.caller, "sub_agent", False) or has_workflow_context_marker(parent_context)):
+            raise ValueError("Background agents cannot be launched from a sub-agent or workflow worker.")
         workflow_depth: Optional[tuple[int, int]] = None
         workflow_accounting: Optional[WorkflowRunAccounting] = None
         reservation: Optional[AgentReservation] = None
@@ -255,15 +270,179 @@ class AgentTool(BaseTool):
         if class_name == "CustomAgent" and routing.requested is not None:
             effective_agent_kwargs["resolved_model"] = routing.model_config
 
-        # Create a unique agent ID
+        # Capture launch identity before admission yields to another parent turn.
         agent_id = str(uuid.uuid4())
-
-        # Use the app's unique execution ID for DB/UI links, not the provider's tool-use ID.
         tool_call_id = getattr(self.caller, "current_tool_execution_id", None)
         if not isinstance(tool_call_id, str):
             tool_call_id = getattr(self.caller, "current_tool_call_id", None)
         if not isinstance(tool_call_id, str):
             tool_call_id = None
+        parent_recorder = getattr(self.caller, "session_recorder", None)
+        launch_turn_id = getattr(parent_recorder, "current_turn_id", None)
+        execution = self
+        if background:
+            # A queued job must not consult mutable caller fields after a turn or
+            # model rebuild. Services/recorders remain borrowed shared references;
+            # per-launch policy/context containers are copied.
+            execution = copy(self)
+            caller_fields = (
+                "agent_name",
+                "user_id",
+                "user_email",
+                "project_template_slug",
+                "protected_files",
+                "agent_mode",
+                "workspace_env_var_descriptions",
+                "workspace_memories",
+                "prompt_provider",
+                "prompt_extensions",
+                "tool_extensions",
+                "usage_recorder",
+                "sub_agent_recorder",
+                "usage_ledger",
+                "llm_trace_sink",
+                "hook_dispatcher",
+                "fire_hook",
+                "max_iterations",
+                "scratchpad_dir",
+                "session_recorder",
+            )
+            captured = {name: getattr(self.caller, name, None) for name in caller_fields}
+            for name in ("protected_files", "workspace_env_var_descriptions", "workspace_memories"):
+                captured[name] = deepcopy(captured[name])
+            for name in ("prompt_extensions", "tool_extensions"):
+                extensions = captured[name]
+                if extensions is not None:
+                    captured[name] = list(extensions)
+            dispatcher = captured["hook_dispatcher"]
+            fire = captured["fire_hook"]
+            if isinstance(dispatcher, HookDispatcher):
+                captured["hook_dispatcher"] = copy(dispatcher)
+                captured["hook_dispatcher"].config = deepcopy(dispatcher.config)
+                if dispatcher.is_active and inspect.ismethod(fire) and fire.__self__ is self.caller:
+                    # A bound method still reads the original parent's mutable
+                    # policy/session at completion. Rebind it to a launch receiver
+                    # so event construction and prompt/agent hook capabilities
+                    # use the same policy as the queued child's own hooks.
+                    hook_caller = copy(self.caller)
+                    for name, value in captured.items():
+                        if name != "fire_hook":
+                            setattr(hook_caller, name, value)
+                    hook_caller.config = self.caller.config.model_copy(deep=True)
+                    hook_caller.sub_agent_context = deepcopy(parent_context)
+                    collection = getattr(self.caller, "tool_collection", None)
+                    if collection is not None:
+                        hook_caller.tool_collection = copy(collection)
+                        hook_caller.tool_collection.agent_tool = execution
+                    captured["fire_hook"] = fire.__func__.__get__(hook_caller, type(hook_caller))
+            execution.caller = SimpleNamespace(**captured)
+            parent_context = deepcopy(parent_context)
+            dispatch_config = dispatch_config.model_copy(deep=True)
+            execution.config = dispatch_config
+            routing = replace(
+                routing,
+                config=routing.config.model_copy(deep=True),
+                model_config=routing.model_config.model_copy(deep=True),
+            )
+            effective_agent_kwargs = dict(effective_agent_kwargs)
+            if class_name == "CustomAgent" and routing.requested is not None:
+                effective_agent_kwargs["resolved_model"] = routing.model_config
+            sub_agent_info_extra = deepcopy(sub_agent_info_extra)
+
+        async def run() -> str:
+            kwargs = dict(
+                agent_class=agent_class,
+                class_name=class_name,
+                agent_name=agent_name,
+                task=task,
+                agent_id=agent_id,
+                tool_call_id=tool_call_id,
+                launch_turn_id=launch_turn_id,
+                parent_context=parent_context,
+                workflow_depth=workflow_depth,
+                workflow_accounting=workflow_accounting,
+                reservation=reservation,
+                dispatch_config=dispatch_config,
+                routing=routing,
+                effective_agent_kwargs=effective_agent_kwargs,
+                sub_agent_info_extra=sub_agent_info_extra,
+                browser_manager_override=browser_manager_override,
+                background=background,
+            )
+            if browser_manager_override is not None:
+                async with browser_manager_agent_lock(browser_manager_override):
+                    return await execution._execute_agent(**kwargs)
+            return await execution._execute_agent(**kwargs)
+
+        if background:
+            manager = self._background_jobs()
+            receipt = await manager.submit(
+                agent_id,
+                run,
+                agent_type=agent_name,
+                task=task,
+                metadata={
+                    "parent_tool_call_id": tool_call_id,
+                    "turn_id": launch_turn_id,
+                    "workspace_id": self.workspace_id,
+                    "project_path": str(self.project_path),
+                    "thread_id": self.thread_id,
+                    "effective_routing": routing.metadata,
+                },
+            )
+            return json.dumps({**receipt, "job_id": agent_id, "state": "accepted"})
+        return await run()
+
+    def _background_jobs(self) -> Any:
+        """Get the session owner; never fall back to an unsupervised task."""
+        getter = getattr(self.caller, "get_background_jobs", None)
+        manager = getter() if callable(getter) else None
+        if manager is None:
+            raise RuntimeError("Background agents are unavailable: this host has no background job owner.")
+        return manager
+
+    async def agent_job(self, operation: str, job_id: Optional[str] = None) -> str:
+        """Inspect retained job reports or cancel a session-owned background job."""
+        if getattr(self.caller, "sub_agent", False) or has_workflow_context_marker(
+            getattr(self.caller, "sub_agent_context", None)
+        ):
+            raise ValueError("Background job controls are only available to the parent session.")
+        if operation not in {"list", "status", "cancel"}:
+            raise ValueError("operation must be list, status, or cancel")
+        if operation != "list" and not job_id:
+            raise ValueError(f"job_id is required for {operation}")
+        if operation == "list" and job_id is not None:
+            raise ValueError("job_id is only valid for status or cancel")
+        manager = self._background_jobs()
+        if operation == "cancel":
+            return json.dumps(await manager.cancel(job_id))
+        jobs = manager.snapshot(job_id)
+        if operation == "status" and not jobs:
+            raise ValueError(f"Unknown background job `{job_id}`.")
+        return json.dumps(jobs)
+
+    async def _execute_agent(
+        self,
+        *,
+        agent_class: Any,
+        class_name: str,
+        agent_name: str,
+        task: str,
+        agent_id: str,
+        tool_call_id: Optional[str],
+        launch_turn_id: Optional[str],
+        parent_context: Any,
+        workflow_depth: Optional[tuple[int, int]],
+        workflow_accounting: Optional[WorkflowRunAccounting],
+        reservation: Optional[AgentReservation],
+        dispatch_config: AgentConfig,
+        routing: ModelRoutingResolution,
+        effective_agent_kwargs: dict[str, Any],
+        sub_agent_info_extra: Optional[dict[str, Any]],
+        browser_manager_override: BrowserManager | None,
+        background: bool,
+    ) -> str:
+        """Run the same real child lifecycle for foreground and supervised jobs."""
         conversation_id = None
         start_time = time.time()
 
@@ -302,6 +481,7 @@ class AgentTool(BaseTool):
                 routing.requested.as_dict(effort_key="thinking_effort") if routing.requested is not None else None
             ),
             "effective_routing": routing.metadata,
+            "background": background,
         }
         # A nested dispatch from a workflow worker inherits the workflow's
         # delegation policy and grouping metadata. Cosmetic call labels/indexes
@@ -398,57 +578,91 @@ class AgentTool(BaseTool):
                 tool_call_id=tool_call_id,
                 conversation_id=conversation_id,
                 sub_agent_info=sub_agent_info,
+                launch_turn_id=launch_turn_id,
             )
             if scoped_recorder is not None:
                 agent.session_recorder = scoped_recorder
                 scoped_recorder.record_context_message(agent.session_context_message)
 
-            # Track messages and their sequence
-            last_saved_index = -1
-            streamed_messages = {}  # Track messages by UUID for assembly
+            usage_scope = current_session_usage_scope()
+            if scoped_recorder is not None and (background or usage_scope is not None):
+                usage_scope_cm = session_usage_scope(
+                    scoped_recorder,
+                    turn_id=launch_turn_id if background else None,
+                )
+            else:
+                usage_scope_cm = nullcontext()
 
-            # Process the task and stream messages
-            async for msg in agent.process_message_stream(task):
-                # Extract message details
-                message_type = msg.get("type", "agent")
-                content = msg.get("content", "")
-                complete = msg.get("complete", False)
-                msg_uuid = msg.get("uuid", str(uuid.uuid4()))
-                timestamp = datetime.now().isoformat()
+            with usage_scope_cm:
+                # Track messages and their sequence
+                last_saved_index = -1
+                streamed_messages = {}  # Track messages by UUID for assembly
 
-                if message_type not in _MIRRORED_CHUNK_TYPES:
-                    content_payload = {"text": content, "message_type": message_type}
-                    evt = AgentEvent(
-                        event_type="chat_message",
-                        content=content_payload,
-                        sender=agent_name,
-                        timestamp=timestamp,
-                        is_streaming=False,
-                        uuid=msg_uuid,
-                        sub_agent_info=sub_agent_info,
-                    )
-                    await self.connection_manager.broadcast_event(evt, self.workspace_id, self.thread_id)
+                # Process the task and stream messages
+                async for msg in agent.process_message_stream(task):
+                    # Extract message details
+                    message_type = msg.get("type", "agent")
+                    content = msg.get("content", "")
+                    complete = msg.get("complete", False)
+                    msg_uuid = msg.get("uuid", str(uuid.uuid4()))
+                    timestamp = datetime.now().isoformat()
 
-                # Track streaming messages
-                if msg_uuid not in streamed_messages:
-                    streamed_messages[msg_uuid] = {
-                        "content": "",
-                        "type": message_type,
-                        "uuid": msg_uuid,
-                        "complete": False,
-                    }
+                    if message_type not in _MIRRORED_CHUNK_TYPES:
+                        content_payload = {"text": content, "message_type": message_type}
+                        evt = AgentEvent(
+                            event_type="chat_message",
+                            content=content_payload,
+                            sender=agent_name,
+                            timestamp=timestamp,
+                            is_streaming=False,
+                            uuid=msg_uuid,
+                            sub_agent_info=sub_agent_info,
+                        )
+                        await self.connection_manager.broadcast_event(evt, self.workspace_id, self.thread_id)
 
-                streamed_messages[msg_uuid]["content"] += content
-                streamed_messages[msg_uuid]["complete"] = complete
+                    # Track streaming messages
+                    if msg_uuid not in streamed_messages:
+                        streamed_messages[msg_uuid] = {
+                            "content": "",
+                            "type": message_type,
+                            "uuid": msg_uuid,
+                            "complete": False,
+                        }
 
-                # Save new messages when a message completes
-                if conversation_id and complete:
-                    # Get current complete history from agent
-                    current_history = agent.dump_message_history()
+                    streamed_messages[msg_uuid]["content"] += content
+                    streamed_messages[msg_uuid]["complete"] = complete
 
-                    # Only save messages we haven't saved yet
-                    for i in range(last_saved_index + 1, len(current_history)):
-                        hist_msg = current_history[i]
+                    # Save new messages when a message completes
+                    if conversation_id and complete:
+                        # Get current complete history from agent
+                        current_history = agent.dump_message_history()
+
+                        # Only save messages we haven't saved yet
+                        for i in range(last_saved_index + 1, len(current_history)):
+                            hist_msg = current_history[i]
+                            await self._record_message(
+                                conversation_id,
+                                {
+                                    "role": hist_msg.get("role", "assistant"),
+                                    "content": hist_msg.get("content", []),
+                                    "stream_uuid": None,
+                                },
+                                i + 1,
+                            )
+
+                        # Update last saved index
+                        last_saved_index = len(current_history) - 1
+
+                        # Mark streamed message as saved
+                        streamed_messages[msg_uuid]["saved"] = True
+
+                # Get final history and save any remaining messages
+                final_history = agent.dump_message_history()
+
+                if conversation_id:
+                    # Save any messages we haven't saved yet
+                    for i in range(last_saved_index + 1, len(final_history)):
+                        hist_msg = final_history[i]
                         await self._record_message(
                             conversation_id,
                             {
@@ -459,36 +673,13 @@ class AgentTool(BaseTool):
                             i + 1,
                         )
 
-                    # Update last saved index
-                    last_saved_index = len(current_history) - 1
+                # Get agent recap
+                result = await agent.recap_agent_outcome()
 
-                    # Mark streamed message as saved
-                    streamed_messages[msg_uuid]["saved"] = True
-
-            # Get final history and save any remaining messages
-            final_history = agent.dump_message_history()
-
-            if conversation_id:
-                # Save any messages we haven't saved yet
-                for i in range(last_saved_index + 1, len(final_history)):
-                    hist_msg = final_history[i]
-                    await self._record_message(
-                        conversation_id,
-                        {
-                            "role": hist_msg.get("role", "assistant"),
-                            "content": hist_msg.get("content", []),
-                            "stream_uuid": None,
-                        },
-                        i + 1,
-                    )
-
-            # Get agent recap
-            result = await agent.recap_agent_outcome()
-
-            # SubagentStop hooks: let the parent observe completion and augment the
-            # result the parent sees. (Forcing the sub-agent to resume on a blocked
-            # SubagentStop is deferred; the per-agent Stop hook covers keep-working.)
-            result = await self._apply_subagent_stop_hooks(agent_name, result, sub_agent_info)
+                # SubagentStop hooks: let the parent observe completion and augment the
+                # result the parent sees. (Forcing the sub-agent to resume on a blocked
+                # SubagentStop is deferred; the per-agent Stop hook covers keep-working.)
+                result = await self._apply_subagent_stop_hooks(agent_name, result, sub_agent_info)
 
             if scoped_recorder is not None:
                 completed_tokens = getattr(agent, "total_tokens_used", None)
@@ -588,11 +779,21 @@ class AgentTool(BaseTool):
                     },
                 )
 
-            # Clean up agent reference
-            if agent_id in self.agents:
-                del self.agents[agent_id]
+            # Child-local services (e.g. LSP clients) must settle with the job.
+            # sub_agent=True means terminal/browser managers and inherited host
+            # extensions are borrowed: ToolCollection.cleanup must not close them.
+            try:
+                cleanup = getattr(agent, "cleanup", None)
+                if callable(cleanup):
+                    await self._maybe_await(cleanup())
+            except Exception as exc:
+                await self.log_error(f"Error cleaning up {agent_name}: {exc}", sender="AgentTool")
+            finally:
+                self.agents.pop(agent_id, None)
 
-    async def dispatch_investigation_agent(self, task: str, model_override: Any = None) -> str:
+    async def dispatch_investigation_agent(
+        self, task: str, model_override: Any = None, *, background: bool = False
+    ) -> str:
         """
         Dispatch an investigation agent to perform a specific task with read-only access to the codebase.
 
@@ -610,6 +811,7 @@ class AgentTool(BaseTool):
             agent_class_import="kolega_code.agent.investigationagent.InvestigationAgent",
             task=task,
             model_override=model_override,
+            background=background,
         )
 
     def _resolve_browser_manager(self, browser_target: Optional[str]) -> BrowserManager:
@@ -631,6 +833,8 @@ class AgentTool(BaseTool):
         task: str,
         model_override: Any = None,
         browser_target: Optional[str] = None,
+        *,
+        background: bool = False,
     ) -> str:
         """
         Dispatch a browser agent to perform web-based tasks and interactions.
@@ -648,15 +852,15 @@ class AgentTool(BaseTool):
             A comprehensive report of the browser agent's findings and actions
         """
         browser_manager = self._resolve_browser_manager(browser_target)
-        async with browser_manager_agent_lock(browser_manager):
-            return await self._dispatch_agent(
-                agent_class_import="kolega_code.agent.browseragent.BrowserAgent",
-                task=task,
-                model_override=model_override,
-                browser_manager_override=browser_manager,
-            )
+        return await self._dispatch_agent(
+            agent_class_import="kolega_code.agent.browseragent.BrowserAgent",
+            task=task,
+            model_override=model_override,
+            browser_manager_override=browser_manager,
+            background=background,
+        )
 
-    async def dispatch_coding_agent(self, task: str, model_override: Any = None) -> str:
+    async def dispatch_coding_agent(self, task: str, model_override: Any = None, *, background: bool = False) -> str:
         """
         Dispatch a coding agent for processing coding-related tasks with streaming output.
 
@@ -674,9 +878,10 @@ class AgentTool(BaseTool):
             agent_class_import="kolega_code.agent.coder.CoderAgent",
             task=task,
             model_override=model_override,
+            background=background,
         )
 
-    async def dispatch_general_agent(self, task: str, model_override: Any = None) -> str:
+    async def dispatch_general_agent(self, task: str, model_override: Any = None, *, background: bool = False) -> str:
         """
         Dispatch a general-purpose agent to autonomously complete a self-contained task.
 
@@ -694,6 +899,7 @@ class AgentTool(BaseTool):
             agent_class_import="kolega_code.agent.generalagent.GeneralAgent",
             task=task,
             model_override=model_override,
+            background=background,
         )
 
     async def list_subagent_models(self, provider: Optional[str] = None) -> str:
@@ -717,7 +923,9 @@ class AgentTool(BaseTool):
                 eligible.difference_update(getattr(extension, "tools", {}).keys())
         return eligible
 
-    async def dispatch_custom_agent(self, agent: str, task: str, model_override: Any = None) -> str:
+    async def dispatch_custom_agent(
+        self, agent: str, task: str, model_override: Any = None, *, background: bool = False
+    ) -> str:
         """Dispatch a discovered custom agent within the caller's capability ceiling.
 
         ``model_override`` is an optional complete provider/model/thinking_effort
@@ -765,6 +973,7 @@ class AgentTool(BaseTool):
             model_override=model_override,
             routing_agent_name="general-agent",
             inherited_model=definition.resolve_model_config(self.config),
+            background=background,
         )
 
     # ------------------------------------------------------------------
@@ -998,6 +1207,7 @@ class AgentTool(BaseTool):
         tool_call_id: Optional[str],
         conversation_id: Optional[str],
         sub_agent_info: dict,
+        launch_turn_id: Optional[str] = None,
     ):
         """Create the subagent's scoped session recorder and journal ``agent.started``.
 
@@ -1021,8 +1231,9 @@ class AgentTool(BaseTool):
                 "requested_routing": sub_agent_info.get("requested_routing"),
                 "effective_routing": sub_agent_info.get("effective_routing"),
                 "conversation_id": conversation_id,
+                "background": sub_agent_info.get("background", False),
             },
-            turn_id=parent_recorder.current_turn_id,
+            turn_id=launch_turn_id,
         )
         return scoped
 

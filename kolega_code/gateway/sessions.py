@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
@@ -36,6 +36,7 @@ from kolega_code.session.runtime import SessionRuntime, control_channel_for
 from kolega_code.tools import ToolError
 
 from kolega_code.gateway.adapters.base import Attachment, ChatRef, GatewayAdapter, InboundMessage
+from kolega_code.gateway.adapters.telegram.formatting import chunk_text
 from kolega_code.gateway.bridge import TurnRenderer
 from kolega_code.gateway.commands import (
     COMMAND_HELP,
@@ -67,6 +68,7 @@ from kolega_code.utils.images import encode_image_file
 logger = logging.getLogger(__name__)
 
 SESSION_MAP_FILE_NAME = "gateway_sessions.json"
+BACKGROUND_RETRY_SECONDS = 1.0
 
 #: Builds the agent for one session. Injecting this is how tests run the
 #: whole host against a scripted LLM; the default mirrors the ACP recipe.
@@ -90,6 +92,15 @@ class ChatSession:
     #: swap the config and rebuild the session in place.
     config_holder: dict[str, Any]
     turn_task: Optional[asyncio.Task[None]] = None
+    turn_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    background_jobs: Any = None
+    completions: list[dict[str, Any]] = field(default_factory=list)
+    completion_chunks: list[str] = field(default_factory=list)
+    background_retry: Optional[asyncio.TimerHandle] = None
+    background_queued: bool = False
+    auto_continue_paused: bool = False
+    closed: bool = False
+    retired_agents: list[Any] = field(default_factory=list)
 
 
 class AgentTurnHandler:
@@ -118,11 +129,19 @@ class AgentTurnHandler:
             max_sessions=config.max_sessions,
             idle_ttl_seconds=config.session_idle_ttl_seconds,
             on_evict=self._on_evict,
+            is_pinned=lambda entry: (
+                entry.turn_task is not None
+                or entry.turn_lock.locked()
+                or entry.background_queued
+                or bool(entry.background_jobs is not None and entry.background_jobs.has_work)
+                or bool(entry.completions)
+            ),
         )
         self._map_path = config.state_dir / SESSION_MAP_FILE_NAME
         self._chat_sessions = self._load_map()
-        self._queues: dict[str, asyncio.Queue[InboundMessage]] = {}
+        self._queues: dict[str, asyncio.Queue[InboundMessage | None]] = {}
         self._workers: dict[str, asyncio.Task[None]] = {}
+        self._closing = False
         self._secret_values = self._collect_secret_values()
 
     # -- TurnHandler interface ---------------------------------------------
@@ -151,6 +170,7 @@ class AgentTurnHandler:
             )
 
     async def shutdown(self) -> None:
+        self._closing = True
         for worker in list(self._workers.values()):
             worker.cancel()
         for worker in list(self._workers.values()):
@@ -171,8 +191,12 @@ class AgentTurnHandler:
             while True:
                 message = await queue.get()
                 entry = await self._ensure_session(chat_ref)
+                if message is None:
+                    entry.background_queued = False
+                else:
+                    entry.auto_continue_paused = False
                 turn_task: asyncio.Task[None] = asyncio.create_task(
-                    self._run_turn(entry, chat_ref, message),
+                    self._run_owned_turn(entry, chat_ref, message),
                     name=f"gateway-turn-{entry.session_id}",
                 )
                 entry.turn_task = turn_task
@@ -218,6 +242,95 @@ class AgentTurnHandler:
         finally:
             self._workers.pop(chat_ref.key, None)
             self._queues.pop(chat_ref.key, None)
+
+    def _wake_background(self, entry: ChatSession) -> None:
+        if self._closing or entry.closed or entry.background_queued or entry.background_retry is not None:
+            return
+        entry.background_queued = True
+        queue = self._queues.setdefault(entry.chat_ref.key, asyncio.Queue())
+        queue.put_nowait(None)
+        worker = self._workers.get(entry.chat_ref.key)
+        if worker is None or worker.done():
+            self._workers[entry.chat_ref.key] = asyncio.create_task(
+                self._worker(entry.chat_ref), name=f"gateway-worker-{entry.chat_ref.key}"
+            )
+
+    def _retry_background(self, entry: ChatSession) -> None:
+        if self._closing or entry.closed or entry.background_retry is not None:
+            return
+
+        def retry() -> None:
+            entry.background_retry = None
+            self._wake_background(entry)
+
+        entry.background_retry = asyncio.get_running_loop().call_later(BACKGROUND_RETRY_SECONDS, retry)
+
+    async def _attach_background(self, entry: ChatSession) -> None:
+        get_jobs = getattr(entry.runtime.agent, "get_background_jobs", None)
+        if not callable(get_jobs):
+            return
+        entry.background_jobs = get_jobs()
+
+        def delivered(completion: dict[str, Any]) -> None:
+            entry.completions.append(completion)
+            self._wake_background(entry)
+
+        entry.background_jobs.set_callbacks(on_ready=lambda: self._wake_background(entry), on_delivered=delivered)
+        await entry.background_jobs.recover()
+        if entry.background_jobs.pending_count:
+            self._wake_background(entry)
+
+    async def _run_owned_turn(self, entry: ChatSession, chat_ref: ChatRef, message: InboundMessage | None) -> None:
+        async with entry.turn_lock:
+            if entry.closed:
+                return
+            if message is not None:
+                await self._run_turn(entry, chat_ref, message)
+                return
+            jobs = entry.background_jobs
+            if jobs is None or entry.background_retry is not None:
+                return
+            try:
+                await jobs.deliver(entry.runtime.agent)
+                completions = bool(entry.completions)
+                while entry.completions:
+                    if not entry.completion_chunks:
+                        entry.completion_chunks = chunk_text(
+                            scrub(str(entry.completions[0]["text"]), self._secret_values),
+                            self._adapter.capabilities.text_chunk_limit,
+                        )
+                    while entry.completion_chunks:
+                        await self._adapter.send_text(chat_ref.chat_id, entry.completion_chunks[0])
+                        # Acknowledge only after send succeeds, with no await
+                        # between success and removing the presented portion.
+                        entry.completion_chunks.pop(0)
+                    entry.completions.pop(0)
+            finally:
+                if entry.completions:
+                    # /stop cancels the presentation, not its pending report.
+                    # Delay retries, including already-queued delivery wakes,
+                    # so a failing transport cannot spin the turn worker.
+                    self._retry_background(entry)
+            if (
+                completions
+                and not entry.auto_continue_paused
+                and getattr(entry.runtime.agent, "background_needs_turn", True)
+            ):
+                agent = entry.runtime.agent
+                assert agent is not None
+                renderer = TurnRenderer(
+                    self._adapter,
+                    chat_ref.chat_id,
+                    event_queue=entry.turn_events,
+                    chunk_limit=self._adapter.capabilities.text_chunk_limit,
+                    edit_throttle_seconds=self._config.edit_throttle_seconds,
+                )
+                await renderer.run(self._scrub_chunks(agent.continue_from_history_stream()))
+            self._persist(entry)
+            if not jobs.active_count:
+                for old in entry.retired_agents:
+                    await old.cleanup()
+                entry.retired_agents.clear()
 
     async def _run_turn(self, entry: ChatSession, chat_ref: ChatRef, message: InboundMessage) -> None:
         # A previous turn may have left unconsumed events (its pump was
@@ -372,18 +485,21 @@ class AgentTurnHandler:
     async def _reset_session(self, chat_ref: ChatRef) -> None:
         await self._stop_turn(chat_ref)
         entry = self._registry.remove(chat_ref)
-        if entry is not None:
-            await self._close_entry(entry.payload)
-        self._chat_sessions.pop(chat_ref.key, None)
-        self._save_map()
         queue = self._queues.get(chat_ref.key)
         if queue is not None:
             while not queue.empty():
                 queue.get_nowait()
+        if entry is not None:
+            await self._close_entry(entry.payload)
+        self._chat_sessions.pop(chat_ref.key, None)
+        self._save_map()
 
     async def _stop_turn(self, chat_ref: ChatRef) -> bool:
         entry = self._registry.get(chat_ref)
-        if entry is None or entry.payload.turn_task is None:
+        if entry is None:
+            return False
+        entry.payload.auto_continue_paused = True
+        if entry.payload.turn_task is None:
             return False
         entry.payload.turn_task.cancel()
         return True
@@ -425,15 +541,30 @@ class AgentTurnHandler:
         except CliConfigError as exc:
             await self._adapter.send_text(chat_ref.chat_id, f"Could not switch models: {exc}")
             return
-        # Persist the live conversation before the rebuild loads it back.
-        self._persist(entry)
-        entry.config_holder["config"] = new_config
-        try:
-            await entry.runtime.rebuild()
-        except Exception:  # noqa: BLE001 — a failed switch must not kill the chat
-            logger.exception("gateway: model switch failed for chat %s", chat_ref.key)
-            await self._adapter.send_text(chat_ref.chat_id, ERROR_REPLY)
-            return
+        async with entry.turn_lock:
+            # SessionRuntime.rebuild() cleans the old generation first. Jobs
+            # still borrow that generation's services, so build before retiring
+            # it and transfer the session supervisor without closing it.
+            self._persist(entry)
+            old = entry.runtime.agent
+            entry.config_holder["config"] = new_config
+            try:
+                rebuilt = await entry.runtime.start()
+            except Exception:  # noqa: BLE001 — a failed switch must not kill the chat
+                entry.config_holder["config"] = entry.agent_config
+                logger.exception("gateway: model switch failed for chat %s", chat_ref.key)
+                await self._adapter.send_text(chat_ref.chat_id, ERROR_REPLY)
+                return
+            if entry.background_jobs is not None:
+                rebuilt.background_jobs = entry.background_jobs
+                rebuilt.background_needs_turn = getattr(old, "background_needs_turn", False)
+                if old is not None:
+                    old.background_jobs = None
+            if old is not None:
+                if entry.background_jobs is not None and entry.background_jobs.active_count:
+                    entry.retired_agents.append(old)
+                else:
+                    await old.cleanup()
         entry.agent_config = new_config
         entry.record.config = config_summary(new_config)
         self._store.save(entry.record)
@@ -515,7 +646,9 @@ class AgentTurnHandler:
         entry = self._registry.put(chat_ref, payload)
         # The new entry is most-recently-active, so an over-capacity prune
         # evicts the least-recent neighbour — never the chat that just spoke.
-        await self._registry.prune()
+        async with payload.turn_lock:
+            await self._attach_background(payload)
+            await self._registry.prune()
         return entry.payload
 
     async def _build_chat_session(
@@ -685,7 +818,22 @@ class AgentTurnHandler:
         await self._close_entry(chat_session)
 
     async def _close_entry(self, chat_session: ChatSession) -> None:
+        chat_session.closed = True
+        if chat_session.background_retry is not None:
+            chat_session.background_retry.cancel()
+            chat_session.background_retry = None
+        turn_task = chat_session.turn_task
+        if turn_task is not None and turn_task is not asyncio.current_task():
+            turn_task.cancel()
+            await asyncio.gather(turn_task, return_exceptions=True)
+        if chat_session.background_jobs is not None:
+            chat_session.background_jobs.set_callbacks(on_ready=None, on_delivered=None)
+            await chat_session.background_jobs.close()
+            await chat_session.background_jobs.deliver(chat_session.runtime.agent)
         self._persist(chat_session)
+        for old in chat_session.retired_agents:
+            await old.cleanup()
+        chat_session.retired_agents.clear()
         try:
             await chat_session.relay.stop()
         except Exception:  # noqa: BLE001 — closing must not mask the eviction

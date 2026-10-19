@@ -70,8 +70,16 @@ def run_acp(args: Any) -> int:
         getattr(args, "permission_mode", None),
         default=PermissionMode.ASK,
     )
+
+    async def serve() -> None:
+        agent = AcpAgent(factory=AgentFactory(permission_mode=permission_mode))
+        try:
+            await run_agent(agent)
+        finally:
+            await agent.shutdown()
+
     try:
-        asyncio.run(run_agent(AcpAgent(factory=AgentFactory(permission_mode=permission_mode))))
+        asyncio.run(serve())
     except KeyboardInterrupt:
         return 130
     return 0

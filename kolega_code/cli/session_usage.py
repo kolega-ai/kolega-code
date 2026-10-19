@@ -32,9 +32,11 @@ history by type) and to share export (which reads only ``ui.*`` events).
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
+from contextvars import ContextVar
 import logging
 from dataclasses import dataclass
-from typing import Any, Iterable, Optional
+from typing import Any, Generator, Iterable, Optional
 
 from kolega_code.llm.ledger import SettledRequest, UsageLedger
 from kolega_code.llm.usage import NormalizedUsage
@@ -62,9 +64,44 @@ _TOKEN_SUM_FIELDS = (
 @dataclass(frozen=True, slots=True)
 class _PendingEvent:
     kind: str  # "message" | "failure"
+    recorder: SessionRecorder
     turn_id: Optional[str]
     payload: dict[str, Any]
     message_dict: Optional[dict[str, Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class _UsageEventScope:
+    recorder: SessionRecorder
+    turn_id: Optional[str]
+
+
+_usage_event_scope: ContextVar[Optional[_UsageEventScope]] = ContextVar("session_usage_scope", default=None)
+
+
+def current_session_usage_scope() -> Optional[_UsageEventScope]:
+    """Return the task-local journaling override for usage events, if any."""
+    return _usage_event_scope.get()
+
+
+@contextmanager
+def session_usage_scope(recorder: SessionRecorder, *, turn_id: Optional[str] = None) -> Generator[None]:
+    """Override usage-event ownership for work running in this task tree.
+
+    ``turn_id`` defaults to the current scope's captured turn when nested, so a
+    background child can preserve the parent's launch turn while narrower child
+    scopes replace only the owning agent stamp.
+    """
+    previous = _usage_event_scope.get()
+    resolved_turn_id = turn_id if turn_id is not None else (previous.turn_id if previous is not None else None)
+    token = _usage_event_scope.set(_UsageEventScope(recorder=recorder, turn_id=resolved_turn_id))
+    try:
+        yield
+    finally:
+        try:
+            _usage_event_scope.reset(token)
+        except ValueError:
+            _usage_event_scope.set(previous)
 
 
 class SessionUsageSink:
@@ -125,6 +162,9 @@ class SessionUsageSink:
             return
         if settled.origin is not None and settled.origin.kind == "history":
             return  # journaled as assistant.message by the session recorder
+        scope = current_session_usage_scope()
+        recorder = scope.recorder if scope is not None else self._recorder
+        turn_id = scope.turn_id if scope is not None else self._recorder.current_turn_id
         message_dict: Optional[dict[str, Any]] = None
         if message is not None:
             to_dict = getattr(message, "to_dict", None)
@@ -135,7 +175,8 @@ class SessionUsageSink:
         self._queue.put_nowait(
             _PendingEvent(
                 kind="message",
-                turn_id=self._recorder.current_turn_id,
+                recorder=recorder,
+                turn_id=turn_id,
                 payload=self._base_payload(settled),
                 message_dict=message_dict,
             )
@@ -146,10 +187,13 @@ class SessionUsageSink:
             return
         # HISTORY failures are journaled too: a failed invocation never produces
         # an assistant.message, so there is nothing to duplicate.
+        scope = current_session_usage_scope()
+        recorder = scope.recorder if scope is not None else self._recorder
+        turn_id = scope.turn_id if scope is not None else self._recorder.current_turn_id
         payload = self._base_payload(settled)
         payload["error"] = settled.error or "unknown error"
         self._queue.put_nowait(
-            _PendingEvent(kind="failure", turn_id=self._recorder.current_turn_id, payload=payload, message_dict=None)
+            _PendingEvent(kind="failure", recorder=recorder, turn_id=turn_id, payload=payload, message_dict=None)
         )
 
     async def aclose(self) -> None:
@@ -193,26 +237,28 @@ class SessionUsageSink:
             prepared: Optional[dict[str, Any]] = None
             refs: list[dict[str, Any]] = []
             if item.message_dict is not None:
-                prepared, refs = self._journal.prepare_message(item.message_dict)
+                prepared, refs = item.recorder.journal.prepare_message(item.message_dict)
             if prepared is not None:
                 # The ledger's call-identity stamp duplicates this event's own
                 # top-level request_id; keep the journaled message clean.
                 metadata = prepared.get("usage_metadata")
                 if isinstance(metadata, dict):
                     metadata.pop("llm_call", None)
-            self._journal.append(
+            item.recorder.journal.append(
                 LLM_MESSAGE_EVENT,
                 actor="assistant",
                 payload={**item.payload, "message": prepared},
                 turn_id=item.turn_id,
                 artifacts=refs,
+                agent=item.recorder.agent_stamp,
             )
         else:
-            self._journal.append(
+            item.recorder.journal.append(
                 LLM_REQUEST_FAILED_EVENT,
                 actor="system",
                 payload=item.payload,
                 turn_id=item.turn_id,
+                agent=item.recorder.agent_stamp,
             )
 
 

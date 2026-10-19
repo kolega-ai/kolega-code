@@ -67,7 +67,8 @@ dependencies = [
     "lxml-html-clean==0.4.5",
     "markdownify==1.2.3",
     "markitdown[docx,pdf,pptx,xls,xlsx]==0.1.6",
-    "mcp==1.28.1",
+    # MCP Streamable HTTP session reclamation: fixes CVE-2026-59951.
+    "mcp==1.30.0",
     "nest-asyncio==1.6.0",
     # Magika: 1.19.2 has Monterey-compatible Intel wheels for Python 3.11/3.12.
     # It has no Python 3.13 wheels; that interpreter requires newer macOS.

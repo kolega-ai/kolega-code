@@ -24,6 +24,7 @@ from .session_journal import (
     SessionJournal,
     SessionJournalError,
     SessionRecorder,
+    archived_background_completion_ids,
 )
 from .session_usage import derive_session_usage
 
@@ -829,6 +830,8 @@ class SessionStore:
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         # Messages and compaction snapshots carry their source seq so a
         # context.rewound event can drop everything at/after its boundary.
+        events = list(events)
+        archived = archived_background_completion_ids(events)
         messages: list[tuple[int, dict[str, Any]]] = []
         compactions: list[tuple[int, dict[str, Any]]] = []
         current_epoch: Optional[str] = None
@@ -848,6 +851,11 @@ class SessionStore:
             if current_epoch is None or event.epoch_id != current_epoch:
                 continue
             if event.event_type in message_events:
+                if event.event_type == "context.message" and event.payload.get("completion_id") in archived:
+                    # Workspace retirement acknowledges results in their original
+                    # context, not the successor's resumable conversation. Keep
+                    # the event for report inspection, rendering and deduplication.
+                    continue
                 if event.event_type == "turn.started" and event.payload.get("continuation"):
                     # A continuation turn opens with no user message; the
                     # boundary contributes nothing to resumable history.

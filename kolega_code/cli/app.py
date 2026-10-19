@@ -25,7 +25,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.filter import LineFilter
 from textual.screen import Screen
 from textual.timer import Timer
-from textual.worker import WorkerState
+from textual.worker import WorkerCancelled, WorkerFailed, WorkerState
 from textual.widgets import (
     Button,
     OptionList,
@@ -36,7 +36,7 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option
 
-from kolega_code.agent import AgentConfig, AgentEvent
+from kolega_code.agent import AgentConfig, AgentEvent, BaseAgent
 from kolega_code.extensions import ExtensionSelection, KolegaExtensionLoadError
 from kolega_code.session.inbox import (
     SHARED_INBOX_REGISTRY,
@@ -55,6 +55,7 @@ from kolega_code.session.inbox import (
 )
 from kolega_code.session.recording import RecordingConnectionManager
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
+from kolega_code.session.background import BackgroundAgentManager
 from kolega_code.agent.prompt_dump import list_prompt_overrides
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.prompts import (
@@ -109,6 +110,7 @@ from .tui.discovery import DiscoveryTip
 from .tui.metadata import MetadataStrip
 from .tui.shortcut_bar import ContextFooter, ShortcutHelpScreen
 from .tui.turn_status import TurnStatus
+from .tui.background_status import BackgroundStatus
 from .tui.boot_splash import BootSplash
 from .tui import constants as tui_constants
 from .tui import agent_runtime as tui_agent_runtime
@@ -320,6 +322,13 @@ class KolegaCodeApp(
         self._sub_agent_seq = 0
         self._session_file_changes: list[tui_state.SessionFileChange] = []
         self._pending_workspace_switch: Optional[tui_state.PendingWorkspaceSwitch] = None
+        self._background_jobs: Optional[BackgroundAgentManager] = None
+        self._background_retirement: Optional[tuple[BackgroundAgentManager, BaseAgent | None, bool]] = None
+        self._background_paused: bool = False
+        self._background_rebuilding: bool = False
+        self._background_resume_needed: bool = False
+        self._background_delivery_failed: bool = False
+        self._retired_agent_generations: list[tuple[Any, Any]] = []
         self._session_diff_tracker: Optional[tui_session_diff.SessionDiffTrackerBase] = None
         self._session_diff_generation = 0
         self._session_diff_files: list[tui_session_diff.SessionDiffFile] = []
@@ -404,6 +413,12 @@ class KolegaCodeApp(
         self._turn_started_at: Optional[float] = None
         self._turn_finished_duration: Optional[float] = None
         self._turn_timer: Optional[Timer] = None
+        self._background_status_timer: Optional[Timer] = None
+        self._background_status_rows: list[dict[str, Any]] = []
+        self._background_status_summary = BackgroundStatus()
+        self._background_status_owner: Optional[BackgroundAgentManager] = None
+        self._background_status_refresh_pending = False
+        self._background_acknowledged_failures: set[str] = set()
         self._turn_status_text = ""
         self._turn_final_text = ""
         self._turn_final_state = tui_state.TurnState.IDLE
@@ -656,6 +671,9 @@ class KolegaCodeApp(
         )
 
     async def on_mount(self) -> None:
+        # Arrival/release callbacks handle the usual case. This level-triggered
+        # fallback also rearms after any modal/startup blocker is dismissed.
+        self.set_interval(0.25, self._maybe_start_background_completion, name="session-input-drain")
         self.settings = self.settings_store.load()
         # Mount is batched by Textual: awaiting agent/tool setup here prevents
         # even a loading screen from painting. Theme the first frame, then return.
@@ -1376,6 +1394,9 @@ class KolegaCodeApp(
         if (
             self._turn_active
             or self.agent_worker is not None
+            or self._background_rebuilding
+            or self._background_retirement is not None
+            or self._pending_workspace_switch is not None
             or (self._settings_screen is not None and self._settings_screen.mcp_busy)
         ):
             self._queue_user_message(text, attachments)
@@ -1762,11 +1783,24 @@ class KolegaCodeApp(
         """Open the full-screen sub-agent inspector (mission control)."""
         if self._sub_agent_inspector is not None:
             return
+        self._prepare_background_agent_inspector()
         if not self._sub_agent_activities:
             self._notify_user(messages.SUB_AGENT_INSPECTOR_EMPTY, severity="information")
             return
         if key is None or key not in self._sub_agent_activities:
-            key = self._default_sub_agent_key()
+            key = (
+                next(
+                    (
+                        row["job_id"]
+                        for row in self._background_status_rows
+                        if row["status"] in {"failed", "interrupted"}
+                        and row["completion_id"] not in self._background_acknowledged_failures
+                        and not row["archived"]
+                    ),
+                    None,
+                )
+                or self._default_sub_agent_key()
+            )
         if key is None:
             return
         screen = tui_sub_agents.SubAgentInspectorScreen(self, key)
@@ -1962,15 +1996,37 @@ class KolegaCodeApp(
         pending = self._pending_workspace_switch
         if pending is None:
             return None
-        self._pending_workspace_switch = None
+        # The boundary is already durable. Unlike a direct activation, this
+        # entire transition (including failure rollback) must settle before
+        # cancellation can release the old root to another turn.
+        previous = self._background_rebuilding
+        self._background_rebuilding = True
+        operation = asyncio.create_task(self._finish_pending_workspace_switch(pending))
+        cancelled = False
+        try:
+            while not operation.done():
+                try:
+                    await asyncio.shield(operation)
+                except asyncio.CancelledError:
+                    cancelled = True
+            result = operation.result()
+            if cancelled:
+                raise asyncio.CancelledError
+            return result
+        finally:
+            self._background_rebuilding = previous
+
+    async def _finish_pending_workspace_switch(self, pending: tui_state.PendingWorkspaceSwitch) -> Optional[str]:
         branch_note = f" on branch `{pending.branch}`" if pending.branch else ""
         worktree_label = pending.branch or pending.new_root.name
         try:
             await self._activate_workspace(pending.new_root, baseline_label=f'Workspace switched · "{worktree_label}"')
         except Exception as exc:
             await self._restore_previous_workspace(pending, exc)
+            self._pending_workspace_switch = None
             return None
 
+        self._pending_workspace_switch = None
         notice = (
             f"Workspace switched to `{pending.new_root}`{branch_note}. Changes and Rewind now use a fresh "
             "“Workspace switched” baseline; prior-workspace checkpoints are no longer shown."
@@ -1995,8 +2051,13 @@ class KolegaCodeApp(
                 old_branch=pending.branch,
                 new_branch=pending.old_branch,
             )
-        except Exception:
-            pass
+        except Exception as rollback_error:
+            # The durable boundary still names the new root. Never make the old
+            # root usable until its reverse boundary has actually been committed.
+            self.session.active_project_path = None if pending.new_root == self.project_path else str(pending.new_root)
+            self._set_chat_enabled(False)
+            self._notify_user(f"Could not persist workspace rollback: {rollback_error}", severity="error")
+            raise
         try:
             await self._activate_workspace(pending.old_root, baseline_label="")
         except Exception as fallback_error:
@@ -2025,7 +2086,13 @@ class KolegaCodeApp(
         """
         if self.config is None:
             raise RuntimeError("Agent configuration is not available.")
-        self.active_project_path = root
+        previous = self._background_rebuilding
+        self._background_rebuilding = True
+        try:
+            await self._retire_background_jobs(archive=True)
+            self.active_project_path = root
+        finally:
+            self._background_rebuilding = previous
         self.file_index = WorkspaceFileIndex(root)
         self._file_index_refreshing = False
         self._pending_edit_previews = {}
@@ -2230,6 +2297,7 @@ class KolegaCodeApp(
             return
         self._rewind_running = True
         try:
+            await self._retire_background_jobs()
             while self._session_diff_refresh_running:
                 await asyncio.sleep(0.05)
             event_paths = [change.path for change in self._session_file_changes]
@@ -2293,6 +2361,8 @@ class KolegaCodeApp(
             self._rewind_running = False
             self._session_diff_dirty = True
             self._start_session_diff_refresh()
+            await self._attach_background_jobs()
+            self._schedule_pending_inputs()
 
     async def _apply_conversation_rewind(self, outcome: RewindOutcome) -> None:
         """Rebuild agent and transcript state through the resume path."""
@@ -2304,7 +2374,8 @@ class KolegaCodeApp(
         self.session.history = record.history
         self.session.compaction = record.compaction
         self._clear_queued_messages()
-        self._restore_conversation_history(record.history)
+        archived = await asyncio.to_thread(self._session_recorder.read_archived_background_messages)
+        self._restore_conversation_history([*record.history, *archived], preserve_background=False)
         self._add_conversation_entry(
             tui_state.ConversationEntry(
                 kind="system",
@@ -2446,6 +2517,11 @@ class KolegaCodeApp(
             self.action_open_sub_agent(activity.agent_id)
 
     async def on_unmount(self) -> None:
+        if self._background_jobs is not None:
+            self._background_jobs.set_callbacks()
+        if self._background_status_timer is not None:
+            self._background_status_timer.stop()
+            self._background_status_timer = None
         await self._cancel_startup()
         # Stop the watchdog thread on shutdown (also keeps test apps from leaking threads).
         if self._watchdog is not None:
@@ -2475,6 +2551,12 @@ class KolegaCodeApp(
 
     def on_worker_state_changed(self, event) -> None:
         self._refresh_shortcut_context()
+        if event.worker.group == "turns" and event.state in {
+            WorkerState.SUCCESS,
+            WorkerState.ERROR,
+            WorkerState.CANCELLED,
+        }:
+            self._schedule_pending_inputs()
         # Capture worker (e.g. agent-turn) crashes that Textual otherwise only logs to stderr.
         try:
             if event.state is WorkerState.ERROR and self._diag is not None:
@@ -2500,11 +2582,21 @@ class KolegaCodeApp(
 
     async def _shutdown_session(self) -> None:
         saved = False
+        self._background_rebuilding = True
+        self._background_paused = True
         try:
             # Release control first, so any prompt still open resolves to its
             # default instead of leaving a turn waiting on a closing window.
             self.control_channel.release(tui_constants.TUI_CLIENT_ID)
             await self._cancel_startup()
+            worker = self.agent_worker
+            if worker is not None:
+                worker.cancel()
+                try:
+                    await worker.wait()
+                except (WorkerCancelled, WorkerFailed):
+                    pass
+            await self._retire_background_jobs()
             if self._watchdog is not None:
                 self._watchdog.stop()
             # Persist any streaming tail still buffered for coalescing, so a
@@ -2682,6 +2774,7 @@ class KolegaCodeApp(
         self._plan_reofferable = False
         self._plan_decision_active = False
         if clear_context:
+            await self._retire_background_jobs()
             self._clear_agent_context(reason="implement_plan_with_cleared_context")
         await self._save_session_async()
         await self._set_interaction_mode(tui_constants.BUILD_INTERACTION_MODE)
@@ -3094,12 +3187,22 @@ class KolegaCodeApp(
         self._clear_queued_messages()
 
     async def _reset_current_thread(self, *, preserve_loop: bool = False) -> None:
+        previous = self._background_rebuilding
+        self._background_rebuilding = True
+        try:
+            await self._reset_current_thread_impl(preserve_loop=preserve_loop)
+        finally:
+            self._background_rebuilding = previous
+            self._schedule_maybe_start_queued_message()
+
+    async def _reset_current_thread_impl(self, *, preserve_loop: bool = False) -> None:
         """Clear the conversation thread.
 
         ``preserve_loop`` keeps the active scheduled loop and its session state
         so a ``/loop --fresh`` iteration can start from a clean context without
         cancelling the loop that asked for it.
         """
+        await self._retire_background_jobs()
         self._close_sub_agent_inspector()
         await asyncio.to_thread(self._session_recorder.start_epoch, "thread_reset")
         if self.agent is not None:
@@ -3165,6 +3268,7 @@ class KolegaCodeApp(
         self._add_conversation_entry(
             tui_state.ConversationEntry(kind="progress", content=messages.THREAD_RESET_MESSAGE, complete=True)
         )
+        await self._attach_background_jobs()
 
     async def _handoff_session(self, document: str) -> None:
         """Switch to a fresh session whose entire context is ``document``.
@@ -3174,6 +3278,7 @@ class KolegaCodeApp(
         the new session records it as ``parent_session_id`` and restores the
         document as its opening conversation.
         """
+        await self._retire_background_jobs()
         # 1) Final durable flush of the old session while its agent/recorder are
         #    still live and bound to the old session id.
         await self._save_session_history_async()

@@ -1471,7 +1471,70 @@ def _permission_callback_for_ask(project_path: Path):
     return permission_callback
 
 
-async def _sleep_until_loop_fire(state: LoopState, recorder: SessionRecorder, json_mode: bool) -> None:
+class _AskBackgroundJobs:
+    """Mailbox adapter driven only by ask's existing, serial turn owner."""
+
+    def __init__(self, agent: Any) -> None:
+        self.agent = agent
+        get_jobs = getattr(agent, "get_background_jobs", None)
+        self.manager: Any = get_jobs() if callable(get_jobs) else None
+        self.ready = asyncio.Event()
+        self.needs_turn = False
+        if self.manager is not None:
+            self.manager.set_callbacks(on_ready=self.ready.set, on_delivered=self._on_delivered)
+
+    def _on_delivered(self, completion: dict[str, Any]) -> None:
+        self.needs_turn = True
+        self.ready.set()
+
+    async def recover(self) -> None:
+        if self.manager is not None:
+            await self.manager.recover()
+
+    async def reset_history(self) -> None:
+        """Retire the settled epoch's manager before resetting the root context."""
+        if self.manager is not None:
+            self.manager.set_callbacks(on_ready=None, on_delivered=None)
+            await self.manager.close()
+            if getattr(self.agent, "background_jobs", None) is self.manager:
+                self.agent.background_jobs = None
+        self.agent.clear_history()
+        self.ready.clear()
+        self.needs_turn = False
+        get_jobs = getattr(self.agent, "get_background_jobs", None)
+        self.manager = get_jobs() if callable(get_jobs) else None
+        if self.manager is not None:
+            self.manager.set_callbacks(on_ready=self.ready.set, on_delivered=self._on_delivered)
+            await self.manager.recover()
+
+    async def drain(self, consume_turn: Any, *, wait: bool = False) -> None:
+        if self.manager is None:
+            return
+        while True:
+            self.ready.clear()
+            await self.manager.deliver(self.agent)
+            if self.needs_turn:
+                self.needs_turn = False
+                if getattr(self.agent, "background_needs_turn", True):
+                    await consume_turn(self.agent.continue_from_history_stream())
+                continue
+            if self.manager.pending_count:
+                continue
+            if not wait or not self.manager.active_count:
+                return
+            # The supervisor shields its children. Cancelling ask cancels this
+            # wait, not the children; agent cleanup then closes/joins them.
+            await self.manager.wait_for_completion()
+
+
+async def _sleep_until_loop_fire(
+    state: LoopState,
+    recorder: SessionRecorder,
+    json_mode: bool,
+    *,
+    background_jobs: _AskBackgroundJobs | None = None,
+    consume_turn: Any = None,
+) -> None:
     """Wait until the loop's next fire time, in slices so Ctrl-C stays responsive."""
     remaining = state.seconds_until()
     if remaining <= 0:
@@ -1484,8 +1547,18 @@ async def _sleep_until_loop_fire(state: LoopState, recorder: SessionRecorder, js
         )
     while remaining > 0:
         slice_seconds = min(1.0, remaining)
-        await asyncio.sleep(slice_seconds)
-        remaining -= slice_seconds
+        if background_jobs is None or background_jobs.manager is None:
+            await asyncio.sleep(slice_seconds)
+            remaining -= slice_seconds
+        else:
+            try:
+                await asyncio.wait_for(background_jobs.ready.wait(), timeout=slice_seconds)
+            except TimeoutError:
+                pass
+            await background_jobs.drain(consume_turn)
+            # Continuations do not mark a scheduled iteration fired, nor move
+            # its deadline. Time spent consuming results counts as sleep time.
+            remaining = state.seconds_until()
 
 
 def _emit_loop_iteration(state: LoopState, recorder: SessionRecorder, json_mode: bool) -> None:
@@ -2035,18 +2108,6 @@ async def _run_ask(args: argparse.Namespace) -> int:
         # reported in real time instead of all at once after streaming finishes.
         pump_task = asyncio.create_task(_pump_ask_events(manager, args.json))
         turn_prompt = prompt
-        if loop_state is not None:
-            # Interval schedules fire immediately; cron schedules wait for the
-            # first matching wall-clock time.
-            await _sleep_until_loop_fire(loop_state, session_recorder, args.json)
-            loop_state.mark_fired()
-            _emit_loop_iteration(loop_state, session_recorder, args.json)
-            turn_prompt = build_loop_iteration_prompt(
-                prompt or "",
-                iteration=loop_state.iterations,
-                max_iterations=loop_state.max_iterations,
-                fresh=loop_state.fresh,
-            )
 
         # Checkpoint for goal/loop token accounting: each drain adds everything
         # the ledger saw since the previous drain — the whole command tree
@@ -2087,6 +2148,28 @@ async def _run_ask(args: argparse.Namespace) -> int:
             while peer_inbox is not None and peer_inbox.pending_texts():
                 joined = "\n\n".join(peer_inbox.pop_all())
                 await _consume_turn(agent.process_message_stream(joined))
+            await background_jobs.drain(_consume_turn)
+
+        background_jobs = _AskBackgroundJobs(agent)
+        await background_jobs.recover()
+        if loop_state is not None:
+            # Interval schedules fire immediately; cron schedules wait for the
+            # first matching wall-clock time, servicing recovered work meanwhile.
+            await _sleep_until_loop_fire(
+                loop_state,
+                session_recorder,
+                args.json,
+                background_jobs=background_jobs,
+                consume_turn=_consume_turn,
+            )
+            loop_state.mark_fired()
+            _emit_loop_iteration(loop_state, session_recorder, args.json)
+            turn_prompt = build_loop_iteration_prompt(
+                prompt or "",
+                iteration=loop_state.iterations,
+                max_iterations=loop_state.max_iterations,
+                fresh=loop_state.fresh,
+            )
 
         stream = (
             agent.process_message_stream(turn_prompt, attachments)
@@ -2107,6 +2190,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
             consume_turn=_consume_turn,
             drain_tokens=_drain_tokens,
             drain_peer_turns=_drain_pending_peer_turns,
+            background_jobs=background_jobs,
         )
 
         if args.save or args.session:
@@ -2139,6 +2223,15 @@ async def _run_ask(args: argparse.Namespace) -> int:
         run_error = {"code": type(exc).__name__, "message": str(exc)[:500]}
         raise
     finally:
+        end_fire_hook = getattr(agent_ref.get("agent"), "fire_hook", None)
+        if end_fire_hook is not None:
+            try:
+                await end_fire_hook(HookEvent.SESSION_END, {"reason": "ask_complete"})
+            except Exception:
+                pass
+        # Children can still emit their terminal events and usage while joined.
+        # Keep the host's consumers and recording sink alive until that settles.
+        await _close_generation()
         if pump_task is not None:
             pump_task.cancel()
             try:
@@ -2150,13 +2243,6 @@ async def _run_ask(args: argparse.Namespace) -> int:
         while not manager.events.empty():
             event = manager.events.get_nowait()
             _print_ask_event(event, args.json)
-        end_fire_hook = getattr(agent_ref.get("agent"), "fire_hook", None)
-        if end_fire_hook is not None:
-            try:
-                await end_fire_hook(HookEvent.SESSION_END, {"reason": "ask_complete"})
-            except Exception:
-                pass
-        await _close_generation()
         if usage_sink is not None:
             try:
                 await usage_sink.aclose()
@@ -2221,6 +2307,7 @@ async def _run_worker_modes(
     consume_turn,
     drain_tokens,
     drain_peer_turns,
+    background_jobs: _AskBackgroundJobs | None = None,
 ) -> int:
     """Run --loop / --goal after the first turn, then drain the peer inbox.
 
@@ -2243,6 +2330,7 @@ async def _run_worker_modes(
             consume_turn=consume_turn,
             drain_tokens=drain_tokens,
             drain_peer_turns=drain_peer_turns,
+            background_jobs=background_jobs,
         )
 
     if goal_state is not None:
@@ -2257,6 +2345,10 @@ async def _run_worker_modes(
         )
 
     await drain_peer_turns()
+    if background_jobs is not None:
+        # A plain ask is a job owner too: do not tear down services just
+        # because the launching parent turn has returned.
+        await background_jobs.drain(consume_turn, wait=True)
     return exit_code
 
 
@@ -2271,18 +2363,35 @@ async def _run_ask_loop_iterations(
     consume_turn,
     drain_tokens,
     drain_peer_turns,
+    background_jobs: _AskBackgroundJobs | None = None,
 ) -> None:
     """Re-run the loop prompt until the iteration cap or the expiry is hit."""
     drain_tokens(loop_state)
     loop_state.advance_after_completion()
     while loop_state.is_active:
         await drain_peer_turns()
-        await _sleep_until_loop_fire(loop_state, session_recorder, json_mode)
+        await _sleep_until_loop_fire(
+            loop_state,
+            session_recorder,
+            json_mode,
+            background_jobs=background_jobs,
+            consume_turn=consume_turn,
+        )
         if not loop_state.is_active:
             break
+        if loop_state.fresh:
+            # Finish old-context work before resetting history. A scheduled
+            # fresh iteration must never receive a late prior-epoch report.
+            if background_jobs is not None:
+                await background_jobs.drain(consume_turn, wait=True)
+                if not loop_state.is_active:
+                    break
         loop_state.mark_fired()
         if loop_state.fresh:
-            agent.clear_history()
+            if background_jobs is not None:
+                await background_jobs.reset_history()
+            else:
+                agent.clear_history()
         _emit_loop_iteration(loop_state, session_recorder, json_mode)
         turn_prompt = build_loop_iteration_prompt(
             prompt or "",

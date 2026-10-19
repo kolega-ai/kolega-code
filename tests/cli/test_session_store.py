@@ -15,6 +15,7 @@ from kolega_code.cli import session_journal as session_journal_module
 from kolega_code.cli.session_journal import (
     DEFAULT_ROOT_AGENT_NAME,
     TOOL_RESULT_PREVIEW_CHARS,
+    SessionEvent,
     SessionJournalError,
     SessionRecorder,
     derive_root_agent_id,
@@ -662,6 +663,522 @@ def test_interrupted_turn_after_injected_context_message_is_recovered(tmp_path: 
     assert replayed[2].content[0].content == "contents"
     assert isinstance(replayed[3].content[0], TextBlock)
     assert replayed[3].content[0].text == "also do Y"
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_failed_tool_results_retain_output_and_retry_batch_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ambiguous: bool
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+    recorder = store.recorder(record.session_id)
+    call = ToolCall(id="read-1", name="read", input={}, execution_id="execution-1")
+    turn_id = recorder.start_turn(Message(role="user", content=[TextBlock("read it")]))
+    recorder.record_assistant(Message(role="assistant", content=[call], tool_calls=[call], stop_reason="tool_use"))
+    output = "FULL START\n" + "x" * (TOOL_RESULT_PREVIEW_CHARS + 100) + "\nFULL END"
+    original = recorder.journal._write_event_locked
+
+    def fail_write(event) -> None:
+        if event.event_type == "tool.results":
+            if ambiguous:
+                original(event)
+            raise SessionJournalError("synthetic tool-result write failure")
+        original(event)
+
+    monkeypatch.setattr(recorder.journal, "_write_event_locked", fail_write)
+    with pytest.raises(SessionJournalError, match="synthetic tool-result write failure"):
+        recorder.record_tool_results(
+            [
+                ToolResult(
+                    tool_use_id=call.id,
+                    content=output,
+                    name=call.name,
+                    execution_id=call.execution_id,
+                    is_error=False,
+                )
+            ]
+        )
+    # Do not allocate a duplicate seq when simulating an ambiguous committed write.
+    recorder.journal.read_events()
+    recorder.finish_turn("failed", error="tool-result write failed")
+    for add_context in (
+        lambda: recorder.start_turn(Message(role="user", content=[TextBlock("next")])),
+        recorder.start_continuation_turn,
+        lambda: recorder.record_context_message(Message(role="user", content=[TextBlock("completion")])),
+        lambda: recorder.record_background_completion(
+            {}, Message(role="user", content=[]), epoch_id=recorder.journal.epoch_id
+        ),
+        lambda: recorder.start_epoch("reset"),
+    ):
+        with pytest.raises(SessionJournalError, match="Unsettled tool results"):
+            add_context()
+    monkeypatch.setattr(recorder.journal, "_write_event_locked", original)
+    retried = recorder.retry_pending_tool_results()
+    assert retried is not None and len(retried) == 1
+    assert retried[0].execution_id == call.execution_id
+    assert retried[0].is_error is False
+    assert "FULL START" in str(retried[0].content) and "FULL END" in str(retried[0].content)
+    assert recorder.retry_pending_tool_results() is None
+    batches = [event for event in recorder.journal.read_events() if event.event_type == "tool.results"]
+    assert len(batches) == 1 and batches[0].turn_id == turn_id
+    assert recorder.journal.read_artifact(batches[0].artifacts[0]).decode() == output
+    recorder.start_continuation_turn()
+    recorder.finish_turn("completed")
+
+
+@pytest.fixture
+def recovery_recording(tmp_path: Path, isolated_cli_env: None) -> tuple[SessionStore, SessionRecord, SessionRecorder]:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+    return store, record, store.recorder(record.session_id)
+
+
+def _start_recovery_tool_turn(recorder: SessionRecorder) -> tuple[str, ToolCall]:
+    turn_id = recorder.start_turn(Message(role="user", content=[TextBlock("run it")]))
+    call = ToolCall(id="tool-1", name="write", input={}, execution_id="execution-1")
+    recorder.record_assistant(Message(role="assistant", content=[call], tool_calls=[call], stop_reason="tool_use"))
+    return turn_id, call
+
+
+@pytest.mark.parametrize("failure", ["before", "after", "projection"])
+def test_tool_result_retention_survives_failed_live_projection(
+    recovery_recording: tuple[SessionStore, SessionRecord, SessionRecorder],
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    store, record, recorder = recovery_recording
+    turn_id, call = _start_recovery_tool_turn(recorder)
+    result = ToolResult(
+        tool_use_id=call.id, name=call.name, content="original success", execution_id=call.execution_id, is_error=False
+    )
+    original = recorder.journal._write_event_locked
+
+    def fail_write(event: SessionEvent) -> None:
+        if event.event_type == "tool.results":
+            if failure == "after":
+                original(event)
+            raise SessionJournalError("result write failed")
+        original(event)
+
+    if failure != "projection":
+        monkeypatch.setattr(recorder.journal, "_write_event_locked", fail_write)
+        with pytest.raises(SessionJournalError, match="result write failed"):
+            recorder.record_tool_results([result], defer_projection=True)
+        with pytest.raises(SessionJournalError, match="before their commit"):
+            recorder.acknowledge_tool_results()
+    else:
+        recorder.record_tool_results([result], defer_projection=True)
+    result.content = "caller mutated the result"
+    recorder.finish_turn("failed")
+    monkeypatch.setattr(recorder.journal, "_write_event_locked", original)
+    assert store.recorder(record.session_id) is recorder
+    first = recorder.retry_pending_tool_results(defer_projection=True)
+    assert first is not None and first[0].content == "original success"
+    projection = Mock(side_effect=RuntimeError("live append failed"))
+    with pytest.raises(RuntimeError, match="live append failed"):
+        projection(first)
+    first[0].content = "failed projection mutated its copy"
+    second = recorder.repair_interrupted_tool_results(defer_projection=True)
+    assert second is not None and second[0].content == "original success"
+    assert second[0].is_error is False
+    third = recorder.retry_pending_tool_results(defer_projection=True)
+    assert third is not None and [result.to_dict() for result in third] == [result.to_dict() for result in second]
+    batches = [event for event in recorder.journal.read_events() if event.event_type == "tool.results"]
+    assert len(batches) == 1 and batches[0].turn_id == turn_id
+    recorder.acknowledge_tool_results()
+    assert recorder.retry_pending_tool_results(defer_projection=True) is None
+    assert recorder.repair_interrupted_tool_results(defer_projection=True) is None
+    recorder.start_continuation_turn()
+    recorder.finish_turn("completed")
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_assistant_retry_after_closed_turn_retains_response_until_projection_ack(
+    recovery_recording: tuple[SessionStore, SessionRecord, SessionRecorder],
+    monkeypatch: pytest.MonkeyPatch,
+    ambiguous: bool,
+) -> None:
+    store, record, recorder = recovery_recording
+    turn_id = recorder.start_turn(Message(role="user", content=[TextBlock("run it")]))
+    epoch_id = recorder.journal.epoch_id
+    call = ToolCall(id="write-1", name="write", input={}, execution_id="original-execution")
+    message = Message(role="assistant", content=[call], tool_calls=[call], stop_reason="tool_use")
+    original = recorder.journal._write_event_locked
+
+    def fail_write(event: SessionEvent) -> None:
+        if event.event_type == "assistant.message":
+            if ambiguous:
+                original(event)
+            raise SessionJournalError("assistant write failed")
+        original(event)
+
+    monkeypatch.setattr(recorder.journal, "_write_event_locked", fail_write)
+    with pytest.raises(SessionJournalError, match="assistant write failed"):
+        recorder.record_assistant(message, reasoning_effort="high", defer_projection=True)
+    message.content = "caller mutated its message"
+    with pytest.raises(SessionJournalError, match="before its commit"):
+        recorder.acknowledge_assistant()
+    recorder.finish_turn("failed", error="assistant write failed")
+    monkeypatch.setattr(recorder.journal, "_write_event_locked", original)
+    replacement_recorder = store.recorder(record.session_id)
+    retried = replacement_recorder.retry_pending_assistant(defer_projection=True)
+    assert retried is not None and retried.tool_calls is not None
+    assert retried.tool_calls[0].execution_id == "original-execution"
+    projection = Mock(side_effect=RuntimeError("assistant projection failed"))
+    with pytest.raises(RuntimeError, match="assistant projection failed"):
+        projection(retried)
+    retried_again = replacement_recorder.retry_pending_assistant(defer_projection=True)
+    assert retried_again is not None and retried_again.to_dict() == retried.to_dict()
+    with pytest.raises(SessionJournalError, match="Unsettled assistant"):
+        recorder.repair_interrupted_tool_results(defer_projection=True)
+    assistants = [event for event in recorder.journal.read_events() if event.event_type == "assistant.message"]
+    assert len(assistants) == 1 and assistants[0].turn_id == turn_id
+    assert assistants[0].payload["reasoning_effort"] == "high"
+    recorder.acknowledge_assistant()
+    assert recorder.retry_pending_assistant(defer_projection=True) is None
+    repaired = recorder.repair_interrupted_tool_results(defer_projection=True)
+    assert repaired is not None and len(repaired) == 1
+    assert repaired[0].execution_id == "original-execution"
+    assert repaired[0].is_error is True and "was not re-run" in str(repaired[0].content)
+    result_event = recorder.journal.read_events()[-1]
+    assert (result_event.event_type, result_event.turn_id, result_event.epoch_id) == ("tool.results", turn_id, epoch_id)
+    assert recorder.current_turn_id is None
+    recorder.acknowledge_tool_results()
+    assert recorder.repair_interrupted_tool_results(defer_projection=True) is None
+
+
+def test_successful_assistant_can_defer_projection_without_changing_direct_callers(
+    recovery_recording: tuple[SessionStore, SessionRecord, SessionRecorder],
+) -> None:
+    _, _, recorder = recovery_recording
+    recorder.start_turn(Message(role="user", content=[TextBlock("hello")]))
+    message = Message(role="assistant", content=[TextBlock("hello back")], stop_reason="end_turn")
+    assert recorder.record_assistant(message) is None
+    assert recorder.retry_pending_assistant() is None
+    assert recorder.record_assistant(message, defer_projection=True) is None
+    for _ in range(2):
+        retried = recorder.retry_pending_assistant(defer_projection=True)
+        assert retried is not None and retried.to_dict() == message.to_dict()
+    recorder.acknowledge_assistant()
+    recorder.finish_turn("completed")
+    terminal = recorder.journal.read_events()[-1]
+    assert terminal.payload["assistant_messages"] == 2
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+@pytest.mark.parametrize("retry_via_finish", [False, True])
+def test_terminal_intent_is_retryable_and_ambiguous_commit_is_not_duplicated(
+    recovery_recording: tuple[SessionStore, SessionRecord, SessionRecorder],
+    monkeypatch: pytest.MonkeyPatch,
+    ambiguous: bool,
+    retry_via_finish: bool,
+) -> None:
+    _, _, recorder = recovery_recording
+    turn_id = recorder.start_turn(Message(role="user", content=[TextBlock("hello")]))
+    original = recorder.journal._write_event_locked
+
+    def fail_write(event: SessionEvent) -> None:
+        if event.event_type == "turn.cancelled":
+            if ambiguous:
+                original(event)
+            raise SessionJournalError("terminal write failed")
+        original(event)
+
+    monkeypatch.setattr(recorder.journal, "_write_event_locked", fail_write)
+    with pytest.raises(SessionJournalError, match="terminal write failed"):
+        recorder.finish_turn("cancelled", reason="original cancellation", error="original error")
+    assert recorder.current_turn_id == turn_id
+    with pytest.raises(SessionJournalError, match="Unsettled turn terminal"):
+        recorder.start_continuation_turn()
+    monkeypatch.setattr(recorder.journal, "_write_event_locked", original)
+    if retry_via_finish:
+        recorder.finish_turn("failed", error="must not replace original intent")
+    else:
+        recorder.retry_pending_turn_terminal()
+    recorder.retry_pending_turn_terminal()
+    assert recorder.current_turn_id is None
+    terminals = [
+        event for event in recorder.journal.read_events() if event.event_type in {"turn.failed", "turn.cancelled"}
+    ]
+    assert len(terminals) == 1 and terminals[0].turn_id == turn_id
+    assert terminals[0].event_type == "turn.cancelled"
+    assert terminals[0].payload["reason"] == "original cancellation"
+    assert terminals[0].payload["error"] == "original error"
+    recorder.start_turn(Message(role="user", content=[TextBlock("next prompt")]))
+    recorder.finish_turn("completed")
+
+
+@pytest.mark.parametrize("pending_kind", ["assistant", "results"])
+@pytest.mark.parametrize("write_state", ["before", "after", "project"])
+@pytest.mark.parametrize("ambiguous_rewind", [False, True])
+def test_rewind_discards_pending_data_before_retrying_or_returning_existing_commit(
+    recovery_recording: tuple[SessionStore, SessionRecord, SessionRecorder],
+    monkeypatch: pytest.MonkeyPatch,
+    pending_kind: str,
+    write_state: str,
+    ambiguous_rewind: bool,
+) -> None:
+    store, record, recorder = recovery_recording
+    turn_id = recorder.start_turn(Message(role="user", content=[TextBlock("discard me")]))
+    call = ToolCall(id="write-1", name="write", input={}, execution_id="discarded-execution")
+    assistant = Message(role="assistant", content=[call], tool_calls=[call], stop_reason="tool_use")
+    if pending_kind == "results":
+        recorder.record_assistant(assistant)
+    original = recorder.journal._write_event_locked
+    pending_type = "assistant.message" if pending_kind == "assistant" else "tool.results"
+
+    def fail_pending(event: SessionEvent) -> None:
+        if event.event_type == pending_type:
+            if write_state == "after":
+                original(event)
+            raise SessionJournalError("pending write failed")
+        original(event)
+
+    def write_pending() -> None:
+        if pending_kind == "assistant":
+            recorder.record_assistant(assistant, defer_projection=True)
+        else:
+            recorder.record_tool_results(
+                [ToolResult(tool_use_id=call.id, name=call.name, content="successful output", is_error=False)],
+                defer_projection=True,
+            )
+
+    if write_state == "project":
+        write_pending()
+    else:
+        monkeypatch.setattr(recorder.journal, "_write_event_locked", fail_pending)
+        with pytest.raises(SessionJournalError, match="pending write failed"):
+            write_pending()
+    monkeypatch.setattr(recorder.journal, "_write_event_locked", original)
+    recorder.finish_turn("failed")
+
+    def fail_rewind(event: SessionEvent) -> None:
+        original(event)
+        if event.event_type == "context.rewound":
+            raise SessionJournalError("ambiguous rewind")
+
+    if ambiguous_rewind:
+        monkeypatch.setattr(recorder.journal, "_write_event_locked", fail_rewind)
+        with pytest.raises(SessionJournalError, match="ambiguous rewind"):
+            recorder.record_rewind(turn_id)
+    else:
+        recorder.record_rewind(turn_id)
+    monkeypatch.setattr(recorder.journal, "_write_event_locked", original)
+    events_before = recorder.journal.read_events()
+    assert recorder.retry_pending_assistant(defer_projection=True) is None
+    assert recorder.retry_pending_tool_results(defer_projection=True) is None
+    assert recorder.repair_interrupted_tool_results(defer_projection=True) is None
+    assert recorder.journal.read_events() == events_before
+    assert store.load(record.session_id).history == []
+    recorder.start_continuation_turn()
+    recorder.finish_turn("completed")
+
+
+@pytest.mark.parametrize("pending_kind", ["assistant", "results", "terminal"])
+def test_pending_projection_and_terminal_barriers_cover_context_writes(
+    recovery_recording: tuple[SessionStore, SessionRecord, SessionRecorder],
+    monkeypatch: pytest.MonkeyPatch,
+    pending_kind: str,
+) -> None:
+    _, _, recorder = recovery_recording
+    recorder.start_turn(Message(role="user", content=[TextBlock("hello")]))
+    message = Message(role="assistant", content=[TextBlock("response")])
+    if pending_kind == "assistant":
+        recorder.record_assistant(message, defer_projection=True)
+    elif pending_kind == "results":
+        recorder.record_tool_results(
+            [ToolResult(tool_use_id="tool-1", name="read", content="result", is_error=False)], defer_projection=True
+        )
+    else:
+        original = recorder.journal._write_event_locked
+
+        def fail_terminal(event: SessionEvent) -> None:
+            raise SessionJournalError("terminal failed")
+
+        monkeypatch.setattr(recorder.journal, "_write_event_locked", fail_terminal)
+        with pytest.raises(SessionJournalError, match="terminal failed"):
+            recorder.finish_turn("failed")
+        monkeypatch.setattr(recorder.journal, "_write_event_locked", original)
+    for write_context in (
+        lambda: recorder.start_turn(Message(role="user", content=[])),
+        recorder.start_continuation_turn,
+        lambda: recorder.record_assistant(message),
+        lambda: recorder.record_synthetic_assistant("notice", notice_code="test"),
+        lambda: recorder.record_tool_results([]),
+        lambda: recorder.record_system_context("system"),
+        lambda: recorder.record_tool_definitions([]),
+        lambda: recorder.record_tool_definitions([{"name": "read"}]),
+        lambda: recorder.record_context_message(Message(role="user", content=[])),
+        lambda: recorder.record_background_completion(
+            {}, Message(role="user", content=[]), epoch_id=recorder.journal.epoch_id
+        ),
+        lambda: recorder.record_workspace_switched(old_root="old", new_root="new"),
+        lambda: recorder.record_compaction({}),
+        lambda: recorder.start_epoch("reset"),
+    ):
+        with pytest.raises(SessionJournalError, match="Unsettled"):
+            write_context()
+
+
+def test_child_retries_do_not_use_root_turn_membership_or_repair_root_tools(
+    recovery_recording: tuple[SessionStore, SessionRecord, SessionRecorder], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, _, root = recovery_recording
+    root_turn_id, call = _start_recovery_tool_turn(root)
+    child = root.scoped_child(agent_id="child", agent_name="worker", parent_tool_call_id=call.id, depth=1)
+    child_turn_id = child.start_turn(Message(role="user", content=[TextBlock("child task")]))
+    original = child.journal._write_event_locked
+
+    def fail_assistant(event: SessionEvent) -> None:
+        original(event)
+        if event.event_type == "assistant.message" and event.depth:
+            raise SessionJournalError("child assistant failed")
+
+    monkeypatch.setattr(child.journal, "_write_event_locked", fail_assistant)
+    with pytest.raises(SessionJournalError, match="child assistant failed"):
+        child.record_assistant(Message(role="assistant", content=[call], tool_calls=[call]), defer_projection=True)
+    monkeypatch.setattr(child.journal, "_write_event_locked", original)
+    assert child.retry_pending_assistant(defer_projection=True) is not None
+    child.acknowledge_assistant()
+    child.record_tool_results(
+        [
+            ToolResult(
+                tool_use_id=call.id,
+                name=call.name,
+                content="child output",
+                execution_id=call.execution_id,
+                is_error=False,
+            )
+        ],
+        defer_projection=True,
+    )
+    child.finish_turn("completed")
+    retried = child.retry_pending_tool_results(defer_projection=True)
+    assert retried is not None and retried[0].content == "child output"
+    child.acknowledge_tool_results()
+    with pytest.raises(SessionJournalError, match="only valid for the root"):
+        child.repair_interrupted_tool_results()
+    assert child.recover_interrupted_turn() is False
+    repaired = root.repair_interrupted_tool_results()
+    assert repaired is not None and repaired[0].is_error is True
+    assert root.current_turn_id == root_turn_id
+    events = root.journal.read_events()
+    assert not any(event.event_type == "turn.failed" and not event.depth for event in events)
+    assert (
+        len([event for event in events if event.turn_id == child_turn_id and event.event_type == "tool.results"]) == 1
+    )
+    root.finish_turn("failed")
+
+
+@pytest.mark.parametrize("closed", [False, True])
+def test_boundary_repair_uses_latest_assistant_execution_ids_and_legacy_fallback(
+    recovery_recording: tuple[SessionStore, SessionRecord, SessionRecorder], closed: bool
+) -> None:
+    _, _, recorder = recovery_recording
+    turn_id, first = _start_recovery_tool_turn(recorder)
+    recorder.record_tool_results(
+        [
+            ToolResult(
+                tool_use_id=first.id,
+                name=first.name,
+                content="first output",
+                execution_id=first.execution_id,
+                is_error=False,
+            )
+        ]
+    )
+    second = ToolCall(id=first.id, name="write", input={}, execution_id="second-execution")
+    legacy = ToolCall(id="legacy-id", name="read", input={}, execution_id="new-execution")
+    recorder.record_assistant(Message(role="assistant", content=[second, legacy], tool_calls=[second, legacy]))
+    # Old results without execution IDs still match by provider ID.
+    recorder.record_tool_results(
+        [ToolResult(tool_use_id=legacy.id, name=legacy.name, content="legacy output", is_error=False)]
+    )
+    if closed:
+        recorder.finish_turn("failed")
+    repaired = recorder.repair_interrupted_tool_results(defer_projection=True)
+    assert repaired is not None and len(repaired) == 1
+    assert repaired[0].execution_id == "second-execution"
+    assert repaired[0].tool_use_id == first.id and repaired[0].is_error is True
+    assert recorder.current_turn_id == (None if closed else turn_id)
+    recorder.acknowledge_tool_results()
+    assert recorder.repair_interrupted_tool_results() is None
+    if not closed:
+        recorder.finish_turn("failed")
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_failed_interruption_and_terminal_writes_settle_independently_at_safe_boundary(
+    recovery_recording: tuple[SessionStore, SessionRecord, SessionRecorder],
+    monkeypatch: pytest.MonkeyPatch,
+    ambiguous: bool,
+) -> None:
+    _, _, recorder = recovery_recording
+    turn_id, call = _start_recovery_tool_turn(recorder)
+    original = recorder.journal._write_event_locked
+
+    def fail_cleanup(event: SessionEvent) -> None:
+        if event.event_type in {"tool.results", "turn.cancelled"}:
+            if ambiguous:
+                original(event)
+            raise SessionJournalError("cleanup write failed")
+        original(event)
+
+    monkeypatch.setattr(recorder.journal, "_write_event_locked", fail_cleanup)
+    with pytest.raises(SessionJournalError, match="cleanup write failed"):
+        recorder.repair_interrupted_tool_results(defer_projection=True)
+    with pytest.raises(SessionJournalError, match="cleanup write failed"):
+        recorder.finish_turn("cancelled", reason="generator closed")
+    monkeypatch.setattr(recorder.journal, "_write_event_locked", original)
+    assert recorder.retry_pending_assistant(defer_projection=True) is None
+    repaired = recorder.repair_interrupted_tool_results(defer_projection=True)
+    assert repaired is not None and repaired[0].execution_id == call.execution_id
+    assert repaired[0].is_error is True and "was not re-run" in str(repaired[0].content)
+    assert recorder.current_turn_id == turn_id
+    with pytest.raises(SessionJournalError, match="Unsettled tool results"):
+        recorder.start_continuation_turn()
+    recorder.acknowledge_tool_results()
+    with pytest.raises(SessionJournalError, match="Unsettled turn terminal"):
+        recorder.start_continuation_turn()
+    recorder.retry_pending_turn_terminal()
+    assert recorder.current_turn_id is None
+    events = recorder.journal.read_events()
+    assert len([event for event in events if event.event_type == "tool.results"]) == 1
+    assert len([event for event in events if event.event_type == "turn.cancelled"]) == 1
+    recorder.start_continuation_turn()
+    recorder.finish_turn("completed")
+
+
+@pytest.mark.parametrize("rewind", [False, True])
+def test_recovery_repairs_closed_failed_turn_without_resurrecting_rewound_tools(tmp_path: Path, rewind: bool) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+    recorder = store.recorder(record.session_id)
+    turn_id = recorder.start_turn(Message(role="user", content=[TextBlock("run it")]))
+    call = ToolCall(id="write-1", name="write", input={}, execution_id="write-execution")
+    recorder.record_assistant(Message(role="assistant", content=[call], tool_calls=[call], stop_reason="tool_use"))
+    recorder.finish_turn("failed", error="disk unavailable before tool results")
+    if rewind:
+        recorder.record_rewind(turn_id)
+    recovered = SessionRecorder(store.journal(record.session_id), recover=True)
+    assert recovered.current_turn_id is None
+    assert recovered.recover_interrupted_turn() is False
+    batches = [event for event in recorder.journal.read_events() if event.event_type == "tool.results"]
+    if rewind:
+        assert batches == []
+        assert store.load(record.session_id).history == []
+    else:
+        assert len(batches) == 1 and batches[0].turn_id == turn_id
+        result = Message.from_dict(batches[0].payload["message"]).content[0]
+        assert isinstance(result, ToolResult)
+        assert result.is_error is True and result.execution_id == "write-execution"
+        assert "was not re-run" in str(result.content)
 
 
 def test_terminal_assistant_message_is_recovered_when_only_marker_is_missing(tmp_path: Path) -> None:

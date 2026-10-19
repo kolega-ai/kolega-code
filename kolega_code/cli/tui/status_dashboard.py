@@ -8,6 +8,7 @@ from typing import Optional
 from rich.cells import cell_len
 from rich.markup import escape
 from rich.text import Text
+from textual.content import Content
 from textual.widgets import Static
 
 from kolega_code.agent import AgentEvent
@@ -17,6 +18,7 @@ from ..theme import Color, Glyph
 from . import app_base as tui_app_base
 from . import state as tui_state
 from .turn_status import TurnStatus
+from .background_status import BackgroundStatus
 
 
 class StatusDashboardMixin(tui_app_base.KolegaAppBase):
@@ -319,6 +321,7 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         self._turn_timer = self.set_interval(
             theme.TURN_STATUS_SPINNER_INTERVAL, self._refresh_turn_status_strip, name="turn-status"
         )
+        self._update_background_status_timer()
         self._refresh_turn_status_strip()
 
     def _complete_turn_timer(self, content: str, state: tui_state.TurnState = tui_state.TurnState.IDLE) -> None:
@@ -338,6 +341,7 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         else:
             self._turn_final_text = messages.DONE_IN.format(duration=duration)
         self._turn_started_at = None
+        self._update_background_status_timer()
         self._refresh_turn_status_strip()
 
     def _clear_turn_status_strip(self) -> None:
@@ -349,23 +353,99 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         self._turn_status_text = ""
         self._turn_final_text = ""
         self._turn_final_state = tui_state.TurnState.IDLE
+        self._update_background_status_timer()
+        self._refresh_turn_status_strip()
+
+    def _background_status(self) -> BackgroundStatus:
+        return self._background_status_summary
+
+    def _schedule_background_status_refresh(self) -> None:
+        if self._background_status_refresh_pending or self._exit or not self.is_running:
+            return
+        self._background_status_refresh_pending = True
+        self.call_next(self._sync_background_agent_status)
+
+    def _sync_background_agent_status(self) -> None:
+        self._background_status_refresh_pending = False
+        if self._exit or self._pruning:
+            return
+        jobs = self._background_jobs
+        if jobs is not self._background_status_owner:
+            self._background_status_owner = jobs
+            if jobs is None:
+                self._background_acknowledged_failures.clear()
+        self._background_status_rows = jobs.status_snapshot() if jobs is not None else []
+        self._background_status_summary = BackgroundStatus.from_rows(
+            self._background_status_rows,
+            self._background_acknowledged_failures,
+            delivery_failed=self._background_delivery_failed if jobs is not None else False,
+        )
+        if self._sub_agent_inspector is not None:
+            self._sync_background_inspector_activities()
+        self._update_background_status_timer()
+        self._refresh_turn_status_strip()
+        self._refresh_shortcut_context()
+
+    def _update_background_status_timer(self) -> None:
+        animate = (
+            self._background_status().animating
+            and self._turn_timer is None
+            and not self._exit
+            and self.animation_level != "none"
+        )
+        if animate and self._background_status_timer is None:
+            self._background_status_timer = self.set_interval(
+                0.25, self._refresh_turn_status_strip, name="background-status"
+            )
+        elif not animate and self._background_status_timer is not None:
+            self._background_status_timer.stop()
+            self._background_status_timer = None
+
+    def _acknowledge_background_failure(self, key: str, *, completion_id: str | None = None) -> None:
+        for row in self._background_status_rows:
+            if (
+                row["job_id"] == key
+                and row["status"] in {"failed", "interrupted"}
+                and (completion_id is None or row["completion_id"] == completion_id)
+                and row["completion_id"] not in self._background_acknowledged_failures
+            ):
+                self._background_acknowledged_failures.add(row["completion_id"])
+                self._sync_background_agent_status()
+                break
+
+    def on_turn_status_agents_requested(self, event: TurnStatus.AgentsRequested) -> None:
+        event.stop()
+        self.action_open_sub_agent()
+
+    def on_turn_status_resized(self, event: TurnStatus.Resized) -> None:
+        event.stop()
         self._refresh_turn_status_strip()
 
     def _refresh_turn_status_strip(self) -> None:
+        if self._exit or self._pruning:
+            return
         try:
             strip = self._turn_status
         except Exception:
             return
+        if not strip.is_attached or strip._pruning:
+            return
 
+        self._update_background_status_timer()
         self._spinner_frame += 1
         content = self._turn_status_content(width=strip.content_size.width or None)
+        available = self._background_status().visible
+        strip.agents_available = available
+        strip.tooltip = "Background agents — click or press Ctrl+G to inspect" if available else None
         strip.display = bool(content)
         if content != self._last_turn_status_content:
             self._last_turn_status_content = content
             # layout=False: the strip is a fixed one-line band (styles: height 1) and
             # only its text changes, so a full-screen reflow per spinner frame
             # is pure waste on large transcripts.
-            strip.update(content, layout=False)
+            # Rich and Textual use different markup grammars, particularly for
+            # action metadata and literal brackets/backslashes in status text.
+            strip.update(Content.from_rich_text(Text.from_markup(content, emoji=False)), layout=False)
         # Tick elapsed time on running sub-agents at most once per second so the
         # faster spinner cadence only touches this cheap status strip.
         now = self._now()
@@ -375,6 +455,36 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             self._tick_running_workflows()
 
     def _turn_status_content(self, *, width: int | None = None) -> str:
+        status = self._background_status()
+        if not status.visible:
+            return self._foreground_turn_status_content(width=width)
+        frame = theme.g(Glyph.RUNNING)
+        background = status.render(frame, width=width)
+        prefix, shortcut = f"{frame} ", " · Ctrl+G"
+        if status.animating and background.plain.startswith(prefix) and background.plain.endswith(shortcut):
+            label_end = len(background) - len(shortcut)
+            # Use a turn-independent clock so foreground turn boundaries
+            # never restart the background sweep. Glyph and shortcut stay steady.
+            label = self._turn_status.shimmer(background[len(prefix) : label_end], self._now())
+            background = background[: len(prefix)] + label + background[label_end:]
+        # Text.markup drops Style(meta=...) when serializing. Keep the action
+        # tag explicit so both Rich and Textual preserve this exact hit region.
+        background_markup = f'[@click="inspect_agents"]{background.markup}[/@click]'
+        foreground = Text()
+        if self._turn_started_at is not None:
+            remaining = None if width is None else width - background.cell_len - 3
+            if remaining is None or remaining >= 28:
+                foreground = Text.from_markup(self._foreground_turn_status_content(width=remaining))
+            elif remaining >= len("Esc interrupt"):
+                # Keep a short foreground interrupt hint when the full status
+                # would crowd the independently right-anchored agent indicator.
+                foreground = Text("Esc interrupt", style="dim")
+        # Reserve the same right-hand position even when no foreground status
+        # is shown. Padding is deliberately outside the clickable action.
+        gap = (3 if foreground else 0) if width is None else max(0, width - foreground.cell_len - background.cell_len)
+        return foreground.markup + " " * gap + background_markup
+
+    def _foreground_turn_status_content(self, *, width: int | None = None) -> str:
         if self._turn_started_at is not None:
             elapsed = max(0.0, self._now() - self._turn_started_at)
             status = self._turn_status_text or messages.WORKING

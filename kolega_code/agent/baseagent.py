@@ -53,6 +53,7 @@ from kolega_code.llm.models import (
     ToolCall,
     ToolResult,
     WebSearchCallBlock,
+    same_tool_execution,
 )
 from kolega_code.llm.providers.models import TokenCount
 from kolega_code.llm.specs import (
@@ -73,6 +74,7 @@ from .prompt_provider import PromptProvider, AgentMode, AgentType, PromptContext
 from .prompt_overrides import ProjectPromptOverrides, format_prompt_override_error, render_prompt_override_source
 from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
+from kolega_code.session.background import BackgroundAgentManager
 from .tools import ToolCollection, ToolExtension  # noqa: F401 - ToolCollection kept for downstream monkeypatching
 from kolega_code.tools import ToolError
 from kolega_code.tool_subjects import build_tool_display, build_tool_subject, configured_tool_subject_secrets
@@ -593,6 +595,10 @@ class BaseAgent(LogMixin):
         # Set by a blocking PostToolUse hook to end the turn after the current tool batch.
         self._hook_end_turn = False
         self.queued_input_provider: Optional[Callable[[], Awaitable[List[QueuedUserInput]]]] = None
+        self.background_jobs: Optional[BackgroundAgentManager] = None
+        # Hosts use this to distinguish an inserted result already consumed by
+        # this turn from one that still needs an idle continuation.
+        self.background_needs_turn: bool = False
 
     # ------------------------------------------------------------------
     # Conversation delegation
@@ -2202,6 +2208,168 @@ class BaseAgent(LogMixin):
         """Return the agent's final report: the text of the last message in history."""
         return self.history[-1].get_text_content()
 
+    def get_background_jobs(self) -> BackgroundAgentManager:
+        """Return the session supervisor, created after the host binds recording.
+
+        Hosts transfer this reference across same-session agent rebuilds, and
+        close it before changing context epochs or releasing shared services.
+        """
+        if self.sub_agent:
+            raise RuntimeError("Background jobs belong to the root session, not a delegated agent")
+        if self.background_jobs is None:
+            self.background_jobs = BackgroundAgentManager(self.session_recorder)
+        return self.background_jobs
+
+    async def _deliver_background_completions(self) -> None:
+        if self.background_jobs is not None:
+            await self.background_jobs.deliver(self)
+
+    async def prepare_background_completions(self) -> None:
+        """Settle durable messages and their live projections at a safe boundary."""
+        recorder = self.session_recorder
+        if recorder is None:
+            return
+
+        async def repair() -> None:
+            retry_assistant = getattr(recorder, "retry_pending_assistant", None)
+            acknowledge_assistant = getattr(recorder, "acknowledge_assistant", None)
+            if callable(retry_assistant):
+                kwargs = {"defer_projection": True} if callable(acknowledge_assistant) else {}
+                message = await asyncio.to_thread(retry_assistant, **kwargs)
+                if message is not None:
+                    if not isinstance(message, Message):
+                        raise TypeError("Retried assistant projection must be a Message")
+                    self._append_retried_assistant(message)
+                    if callable(acknowledge_assistant):
+                        acknowledge_assistant()
+
+            # Root repair also catches durable unanswered calls absent from a
+            # replacement agent's history, including ambiguous assistant writes.
+            repair_tools = getattr(recorder, "repair_interrupted_tool_results", None)
+            depth = getattr(getattr(recorder, "agent_stamp", None), "depth", 0)
+            retry_tools = (
+                repair_tools
+                if callable(repair_tools) and not depth
+                else getattr(recorder, "retry_pending_tool_results", None)
+            )
+            acknowledge_tools = getattr(recorder, "acknowledge_tool_results", None)
+            if callable(retry_tools):
+                kwargs = {"defer_projection": True} if callable(acknowledge_tools) else {}
+                results = await asyncio.to_thread(retry_tools, **kwargs)
+                if results is not None:
+                    self.append_user_message(results)
+                    if callable(acknowledge_tools):
+                        acknowledge_tools()
+            retry_terminal = getattr(recorder, "retry_pending_turn_terminal", None)
+            if callable(retry_terminal):
+                await asyncio.to_thread(retry_terminal)
+
+        commit = asyncio.create_task(repair())
+        cancelled = False
+        while not commit.done():
+            try:
+                await asyncio.shield(commit)
+            except asyncio.CancelledError:
+                cancelled = True
+        commit.result()
+        if cancelled:
+            raise asyncio.CancelledError
+
+    def _append_retried_assistant(self, message: Message) -> None:
+        """Project once even if an earlier append succeeded before raising."""
+        calls = message.tool_calls or []
+        if calls:
+            for existing in reversed(self.history):
+                if existing.role != "assistant":
+                    continue
+                previous = existing.tool_calls or []
+                if len(previous) == len(calls) and all(
+                    same_tool_execution(left, right) for left, right in zip(previous, calls)
+                ):
+                    return
+                break
+        elif self.history and self.history[-1].role == "assistant":
+            if self.history[-1].to_dict()["content"] == message.to_dict()["content"]:
+                return
+        self.append_assistant_message(message)
+
+    async def _commit_tool_results(self, results: List[ToolResult]) -> None:
+        """Settle a journal write before releasing tool-batch ownership on cancel."""
+        cancelled = False
+        acknowledge = getattr(self.session_recorder, "acknowledge_tool_results", None)
+        if self.session_recorder is not None:
+            kwargs = {"defer_projection": True} if callable(acknowledge) else {}
+            commit = asyncio.create_task(
+                asyncio.to_thread(self.session_recorder.record_tool_results, results, **kwargs)
+            )
+            while not commit.done():
+                try:
+                    await asyncio.shield(commit)
+                except asyncio.CancelledError:
+                    cancelled = True
+            results = commit.result()
+        self.append_user_message(results)
+        if callable(acknowledge):
+            acknowledge()
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _commit_assistant_message(self, message: Message) -> None:
+        """Keep a cancelled journal write and its live projection in lockstep."""
+        cancelled = False
+        acknowledge = getattr(self.session_recorder, "acknowledge_assistant", None)
+        if self.session_recorder is not None:
+            kwargs = {"defer_projection": True} if callable(acknowledge) else {}
+            commit = asyncio.create_task(
+                asyncio.to_thread(
+                    self.session_recorder.record_assistant,
+                    message,
+                    reasoning_effort=self.primary_model_config.thinking_effort,
+                    **kwargs,
+                )
+            )
+            while not commit.done():
+                try:
+                    await asyncio.shield(commit)
+                except asyncio.CancelledError:
+                    cancelled = True
+            commit.result()
+        self.append_assistant_message(message)
+        if callable(acknowledge):
+            acknowledge()
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _settle_interrupted_tool_calls(self) -> None:
+        """Close an interrupted tool-call message before any idle insertion."""
+        await self.prepare_background_completions()
+        answered: List[ToolResult] = []
+        for message in reversed(self.history):
+            if isinstance(message.content, list):
+                answered.extend(block for block in message.content if isinstance(block, ToolResult))
+            if message.role != "assistant":
+                continue
+            pending = [
+                call
+                for call in message.tool_calls or []
+                if not any(same_tool_execution(call, result) for result in answered)
+            ]
+            if pending:
+                await self._commit_tool_results(
+                    [
+                        ToolResult(
+                            tool_use_id=call.id,
+                            content="Tool execution was interrupted. The tool was not re-run.",
+                            name=call.name,
+                            is_error=True,
+                            execution_id=call.execution_id,
+                            input_kind=call.input_kind,
+                        )
+                        for call in pending
+                    ]
+                )
+            return
+
     @staticmethod
     def _is_silent_turn(message: Message) -> bool:
         """True when an assistant message has no tool calls and no visible text.
@@ -2215,6 +2383,7 @@ class BaseAgent(LogMixin):
 
     async def _deliver_queued_user_inputs(self) -> None:
         """Append user inputs drained from the host while the current turn is running."""
+        await self._deliver_background_completions()
         if self.queued_input_provider is None:
             return
 
@@ -2322,6 +2491,8 @@ class BaseAgent(LogMixin):
         provider stream context it holds) waiting for garbage-collection
         finalization.
         """
+        await self.prepare_background_completions()
+        await self._deliver_background_completions()
         turn_id = str(uuid.uuid4())
         await self._emit_turn_boundary("started", turn_id=turn_id, user_text=user_text)
         try:
@@ -2329,17 +2500,45 @@ class BaseAgent(LogMixin):
                 async for chunk in impl:
                     await self._mirror_stream_chunk(chunk)
                     yield chunk
-        except asyncio.CancelledError:
-            await self._finish_recorded_turn("cancelled")
+        except (asyncio.CancelledError, GeneratorExit):
+            await self._finalize_interrupted_turn("cancelled")
             await self._emit_turn_boundary("ended", turn_id=turn_id, status="cancelled")
             raise
         except Exception as exc:
-            await self._finish_recorded_turn("failed", error=str(exc))
+            await self._finalize_interrupted_turn("failed", error=str(exc))
             await self._emit_turn_boundary("ended", turn_id=turn_id, status="failed")
             raise
         else:
             await self._finish_recorded_turn("completed")
+            # Text-only endings and stop-after-tools do not visit the queued
+            # input boundary. Insert here; the host can wake a continuation
+            # after it releases its exclusive execution owner.
+            await self._deliver_background_completions()
             await self._emit_turn_boundary("ended", turn_id=turn_id, status="completed")
+
+    async def _finalize_interrupted_turn(self, status: str, *, error: Optional[str] = None) -> None:
+        """Join the entire cleanup, including terminal bookkeeping, on re-cancel."""
+
+        async def finalize() -> None:
+            try:
+                await self._settle_interrupted_tool_calls()
+            except Exception:
+                # The recorder retains failed commits/projections. Keep the
+                # original failure while fencing new input until repair succeeds.
+                pass
+            finally:
+                await self._finish_recorded_turn(status, error=error)
+
+        cleanup = asyncio.create_task(finalize())
+        cancelled = False
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                cancelled = True
+        cleanup.result()
+        if cancelled:
+            raise asyncio.CancelledError
 
     async def _mirror_stream_chunk(self, chunk: Dict[str, Any]) -> None:
         """Re-emit one generator chunk as a stream event. Never raises."""
@@ -2385,7 +2584,16 @@ class BaseAgent(LogMixin):
         recorder = self.session_recorder
         if recorder is None or recorder.current_turn_id is None:
             return
-        await asyncio.to_thread(recorder.finish_turn, status, error=error)
+        commit = asyncio.create_task(asyncio.to_thread(recorder.finish_turn, status, error=error))
+        cancelled = False
+        while not commit.done():
+            try:
+                await asyncio.shield(commit)
+            except asyncio.CancelledError:
+                cancelled = True
+        commit.result()
+        if cancelled:
+            raise asyncio.CancelledError
 
     def refresh_memory_context(self) -> None:
         """Re-read project memory so the next turn picks up any change.
@@ -2578,6 +2786,7 @@ class BaseAgent(LogMixin):
             # journaled; honor the cancel now instead of sending another request.
             if self._pending_turn_cancellation():
                 raise asyncio.CancelledError()
+            await self.prepare_background_completions()
             iterations += 1
             if self.max_iterations is not None and iterations > self.max_iterations:
                 raise MaxAgentIterationsExceeded(
@@ -2587,6 +2796,7 @@ class BaseAgent(LogMixin):
 
             self.mark_cache_checkpoint()
 
+            committing_history = False
             try:
                 # Build the request history once and reuse it for both the token
                 # count and the request below — the repair+adapt+image-strip pass is
@@ -2662,6 +2872,7 @@ class BaseAgent(LogMixin):
                 # get_final_message() — because providers may sample and emit
                 # their trace record at any of those points (the native Tinker
                 # provider does all of it in __aenter__), not at stream().
+                self.background_needs_turn = False
                 with llm_call_origin(self._main_loop_origin()):
                     stream_cm = await cast(
                         Coroutine[Any, Any, AbstractAsyncContextManager[Any]],
@@ -2820,13 +3031,9 @@ class BaseAgent(LogMixin):
                         sender=self.agent_name,
                     )
 
-                if self.session_recorder is not None:
-                    await asyncio.to_thread(
-                        self.session_recorder.record_assistant,
-                        assistant_message,
-                        reasoning_effort=self.primary_model_config.thinking_effort,
-                    )
-                self.append_assistant_message(assistant_message)
+                committing_history = True
+                await self._commit_assistant_message(assistant_message)
+                committing_history = False
                 # A clean stream resets the transient-failure budget, so the cap measures
                 # only consecutive failures, not lifetime failures across the turn.
                 self._consecutive_llm_retries = 0
@@ -2854,6 +3061,24 @@ class BaseAgent(LogMixin):
                     tools_succeeded = True
                     try:
                         tool_responses = await self.process_tool_calls(assistant_message.tool_calls)
+                    except asyncio.CancelledError:
+                        # A background child can finish immediately after stop.
+                        # Settle the interrupted batch before inserting its
+                        # completion; never re-run interrupted tools.
+                        await self._commit_tool_results(
+                            [
+                                ToolResult(
+                                    tool_use_id=call.id,
+                                    content="Tool execution was interrupted. The tool was not re-run.",
+                                    name=call.name,
+                                    is_error=True,
+                                    execution_id=call.execution_id,
+                                    input_kind=call.input_kind,
+                                )
+                                for call in assistant_message.tool_calls
+                            ]
+                        )
+                        raise
                     except Exception as ex:
                         tools_succeeded = False
                         error_message = f"Error processing tool calls: {str(ex)}"
@@ -2875,12 +3100,9 @@ class BaseAgent(LogMixin):
                     # Persistence is deliberately outside the tool-execution handler:
                     # a journal failure is terminal and must not be mistaken for a tool
                     # failure that the model can continue past.
-                    if self.session_recorder is not None:
-                        tool_responses = await asyncio.to_thread(
-                            self.session_recorder.record_tool_results,
-                            tool_responses,
-                        )
-                    self.append_user_message(tool_responses)
+                    committing_history = True
+                    await self._commit_tool_results(tool_responses)
+                    committing_history = False
 
                     if tools_succeeded and self.should_stop_after_tools():
                         break
@@ -2981,6 +3203,11 @@ class BaseAgent(LogMixin):
             except Exception as ex:
                 if getattr(ex, "session_persistence_error", False):
                     raise
+                if committing_history:
+                    # Keep the legacy LLMError boundary for recorder/host errors,
+                    # but never classify a failed history projection as a
+                    # retryable provider failure and issue another model request.
+                    raise LLMError(f"Session history commit failed: {ex}") from ex
                 await self.handle_llm_error(ex)
 
         # A swallowed cancellation must not let the turn record itself as
@@ -3001,6 +3228,8 @@ class BaseAgent(LogMixin):
         This should be called when the agent is being destroyed.
         """
         try:
+            if self.background_jobs is not None:
+                await self.background_jobs.close()
             if self.tool_collection is not None:
                 await self.tool_collection.cleanup()
         finally:
