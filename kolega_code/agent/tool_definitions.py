@@ -119,6 +119,15 @@ def dispatch_agent_input_schema(
             "type": "string",
             "description": "Detailed, self-contained task for the sub-agent.",
         },
+        "background": {
+            "type": "boolean",
+            "default": False,
+            "description": (
+                "Opt in to session-owned background execution. Returns an accepted job receipt immediately; "
+                "completion is delivered separately. Omit or use false to wait for the final report. "
+                "Only the parent session may launch background jobs."
+            ),
+        },
         "model_override": {
             **ORDINARY_MODEL_OVERRIDE_SCHEMA,
             "description": (
@@ -497,6 +506,25 @@ BUILTIN_TOOL_SPECS: dict[str, BuiltinToolSpec] = {
     # dispatch_agent input schema and catalog suffix are composed per
     # collection from explicit data (see ToolCollection._builtin_tool_definition).
     "dispatch_agent": BuiltinToolSpec(input_schema=None),
+    "agent_job": BuiltinToolSpec(
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "operation": {
+                    "type": "string",
+                    "enum": ["list", "status", "cancel"],
+                    "description": "List retained jobs, inspect one job's full report/status, or cancel one job.",
+                },
+                "job_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Job ID from dispatch_agent. Required for status/cancel; omit for list.",
+                },
+            },
+            "required": ["operation"],
+        }
+    ),
     "edit": BuiltinToolSpec(
         input_schema={
             "type": "object",

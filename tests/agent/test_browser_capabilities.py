@@ -133,7 +133,7 @@ async def test_browser_agent_runs_are_serialized_per_concrete_manager(tmp_path: 
         active -= 1
         return "done"
 
-    collection.agent_tool._dispatch_agent = dispatch  # type: ignore[method-assign]
+    collection.agent_tool._execute_agent = dispatch  # type: ignore[method-assign]
 
     await asyncio.gather(
         collection.agent_tool.dispatch_browser_agent("first", browser_target="chrome"),

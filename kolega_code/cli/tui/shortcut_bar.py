@@ -88,6 +88,7 @@ class ContextFooter(Footer):
                 hints.append(Shortcut(key, label, description, active.binding.action))
 
         working = bool(getattr(app, "_turn_active", False)) or getattr(app, "agent_worker", None) is not None
+        background = bool(getattr(getattr(app, "_background_status_summary", None), "visible", False))
         active_actions = getattr(app, "_active_prompt_actions", None)
         actions = active_actions() if callable(active_actions) else None
         if isinstance(focused, ActionList) and focused is actions and not focused.disabled:
@@ -112,7 +113,7 @@ class ContextFooter(Footer):
                     hints.append(Shortcut("/", "/", "commands"))
                     add("shift+tab", "Shift+Tab", "Plan/Build")
         add("ctrl+o", "Ctrl+O", "sidebar")
-        if working:
+        if working or background:
             add("ctrl+g", "Ctrl+G", "agents")
         return tuple(hints)
 

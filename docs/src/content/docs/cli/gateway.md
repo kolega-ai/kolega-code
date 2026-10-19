@@ -113,6 +113,24 @@ echo is identified separately from remote access.
 The same commands are registered with Telegram so they appear in the slash
 menu while typing.
 
+### Background subagents
+
+Background child jobs keep their chat session alive after the parent turn ends.
+Their reports are delivered to the chat even while it is idle, and the parent
+normally continues using the report. These continuations use the same per-chat
+queue as incoming messages, so parent turns never overlap.
+
+`/stop` pauses automatic continuation without throwing away child reports.
+Another ordinary message resumes normal operation. `/model` preserves the job
+supervisor and keeps the old generation's services alive until its children
+finish. `/new` cancels and joins old-session work before teardown; late reports
+are never injected into the new session.
+
+Sessions with active jobs or pending reports are protected from idle and
+capacity eviction. The live session count can therefore temporarily exceed the
+configured limit. Daemon shutdown cancels and joins jobs before closing session
+services. Jobs do not continue executing after the daemon exits.
+
 ## Access rules
 
 Remote access is deny-by-default. Authorized sender IDs are the **union** of

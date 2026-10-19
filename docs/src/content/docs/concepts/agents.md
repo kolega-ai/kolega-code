@@ -35,6 +35,67 @@ When [gigacode](../../gigacode/) is enabled, the main agent can also orchestrate
 **many** of these sub-agents at once through a workflow — running them in parallel
 or in pipelines and collecting the results.
 
+### Background sub-agents
+
+Dispatch is **foreground by default**: omitting `background` or setting it to
+`false` waits for the final report. To let the main agent continue independent
+work, ask it to delegate in the background. The actual `dispatch_agent` tool
+arguments are:
+
+```json
+{
+  "agent_type": "investigation",
+  "task": "Inspect the test coverage for authentication and report gaps. Do not edit files.",
+  "background": true
+}
+```
+
+This returns an immediate receipt with `state: "accepted"` and a stable `job_id`,
+**not** the report or confirmation of success. Completion, failure, or cancellation
+is delivered separately. These are agent tool calls, not shell or slash commands.
+The main agent can inspect or cancel jobs with `agent_job`:
+
+| Operation | Tool arguments |
+| --- | --- |
+| List retained jobs | `{"operation": "list"}` |
+| Get one job's status and full report | `{"operation": "status", "job_id": "<job_id from receipt>"}` |
+| Cancel one job and wait for it to stop | `{"operation": "cancel", "job_id": "<job_id from receipt>"}` |
+
+Reports remain available after completion, including failure and cancellation
+details. Results arrive automatically, so routine polling is unnecessary. Give
+each child a self-contained task; avoid concurrent edits to the same files.
+Background dispatch requires a supported session owner. Only the parent session
+can launch or manage these jobs—not sub-agents or workflow workers.
+
+#### In the TUI
+
+- **While working:** completions enter the main agent's history at a safe boundary,
+  after tool results, rather than interrupting an in-flight model request.
+- **While idle:** the result appears in the conversation and normally starts an
+  automatic continuation so the main agent can use it without another prompt.
+  Startup, approval/selection screens, or rebuilding can defer delivery.
+- **Explicit stop (`Esc` / `Ctrl+C`):** stops the main agent and pauses automatic
+  continuation, but does **not** cancel background jobs or discard their results.
+  Submit another prompt to resume the main agent; use `agent_job` to cancel a job.
+- **Same-session model/mode rebuild:** keeps jobs alive and reattaches their
+  completion delivery. Jobs retain their launch configuration and tool resources;
+  switching settings does not reconfigure an already-running child.
+- **Reset, workspace switch, rewind, or quit:** cancels outstanding jobs and waits
+  for them to stop before tearing down their context and shared resources.
+  A workspace switch preserves ordinary conversation history, but archives newly
+  settled old-workspace reports rather than feeding them to the new workspace.
+  Rewind intentionally removes later context; its discarded completions remain
+  acknowledged, so resuming does not inject them again.
+
+Background jobs survive turns, **not process exit**; they are not a persistent
+worker service. Their live cards can remain running after the main turn finishes.
+Use the [sub-agent inspector](../../tui/interface/#sub-agent-inspector) for activity
+and `agent_job` for retained reports.
+
+Background execution does not grant extra tools or bypass read-only/tool-scope
+restrictions. Like foreground sub-agents, children run unattended in **Auto**
+permission mode rather than asking for per-tool approval in their transcript.
+
 ### Per-dispatch model routing
 
 Sub-agent dispatches normally inherit the CLI/host model configuration for the

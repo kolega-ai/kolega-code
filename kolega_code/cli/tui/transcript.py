@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Callable, Optional
@@ -67,7 +68,10 @@ def _is_standalone_system_reminder_history_item(item: dict) -> bool:
         return False
     text = block.get("text")
     return (
-        isinstance(text, str) and text.startswith('<system-reminder source="') and text.endswith("</system-reminder>")
+        isinstance(text, str)
+        and text.startswith('<system-reminder source="')
+        and not text.startswith('<system-reminder source="subagent">')
+        and text.endswith("</system-reminder>")
     )
 
 
@@ -97,15 +101,18 @@ class _IndentedRenderState:
 
 
 class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
-    def _restore_conversation_history(self, history: list[dict]) -> None:
+    def _restore_conversation_history(self, history: list[dict], *, preserve_background: bool = True) -> None:
         # Model/settings rebuilds should not undo the user's disclosure choices.
+        running = {key: value for key, value in self._sub_agent_activities.items() if value.background}
         self.conversation_entries = [entry for entry in self.conversation_entries if entry.kind == "startup"]
         self._stream_entries = {}
         self._tool_entries = {}
         self._tool_stream_buffers = {}
-        self._sub_agent_activities = {}
-        self._sub_agent_by_tool_call = {}
-        self._sub_agent_seq = 0
+        self._sub_agent_activities = running
+        self._sub_agent_by_tool_call = {
+            key: value for key, value in self._sub_agent_by_tool_call.items() if value in running
+        }
+        self._sub_agent_seq = max((activity.index for activity in running.values()), default=0)
         self._workflow_activities = {}
         self._active_progress_entry = None
         self._plan_decision_active = False
@@ -133,6 +140,31 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             self.conversation_entries.extend(self._conversation_entries_from_history_items(history[summary_index:]))
         else:
             self.conversation_entries.extend(self._conversation_entries_from_history_items(history))
+        # A completion may already be represented in the supplied root history
+        # while its archived UI projection is also present. Keep its original
+        # rendering once, without inserting the UI-only message into model context.
+        seen_completions: set[str] = set()
+        unique_entries: list[ConversationEntry] = []
+        for entry in self.conversation_entries:
+            origin = entry.origin or {}
+            if origin.get("kind") == "subagent_completion":
+                job_id = str(origin.get("job_id") or "")
+                if job_id and job_id in seen_completions:
+                    continue
+                if job_id:
+                    seen_completions.add(job_id)
+            unique_entries.append(entry)
+        self.conversation_entries = unique_entries
+        if not preserve_background:
+            # Rewind keeps only cards whose completion survived replay. Ordinary
+            # same-session rebuilds also keep live cards and their disclosure state.
+            running = {key: value for key, value in running.items() if key in seen_completions}
+            self._sub_agent_activities = running
+            self._sub_agent_by_tool_call = {
+                key: value for key, value in self._sub_agent_by_tool_call.items() if value in running
+            }
+            self._sub_agent_seq = max((activity.index for activity in running.values()), default=0)
+        self.conversation_entries.extend(activity.entry for activity in running.values())
         if len(self.conversation_entries) > 1:
             self._fold_startup_entry(render=False)
         self._render_conversation()
@@ -314,6 +346,20 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         return None
 
     def _conversation_entry_for_text(self, role: str, text: str) -> ConversationEntry:
+        if role == "user" and text.startswith('<system-reminder source="subagent">\n'):
+            try:
+                lines = text.split("\n", 4)
+                payload = json.loads(lines[2])
+                report = lines[4].removesuffix("\n</system-reminder>")
+                return ConversationEntry(
+                    kind="system",
+                    content=(
+                        f"Background {payload['agent_type']} {payload['status']} ({payload['job_id']}):\n\n{report}"
+                    ),
+                    origin={"kind": "subagent_completion", "job_id": payload["job_id"]},
+                )
+            except (ValueError, IndexError, KeyError, TypeError):
+                return ConversationEntry(kind="system", content=text)
         names = skill_names_in_text(text)
         if names:
             return ConversationEntry(kind="skill", content=skill_activation_label(*names))
@@ -395,13 +441,18 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         if entry is not None:
             self._invalidate_conversation(entry)
 
-    def _begin_turn_progress(self, activity: str = messages.WORKING) -> None:
-        self._close_sub_agent_inspector()
+    def _begin_turn_progress(self, activity: str = messages.WORKING, *, preserve_inspector: bool = False) -> None:
+        if not preserve_inspector:
+            self._close_sub_agent_inspector()
         self._tool_entries = {}
         self._tool_stream_buffers = {}
-        self._sub_agent_activities = {}
-        self._sub_agent_by_tool_call = {}
-        self._sub_agent_seq = 0
+        self._sub_agent_activities = {
+            key: value for key, value in self._sub_agent_activities.items() if value.background
+        }
+        self._sub_agent_by_tool_call = {
+            key: value for key, value in self._sub_agent_by_tool_call.items() if value in self._sub_agent_activities
+        }
+        self._sub_agent_seq = max((item.index for item in self._sub_agent_activities.values()), default=0)
         self._workflow_activities = {}
         self._active_progress_entry = None
         self._turn_active = True
@@ -724,6 +775,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 index=self._sub_agent_seq,
                 entry=entry,
                 task_full=task_full,
+                background=bool(info.get("background")),
                 workflow_run_id=str(info.get("workflow_run_id") or ""),
                 workflow_phase=str(info.get("phase") or ""),
                 routing=SubAgentRouting.from_info(info),
@@ -1067,7 +1119,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         """Mark still-running sub-agents as finished (no lifecycle event arrives on cancel)."""
         changed = False
         for activity in self._sub_agent_activities.values():
-            if activity.status == "running":
+            if activity.status == "running" and not activity.background:
                 activity.status = status
                 activity.finished_at = self._now()
                 activity.entry.complete = True

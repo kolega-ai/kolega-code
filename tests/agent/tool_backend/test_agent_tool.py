@@ -2,9 +2,12 @@
 
 import pytest
 from typing import Any, ClassVar, Optional
+from collections.abc import Awaitable, Callable
 from unittest.mock import ANY, AsyncMock, Mock, MagicMock, patch
 import uuid
 import builtins
+import asyncio
+import json
 
 from kolega_code.agent.tool_backend.agent_tool import AgentTool
 from kolega_code.agent.orchestration.accounting import WorkflowRunAccounting
@@ -475,6 +478,7 @@ class TestAgentTool:
                 agent_class_import="kolega_code.agent.investigationagent.InvestigationAgent",
                 task="Investigate this code",
                 model_override=None,
+                background=False,
             )
             assert result == "Investigation completed"
 
@@ -490,6 +494,7 @@ class TestAgentTool:
                 task="Browse the web",
                 model_override=None,
                 browser_manager_override=ANY,
+                background=False,
             )
             assert agent_tool.browser_manager is mock_dispatch.call_args.kwargs["browser_manager_override"]
             assert result == "Browser task completed"
@@ -517,6 +522,7 @@ class TestAgentTool:
                 agent_class_import="kolega_code.agent.coder.CoderAgent",
                 task="Write some code",
                 model_override=None,
+                background=False,
             )
             assert result == "Coding completed"
 
@@ -859,3 +865,360 @@ class TestDispatchPermissions:
         assert MockAgent.last_instance is not None
         assert MockAgent.last_instance.init_kwargs["permission_mode"] == PermissionMode.AUTO
         assert MockAgent.last_instance.init_kwargs["permission_callback"] is auto_allow_permission_callback
+
+
+class BackgroundJobsStub:
+    """Session-owner API double; event gates, not sleeps, control execution."""
+
+    def __init__(self) -> None:
+        self.start = asyncio.Event()
+        self.start.set()
+        self.jobs: dict[str, dict[str, Any]] = {}
+        self.tasks: dict[str, asyncio.Task[None]] = {}
+
+    async def submit(
+        self,
+        job_id: str,
+        run: Callable[[], Awaitable[str]],
+        *,
+        agent_type: str,
+        task: str,
+        metadata: Optional[dict] = None,
+    ) -> dict:
+        job = {"job_id": job_id, "state": "accepted", "agent_type": agent_type, "task": task, "metadata": metadata}
+        self.jobs[job_id] = job
+
+        async def execute() -> None:
+            try:
+                await self.start.wait()
+                job["state"] = "running"
+                job["result"] = await run()
+                job["state"] = "completed"
+            except asyncio.CancelledError:
+                job["state"] = "cancelled"
+            except Exception as exc:
+                job["state"] = "failed"
+                job["error"] = str(exc)
+
+        self.tasks[job_id] = asyncio.create_task(execute())
+        return {"job_id": job_id, "state": "accepted"}
+
+    def snapshot(self, job_id: Optional[str] = None) -> list[dict]:
+        return [dict(job) for key, job in self.jobs.items() if job_id is None or key == job_id]
+
+    async def cancel(self, job_id: str) -> dict:
+        self.tasks[job_id].cancel()
+        await self.tasks[job_id]
+        return self.snapshot(job_id)[0]
+
+    async def settle(self) -> None:
+        await asyncio.wait_for(asyncio.gather(*self.tasks.values()), timeout=3)
+
+
+@pytest.fixture
+def background_dispatch(
+    mock_caller: Mock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[BackgroundJobsStub, asyncio.Event, asyncio.Event, list[MockAgent]]:
+    manager = BackgroundJobsStub()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    instances: list[MockAgent] = []
+    mock_caller.get_background_jobs = lambda: manager
+    mock_caller.session_recorder = None
+    mock_caller.sub_agent_context = None
+
+    class GatedAgent(MockAgent):
+        agent_name = "general-agent"
+
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.recap_agent_outcome = AsyncMock(return_value="full final report\n" * 500)
+            self.cleanup = AsyncMock()
+            instances.append(self)
+
+        async def process_message_stream(self, task: str):
+            entered.set()
+            await release.wait()
+            if task == "fail":
+                raise RuntimeError("child failed")
+            yield {"type": "response", "content": "finished", "complete": True}
+
+    monkeypatch.setattr("kolega_code.agent.generalagent.GeneralAgent", GatedAgent)
+    return manager, entered, release, instances
+
+
+@pytest.mark.asyncio
+async def test_background_receipt_precedes_real_completion_and_retains_full_report(
+    agent_tool: AgentTool, mock_caller: Mock, background_dispatch
+) -> None:
+    manager, entered, release, instances = background_dispatch
+    receipt = json.loads(await asyncio.wait_for(agent_tool.dispatch_general_agent("work", background=True), timeout=3))
+    assert receipt["state"] == "accepted"
+    await asyncio.wait_for(entered.wait(), timeout=3)
+    job_id = receipt["job_id"]
+    assert not manager.tasks[job_id].done()
+    assert instances[0].sub_agent_context["agent_id"] == job_id
+    assert instances[0].sub_agent_context["background"] is True
+    assert agent_tool.agents[job_id] is instances[0]
+    assert mock_caller.sub_agent_recorder.complete_conversation.await_count == 0
+    release.set()
+    await manager.settle()
+    assert not agent_tool.agents
+    status = json.loads(await agent_tool.agent_job("status", job_id))[0]
+    assert status["state"] == "completed"
+    assert status["result"] == "full final report\n" * 500
+    assert len(status["result"]) > 2000
+    assert mock_caller.sub_agent_recorder.complete_conversation.await_count == 1
+    instances[0].cleanup.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_foreground_dispatch_still_waits_for_real_report(agent_tool: AgentTool, background_dispatch) -> None:
+    manager, entered, release, instances = background_dispatch
+    task = asyncio.create_task(agent_tool.dispatch_general_agent("work"))
+    await asyncio.wait_for(entered.wait(), timeout=3)
+    assert not task.done()
+    assert not manager.jobs
+    assert instances[0].sub_agent_context["background"] is False
+    release.set()
+    assert await asyncio.wait_for(task, timeout=3) == "full final report\n" * 500
+
+
+@pytest.mark.asyncio
+async def test_background_captures_launch_context_before_queued_execution(
+    agent_tool: AgentTool, mock_caller: Mock, background_dispatch
+) -> None:
+    manager, entered, release, instances = background_dispatch
+    manager.start.clear()
+    mock_caller.current_tool_execution_id = "launch-execution"
+    mock_caller.protected_files = ["launch.lock"]
+    mock_caller.max_iterations = 7
+    mock_caller.session_recorder = Mock()
+    recorder = mock_caller.session_recorder
+    recorder.current_turn_id = "launch-turn"
+    receipt = json.loads(await agent_tool.dispatch_general_agent("work", background=True))
+    assert not entered.is_set()
+    assert mock_caller.sub_agent_recorder.start_conversation.await_count == 0
+    mock_caller.current_tool_execution_id = "later-execution"
+    mock_caller.protected_files.append("later.lock")
+    mock_caller.max_iterations = 100
+    recorder.current_turn_id = "later-turn"
+    agent_tool.config.long_context_config.model = "later-model"
+    manager.start.set()
+    await asyncio.wait_for(entered.wait(), timeout=3)
+    assert instances[0].parent_tool_call_id == "launch-execution"
+    assert instances[0].init_kwargs["protected_files"] == ["launch.lock"]
+    assert instances[0].init_kwargs["max_iterations"] == 7
+    assert instances[0].init_kwargs["config"].long_context_config.model != "later-model"
+    assert recorder.scoped_child.return_value.record_agent_started.call_args.kwargs["turn_id"] == "launch-turn"
+    assert manager.jobs[receipt["job_id"]]["metadata"]["turn_id"] == "launch-turn"
+    release.set()
+    await manager.settle()
+
+
+@pytest.mark.asyncio
+async def test_background_errors_are_real_failed_jobs(
+    agent_tool: AgentTool, mock_caller: Mock, background_dispatch
+) -> None:
+    manager, entered, release, _ = background_dispatch
+    receipt = json.loads(await agent_tool.dispatch_general_agent("fail", background=True))
+    await asyncio.wait_for(entered.wait(), timeout=3)
+    release.set()
+    await manager.settle()
+    job = json.loads(await agent_tool.agent_job("status", receipt["job_id"]))[0]
+    assert job["state"] == "failed"
+    assert job["error"] == "child failed"
+    assert mock_caller.sub_agent_recorder.fail_conversation.await_count == 1
+    assert not agent_tool.agents
+
+
+@pytest.mark.asyncio
+async def test_background_cancel_joins_the_real_child(
+    agent_tool: AgentTool, mock_caller: Mock, background_dispatch
+) -> None:
+    manager, entered, _, instances = background_dispatch
+    receipt = json.loads(await agent_tool.dispatch_general_agent("work", background=True))
+    await asyncio.wait_for(entered.wait(), timeout=3)
+    cancelled = json.loads(await agent_tool.agent_job("cancel", receipt["job_id"]))
+    assert cancelled["state"] == "cancelled"
+    assert manager.tasks[receipt["job_id"]].done()
+    assert not agent_tool.agents
+    assert mock_caller.sub_agent_recorder.interrupt_conversation.await_count == 1
+    assert json.loads(await agent_tool.agent_job("list"))[0]["state"] == "cancelled"
+    instances[0].cleanup.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("context", [None, {"workflow_run_id": "workflow", "depth": 1, "max_agent_depth": 3}])
+async def test_background_descendants_rejected_before_admission(
+    agent_tool: AgentTool, mock_caller: Mock, background_dispatch, context
+) -> None:
+    manager, _, _, _ = background_dispatch
+    mock_caller.sub_agent = context is None
+    mock_caller.sub_agent_context = context
+    with pytest.raises(ValueError, match="sub-agent or workflow"):
+        await agent_tool.dispatch_general_agent("work", background=True)
+    assert not manager.jobs
+    assert mock_caller.sub_agent_recorder.start_conversation.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_background_route_validation_precedes_admission(
+    agent_tool: AgentTool, mock_caller: Mock, background_dispatch
+) -> None:
+    manager, _, _, _ = background_dispatch
+    with pytest.raises(ValueError):
+        await agent_tool.dispatch_general_agent("work", model_override={}, background=True)
+    assert not manager.jobs
+    assert mock_caller.sub_agent_recorder.start_conversation.await_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("background", ["false", "true", 0, 1, None, {}, []])
+async def test_dispatch_backend_rejects_non_boolean_before_admission(
+    agent_tool: AgentTool, mock_caller: Mock, mock_connection_manager: AsyncMock, background_dispatch, background: Any
+) -> None:
+    manager, entered, release, instances = background_dispatch
+    release.set()
+    with pytest.raises(ValueError, match="background must be a boolean"):
+        await agent_tool.dispatch_general_agent("work", background=background)
+    assert not manager.jobs
+    assert not entered.is_set()
+    assert not instances
+    mock_caller.sub_agent_recorder.start_conversation.assert_not_awaited()
+    mock_connection_manager.broadcast_event.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_background_missing_owner_is_explicit_and_has_no_lifecycle_side_effects(
+    agent_tool: AgentTool, mock_caller: Mock, background_dispatch
+) -> None:
+    mock_caller.get_background_jobs = lambda: None
+    with pytest.raises(RuntimeError, match="no background job owner"):
+        await agent_tool.dispatch_general_agent("work", background=True)
+    assert mock_caller.sub_agent_recorder.start_conversation.await_count == 0
+    assert not agent_tool.agents
+
+
+@pytest.mark.asyncio
+async def test_all_specialized_dispatch_methods_forward_background(agent_tool: AgentTool, mock_caller: Mock) -> None:
+    mock_caller.custom_agent_catalog.has_agents.return_value = True
+    definition = mock_caller.custom_agent_catalog.get.return_value
+    definition.name = "custom-helper"
+    definition.tools = None
+    with (
+        patch.object(agent_tool, "_dispatch_agent", new_callable=AsyncMock) as dispatch,
+        patch.object(agent_tool, "_eligible_custom_agent_tools", return_value={"read"}),
+    ):
+        dispatch.return_value = '{"job_id": "accepted-job", "state": "accepted"}'
+        for method in (
+            agent_tool.dispatch_general_agent,
+            agent_tool.dispatch_investigation_agent,
+            agent_tool.dispatch_coding_agent,
+            agent_tool.dispatch_browser_agent,
+        ):
+            assert json.loads(await method("work", background=True))["job_id"] == "accepted-job"
+            assert dispatch.await_args is not None
+            assert dispatch.await_args.kwargs["background"] is True
+        await agent_tool.dispatch_custom_agent("custom-helper", "work", background=True)
+        assert dispatch.await_args is not None
+        assert dispatch.await_args.kwargs["background"] is True
+        assert dispatch.await_args.kwargs["agent_kwargs"]["allowed_tools"] == ["read"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("operation", "job_id"), [("invalid", None), ("status", None), ("cancel", ""), ("list", "id")])
+async def test_job_control_rejects_invalid_operations(
+    agent_tool: AgentTool, background_dispatch, operation: str, job_id: Optional[str]
+) -> None:
+    with pytest.raises(ValueError):
+        await agent_tool.agent_job(operation, job_id)
+
+
+@pytest.mark.asyncio
+async def test_background_browser_lock_covers_real_execution_not_submission(
+    agent_tool: AgentTool, background_dispatch, monkeypatch
+) -> None:
+    from kolega_code.services.base import browser_manager_agent_lock
+    from kolega_code.services.browser import PlaywrightBrowserManager
+
+    manager, entered, release, instances = background_dispatch
+    selected = PlaywrightBrowserManager()
+    agent_tool.browser_manager = selected
+    # Reuse the gated implementation with the browser role.
+    from kolega_code.agent.generalagent import GeneralAgent
+
+    class GatedBrowser(GeneralAgent):
+        agent_name = "browser-agent"
+
+    monkeypatch.setattr("kolega_code.agent.browseragent.BrowserAgent", GatedBrowser)
+    monkeypatch.setattr("kolega_code.agent.tool_backend.agent_tool.supports_vision", lambda *_: True)
+    lock = browser_manager_agent_lock(selected)
+    async with lock:
+        first = json.loads(
+            await asyncio.wait_for(agent_tool.dispatch_browser_agent("first", background=True), timeout=3)
+        )
+        second = json.loads(
+            await asyncio.wait_for(agent_tool.dispatch_browser_agent("second", background=True), timeout=3)
+        )
+        assert not entered.is_set()
+    await asyncio.wait_for(entered.wait(), timeout=3)
+    assert lock.locked()
+    assert len(instances) == 1
+    assert not manager.tasks[first["job_id"]].done()
+    assert not manager.tasks[second["job_id"]].done()
+    release.set()
+    await manager.settle()
+    assert len(instances) == 2
+    assert not lock.locked()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_integrates_with_real_session_supervisor(
+    agent_tool: AgentTool, mock_caller: Mock, background_dispatch
+) -> None:
+    from kolega_code.session.background import BackgroundAgentManager
+
+    _, entered, release, instances = background_dispatch
+    manager = BackgroundAgentManager()
+    mock_caller.get_background_jobs = lambda: manager
+    receipt = json.loads(await agent_tool.dispatch_general_agent("work", background=True))
+    assert receipt["state"] == "accepted"
+    await asyncio.wait_for(entered.wait(), timeout=3)
+    assert manager.active_count == 1
+    assert instances[0].sub_agent_context["agent_id"] == receipt["job_id"]
+    release.set()
+    await asyncio.wait_for(manager.wait(), timeout=3)
+    status = json.loads(await agent_tool.agent_job("status", receipt["job_id"]))[0]
+    assert status["status"] == "completed"
+    assert status["result"] == "full final report\n" * 500
+    assert manager.pending_count == 1
+    assert not agent_tool.agents
+
+
+@pytest.mark.asyncio
+async def test_foreground_cancellation_still_interrupts_child(
+    agent_tool: AgentTool, mock_caller: Mock, background_dispatch
+) -> None:
+    manager, entered, _, instances = background_dispatch
+    task = asyncio.create_task(agent_tool.dispatch_general_agent("work"))
+    await asyncio.wait_for(entered.wait(), timeout=3)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not manager.jobs
+    assert not agent_tool.agents
+    assert mock_caller.sub_agent_recorder.interrupt_conversation.await_count == 1
+    instances[0].cleanup.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_background_browser_vision_validation_precedes_admission(
+    agent_tool: AgentTool, mock_caller: Mock, background_dispatch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, _, _, _ = background_dispatch
+    monkeypatch.setattr("kolega_code.agent.tool_backend.agent_tool.supports_vision", lambda *_: False)
+    with pytest.raises(ValueError, match="vision-capable"):
+        await agent_tool.dispatch_browser_agent("work", background=True)
+    assert not manager.jobs
+    assert mock_caller.sub_agent_recorder.start_conversation.await_count == 0

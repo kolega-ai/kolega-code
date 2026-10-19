@@ -188,6 +188,7 @@ class AcpAgent(Agent):
             return await self._load_sub_session(session_id)
         if session_id in self._sessions:
             existing = self._sessions[session_id]
+            self._start_session_tasks(existing)
             return LoadSessionResponse(config_options=self._factory.config_options_for(existing))
         try:
             session = await self._factory.load_session(
@@ -204,6 +205,7 @@ class AcpAgent(Agent):
         await self._emit_initial_usage(session)
         await self._send_available_commands(session)
         await self._replay_transcript(session)
+        self._start_session_tasks(session)
         return LoadSessionResponse(config_options=self._factory.config_options_for(session))
 
     async def _load_sub_session(self, session_id: str) -> LoadSessionResponse:
@@ -254,10 +256,32 @@ class AcpAgent(Agent):
 
     async def close_session(self, session_id: str, **kwargs: Any) -> None:
         logger.info("acp session/close (session=%s)", session_id)
-        self._sessions.pop(session_id, None)
+        session = self._sessions.pop(session_id, None)
+        if session is not None:
+            session.closed = True
+            session.auto_continue_paused = True
+            if session.turn_task is not None:
+                session.turn_task.cancel()
+                await asyncio.gather(session.turn_task, return_exceptions=True)
+            if session.background_task is not None:
+                session.background_task.cancel()
+                await asyncio.gather(session.background_task, return_exceptions=True)
         self._brokers.pop(session_id, None)
-        await self._factory.close_session(session_id)
+        if session is not None:
+            async with session.execution_lock:
+                await self._factory.close_session(session_id)
+        else:
+            await self._factory.close_session(session_id)
+        if session is not None and session.event_task is not None:
+            session.event_task.cancel()
+            await asyncio.gather(session.event_task, return_exceptions=True)
+            await self._drain_residual(session, session.bridge)
         return None
+
+    async def shutdown(self) -> None:
+        """Join session work before the ACP transport and shared services close."""
+        for session_id in list(self._sessions):
+            await self.close_session(session_id)
 
     # -- turns ------------------------------------------------------------
 
@@ -270,13 +294,19 @@ class AcpAgent(Agent):
         text = self._extract_text(prompt)
         if not text:
             raise RequestError.invalid_request({"message": "prompt contains no text"})
-        stop_reason = await self._run_turn(session, text)
-        self._factory.persist(session)
+        self._start_session_tasks(session)
+        async with session.execution_lock:
+            session.auto_continue_paused = False
+            stop_reason = await self._run_turn(session, text)
+            self._factory.persist(session)
         return PromptResponse(stop_reason=stop_reason)
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         session = self._sessions.get(session_id)
-        if session is None or session.turn_task is None:
+        if session is None:
+            return
+        session.auto_continue_paused = True
+        if session.turn_task is None:
             logger.debug("acp session/cancel: nothing to cancel (session=%s)", session_id)
             return
         logger.info("acp session/cancel (session=%s)", session_id)
@@ -314,7 +344,8 @@ class AcpAgent(Agent):
             raise RequestError.invalid_params({"message": f"unknown mode {mode_id!r}; available: build, plan"})
         if not session.idle():
             raise RequestError.invalid_request({"message": "modes apply between turns only"})
-        await self._factory.set_interaction_mode(session, mode_id)
+        async with session.execution_lock:
+            await self._factory.set_interaction_mode(session, mode_id)
         logger.info("acp session mode -> %s (session=%s)", mode_id, session_id)
         await self._emit_current_mode(session)
         return SetSessionModeResponse()
@@ -342,14 +373,16 @@ class AcpAgent(Agent):
                 raise RequestError.invalid_params({"message": "model option expects 'provider/model'"})
             provider, model = value.split("/", 1)
             try:
-                await self._factory.apply_model(session, provider, model)
+                async with session.execution_lock:
+                    await self._factory.apply_model(session, provider, model)
             except _HANDLED_CONFIG_ERRORS as exc:
                 raise AgentFactory.protocol_error(exc) from exc
             logger.info("acp session config: model -> %s/%s (session=%s)", provider, model, session_id)
         elif config_id == CONFIG_MODE:
             if value not in INTERACTION_MODES:
                 raise RequestError.invalid_params({"message": f"unknown mode {value!r}; available: build, plan"})
-            await self._factory.set_interaction_mode(session, str(value))
+            async with session.execution_lock:
+                await self._factory.set_interaction_mode(session, str(value))
             logger.info("acp session config: mode -> %s (session=%s)", value, session_id)
             await self._emit_current_mode(session)
         else:
@@ -438,6 +471,7 @@ class AcpAgent(Agent):
             return
         await self._emit_initial_usage(session)
         await self._send_available_commands(session)
+        self._start_session_tasks(session)
 
     async def _send_available_commands(self, session: AcpSession) -> None:
         """Advertise the agent's slash commands for the client's command UI.
@@ -525,29 +559,107 @@ class AcpAgent(Agent):
 
     # -- turn machinery ----------------------------------------------------
 
-    async def _run_turn(self, session: AcpSession, text: str) -> StopReason:
+    def _start_session_tasks(self, session: AcpSession) -> None:
+        if session.closed:
+            return
+        if session.event_task is None:
+            session.bridge = AcpBridge(
+                self._conn, diff_provider=AcpDiffProvider.for_session(session), agent=session.agent
+            )
+            session.event_task = asyncio.create_task(
+                self._pump_events(session, session.bridge), name=f"acp-events-{session.session_id}"
+            )
+        # Explicit session activity rearms retained presentation work, including
+        # after a transport failure. The worker must not retry itself on failure.
+        if session.completions:
+            session.background_wake.set()
+        if session.background_task is not None and not session.background_task.done():
+            return
+        get_jobs = getattr(session.agent, "get_background_jobs", None)
+        if callable(get_jobs):
+            jobs: Any = get_jobs()
+
+            def delivered(completion: dict[str, Any]) -> None:
+                session.completions.append(completion)
+                session.background_wake.set()
+
+            jobs.set_callbacks(on_ready=session.background_wake.set, on_delivered=delivered)
+            session.background_task = asyncio.create_task(
+                self._background_worker(session, jobs), name=f"acp-background-{session.session_id}"
+            )
+
+    async def _background_worker(self, session: AcpSession, jobs: Any) -> None:
+        await jobs.recover()
+        if jobs.pending_count:
+            session.background_wake.set()
+        while not session.closed:
+            await session.background_wake.wait()
+            session.background_wake.clear()
+            async with session.execution_lock:
+                if session.closed:
+                    return
+                try:
+                    await jobs.deliver(session.agent)
+                    # Delivery callbacks also wake the worker for reports
+                    # inserted by the running agent. Consume those wakeups now,
+                    # not after sending: a failed send must wait for new activity,
+                    # while readiness arriving during presentation must survive.
+                    session.background_wake.clear()
+                    if jobs.pending_count:
+                        session.background_wake.set()
+                    completions = bool(session.completions)
+                    try:
+                        while session.completions:
+                            completion = session.completions[0]
+                            await session.bridge.send(
+                                session.session_id, update_agent_thought_text(str(completion["text"]))
+                            )
+                            # History insertion is already durable. Acknowledge
+                            # presentation separately, only after this send
+                            # succeeds; failure/cancellation retains the suffix.
+                            session.completions.pop(0)
+                    except Exception:
+                        logger.exception("acp background presentation failed (session=%s)", session.session_id)
+                        continue
+                    if (
+                        completions
+                        and not session.auto_continue_paused
+                        and getattr(session.agent, "background_needs_turn", True)
+                    ):
+                        await self._run_turn(session, None)
+                    self._factory.persist(session)
+                    if jobs is not getattr(session.agent, "background_jobs", None):
+                        return  # a context reset installed another epoch's owner
+                    if not jobs.active_count:
+                        for old in session.retired_agents:
+                            await old.cleanup()
+                        session.retired_agents.clear()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # A failed automatic turn must not spin or silently kill
+                    # the prompt owner. Explicit input can resume it.
+                    session.auto_continue_paused = True
+                    logger.exception("acp background delivery failed (session=%s)", session.session_id)
+
+    async def _run_turn(self, session: AcpSession, text: str | None) -> StopReason:
         """Drive one agent turn, mapping its output to ACP updates.
 
-        Returns the ACP stop reason. The event pump runs until the turn task
-        completes, then any residual queued events are drained so late tool
-        results still render.
+        The event pump belongs to the session, not this request. It keeps
+        rendering child activity after a prompt's response has been returned.
         """
-        session.drain_events()
-        bridge = AcpBridge(self._conn, diff_provider=AcpDiffProvider.for_session(session), agent=session.agent)
+        self._start_session_tasks(session)
+        bridge = session.bridge
+        bridge.begin_turn(session.agent, AcpDiffProvider.for_session(session))
         session.turn_task = asyncio.create_task(self._drive_turn(session, bridge, text))
-        pump = asyncio.create_task(self._pump_events(session, bridge))
+        reason: StopReason = "cancelled"
         try:
-            return await session.turn_task
+            reason = await session.turn_task
+            return reason
         finally:
-            pump.cancel()
-            try:
-                await pump
-            except asyncio.CancelledError:
-                pass
-            await self._drain_residual(session, bridge)
             session.turn_task = None
             await bridge.emit_usage(session.session_id)
-            plan = self._consume_plan(session, bridge)
+            plan = self._consume_plan(session, bridge) if reason != "cancelled" and not session.closed else None
             if plan:
                 session.record.latest_plan_markdown = plan
                 session.record.plan_pending = True
@@ -606,6 +718,20 @@ class AcpAgent(Agent):
             session.record.plan_pending = False
             session.record.plan_reofferable = False
             if option_id == "implement_plan_clear":
+                jobs = getattr(session.agent, "background_jobs", None)
+                if jobs is not None:
+                    # The reset starts another epoch. Settle old-context work
+                    # before clearing its history and creating a new owner.
+                    jobs.set_callbacks(on_ready=None, on_delivered=None)
+                    await jobs.close()
+                    await jobs.deliver(session.agent)
+                    session.agent.background_jobs = None
+                    if session.background_task is not None and session.background_task is not asyncio.current_task():
+                        session.background_task.cancel()
+                        await asyncio.gather(session.background_task, return_exceptions=True)
+                    session.background_task = None
+                    session.completions.clear()
+                    session.background_wake.clear()
                 self._clear_agent_context(session)
             await self._factory.set_interaction_mode(session, MODE_BUILD)
             await self._emit_current_mode(session)
@@ -630,9 +756,14 @@ class AcpAgent(Agent):
         session.record.history = []
         session.record.compaction = {}
 
-    async def _drive_turn(self, session: AcpSession, bridge: AcpBridge, text: str) -> str:
+    async def _drive_turn(self, session: AcpSession, bridge: AcpBridge, text: str | None) -> StopReason:
         try:
-            async for chunk in session.agent.process_message_stream(text):
+            stream = (
+                session.agent.process_message_stream(text)
+                if text is not None
+                else session.agent.continue_from_history_stream()
+            )
+            async for chunk in stream:
                 await bridge.emit_chunk(session.session_id, chunk)
             return "end_turn"
         except asyncio.CancelledError:

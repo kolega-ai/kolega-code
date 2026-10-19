@@ -54,6 +54,10 @@ def agent_config() -> AgentConfig:
 def mock_base_agent() -> Mock:
     mock = Mock()
     mock.agent_name = "test_agent"
+    mock.sub_agent = False
+    mock.sub_agent_context = None
+    mock.gigacode_enabled = False
+    mock.custom_agent_catalog = None
     # Default: non-vision mock so the read_image tool gate excludes it.
     mock.supports_vision = False
     return mock
@@ -261,12 +265,20 @@ class TestToolCollection:
 
         # Should include the dispatch tool with the full built-in agent_type enum
         assert "dispatch_agent" in tool_names
+        assert "agent_job" in tool_names
         assert "list_subagent_models" in tool_names
 
         definitions = {tool.name: tool for tool in tool_list}
         schema = definitions["dispatch_agent"].input_schema
         assert schema is not None
         assert schema["required"] == ["agent_type", "task"]
+        assert schema["properties"]["background"]["type"] == "boolean"
+        assert schema["properties"]["background"]["default"] is False
+        job_schema = definitions["agent_job"].input_schema
+        assert job_schema is not None
+        assert job_schema["additionalProperties"] is False
+        assert job_schema["required"] == ["operation"]
+        assert job_schema["properties"]["operation"]["enum"] == ["list", "status", "cancel"]
         assert schema["properties"]["agent_type"]["enum"] == ["general", "investigation", "browser", "coding"]
         override = schema["properties"]["model_override"]
         assert override["required"] == ["provider", "model", "thinking_effort"]
@@ -304,6 +316,33 @@ class TestToolCollection:
                 await tool_collection.dispatch_agent(agent_type, "do something")
             assert agent_type in str(exc_info.value)
             assert "general, investigation, browser" in str(exc_info.value)
+
+        with pytest.raises(ValueError, match="unavailable agent_type"):
+            await tool_collection.dispatch_agent("coding", "do something", background=True)
+
+    @pytest.mark.parametrize(
+        ("agent_type", "method_name"),
+        [
+            ("general", "dispatch_general_agent"),
+            ("investigation", "dispatch_investigation_agent"),
+            ("browser", "dispatch_browser_agent"),
+            ("coding", "dispatch_coding_agent"),
+            ("custom-helper", "dispatch_custom_agent"),
+        ],
+    )
+    async def test_dispatch_agent_forwards_background(
+        self,
+        tool_collection: ToolCollection,
+        monkeypatch: pytest.MonkeyPatch,
+        agent_type: str,
+        method_name: str,
+    ) -> None:
+        monkeypatch.setattr(tool_collection, "_available_agent_types", lambda: [agent_type])
+        dispatch = AsyncMock(return_value='{"job_id": "job", "state": "accepted"}')
+        monkeypatch.setattr(tool_collection.agent_tool, method_name, dispatch)
+        assert "accepted" in await tool_collection.dispatch_agent(agent_type, "work", background=True)
+        assert dispatch.await_args is not None
+        assert dispatch.await_args.kwargs["background"] is True
 
     async def test_workflow_depth_gate_cannot_be_bypassed_by_dispatch_extension_group(
         self,

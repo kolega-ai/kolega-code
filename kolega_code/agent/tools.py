@@ -200,6 +200,7 @@ class ToolCollection(LogMixin):
     # collection in _available_agent_types.
     agent_dispatch_tools = [
         "dispatch_agent",
+        "agent_job",
     ]
 
     # Legacy name for backward compatibility
@@ -208,10 +209,12 @@ class ToolCollection(LogMixin):
     # CoderAgent specific dispatch tools
     coder_agent_tools = [
         "dispatch_agent",
+        "agent_job",
     ]
 
     custom_agent_tools = [
         "dispatch_agent",
+        "agent_job",
     ]
 
     # agent_type enum members each dispatch-enabled group admits. "custom"
@@ -786,20 +789,29 @@ class ToolCollection(LogMixin):
         task: str,
         model_override: Any = None,
         browser_target: Optional[str] = None,
+        background: bool = False,
     ) -> str:
         """Dispatch an autonomous sub-agent to complete a self-contained task."""
+        if not isinstance(background, bool):
+            raise ValueError("background must be a boolean.")
         if agent_type not in self._available_agent_types():
             available = ", ".join(self._available_agent_types()) or "none"
             raise ValueError(f"Unknown or unavailable agent_type `{agent_type}`. Valid values: {available}.")
         if agent_type == "general":
-            return await self.agent_tool.dispatch_general_agent(task, model_override)
+            return await self.agent_tool.dispatch_general_agent(task, model_override, background=background)
         if agent_type == "investigation":
-            return await self.agent_tool.dispatch_investigation_agent(task, model_override)
+            return await self.agent_tool.dispatch_investigation_agent(task, model_override, background=background)
         if agent_type == "browser":
-            return await self.agent_tool.dispatch_browser_agent(task, model_override, browser_target)
+            return await self.agent_tool.dispatch_browser_agent(
+                task, model_override, browser_target, background=background
+            )
         if agent_type == "coding":
-            return await self.agent_tool.dispatch_coding_agent(task, model_override)
-        return await self.agent_tool.dispatch_custom_agent(agent_type, task, model_override)
+            return await self.agent_tool.dispatch_coding_agent(task, model_override, background=background)
+        return await self.agent_tool.dispatch_custom_agent(agent_type, task, model_override, background=background)
+
+    async def agent_job(self, operation: str, job_id: Optional[str] = None) -> str:
+        """Inspect retained background reports or cancel a session-owned job."""
+        return await self.agent_tool.agent_job(operation, job_id)
 
     async def list_subagent_models(self, provider: Optional[str] = None) -> str:
         """List configured models available for ordinary and Gigacode sub-agents."""
@@ -1357,7 +1369,12 @@ class ToolCollection(LogMixin):
 
         # dispatch_agent only surfaces when it has at least one agent_type to
         # offer; the per-type gates live in _available_agent_types.
-        if method_name == "dispatch_agent" and not self._available_agent_types():
+        if method_name in {"dispatch_agent", "agent_job"} and not self._available_agent_types():
+            return False
+        if method_name == "agent_job" and (
+            getattr(self.caller, "sub_agent", False)
+            or has_workflow_context_marker(getattr(self.caller, "sub_agent_context", None))
+        ):
             return False
 
         if self.tool_config.allowed_tools is not None and method_name not in self.tool_config.allowed_tools:
@@ -1495,6 +1512,8 @@ class ToolCollection(LogMixin):
             dispatch_candidates.update(set(getattr(self, group_name, []) or []) & set(self.agent_dispatch_tools))
 
         dispatch_candidates.difference_update(self.tool_exclusions)
+        # Job inspection/control is not itself a delegation capability.
+        dispatch_candidates.discard("agent_job")
         if self.tool_config.allowed_tools is not None:
             dispatch_candidates.intersection_update(self.tool_config.allowed_tools)
         if "dispatch_agent" in dispatch_candidates and not self._available_agent_types():
@@ -1522,6 +1541,7 @@ class ToolCollection(LogMixin):
 
     async def cleanup(self):
         """Clean up all tool resources"""
+        borrowed = bool(getattr(self.caller, "sub_agent", False))
         try:
             # Clean up LSP resources
             if hasattr(self, "lsp_manager") and self.lsp_manager is not None:
@@ -1529,7 +1549,7 @@ class ToolCollection(LogMixin):
                 await self.log_info("Cleaned up LSP resources", sender="ToolCollection")
 
             # Clean up terminal resources
-            if hasattr(self, "terminal_tool") and hasattr(self.terminal_tool, "terminal_manager"):
+            if not borrowed and hasattr(self, "terminal_tool") and hasattr(self.terminal_tool, "terminal_manager"):
                 await self.terminal_tool.terminal_manager.cleanup_all()
                 await self.log_info("Cleaned up terminal resources", sender="ToolCollection")
 
@@ -1540,7 +1560,7 @@ class ToolCollection(LogMixin):
                 await self.log_info("Cleaned up eval kernel resources", sender="ToolCollection")
 
             # Clean up any browser resources
-            if hasattr(self, "browser_tool") and hasattr(self.browser_tool, "cleanup"):
+            if not borrowed and hasattr(self, "browser_tool") and hasattr(self.browser_tool, "cleanup"):
                 await self.browser_tool.cleanup()
                 await self.log_info("Cleaned up browser resources", sender="ToolCollection")
 
@@ -1557,7 +1577,8 @@ class ToolCollection(LogMixin):
                             )
 
             # Clean up host-provided tool extensions (MCP transports, etc.).
-            await self.cleanup_tool_extensions(self.tool_extensions)
+            if not borrowed:
+                await self.cleanup_tool_extensions(self.tool_extensions)
 
         except Exception as e:
             await self.log_error(f"Error during tool cleanup: {str(e)}", sender="ToolCollection")

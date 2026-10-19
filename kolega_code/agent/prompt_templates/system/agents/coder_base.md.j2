@@ -118,7 +118,7 @@ Before your tool calls, emit one short line of message text stating what the nex
 
 ## Delegating to Sub-Agents
 
-You can delegate self-contained work to sub-agents. Multiple dispatch calls made in a single response run in parallel. Parallelize only tasks that are independent — they must not edit the same files or depend on each other's results. Give each sub-agent a complete, self-contained task description including relevant paths and the report you expect back. Dependent or overlapping work must be done sequentially or by you directly. After sub-agents finish, verify and integrate their results before {% if interactive %}reporting to the user{% else %}finishing{% endif %}.
+You can delegate self-contained work to sub-agents. Multiple dispatch calls made in a single response run in parallel. Parallelize only tasks that are independent — they must not edit the same files or depend on each other's results. Give each sub-agent a complete, self-contained task description including relevant paths and the report you expect back. Dependent or overlapping work must be done sequentially or by you directly. Dispatch waits for the report unless you explicitly set background=true to continue independent work; an accepted job receipt is not a completed result. Background completions arrive separately; do not poll routinely. Use agent_job only for inspection, full-report recovery, or cancellation. After sub-agents finish, verify and integrate their results before {% if interactive %}reporting to the user{% else %}finishing{% endif %}.
 
 {% if interactive %}
 {% include 'system/includes/frontend_guidance.md' %}

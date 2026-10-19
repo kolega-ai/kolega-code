@@ -259,6 +259,7 @@ def test_coder_agent_dispatches_general_but_not_coding_agents(project_path, mock
 
     assert_internal_tools_not_exposed(tool_names)
     assert "dispatch_agent" in tool_names
+    assert "agent_job" in tool_names
     agent_types = dispatch_agent_types(agent.tool_collection)
     assert "general" in agent_types
     assert "investigation" in agent_types
@@ -376,6 +377,7 @@ def test_general_agent_tool_inventory(project_path, mock_connection_manager, age
     assert not tool_names.intersection(ToolCollection.browser_tools)
     # Recursion guard: no dispatch tools at all
     assert not any(name.startswith("dispatch_") for name in tool_names)
+    assert "agent_job" not in tool_names
     assert "list_subagent_models" not in tool_names
 
 
@@ -626,6 +628,7 @@ def test_dispatch_tools_hidden_when_subagents_disabled(project_path, mock_connec
 
     tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
     assert "dispatch_agent" not in tool_names
+    assert "agent_job" not in tool_names
     assert "list_subagent_models" not in tool_names
     # The registry is the dispatch boundary: a hidden tool is unreachable.
     assert agent.tool_collection.has_tool("dispatch_agent") is False
@@ -679,12 +682,34 @@ def test_subagents_gate_beats_planning_custom_group_whitelist(tmp_path, mock_con
             custom_agent_catalog=catalog,
         )
 
-    assert "dispatch_agent" in {tool.name for tool in build().tool_collection.get_tool_list()}
+    enabled_names = {tool.name for tool in build().tool_collection.get_tool_list()}
+    assert {"dispatch_agent", "agent_job"} <= enabled_names
 
     agent_config.subagents_enabled = False
     disabled = build()
     assert "dispatch_agent" not in {tool.name for tool in disabled.tool_collection.get_tool_list()}
     assert disabled.tool_collection.has_tool("dispatch_agent") is False
+    assert disabled.tool_collection.has_tool("agent_job") is False
+
+
+def test_job_control_respects_allowed_tool_narrowing(project_path, mock_connection_manager, agent_config):
+    from kolega_code.agent.tools import ToolCollectionConfig
+
+    agent = _coder(project_path, mock_connection_manager, agent_config)
+    agent.tool_collection.tool_config.allowed_tools = ["dispatch_agent"]
+    assert agent.tool_collection.has_tool("dispatch_agent")
+    assert not agent.tool_collection.has_tool("agent_job")
+
+    leaf = ToolCollection(
+        project_path,
+        "workspace",
+        str(uuid.uuid4()),
+        mock_connection_manager,
+        agent_config,
+        agent,
+        tool_config=ToolCollectionConfig(include_agent_dispatch_tools=False),
+    )
+    assert not leaf.has_tool("agent_job")
 
 
 def _coder(project_path, mock_connection_manager, agent_config):

@@ -33,14 +33,15 @@ class AcpSession:
     question_state: dict[str, Any] = field(default_factory=dict)
     #: In-flight turn task; None when the session is idle. Set and cleared by the server.
     turn_task: asyncio.Task | None = field(default=None, repr=False)
+    execution_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    event_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    background_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    bridge: Any = field(default=None, repr=False)
+    background_wake: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+    completions: list[dict[str, Any]] = field(default_factory=list)
+    auto_continue_paused: bool = False
+    closed: bool = False
+    retired_agents: list[Any] = field(default_factory=list, repr=False)
 
     def idle(self) -> bool:
-        return self.turn_task is None or self.turn_task.done()
-
-    def drain_events(self) -> None:
-        """Drop any events left over from a previous turn (stale mapping inputs)."""
-        while not self.manager.events.empty():
-            try:
-                self.manager.events.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        return not self.execution_lock.locked() and (self.turn_task is None or self.turn_task.done())

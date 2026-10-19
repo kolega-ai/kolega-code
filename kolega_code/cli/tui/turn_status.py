@@ -9,6 +9,7 @@ from rich.cells import cell_len
 from rich.color import Color
 from rich.style import Style
 from rich.text import Text
+from textual.message import Message
 from textual.widgets import Static
 
 from .. import theme
@@ -74,6 +75,24 @@ class TurnStatus(Static):
         color: $text;
     }
     """
+
+    class AgentsRequested(Message):
+        """Open the existing inspector without moving transcript or composer focus."""
+
+    class Resized(Message):
+        """Reformat cached status after this fixed band changes width."""
+
+    agents_available: bool = False
+
+    def on_resize(self) -> None:
+        # Foreground animation already reformats on its own timer. Only the
+        # cached background strip needs a repaint when static content resizes.
+        if self.agents_available:
+            self.post_message(self.Resized())
+
+    def action_inspect_agents(self) -> None:
+        if self.agents_available:
+            self.post_message(self.AgentsRequested())
 
     def shimmer(self, label: Text, elapsed: float) -> Text:
         console = self.app.console

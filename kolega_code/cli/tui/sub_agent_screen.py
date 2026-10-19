@@ -140,6 +140,7 @@ class SubAgentInspectorScreen(ModalScreen):
         self._spinner_frame += 1
         self._sync_roster()
         self._refresh_header()
+        self._schedule_failure_acknowledgment()
 
     # ---- selection ------------------------------------------------------------
 
@@ -318,6 +319,7 @@ class SubAgentInspectorScreen(ModalScreen):
             self._rendered_key = None
             self._empty_shown = False
             return
+        self._schedule_failure_acknowledgment()
         if self._rendered_key != self._selected_key:
             # Selection change: mount only the trailing window of the new trajectory.
             window.rebuild(activity.steps)
@@ -349,6 +351,40 @@ class SubAgentInspectorScreen(ModalScreen):
         pinned_to_end = view.max_scroll_y <= 0 or view.scroll_y >= view.max_scroll_y - 1
         window.refresh_all()
         window.sync(activity.steps, set(), follow_bottom=self._follow and pinned_to_end)
+
+    def _schedule_failure_acknowledgment(self) -> None:
+        activity = self._owner._sub_agent_activities.get(self._selected_key)
+        if activity is None:
+            return
+        for row in self._owner._background_status_rows:
+            completion_id = row["completion_id"]
+            if (
+                row["job_id"] == self._selected_key
+                and row["status"] in {"failed", "interrupted"}
+                and completion_id not in self._owner._background_acknowledged_failures
+                and f"background-result:{completion_id}" in activity.stream_steps
+            ):
+                # Mounting the roster is not acknowledgment: wait until the
+                # selected result trajectory has actually had a paint.
+                self.call_after_refresh(self._acknowledge_presented_failure, self._selected_key, completion_id)
+                break
+
+    def _acknowledge_presented_failure(self, key: str, completion_id: str) -> None:
+        if (
+            self._owner._sub_agent_inspector is not self
+            or self._owner.screen is not self
+            or self._pruning
+            or self._selected_key != key
+        ):
+            return
+        activity = self._owner._sub_agent_activities.get(key)
+        if activity is None or self._trajectory_window is None:
+            return
+        result = activity.stream_steps.get(f"background-result:{completion_id}")
+        widget = self._trajectory_window.widgets.get(result.entry_id) if result is not None else None
+        view = self.query_one("#inspector_trajectory", TrajectoryScrollView)
+        if widget is not None and widget.is_attached and widget.region.overlaps(view.content_region):
+            self._owner._acknowledge_background_failure(key, completion_id=completion_id)
 
     def _refresh_footer(self) -> None:
         try:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import Any, cast
 
 from kolega_code.agent import (
     AgentConfig,
@@ -14,7 +15,7 @@ from kolega_code.agent import (
     PromptExtension,
     ToolExtension,
 )
-from kolega_code.agent.baseagent import QueuedUserInput
+from kolega_code.agent.baseagent import BaseAgent, QueuedUserInput
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.tool_definitions import tool_description_asset
 from kolega_code.agent.volatile_context import VolatileSection
@@ -44,6 +45,7 @@ from kolega_code.session.inbox import (
     validate_peer_text as validate_peer_message_text,
 )
 from kolega_code.session.runtime import deserialize_permission_request
+from kolega_code.session.background import BackgroundAgentManager
 from kolega_code.tools import ToolError
 from textual.widgets import Static
 
@@ -244,15 +246,20 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
 
     async def _finalize_turn_output(self, *, cancel_pending: bool) -> None:
         """Settle transcript state common to every turn outcome, before the final status."""
+        owner = self.agent_worker
         if cancel_pending:
             self._cancel_pending_question()
             self._cancel_pending_approval()
         await self._drain_pending_events()
+        if self.agent_worker is not owner:
+            return
         self._start_session_diff_refresh()
         self._finalize_sub_agent_activities()
         self._finalize_workflow_activities()
 
-    async def _run_turn_stream(self, stream_factory, *, checkpoint_label: str | None = None) -> bool:
+    async def _run_turn_stream(
+        self, stream_factory, *, checkpoint_label: str | None = None, preserve_inspector: bool = False
+    ) -> bool:
         """Run one agent stream and return whether it was cancelled by the user.
 
         When ``checkpoint_label`` is given, the session-diff checkpoint is
@@ -260,58 +267,84 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         previous turn's result immediately and Esc during a slow capture
         resolves through the normal cancelled path.
         """
+        owner = self.agent_worker
         cancelled_by_user = False
-        self._begin_turn_progress(messages.PREPARING_CHECKPOINT if checkpoint_label is not None else messages.WORKING)
+        self._begin_turn_progress(
+            messages.PREPARING_CHECKPOINT if checkpoint_label is not None else messages.WORKING,
+            preserve_inspector=preserve_inspector,
+        )
         try:
             if checkpoint_label is not None:
                 await self._record_turn_checkpoint(checkpoint_label)
                 self._update_progress(messages.WORKING, complete=False, state=tui_state.TurnState.GENERATING)
             self._log_status(messages.GENERATING, "ok")
             await self._consume_agent_stream(stream_factory())
+            if self.agent_worker is not owner:
+                return False
             await self._finalize_turn_output(cancel_pending=False)
+            if self.agent_worker is not owner:
+                return False
             self._finish_turn_progress(messages.FINISHED, tui_state.TurnState.IDLE)
             await self._save_session_history_async()
+            if self.agent_worker is not owner:
+                return False
             await self._capture_completed_plan()
-            self._log_status(messages.FINISHED, "ok")
-            self._maybe_trigger_session_metadata()
+            if self.agent_worker is owner:
+                self._log_status(messages.FINISHED, "ok")
+                self._maybe_trigger_session_metadata()
         except asyncio.CancelledError:
             cancelled_by_user = True
+            if self.agent_worker is owner:
+                self._background_paused = True
             # When the app is quitting, action_quit already settled open
             # prompts (control lease release) and saved the session, and the
             # widget tree is being torn down — skip the cleanup that would
             # repaint it.
-            if not self._exit:
+            if not self._exit and self.agent_worker is owner:
                 await self._finalize_turn_output(cancel_pending=True)
-                self._finish_turn_progress(messages.STOPPED_BY_USER, tui_state.TurnState.STOPPED)
-                await self._save_session_history_async()
-                self._log_status(messages.STOPPED_BY_USER, "warn")
+                if self.agent_worker is owner:
+                    self._finish_turn_progress(messages.STOPPED_BY_USER, tui_state.TurnState.STOPPED)
+                    await self._save_session_history_async()
+                    if self.agent_worker is owner:
+                        self._log_status(messages.STOPPED_BY_USER, "warn")
         except LLMError as exc:
-            await self._finalize_turn_output(cancel_pending=True)
-            model = self.config.long_context_config.model if self.config is not None else None
-            message_text = llm_error_message(exc, model=model)
-            self._finish_turn_progress(message_text, tui_state.TurnState.ERROR)
-            await self._save_session_history_async()
-            self._log_status(message_text, "error")
+            if self.agent_worker is owner:
+                self._background_paused = True
+                await self._finalize_turn_output(cancel_pending=True)
+                if self.agent_worker is owner:
+                    model = self.config.long_context_config.model if self.config is not None else None
+                    message_text = llm_error_message(exc, model=model)
+                    self._finish_turn_progress(message_text, tui_state.TurnState.ERROR)
+                    await self._save_session_history_async()
+                    if self.agent_worker is owner:
+                        self._log_status(message_text, "error")
         except Exception as exc:
-            await self._finalize_turn_output(cancel_pending=True)
-            self._finish_turn_progress(messages.STOPPED_WITH_ERROR.format(error=exc), tui_state.TurnState.ERROR)
-            await self._save_session_history_async()
-            self._log_status(messages.STOPPED_WITH_ERROR.format(error=exc), "error")
+            if self.agent_worker is owner:
+                self._background_paused = True
+                await self._finalize_turn_output(cancel_pending=True)
+                if self.agent_worker is owner:
+                    self._finish_turn_progress(messages.STOPPED_WITH_ERROR.format(error=exc), tui_state.TurnState.ERROR)
+                    await self._save_session_history_async()
+                    if self.agent_worker is owner:
+                        self._log_status(messages.STOPPED_WITH_ERROR.format(error=exc), "error")
             raise
         finally:
-            self._active_progress_entry = None
-            self._turn_active = False
-            if not self._exit:
-                self._flush_terminal_output()
-                self._flush_log_output()
-                self._flush_conversation_render()
-                if self._plan_decision_active:
-                    self._set_composer_status(messages.PLAN_READY_PLACEHOLDER)
-                else:
-                    self._restore_composer_placeholder()
-                self._set_chat_enabled(self.agent is not None and not self._plan_decision_active)
-                if cancelled_by_user:
-                    self._schedule_primary_focus_restore()
+            # Teardown can yield while an exclusive replacement reserves the
+            # slot. Its progress, timer and composer state now belong to it.
+            if self.agent_worker is owner:
+                self._active_progress_entry = None
+                self._turn_active = False
+                if not self._exit:
+                    self._flush_terminal_output()
+                    self._flush_log_output()
+                    self._flush_conversation_render()
+                    if self._plan_decision_active:
+                        self._set_composer_status(messages.PLAN_READY_PLACEHOLDER)
+                    else:
+                        self._restore_composer_placeholder()
+                    self._set_chat_enabled(self.agent is not None and not self._plan_decision_active)
+                    if cancelled_by_user:
+                        self._schedule_primary_focus_restore()
         return cancelled_by_user
 
     def _maybe_trigger_session_metadata(self) -> None:
@@ -392,19 +425,31 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         scheduled-loop driver, for one — have to learn about it from this return
         value rather than from an exception.
         """
+        owner = self.agent_worker
         try:
             if self.agent is None:
                 return False
+            if self._background_retirement is not None:
+                await self._attach_background_jobs()
+            self._background_paused = False
+            self._background_delivery_failed = False
+            self._schedule_background_status_refresh()
+            if self._background_jobs is not None:
+                await self._background_jobs.deliver(self.agent)
             cancelled_by_user = await self._run_turn_stream(
                 lambda: self._agent_turn_stream(message, attachments),
                 checkpoint_label=turn_label or message,
             )
+            if self.agent_worker is not owner:
+                return cancelled_by_user
             # A committed workspace switch applies between turns: the agent is
             # rebuilt in the new checkout, then handed one continuation turn so
             # the work that prompted the switch resumes there. A cancelled turn
             # still applies the committed rebuild but stays quiet afterwards.
             while True:
                 continuation = await self._apply_pending_workspace_switch()
+                if self.agent_worker is not owner:
+                    return cancelled_by_user
                 if cancelled_by_user or continuation is None:
                     break
                 cancelled_by_user = await self._run_turn_stream(
@@ -428,15 +473,17 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             # An unexpected stream error must not strand a committed switch:
             # the journal already names the new workspace, so apply the rebuild
             # even though no continuation turn will run.
-            if self._pending_workspace_switch is not None:
+            if self.agent_worker is owner and self._pending_workspace_switch is not None:
                 await self._apply_pending_workspace_switch()
             # The turn worker owns ``agent_worker`` for its whole lifetime — including
             # the goal loop's verifier phase, which runs between work turns. Clear it
             # only here so the app stays "busy" during goal evaluation: submissions
             # queue instead of running immediately (which would cancel the verifier
             # via the exclusive ``turns`` worker group) and Esc can interrupt the loop.
-            self.agent_worker = None
-            self._refresh_shortcut_context()
+            if self.agent_worker is owner:
+                self.agent_worker = None
+                self._refresh_shortcut_context()
+                self._schedule_maybe_start_queued_message()
 
     # ------------------------------------------------------------------
     # Autonomous goal loop
@@ -804,6 +851,232 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         await self._persist_goal_async()
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=note, tone="warning"))
 
+    def _background_completion_delivered(self, completion: dict[str, Any]) -> None:
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(
+                kind="system",
+                content=(
+                    f"Background {completion['agent_type']} {completion['status']} "
+                    f"({completion['job_id']}):\n\n{completion['result']}"
+                ),
+                origin={"kind": "subagent_completion", "job_id": completion["job_id"]},
+            )
+        )
+        # A completed card can have no terminal UI event on cancellation.
+        activity = self._sub_agent_activities.get(completion["job_id"])
+        if activity is not None and activity.status == "running":
+            activity.status = completion["status"]
+            activity.finished_at = self._now()
+            activity.entry.complete = True
+            activity.entry.content = self._format_sub_agent_content(activity)
+            self._invalidate_conversation(activity.entry)
+        if not self._background_rebuilding:
+            self._schedule_maybe_start_queued_message()
+        self._schedule_background_status_refresh()
+
+    async def _attach_background_jobs(self) -> None:
+        if self._background_retirement is not None:
+            # Retry the actual retained reports with their original delivery
+            # policy, never recover a replacement manager from stale disk rows.
+            await self._retire_background_jobs()
+        agent = self.agent
+        getter = getattr(agent, "get_background_jobs", None)
+        if agent is None or not callable(getter):
+            return
+        jobs = self._background_jobs
+        if jobs is None:
+            jobs = cast(BackgroundAgentManager, getter())
+            self._background_jobs = jobs
+        else:
+            agent.background_jobs = jobs
+        agent.background_needs_turn = self._background_resume_needed or agent.background_needs_turn
+        self._background_resume_needed = False
+        self._background_delivery_failed = False
+
+        def ready() -> None:
+            if self._background_jobs is jobs and not self._exit:
+                self._schedule_pending_inputs()
+
+        def changed() -> None:
+            if self._background_jobs is jobs and not self._exit:
+                self._schedule_background_status_refresh()
+
+        jobs.set_callbacks(on_ready=ready, on_delivered=self._background_completion_delivered, on_changed=changed)
+        await jobs.recover()
+        ready()
+        changed()
+
+    async def _process_background_completions(self, jobs: BackgroundAgentManager) -> None:
+        owner = self.agent_worker
+        try:
+            agent = self.agent
+            if (
+                agent is None
+                or jobs is not self._background_jobs
+                or self._background_rebuilding
+                or self._background_retirement is not None
+            ):
+                return
+            await self._drain_pending_events()
+            await jobs.deliver(agent)
+            if agent.background_needs_turn and not self._background_paused:
+                await self._run_turn_stream(lambda: agent.continue_from_history_stream(), preserve_inspector=True)
+            else:
+                await self._save_session_history_async()
+            await self._cleanup_retired_agent_generations()
+        except asyncio.CancelledError:
+            if self.agent_worker is owner:
+                self._background_paused = True
+            raise
+        except Exception as exc:
+            if self.agent_worker is owner:
+                self._background_paused = True
+                self._background_delivery_failed = True
+                self._schedule_background_status_refresh()
+                self._log_status(f"Background completion delivery failed: {exc}", "error")
+        finally:
+            if self.agent_worker is owner:
+                self.agent_worker = None
+                self._refresh_shortcut_context()
+                self._schedule_maybe_start_queued_message()
+
+    async def _cleanup_retired_agent_generations(self) -> None:
+        if self._background_retirement is not None:
+            return
+        if self._background_jobs is not None and self._background_jobs.has_work:
+            return
+        retired, self._retired_agent_generations = self._retired_agent_generations, []
+        for agent, bundle in retired:
+            try:
+                await agent.cleanup()
+            except Exception as exc:
+                self._agent_cleanup_failed = True
+                self._log_status(f"retired agent cleanup failed: {exc}", "warn")
+            finally:
+                if bundle is not None:
+                    try:
+                        await cleanup_extension_bundle(bundle)
+                    except Exception as exc:
+                        self._agent_cleanup_failed = True
+                        self._log_status(f"retired extension cleanup failed: {exc}", "warn")
+
+    async def _retire_background_jobs(self, *, agent: BaseAgent | None = None, archive: bool = False) -> None:
+        """Settle this epoch before destructive context/workspace transitions."""
+        if self._background_retirement is None:
+            target = agent if agent is not None else self.agent
+            jobs = self._background_jobs
+            if jobs is not None:
+                self._background_retirement = (jobs, target, archive)
+        else:
+            jobs, target, archive = self._background_retirement
+        self._background_resume_needed = False
+        previous = self._background_rebuilding
+        self._background_rebuilding = True
+
+        async def retire() -> None:
+            try:
+                if jobs is not None:
+                    jobs.set_callbacks(on_ready=None, on_delivered=None)
+                    await jobs.close()
+                    if target is not None:
+                        pending = {row["job_id"] for row in jobs.snapshot() if not row["delivered"]}
+                        await jobs.deliver(target, archive=archive)
+                        if archive:
+                            for outcome in jobs.snapshot():
+                                if outcome["job_id"] in pending:
+                                    self._background_completion_delivered(outcome)
+                        target.background_jobs = None
+                        target.background_needs_turn = False
+                    self._background_jobs = None
+                    self._background_retirement = None
+                    self._schedule_background_status_refresh()
+                    for outcome in jobs.snapshot():
+                        activity = self._sub_agent_activities.get(outcome["job_id"])
+                        if activity is not None and activity.status == "running":
+                            activity.status = outcome["status"]
+                            activity.finished_at = self._now()
+                            activity.entry.complete = True
+                            activity.entry.content = self._format_sub_agent_content(activity)
+                            self._invalidate_conversation(activity.entry)
+            finally:
+                if jobs is not None and self._background_jobs is jobs:
+                    self._schedule_background_status_refresh()
+                await self._cleanup_retired_agent_generations()
+
+        # Shield the host finalization too, not just the manager's durable writes.
+        # Otherwise cancellation can strand the current root on a closed manager
+        # after its completion has already been consumed.
+        operation = asyncio.create_task(retire())
+        cancelled = False
+        try:
+            while not operation.done():
+                try:
+                    await asyncio.shield(operation)
+                except asyncio.CancelledError:
+                    cancelled = True
+            operation.result()
+            if cancelled:
+                if target is not None and target is self.agent and not self._exit:
+                    # The transition did not run. Keep this root usable without
+                    # reviving the consumed completion's automatic continuation.
+                    recovery = asyncio.create_task(self._attach_background_jobs())
+                    while not recovery.done():
+                        try:
+                            await asyncio.shield(recovery)
+                        except asyncio.CancelledError:
+                            pass
+                    recovery.result()
+                raise asyncio.CancelledError
+        finally:
+            self._background_rebuilding = previous
+
+    def _prepare_background_agent_inspector(self) -> None:
+        """Make queued/recovered jobs inspectable before any child UI event arrives."""
+        self._sync_background_agent_status()
+        self._sync_background_inspector_activities()
+
+    def _sync_background_inspector_activities(self) -> None:
+        """Project retained job results only when the inspector needs them."""
+        jobs = self._background_jobs
+        if jobs is None:
+            return
+        for row in self._background_status_rows:
+            if row["archived"]:
+                continue
+            full = jobs.snapshot(row["job_id"])[0]
+            activity = self._ensure_sub_agent_activity(
+                AgentEvent(
+                    event_type="chat_message",
+                    sender=row["agent_type"],
+                    content={},
+                    sub_agent_info={
+                        "agent_id": row["job_id"],
+                        "agent_name": row["agent_type"],
+                        "task": row["label"],
+                        "task_full": full["task"],
+                        "background": True,
+                    },
+                )
+            )
+            activity.status = row["status"]
+            activity.current_action = "Queued" if row["status"] == "queued" else activity.current_action
+            if row["status"] not in {"queued", "running"}:
+                if activity.finished_at is None:
+                    activity.finished_at = self._now()
+                activity.entry.complete = True
+                activity.current_action = ""
+                activity.last_activity = full["result"][:240]
+                result_key = f"background-result:{row['completion_id']}"
+                if result_key not in activity.stream_steps:
+                    result = tui_state.ConversationEntry(kind="assistant", content=full["result"])
+                    activity.stream_steps[result_key] = result
+                    activity.steps.append(result)
+            elif activity.current_action == "Queued":
+                activity.current_action = "" if row["status"] == "running" else "Queued"
+            activity.entry.content = self._format_sub_agent_content(activity)
+            self._invalidate_conversation(activity.entry)
+            self._invalidate_sub_agent_detail(activity)
+
     def _queue_user_message(
         self,
         text: str,
@@ -925,11 +1198,34 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         except Exception:
             self._maybe_start_queued_message()
 
+    def _schedule_pending_inputs(self) -> None:
+        """Rearm on owner release/unblock only when there is actual work."""
+        if self._background_rebuilding or self._background_retirement is not None:
+            return
+        jobs = self._background_jobs
+        if self._queued_messages or (
+            jobs is not None
+            and (
+                jobs.pending_count
+                or (getattr(self.agent, "background_needs_turn", False) and not self._background_paused)
+            )
+        ):
+            self._schedule_maybe_start_queued_message()
+
     def _maybe_start_queued_message(self) -> bool:
         settings_screen = getattr(self, "_settings_screen", None)
         if settings_screen is not None and settings_screen.mcp_busy:
             return False
-        if self._startup_pending or not self._queued_messages or self.agent is None:
+        if (
+            self._startup_pending
+            or self.agent is None
+            or self._exit
+            or self._background_rebuilding
+            or self._background_retirement is not None
+            or self._pending_workspace_switch is not None
+            or self._handoff_in_progress
+            or self._rewind_running
+        ):
             return False
         if self._turn_active or self.agent_worker is not None:
             return False
@@ -942,6 +1238,22 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             or self._plan_decision_active
         ):
             return False
+
+        if not self._queued_messages:
+            jobs = self._background_jobs
+            if (
+                jobs is None
+                or self._background_delivery_failed
+                or not (jobs.pending_count or (self.agent.background_needs_turn and not self._background_paused))
+            ):
+                return False
+            self.agent_worker = self.run_worker(
+                self._process_background_completions(jobs),
+                name="kolega-background-completion",
+                group="turns",
+                exclusive=True,
+            )
+            return True
 
         queued = self._queued_messages.pop(0)
         if queued.is_peer:
@@ -962,6 +1274,15 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._process_message(queued.text, queued.attachments), name="kolega-turn", group="turns", exclusive=True
         )
         return True
+
+    def _maybe_start_background_completion(self) -> bool:
+        """Level-triggered fallback for internal mail, not ordinary user input."""
+        jobs = self._background_jobs
+        if jobs is None or not (
+            jobs.pending_count or (getattr(self.agent, "background_needs_turn", False) and not self._background_paused)
+        ):
+            return False
+        return self._maybe_start_queued_message()
 
     async def _provide_queued_user_inputs(self) -> list[QueuedUserInput]:
         """Agent-driven mid-turn drain: the running turn pulls queued messages
@@ -1193,6 +1514,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         if self._handoff_in_progress and self._handoff_cancel_event is not None:
             self._handoff_cancel_event.set()
             return
+        self._background_paused = True
         if self.agent_worker is not None:
             self._update_progress(messages.STOP_REQUESTED, complete=False, state=tui_state.TurnState.STOPPING)
             self._cancel_pending_question()
@@ -1360,6 +1682,24 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         restore_transcript: bool = True,
         preserve_queued: bool = False,
     ) -> None:
+        previous = self._background_rebuilding
+        self._background_rebuilding = True
+        try:
+            await self._build_agent_impl(
+                config, rebuild, restore_transcript=restore_transcript, preserve_queued=preserve_queued
+            )
+        finally:
+            self._background_rebuilding = previous
+            self._schedule_pending_inputs()
+
+    async def _build_agent_impl(
+        self,
+        config: AgentConfig,
+        rebuild: bool = False,
+        *,
+        restore_transcript: bool = True,
+        preserve_queued: bool = False,
+    ) -> None:
         self._set_startup_stage("Loading skills and agents…")
         await self._prime_recording_offset()
         history = self.session.history
@@ -1372,7 +1712,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             history = self.session.history
             compaction = self.session.compaction
             if rebuild:
-                await self._cleanup_agent_generation()
+                await self._cleanup_agent_generation(preserve_background=True)
 
         browser_manager = build_browser_manager(
             self.store.root,
@@ -1558,9 +1898,13 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 self.agent.restore_compaction_state(compaction)
                 self.agent.session_recorder = self._session_recorder
                 if restore_transcript:
-                    self._restore_conversation_history(history)
+                    archived = await asyncio.to_thread(self._session_recorder.read_archived_background_messages)
+                    # UI-only reports must never enter restore_message_history:
+                    # they belong to the retiring workspace, not its successor.
+                    self._restore_conversation_history([*history, *archived])
             if extension_bundle is not None:
                 await bind_extension_agent(extension_bundle, self.agent)
+            await self._attach_background_jobs()
             self._update_mode_chrome()
             self._ensure_startup_entry()
             self._set_startup_stage("Running startup hooks…")
@@ -1575,17 +1919,26 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             await self._cleanup_agent_generation()
             raise
 
-    async def _cleanup_agent_generation(self) -> None:
+    async def _cleanup_agent_generation(self, *, preserve_background: bool = False) -> None:
         """Tear down the current agent generation (agent, then bundle) exactly once.
 
-        Both references are detached before anything is awaited, so repeated or
-        concurrent callers cannot clean the same generation twice. Each step is
-        guarded: a cleanup failure is reported, never raised.
+        Retirement must succeed before detaching resources: a storage failure
+        leaves the generation and its reports owned for a later retry. Cleanup
+        failures after retirement are reported, never raised.
         """
+        if not preserve_background or self._background_retirement is not None:
+            await self._retire_background_jobs(agent=self.agent)
         agent = self.agent
         bundle = self._extension_bundle
         self.agent = None
         self._extension_bundle = None
+        jobs = self._background_jobs
+        if preserve_background and jobs is not None and agent is not None:
+            self._background_resume_needed = agent.background_needs_turn
+            agent.background_jobs = None
+            if jobs.has_work:
+                self._retired_agent_generations.append((agent, bundle))
+                return
         try:
             if agent is not None:
                 try:

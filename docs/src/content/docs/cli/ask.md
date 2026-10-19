@@ -137,6 +137,24 @@ expiry. `--loop` cannot be combined with `--goal`.
 
 See [Scheduled Loops](../../loop/) for the full interval and cron syntax.
 
+## Background subagents
+
+When the agent delegates with `dispatch_agent(..., background=True)`, the parent
+can finish its current turn while the child keeps working. `ask` stays alive
+until its background jobs and completion continuations settle. Reports are
+inserted into the existing conversation; they do not become extra typed prompts.
+
+In scheduled loops, a report can wake the agent during the wait without counting
+as another scheduled iteration or moving the next fire time. With `--loop-fresh`,
+old-context jobs and their continuations settle before history is cleared; this
+can delay the next iteration. Goal mode consumes available reports between turns
+and settles outstanding jobs before the command exits.
+
+Ctrl-C stops the invocation rather than launching another continuation. Shutdown
+cancels and joins remaining jobs before closing their services. Background jobs
+survive parent-turn completion, **not process exit**; persisted session outcomes
+can be recovered on resume.
+
 ## JSON output
 
 With `--json`, the command streams the **semantic event protocol**: UTF-8

@@ -111,6 +111,12 @@ class AcpBridge:
         #: label the dispatching card's title.
         self._dispatch_labels: dict[str, str] = {}
 
+    def begin_turn(self, agent: Any, diff_provider: AcpDiffProvider) -> None:
+        """Reset turn-only projections, retaining session-lifetime tool maps."""
+        self._agent = agent
+        self._diffs = diff_provider
+        self._turn_response_parts.clear()
+
     async def send(self, session_id: str, update: Any) -> None:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(

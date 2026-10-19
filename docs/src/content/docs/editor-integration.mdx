@@ -127,6 +127,21 @@ delete the setting to restore them.
   collapsible block with the summary, and restored threads replay the last one.
 - **Usage** — the context-window meter updates after each turn.
 
+## Background subagents
+
+A background `dispatch_agent` job belongs to the editor session, not to the
+prompt request that launched it. Child activity and completion reports continue
+to arrive as session updates after that prompt has returned. The parent normally
+continues from its existing history when an idle report arrives; this does not
+create a synthetic user message or another prompt response.
+
+Prompt turns and automatic continuations share one session execution owner.
+Cancelling a turn pauses automatic continuation, but completed child reports are
+still retained and displayed. Sending another prompt resumes normal operation.
+Model and plan/build switches preserve the job supervisor; services borrowed
+by running children remain alive until those children settle. Closing the session
+cancels and joins its work before releasing services.
+
 ## Client differences
 
 | Feature | Zed | vscode-acp |
