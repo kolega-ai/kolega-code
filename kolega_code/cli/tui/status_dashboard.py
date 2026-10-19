@@ -444,7 +444,7 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             # only its text changes, so a full-screen reflow per spinner frame
             # is pure waste on large transcripts.
             # Rich and Textual use different markup grammars, particularly for
-            # action metadata and literal brackets/backslashes in task labels.
+            # action metadata and literal brackets/backslashes in status text.
             strip.update(Content.from_rich_text(Text.from_markup(content, emoji=False)), layout=False)
         # Tick elapsed time on running sub-agents at most once per second so the
         # faster spinner cadence only touches this cheap status strip.
@@ -458,25 +458,30 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         status = self._background_status()
         if not status.visible:
             return self._foreground_turn_status_content(width=width)
-        frames = theme.spinner_frames()
-        frame = theme.g(Glyph.RUNNING) if self.animation_level == "none" else frames[self._spinner_frame % len(frames)]
-        background = status.render(frame, width=width, compact=self._turn_started_at is not None)
+        frame = theme.g(Glyph.RUNNING)
+        background = status.render(frame, width=width)
+        prefix, shortcut = f"{frame} ", " · Ctrl+G"
+        if status.animating and background.plain.startswith(prefix) and background.plain.endswith(shortcut):
+            label_end = len(background) - len(shortcut)
+            # Use a turn-independent clock so foreground turn boundaries
+            # never restart the background sweep. Glyph and shortcut stay steady.
+            label = self._turn_status.shimmer(background[len(prefix) : label_end], self._now())
+            background = background[: len(prefix)] + label + background[label_end:]
         # Text.markup drops Style(meta=...) when serializing. Keep the action
         # tag explicit so both Rich and Textual preserve this exact hit region.
         background_markup = f'[@click="inspect_agents"]{background.markup}[/@click]'
-        # An idle main turn must not suggest the whole session has finished.
-        if self._turn_started_at is None:
-            return background_markup
-        remaining = None if width is None else width - background.cell_len - 3
-        if remaining is not None and remaining < 28:
-            # Keep the agent count/shortcut. Use a short foreground interrupt
-            # hint if there is room, rather than clipping either full region.
-            foreground = Text("Esc interrupt", style="dim")
-            if remaining < foreground.cell_len:
-                return background_markup
-        else:
-            foreground = Text.from_markup(self._foreground_turn_status_content(width=remaining))
-        gap = 3 if width is None else max(3, width - foreground.cell_len - background.cell_len)
+        foreground = Text()
+        if self._turn_started_at is not None:
+            remaining = None if width is None else width - background.cell_len - 3
+            if remaining is None or remaining >= 28:
+                foreground = Text.from_markup(self._foreground_turn_status_content(width=remaining))
+            elif remaining >= len("Esc interrupt"):
+                # Keep a short foreground interrupt hint when the full status
+                # would crowd the independently right-anchored agent indicator.
+                foreground = Text("Esc interrupt", style="dim")
+        # Reserve the same right-hand position even when no foreground status
+        # is shown. Padding is deliberately outside the clickable action.
+        gap = (3 if foreground else 0) if width is None else max(0, width - foreground.cell_len - background.cell_len)
         return foreground.markup + " " * gap + background_markup
 
     def _foreground_turn_status_content(self, *, width: int | None = None) -> str:

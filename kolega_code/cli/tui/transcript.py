@@ -1562,6 +1562,10 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 self._format_startup_entry,
                 self._startup_recent_sessions,
             )
+        if (entry.origin or {}).get("kind") == "subagent_completion":
+            # Keep the full delivery projection for replay/export, but never dump
+            # its report into the visible transcript without explicit disclosure.
+            return ToolEntryWidget(entry, self._background_completion_title)
         if entry.kind in {"tool_call", "tool_result", "tool_error"}:
             return ToolEntryWidget(
                 entry,
@@ -1577,6 +1581,20 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         if entry.kind == "sub_agent":
             return SubAgentEntryWidget(entry, self._format_conversation_entry)
         return ConversationEntryWidget(entry, self._format_conversation_entry)
+
+    def _background_completion_title(self, entry: ConversationEntry) -> str:
+        # Both live and restored projections use this header. The opaque job ID
+        # stays in the expanded body, not in the compact completion row.
+        job_id = (entry.origin or {}).get("job_id", "")
+        label = entry.content.partition("\n\n")[0].removesuffix(":").removesuffix(f" ({job_id})")
+        status = label.rsplit(" ", 1)[-1]
+        color = {
+            "completed": Color.SUCCESS,
+            "failed": Color.ERROR,
+            "cancelled": Color.WARNING,
+            "interrupted": Color.WARNING,
+        }.get(status, Color.TOOL)
+        return theme.role_header(Glyph.SUB_AGENT, escape(label), color, detail="report")
 
     def _compaction_summary_title(self, entry: ConversationEntry) -> str:
         return theme.role_header(Glyph.STATUS, messages.COMPACTION_SUMMARY_TITLE, Color.ACCENT)

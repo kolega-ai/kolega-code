@@ -6,6 +6,7 @@ from dataclasses import FrozenInstanceError
 from typing import Any
 
 import pytest
+from rich.console import Console
 from rich.text import Text
 
 from kolega_code.cli import theme
@@ -62,7 +63,6 @@ def test_from_rows_counts_each_visible_job_once_and_ignores_archived_rows() -> N
         interrupted=1,
         saving=1,
         storage_failed=1,
-        labels=("running", "queued"),
         delivery_failed=True,
     )
     assert status.total == 9
@@ -74,34 +74,34 @@ def test_from_rows_counts_each_visible_job_once_and_ignores_archived_rows() -> N
     ("data", "acknowledged", "expected"),
     [
         (row(status="completed", delivered=True), set(), BackgroundStatus()),
-        (row(status="failed", delivered=True), set(), BackgroundStatus(failed=1, labels=("research",))),
+        (row(status="failed", delivered=True), set(), BackgroundStatus(failed=1)),
         (
             row(status="interrupted", delivered=True),
             set(),
-            BackgroundStatus(interrupted=1, labels=("research",)),
+            BackgroundStatus(interrupted=1),
         ),
         (row(status="failed", delivered=True), {"completion"}, BackgroundStatus()),
         (row(status="interrupted", delivered=True), {"completion"}, BackgroundStatus()),
         (
             row(status="failed", ready=True),
             {"completion"},
-            BackgroundStatus(ready=1, labels=("research",)),
+            BackgroundStatus(ready=1),
         ),
         (
             row(status="interrupted", ready=True),
             {"completion"},
-            BackgroundStatus(ready=1, labels=("research",)),
+            BackgroundStatus(ready=1),
         ),
-        (row(status="cancelled", ready=True), set(), BackgroundStatus(ready=1, labels=("research",))),
+        (row(status="cancelled", ready=True), set(), BackgroundStatus(ready=1)),
         (
             row(status="failed", settling=True),
             set(),
-            BackgroundStatus(saving=1, labels=("research",)),
+            BackgroundStatus(saving=1),
         ),
         (
             row(status="failed", settling=True, persistence_error=True),
             {"completion"},
-            BackgroundStatus(storage_failed=1, labels=("research",)),
+            BackgroundStatus(storage_failed=1),
         ),
     ],
     ids=[
@@ -128,9 +128,7 @@ def test_failure_acknowledgment_uses_completion_id_not_reused_job_id() -> None:
         row(status="failed", delivered=True, completion_id="old-completion", label="old failure"),
         row(status="failed", delivered=True, completion_id="new-completion", label="new failure"),
     ]
-    assert BackgroundStatus.from_rows(rows, {"job", "old-completion"}) == BackgroundStatus(
-        failed=1, labels=("new failure",)
-    )
+    assert BackgroundStatus.from_rows(rows, {"job", "old-completion"}) == BackgroundStatus(failed=1)
 
 
 @pytest.mark.parametrize(
@@ -158,13 +156,12 @@ def test_status_is_immutable_and_does_not_retain_mutable_inputs() -> None:
     rows[0].update(status="completed", label="changed label")
     rows.clear()
     acknowledged.add("completion")
-    assert status == BackgroundStatus(failed=1, labels=("original label",))
-    assert isinstance(status.labels, tuple)
+    assert status == BackgroundStatus(failed=1)
     with pytest.raises(FrozenInstanceError):
         setattr(status, "failed", 0)
 
 
-def test_labels_fall_back_to_agent_type_and_only_keep_two_visible_jobs() -> None:
+def test_labels_and_agent_types_do_not_enter_the_status_summary() -> None:
     status = BackgroundStatus.from_rows(
         [
             row(status="completed", delivered=True, label="hidden"),
@@ -174,7 +171,7 @@ def test_labels_fall_back_to_agent_type_and_only_keep_two_visible_jobs() -> None
         ],
         set(),
     )
-    assert status == BackgroundStatus(running=2, queued=1, labels=("investigation", "second task"))
+    assert status == BackgroundStatus(running=2, queued=1)
 
 
 @pytest.mark.parametrize(
@@ -218,12 +215,15 @@ def test_render_state_counts_and_semantic_style(
     rendered = status.render("⠋")
     assert isinstance(rendered, Text)
     assert rendered.plain == expected
-    assert rendered.style == color
+    console = Console()
+    assert rendered.get_style_at_offset(console, 0).color == console.get_style(color).color
+    shortcut_start = rendered.plain.index(" · Ctrl+G")
+    assert all(rendered.get_style_at_offset(console, i).dim for i in range(shortcut_start, len(rendered)))
     assert status.visible is True
     assert status.animating is animating
 
 
-def test_mixed_render_preserves_every_count_and_warning_before_task_labels() -> None:
+def test_mixed_render_preserves_every_count_and_warning() -> None:
     status = BackgroundStatus(
         running=2,
         queued=1,
@@ -233,19 +233,26 @@ def test_mixed_render_preserves_every_count_and_warning_before_task_labels() -> 
         saving=1,
         storage_failed=1,
         delivery_failed=True,
-        labels=("research",),
     )
     assert status.render("⠋").plain == (
         "✗ 9 agents · 2 running · 1 queued · 2 results ready · 1 failed · 1 interrupted"
-        " · 1 saving result · 1 save failed · delivery failed · research · Ctrl+G"
+        " · 1 saving result · 1 save failed · delivery failed · Ctrl+G"
     )
-    assert status.render("⠋").style == Color.WARNING
+    rendered = status.render("⠋")
+    console = Console()
+    assert (
+        rendered.get_style_at_offset(console, rendered.plain.index("9 agents")).color
+        == console.get_style(Color.WARNING).color
+    )
 
 
-def test_compact_render_omits_task_labels_but_not_count_or_shortcut() -> None:
-    status = BackgroundStatus(running=2, labels=("task one", "task two"))
-    assert status.render("⠋", compact=True).plain == "⠋ 2 background agents · Ctrl+G"
-    assert status.render("⠋").plain == "⠋ 2 background agents · task one, task two · Ctrl+G"
+def test_active_render_matches_foreground_label_styling_with_an_accent_glyph() -> None:
+    rendered = BackgroundStatus(running=2).render("⠋")
+    assert rendered.plain == "⠋ 2 background agents · Ctrl+G"
+    console = Console()
+    assert rendered.get_style_at_offset(console, 0).color == console.get_style(Color.ACCENT).color
+    label_start = rendered.plain.index("2 background agents")
+    assert rendered.get_style_at_offset(console, label_start).color is None
 
 
 def test_empty_status_has_no_strip() -> None:
@@ -256,8 +263,8 @@ def test_empty_status_has_no_strip() -> None:
 @pytest.mark.parametrize(
     "status",
     [
-        BackgroundStatus(running=12, queued=3, labels=("界" * 12, "e\u0301" * 12)),
-        BackgroundStatus(failed=2, storage_failed=1, delivery_failed=True, labels=("[red]task[/red]",)),
+        BackgroundStatus(running=12, queued=3),
+        BackgroundStatus(failed=2, storage_failed=1, delivery_failed=True),
     ],
 )
 def test_render_stays_single_line_and_within_available_terminal_cells(width: int, status: BackgroundStatus) -> None:
@@ -271,54 +278,38 @@ def test_render_stays_single_line_and_within_available_terminal_cells(width: int
         assert "Ctrl+G" in rendered.plain
 
 
-def test_width_budget_uses_unicode_cells_not_python_string_length() -> None:
-    status = BackgroundStatus.from_rows([row(label="界" * 10)], set())
-    assert status.render("⠋", width=45).plain == "⠋ 1 background agent · Ctrl+G"
-    wide = status.render("⠋", width=64)
-    assert wide.plain == "⠋ 1 background agent · " + "界" * 10 + " · Ctrl+G"
-    assert wide.cell_len > len(wide.plain)
-    assert wide.cell_len <= 64
-
-
-def test_labels_are_single_line_literal_text_not_rich_markup() -> None:
-    status = BackgroundStatus.from_rows([row(label="  [red]界[/red]\n\t e\u0301\r  ")], set())
-    assert status.labels == ("[red]界[/red] e\u0301",)
-    rendered = status.render("⠋")
-    assert rendered.plain == "⠋ 1 background agent · [red]界[/red] e\u0301 · Ctrl+G"
-    assert rendered.style == Color.ACCENT
-    assert all(span.style == "dim" for span in rendered.spans)
-
-
-def test_long_unicode_labels_are_bounded_before_rendering() -> None:
-    status = BackgroundStatus.from_rows([row(label="界" * 100)], set())
-    assert len(status.labels) == 1
-    assert Text(status.labels[0]).cell_len <= 28
-    assert status.labels[0].endswith("…")
-    assert status.render("⠋", width=60).cell_len <= 60
+@pytest.mark.parametrize("label", ["short task", "界" * 100, "  [red]界[/red]\n\t e\u0301\r  "])
+def test_task_labels_cannot_change_content_or_width_even_on_wide_terminals(label: str) -> None:
+    status = BackgroundStatus.from_rows([row(label=label)], set())
+    expected = "⠋ 1 background agent · Ctrl+G"
+    assert status == BackgroundStatus(running=1)
+    assert status.render("⠋", width=120).plain == expected
+    assert status.render("⠋", width=60).plain == expected
+    assert status.render("⠋", width=30).plain == expected
 
 
 @pytest.mark.parametrize(
     ("status", "width", "expected"),
     [
         (
-            BackgroundStatus(running=12, labels=("a long task label",)),
+            BackgroundStatus(running=12),
             33,
             "⠋ 12 background agents · Ctrl+G",
         ),
-        (BackgroundStatus(running=12, labels=("a long task label",)), 23, "⠋ 12 agents · Ctrl+G"),
+        (BackgroundStatus(running=12), 23, "⠋ 12 agents · Ctrl+G"),
         (BackgroundStatus(running=12), 13, "12 · Ctrl+G"),
         (
-            BackgroundStatus(running=8, failed=2, labels=("task label",)),
+            BackgroundStatus(running=8, failed=2),
             27,
             "✗ 2 failed · Ctrl+G",
         ),
         (
-            BackgroundStatus(running=8, delivery_failed=True, labels=("task label",)),
+            BackgroundStatus(running=8, delivery_failed=True),
             29,
             "✗ delivery failed · Ctrl+G",
         ),
         (
-            BackgroundStatus(running=8, storage_failed=1, labels=("task label",)),
+            BackgroundStatus(running=8, storage_failed=1),
             27,
             "✗ 1 save failed · Ctrl+G",
         ),

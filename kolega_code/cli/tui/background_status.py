@@ -20,7 +20,6 @@ class BackgroundStatus:
     interrupted: int = 0
     saving: int = 0
     storage_failed: int = 0
-    labels: tuple[str, ...] = ()
     delivery_failed: bool = False
 
     @classmethod
@@ -28,7 +27,6 @@ class BackgroundStatus:
         cls, rows: list[dict[str, Any]], acknowledged: set[str], *, delivery_failed: bool = False
     ) -> BackgroundStatus:
         counts = dict.fromkeys(("running", "queued", "ready", "failed", "interrupted", "saving", "storage_failed"), 0)
-        labels: list[str] = []
         for row in rows:
             if row["archived"]:
                 continue
@@ -46,11 +44,7 @@ class BackgroundStatus:
             else:
                 continue
             counts[kind] += 1
-            label = Text(" ".join((row["label"] or row["agent_type"]).split()))
-            label.truncate(28, overflow="ellipsis")
-            if label.plain:
-                labels.append(label.plain)
-        return cls(**counts, labels=tuple(labels[:2]), delivery_failed=delivery_failed)
+        return cls(**counts, delivery_failed=delivery_failed)
 
     @property
     def visible(self) -> bool:
@@ -66,8 +60,8 @@ class BackgroundStatus:
             self.running + self.queued + self.ready + self.failed + self.interrupted + self.saving + self.storage_failed
         )
 
-    def render(self, frame: str, *, width: int | None = None, compact: bool = False) -> Text:
-        """Keep counts and the inspector shortcut before optional task labels."""
+    def render(self, frame: str, *, width: int | None = None) -> Text:
+        """Show counts, state, and the inspector shortcut; task details live in the inspector."""
         if not self.visible or (width is not None and width <= 0):
             return Text()
         warning = self.failed or self.interrupted or self.storage_failed or self.delivery_failed
@@ -104,19 +98,19 @@ class BackgroundStatus:
         short = f"{self.total} {noun}"
         if warning:
             short = " · ".join(part for part in parts if any(word in part for word in ("failed", "interrupted")))
-        candidates = []
-        if not compact and self.labels:
-            candidates.append(f"{summary} · {', '.join(self.labels)}")
-        candidates.extend((summary, short, f"{self.total} {noun}"))
-        for candidate in candidates:
-            text = Text(f"{glyph} ", style=color)
-            text.append(candidate)
+        label_style = Color.WARNING if warning else ""
+        for candidate in (summary, short, f"{self.total} {noun}"):
+            text = Text()
+            text.append(f"{glyph} ", style=color)
+            text.append(candidate, style=label_style)
             text.append(" · Ctrl+G", style="dim")
             if width is None or text.cell_len <= width:
                 return text
-        text = Text(f"{self.total} {noun} · Ctrl+G", style=color)
+        text = Text(f"{self.total} {noun}", style=label_style)
+        text.append(" · Ctrl+G", style="dim")
         if width is not None:
             if text.cell_len > width:
-                text = Text(f"{self.total} · Ctrl+G", style=color)
+                text = Text(str(self.total), style=label_style)
+                text.append(" · Ctrl+G", style="dim")
             text.truncate(width, overflow="ellipsis")
         return text

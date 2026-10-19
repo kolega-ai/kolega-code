@@ -158,17 +158,25 @@ choice; the full editor remains available for every advanced setting.
   right now, and a tail of its latest output. Press `Ctrl+G` (or click the card) to
   open the full [sub-agent inspector](#sub-agent-inspector).
 - **Background agents** — a persistent, clickable indicator above the composer
-  keeps their count and status visible even after the main turn finishes or you
+  stays anchored on the right, including when the main turn finishes or you
   scroll away from their cards. It distinguishes running and queued work,
   results awaiting delivery, and result-saving or delivery errors. Click the
   background text or press `Ctrl+G` to inspect; while the main agent is working,
   its activity, elapsed time, and interrupt hint remain alongside the indicator
-  when space permits. Narrow terminals prioritize counts and the inspector
-  shortcut over task labels. An idle background-only indicator never offers
+  when space permits. It uses the same activity styling and theme-aware shimmer
+  as the foreground status, without hyperlink underlining. Only counts, states,
+  and the inspector shortcut appear here; task descriptions live in the inspector.
+  Narrow terminals prioritize counts and the inspector shortcut.
+  An idle background-only indicator never offers
   `Esc` to interrupt a nonexistent foreground turn.
   Successful results leave the indicator once delivered; failures and interrupted
   jobs remain until their selected result is shown in the inspector. Automatic
   result continuations do not close an inspector you are reading.
+  Delivered reports appear as collapsed result rows rather than expanded text
+  dumps. Click a row (or focus it and press `Enter`) to read its full report;
+  `Ctrl+G` still opens the inspector. Reports stay collapsed when restoring a
+  session, including archived reports from a previous workspace. This changes
+  only the display: the main agent still receives the complete result.
   `TEXTUAL_ANIMATIONS=none` keeps the background indicator static.
 - **Option lists** — when the agent asks you to choose between options (including
   plan decisions and tool approvals), they render as a **vertical,

@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import Mock
 
 import pytest
+from rich.color import ColorSystem
 from rich.text import Text
+from textual.geometry import Region
 from textual.screen import ModalScreen
 from textual.widgets import Static
 from textual.widgets._footer import FooterKey
 
+from kolega_code.cli.theme import Color
 from kolega_code.cli.tui.shortcut_bar import ContextFooter
 from kolega_code.cli.tui.state import ConversationEntry, TurnState
 from kolega_code.cli.tui.widgets import ChatComposer
@@ -39,6 +42,192 @@ async def _start_job(manager: BackgroundAgentManager, job_id: str, gate: asyncio
 
     await manager.submit(job_id, child, agent_type="investigation", task=f"Investigate {job_id}")
     await asyncio.wait_for(started.wait(), 3)
+
+
+@pytest.mark.parametrize("width", [32, 60, 120])
+async def test_background_indicator_stays_right_anchored_across_foreground_turns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, width: int
+) -> None:
+    app, _, _ = _build_background_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(width, 30)) as pilot:
+        app._set_sidebar_visible(False)
+        manager = app._background_jobs
+        assert isinstance(manager, BackgroundAgentManager)
+        await _start_job(manager, "anchored", asyncio.Event())
+        await _wait_for(
+            pilot,
+            lambda: app._turn_status.content_size.width == width - 2 and "Ctrl+G" in _plain(app),
+            description="background indicator layout",
+        )
+        strip = app._turn_status
+        content_width = strip.content_size.width
+
+        def indicator_position() -> tuple[int, int]:
+            text = Text.from_markup(app._turn_status_content(width=content_width))
+            start = next(i for i in range(len(text)) if text.get_style_at_offset(app.console, i).meta.get("@click"))
+            return text[:start].cell_len, text.cell_len
+
+        idle = indicator_position()
+        assert idle[1] == content_width
+        for label in ("Working", "A much longer foreground label with 測試 and e\u0301"):
+            app._begin_turn_progress(label)
+            assert indicator_position() == idle
+            app._finish_turn_progress("Finished", TurnState.IDLE)
+            assert indicator_position() == idle
+            assert "Esc" not in _plain(app)
+            assert "Done in" not in _plain(app)
+
+
+async def test_background_indicator_never_shows_task_slugs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app, _, _ = _build_background_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(200, 30)) as pilot:
+        app._set_sidebar_visible(False)
+        manager = app._background_jobs
+        assert isinstance(manager, BackgroundAgentManager)
+        await _start_job(manager, "task-slug-must-stay-in-inspector", asyncio.Event())
+        await _wait_for(pilot, lambda: "1 background agent" in _plain(app), description="background indicator")
+        for foreground in (False, True, False):
+            if foreground:
+                app._begin_turn_progress("Working")
+            else:
+                app._finish_turn_progress("Finished", TurnState.IDLE)
+            assert "Investigate" not in _plain(app)
+            assert "task-slug" not in _plain(app)
+            assert "1 background agent" in _plain(app)
+            assert "Ctrl+G" in _plain(app)
+
+
+@pytest.mark.parametrize("theme_name", ["kolega-dark", "textual-light"])
+@pytest.mark.parametrize("failed", [False, True])
+async def test_background_indicator_is_not_underlined_even_on_hover(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, theme_name: str, failed: bool
+) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    app, _, _ = _build_background_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        app.theme = theme_name
+        app.animation_level = "none"
+        monkeypatch.setattr(app.console, "_color_system", ColorSystem.TRUECOLOR)
+        monkeypatch.setattr(app.console, "no_color", False)
+        manager = app._background_jobs
+        assert isinstance(manager, BackgroundAgentManager)
+        if failed:
+            app._background_paused = True
+
+            async def fail() -> str:
+                raise RuntimeError("Inspect the retained warning")
+
+            await manager.submit("activity-style", fail, agent_type="investigation", task="Warning style")
+            await manager.wait()
+        else:
+            await _start_job(manager, "activity-style", asyncio.Event())
+        await _wait_for(
+            pilot,
+            lambda: "Ctrl+G" in _plain(app) and app._turn_status.content_size.height == 1,
+            description="styled background indicator",
+        )
+        strip = app._turn_status
+        text = Text.from_markup(app._turn_status_content(width=strip.content_size.width))
+        start = next(i for i in range(len(text)) if text.get_style_at_offset(app.console, i).meta.get("@click"))
+        for hover in (False, True):
+            if hover:
+                await pilot.hover(strip, offset=(start + 2, 0))
+            painted = asyncio.Event()
+            strip.call_after_refresh(painted.set)
+            await asyncio.wait_for(painted.wait(), 6)
+            segments = [
+                segment
+                for line in strip.render_lines(Region(0, 0, strip.size.width, 1))
+                for segment in line
+                if segment.style and segment.style.meta.get("@click")
+            ]
+            assert segments, "The background indicator must remain a real click target."
+            assert all(segment.style is not None and not segment.style.underline for segment in segments)
+            expected = app.console.get_style(Color.WARNING if failed else Color.ACCENT).color
+            actual = segments[0].style.color if segments[0].style is not None else None
+            assert actual is not None and expected is not None
+            assert actual.get_truecolor(app.ansi_theme) == expected.get_truecolor(app.ansi_theme)
+
+
+async def test_background_activity_shimmers_without_moving_or_animating_the_shortcut(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, _, _ = _build_background_app(tmp_path, monkeypatch)
+    now = 100.0
+    monkeypatch.setattr(app, "_now", lambda: now)
+    async with app.run_test(size=(120, 30)) as pilot:
+        monkeypatch.setattr(app.console, "_color_system", ColorSystem.TRUECOLOR)
+        monkeypatch.setattr(app.console, "no_color", False)
+        app.animation_level = "full"
+        manager = app._background_jobs
+        assert isinstance(manager, BackgroundAgentManager)
+        await _start_job(manager, "shimmer", asyncio.Event())
+        await _wait_for(pilot, lambda: "1 background agent" in _plain(app), description="animated background activity")
+        app._spinner_frame = 3
+        app._refresh_turn_status_strip()
+        first = Text.from_markup(app._turn_status_content(width=100))
+        now += 0.4
+        app._refresh_turn_status_strip()
+        second = Text.from_markup(app._turn_status_content(width=100))
+        assert first.plain == second.plain
+        start = next(i for i in range(len(first)) if first.get_style_at_offset(app.console, i).meta.get("@click"))
+        label_start = first.plain.index("1 background agent")
+        end = first.plain.index(" · Ctrl+G")
+        assert [first.get_style_at_offset(app.console, i).color for i in range(label_start, end)] != [
+            second.get_style_at_offset(app.console, i).color for i in range(label_start, end)
+        ]
+        assert first[start:label_start] == second[start:label_start]
+        assert all(
+            first.get_style_at_offset(app.console, i) == second.get_style_at_offset(app.console, i)
+            for i in range(end, len(first))
+        )
+        app._begin_turn_progress("Working")
+        active = Text.from_markup(app._turn_status_content(width=100))
+        assert active[start:] == second[start:]
+        app._finish_turn_progress("Finished", TurnState.IDLE)
+        assert Text.from_markup(app._turn_status_content(width=100))[start:] == second[start:]
+
+
+@pytest.mark.parametrize(
+    ("color_system", "no_color", "animation_level"),
+    [
+        (ColorSystem.EIGHT_BIT, False, "full"),
+        (ColorSystem.STANDARD, False, "full"),
+        (None, False, "full"),
+        (ColorSystem.TRUECOLOR, True, "full"),
+        (ColorSystem.TRUECOLOR, False, "basic"),
+        (ColorSystem.TRUECOLOR, False, "none"),
+    ],
+)
+async def test_background_shimmer_respects_color_and_animation_fallbacks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    color_system: ColorSystem | None,
+    no_color: bool,
+    animation_level: Literal["none", "basic", "full"],
+) -> None:
+    app, _, _ = _build_background_app(tmp_path, monkeypatch)
+    now = 100.0
+    monkeypatch.setattr(app, "_now", lambda: now)
+    async with app.run_test(size=(100, 30)) as pilot:
+        monkeypatch.setattr(app.console, "_color_system", color_system)
+        monkeypatch.setattr(app.console, "no_color", no_color)
+        app.animation_level = animation_level
+        manager = app._background_jobs
+        assert isinstance(manager, BackgroundAgentManager)
+        await _start_job(manager, "flat", asyncio.Event())
+        await _wait_for(pilot, lambda: "1 background agent" in _plain(app), description="flat background activity")
+        app._spinner_frame = 3
+        app._refresh_turn_status_strip()
+        first = Text.from_markup(app._turn_status_content(width=90))
+        now += 0.4
+        app._refresh_turn_status_strip()
+        assert Text.from_markup(app._turn_status_content(width=90)) == first
+        start = next(i for i in range(len(first)) if first.get_style_at_offset(app.console, i).meta.get("@click"))
+        app._begin_turn_progress("Working")
+        assert Text.from_markup(app._turn_status_content(width=90))[start:] == first[start:]
+        app._finish_turn_progress("Finished", TurnState.IDLE)
+        assert Text.from_markup(app._turn_status_content(width=90))[start:] == first[start:]
 
 
 async def test_idle_strip_survives_parent_turns_scroll_and_preserves_draft(
@@ -235,9 +424,15 @@ async def test_narrow_unicode_strip_remains_single_line_and_keeps_shortcut_when_
 async def test_idle_timer_is_cached_no_reflow_and_honors_reduced_motion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
     app, _, _ = _build_background_app(tmp_path, monkeypatch)
+    now = 100.0
+    monkeypatch.setattr(app, "_now", lambda: now)
     gate = asyncio.Event()
     async with app.run_test(size=(100, 30)) as pilot:
+        monkeypatch.setattr(app.console, "_color_system", ColorSystem.TRUECOLOR)
+        monkeypatch.setattr(app.console, "no_color", False)
+        app.animation_level = "full"
         manager = app._background_jobs
         assert isinstance(manager, BackgroundAgentManager)
         await _start_job(manager, "cached", gate)
@@ -246,12 +441,16 @@ async def test_idle_timer_is_cached_no_reflow_and_honors_reduced_motion(
         await _wait_for(
             pilot, lambda: strip.region.height == 1 and strip.content_size.width > 0, description="strip layout"
         )
+        app._refresh_turn_status_strip()
         snapshot = Mock(wraps=manager.status_snapshot)
         update = Mock(wraps=strip.update)
         monkeypatch.setattr(manager, "status_snapshot", snapshot)
         monkeypatch.setattr(strip, "update", update)
         before = (strip.region, app.query_one(ChatComposer).region)
+        app._refresh_turn_status_strip()
+        assert update.call_count == 0
         for _ in range(5):
+            now += 0.4
             app._refresh_turn_status_strip()
         assert snapshot.call_count == 0
         assert update.call_count > 0

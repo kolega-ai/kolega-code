@@ -84,6 +84,16 @@ class TurnStatus(Static):
 
     agents_available: bool = False
 
+    @property
+    def link_style(self) -> Style:
+        """Keep clickable activity text in its semantic colors, not hyperlink styling."""
+        return Style(underline=False)
+
+    @property
+    def link_style_hover(self) -> Style:
+        """Give the inspector affordance a quiet hover without flattening its shimmer."""
+        return Style(bold=True, underline=False)
+
     def on_resize(self) -> None:
         # Foreground animation already reformats on its own timer. Only the
         # cached background strip needs a repaint when static content resizes.

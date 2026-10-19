@@ -9,14 +9,17 @@ from typing import Any, ClassVar, cast
 from unittest.mock import MagicMock
 
 import pytest
+from rich.text import Text
+from textual.widgets import Collapsible
+from textual.widgets._collapsible import CollapsibleTitle
 from textual.worker import WorkerCancelled
 
 from kolega_code.cli.config import config_summary
 from kolega_code.cli import messages
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.tui import agent_runtime as agent_runtime_module
-from kolega_code.cli.tui.state import TurnState
-from kolega_code.cli.tui.widgets import ChatComposer
+from kolega_code.cli.tui.state import ConversationEntry, TurnState
+from kolega_code.cli.tui.widgets import ChatComposer, ConversationEntryWidget, ToolEntryWidget
 from kolega_code.events import AgentEvent
 from kolega_code.llm.models import Message, TextBlock
 from kolega_code.session.background import BackgroundAgentManager
@@ -193,6 +196,100 @@ def _record_turn(recorder: Any, user_text: str) -> None:
     recorder.finish_turn("completed")
 
 
+async def _completion_widget(app: Any, pilot: Any, entry: ConversationEntry) -> ToolEntryWidget:
+    await _wait_for(
+        pilot,
+        lambda: entry.entry_id in app._entry_widgets and bool(app._entry_widgets[entry.entry_id].query(".tool-body")),
+        description="collapsed background report to mount",
+    )
+    widget = app._entry_widgets[entry.entry_id]
+    assert isinstance(widget, ToolEntryWidget)
+    return widget
+
+
+@pytest.mark.parametrize("source", ["live", "restored"])
+@pytest.mark.parametrize("status", ["completed", "failed", "cancelled", "interrupted"])
+@pytest.mark.asyncio
+async def test_background_reports_start_collapsed_and_expand_on_demand(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source: str,
+    status: str,
+) -> None:
+    app, _, _ = _build_background_app(tmp_path, monkeypatch)
+    # Include markup-like text and enough output to expose an accidental dump.
+    report = "[bold]literal report[/bold]\n" + "\n".join(f"Report detail {i}" for i in range(100))
+    completion = {
+        "job_id": "job-report",
+        "completion_id": "completion-report",
+        "agent_type": "investigation",
+        "status": status,
+        "result": report,
+    }
+    async with app.run_test(size=(120, 40)) as pilot:
+        app._set_sidebar_visible(False)
+        if source == "live":
+            app._background_completion_delivered(completion)
+        else:
+            message = Message(
+                role="user", content=[TextBlock(BackgroundAgentManager._completion_text(completion))]
+            ).to_dict()
+            app._restore_conversation_history([message, message])
+
+        entries = [
+            entry
+            for entry in app.conversation_entries
+            if entry.origin == {"kind": "subagent_completion", "job_id": "job-report"}
+        ]
+        assert len(entries) == 1
+        entry = entries[0]
+        # Presentation must not truncate or rewrite the retained report.
+        assert entry.content.endswith("\n\n" + report)
+        await _wait_for(pilot, lambda: entry.entry_id in app._entry_widgets, description="background completion row")
+        widget = app._entry_widgets.get(entry.entry_id)
+        assert isinstance(widget, ToolEntryWidget)
+        widget = await _completion_widget(app, pilot, entry)
+        disclosure = widget.query_one(Collapsible)
+        title = widget.query_one(CollapsibleTitle)
+        assert disclosure.collapsed is True
+        assert f"Background investigation {status}" in Text.from_markup(disclosure.title).plain
+        assert "job-report" not in disclosure.title
+        assert "Report detail" not in disclosure.title
+        # Tool rows have one blank separator beneath their single-line title.
+        await _wait_for(pilot, lambda: widget.region.height == 2, description="single-line background result")
+
+        title.focus()
+        await pilot.press("enter")
+        await _wait_for(pilot, lambda: not disclosure.collapsed, description="explicit report expansion")
+        assert widget._body is not None
+        assert str(widget._body.render()) == entry.content
+        await _wait_for(pilot, lambda: widget.region.height > 10, description="full report layout")
+
+        # Resize/refresh must not undo the explicit disclosure choice.
+        await pilot.resize_terminal(45, 40)
+        widget.refresh_content()
+        assert disclosure.collapsed is False
+        title.focus()
+        await pilot.press("enter")
+        await _wait_for(
+            pilot, lambda: disclosure.collapsed and widget.region.height <= 3, description="report folded again"
+        )
+        assert entry.content.endswith("\n\n" + report)
+
+
+@pytest.mark.asyncio
+async def test_ordinary_system_notes_are_not_background_disclosures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, _, _ = _build_background_app(tmp_path, monkeypatch)
+    async with app.run_test():
+        entry = ConversationEntry(
+            kind="system", content="Background investigation completed (not-a-job):\n\nAn ordinary note."
+        )
+        assert type(app._make_entry_widget(entry)) is ConversationEntryWidget
+
+
 @pytest.mark.asyncio
 async def test_idle_background_completion_is_inserted_and_continues_once(
     tmp_path: Path,
@@ -233,6 +330,8 @@ async def test_idle_background_completion_is_inserted_and_continues_once(
         assert len(completion_entries) == 1
         assert "Background investigation completed (job-idle):" in completion_entries[0].content
         assert "idle child report" in completion_entries[0].content
+        widget = await _completion_widget(app, pilot, completion_entries[0])
+        assert widget.query_one(Collapsible).collapsed is True
 
 
 @pytest.mark.asyncio
@@ -734,6 +833,11 @@ async def test_workspace_activation_retires_old_jobs_without_late_delivery_into_
             for entry in app.conversation_entries
             if entry.origin == {"kind": "subagent_completion", "job_id": "job-workspace"}
         ] == [original_report]
+        archived_entry = next(
+            entry for entry in app.conversation_entries if (entry.origin or {}).get("job_id") == "job-workspace"
+        )
+        widget = await _completion_widget(app, pilot, archived_entry)
+        assert widget.query_one(Collapsible).collapsed is True
 
     from kolega_code.cli.app import KolegaCodeApp
 
@@ -756,6 +860,16 @@ async def test_workspace_activation_retires_old_jobs_without_late_delivery_into_
             if entry.origin == {"kind": "subagent_completion", "job_id": "job-workspace"}
         ] == [original_report]
         assert resumed_agent.continuations == 0
+        archived_entry = next(
+            entry for entry in resumed.conversation_entries if (entry.origin or {}).get("job_id") == "job-workspace"
+        )
+        widget = await _completion_widget(resumed, pilot, archived_entry)
+        disclosure = widget.query_one(Collapsible)
+        assert disclosure.collapsed is True
+        disclosure.collapsed = False
+        await _wait_for(pilot, lambda: widget.region.height > 2, description="archived report expansion")
+        assert widget._body is not None
+        assert str(widget._body.render()) == original_report
 
 
 @pytest.mark.parametrize("boundary", ["close", "archive", "cleanup"])
