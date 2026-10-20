@@ -126,6 +126,28 @@ def key_widget(footer: ContextFooter, key: str) -> FooterKey:
     return next(widget for widget in footer.query(FooterKey) if widget.key == key)
 
 
+def _footer_key_clickable(footer: ContextFooter, key: str) -> bool:
+    try:
+        widget = key_widget(footer, key)
+    except StopIteration:
+        return False
+    return widget.is_attached and widget.region.width > 0 and widget.region.height > 0
+
+
+async def click_footer_key(pilot: Pilot, footer: ContextFooter, key: str) -> None:
+    """Click a footer key once its post-recompose layout exists, and never miss.
+
+    ``ContextFooter.refresh_context`` coalesces into ``call_next`` and remounts
+    the keys, so until the next layout pass a queried ``FooterKey`` is either
+    absent (``StopIteration``) or has an empty region. ``labels()`` matches as
+    soon as the widgets mount, so clicking straight after a labels wait can
+    target a zero-width widget: ``Pilot.click`` then computes the screen origin
+    and silently returns ``False``, failing the test later on the wrong assert.
+    """
+    await wait_for(pilot, lambda: _footer_key_clickable(footer, key))
+    assert await pilot.click(key_widget(footer, key)), f"footer click for {key!r} did not land"
+
+
 async def test_idle_hints_and_real_click_dispatch() -> None:
     app = ShortcutApp()
     async with app.run_test(size=(120, 30)) as pilot:
@@ -135,15 +157,15 @@ async def test_idle_hints_and_real_click_dispatch() -> None:
         assert isinstance(footer, Footer)
         composer.load_text("draft")
         composer.move_cursor((0, 5))
-        await pilot.click(key_widget(footer, "shift+enter"))
+        await click_footer_key(pilot, footer, "shift+enter")
         await wait_for(pilot, lambda: composer.text == "draft\n")
-        await pilot.click(key_widget(footer, "enter"))
+        await click_footer_key(pilot, footer, "enter")
         await wait_for(pilot, lambda: app.submissions == ["draft\n"])
-        await pilot.click(key_widget(footer, "shift+tab"))
-        await pilot.click(key_widget(footer, "ctrl+o"))
+        await click_footer_key(pilot, footer, "shift+tab")
+        await click_footer_key(pilot, footer, "ctrl+o")
         await wait_for(pilot, lambda: app.calls == ["mode", "sidebar"])
         composer.load_text("")
-        await pilot.click(key_widget(footer, "/"))
+        await click_footer_key(pilot, footer, "/")
         await wait_for(pilot, lambda: composer.text == "/")
         assert app.screen.focused is composer
 
@@ -156,7 +178,7 @@ async def test_working_context_accepts_either_busy_signal(busy_source: str) -> N
         setattr(app, busy_source, True if busy_source == "_turn_active" else object())
         footer.refresh_context()
         await wait_for(pilot, lambda: labels(footer) == ["queue", "newline", "sidebar", "agents"])
-        await pilot.click(key_widget(footer, "ctrl+g"))
+        await click_footer_key(pilot, footer, "ctrl+g")
         await wait_for(pilot, lambda: app.calls == ["agents"])
         setattr(app, busy_source, False if busy_source == "_turn_active" else None)
         footer.refresh_context()
@@ -175,14 +197,14 @@ async def test_question_list_and_text_hints_follow_focus_not_pending_flags() -> 
         actions.highlighted = 0
         app.screen.set_focus(actions)
         await wait_for(pilot, lambda: labels(footer) == ["choose", "select", "sidebar"])
-        await pilot.click(key_widget(footer, "down"))
+        await click_footer_key(pilot, footer, "down")
         await wait_for(pilot, lambda: actions.highlighted == 1)
-        await pilot.click(key_widget(footer, "enter"))
+        await click_footer_key(pilot, footer, "enter")
         await wait_for(pilot, lambda: app.selections == [1])
         app.screen.set_focus(composer)
         await wait_for(pilot, lambda: labels(footer) == ["answer", "newline", "sidebar"])
         composer.load_text("custom answer")
-        await pilot.click(key_widget(footer, "enter"))
+        await click_footer_key(pilot, footer, "enter")
         await wait_for(pilot, lambda: app.submissions == ["custom answer"])
         app.screen.set_focus(app.query_one(Input))
         await wait_for(pilot, lambda: labels(footer) == ["sidebar"])
@@ -201,9 +223,9 @@ async def test_completion_precedes_question_and_dismiss_click_is_not_cancel() ->
         dropdown.display = True
         footer.refresh_context()
         await wait_for(pilot, lambda: labels(footer) == ["choose", "select", "dismiss", "sidebar"])
-        await pilot.click(key_widget(footer, "down"))
+        await click_footer_key(pilot, footer, "down")
         await wait_for(pilot, lambda: dropdown.highlighted == 1)
-        await pilot.click(key_widget(footer, "escape"))
+        await click_footer_key(pilot, footer, "escape")
         await wait_for(pilot, lambda: not dropdown.display)
         footer.refresh_context()  # Parent's dropdown change hook.
         await wait_for(pilot, lambda: labels(footer) == ["answer", "newline", "sidebar"])
@@ -276,7 +298,7 @@ async def test_help_click_lists_fallbacks_and_restores_draft_focus_and_selection
         composer.move_cursor((1, 3))
         selection = composer.selection
         await wait_for(pilot, lambda: any(key.key == "f1" for key in footer.query(FooterKey)))
-        await pilot.click(key_widget(footer, "f1"))
+        await click_footer_key(pilot, footer, "f1")
         await wait_for(pilot, lambda: isinstance(app.screen, ShortcutHelpScreen))
         help_screen = app.screen
         assert isinstance(help_screen, ShortcutHelpScreen)
@@ -343,7 +365,7 @@ async def test_completion_select_uses_real_composer_handler(selection_key: str) 
         footer.refresh_context()
         await wait_for(pilot, lambda: "select" in labels(footer))
         if selection_key == "click":
-            await pilot.click(key_widget(footer, "enter"))
+            await click_footer_key(pilot, footer, "enter")
         else:
             await pilot.press("tab")
         await wait_for(pilot, lambda: composer.text == entry.token + " " and not dropdown.display)
