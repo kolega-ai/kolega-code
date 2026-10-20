@@ -4,6 +4,7 @@ from .anthropic import ANTHROPIC_SPECS
 from .mistral import MISTRAL_SPECS
 from .moonshot import MOONSHOT_SPECS
 from .kimi_coding import KIMI_CODING_SPECS
+from .minimax import MINIMAX_SPECS
 from .deepseek import DEEPSEEK_SPECS
 from .openai import OPENAI_SPECS
 from .openai_chatgpt import OPENAI_CHATGPT_SPECS
@@ -35,6 +36,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
     **MISTRAL_SPECS,
     **MOONSHOT_SPECS,
     **KIMI_CODING_SPECS,
+    **MINIMAX_SPECS,
     **DEEPSEEK_SPECS,
     **OPENAI_SPECS,
     **OPENAI_CHATGPT_SPECS,

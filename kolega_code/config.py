@@ -32,6 +32,7 @@ class ModelProvider(str, Enum):
     LLAMA = "llama"
     DASHSCOPE = "dashscope"
     MOONSHOT = "moonshot"
+    MINIMAX = "minimax"  # MiniMax platform (Anthropic-compatible endpoint)
     DEEPSEEK = "deepseek"
     ZAI = "zai"
     KIMI_CODING = "kimi_coding"
@@ -213,6 +214,7 @@ class AgentConfig(BaseModel):
     xai_api_key: Optional[str] = Field(default=None, description="API key for X.ai")
     dashscope_api_key: Optional[str] = Field(default=None, description="API key for Dashscope (Alibaba Model Studio)")
     moonshot_api_key: Optional[str] = Field(default=None, description="API key for Moonshot.ai")
+    minimax_api_key: Optional[str] = Field(default=None, description="API key for MiniMax")
     deepseek_api_key: Optional[str] = Field(default=None, description="API key for DeepSeek")
     zai_api_key: Optional[str] = Field(default=None, description="API key for Z.AI (GLM Coding Plan)")
     kimi_coding_api_key: Optional[str] = Field(default=None, description="API key for Kimi Coding Plan")
@@ -425,6 +427,7 @@ class AgentConfig(BaseModel):
             ModelProvider.XAI: self.xai_api_key,
             ModelProvider.DASHSCOPE: self.dashscope_api_key,
             ModelProvider.MOONSHOT: self.moonshot_api_key,
+            ModelProvider.MINIMAX: self.minimax_api_key,
             ModelProvider.DEEPSEEK: self.deepseek_api_key,
             ModelProvider.ZAI: self.zai_api_key,
             ModelProvider.KIMI_CODING: self.kimi_coding_api_key,

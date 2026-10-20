@@ -180,6 +180,7 @@ Supported model providers:
 - DashScope / Qwen
 - OpenRouter (gateway to 250+ tool-capable models)
 - Moonshot / Kimi
+- MiniMax
 - DeepSeek
 - Z.AI / GLM Coding Plan
 - Kimi Coding Plan

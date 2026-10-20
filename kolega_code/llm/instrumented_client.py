@@ -295,7 +295,7 @@ class InstrumentedLLMClient(LLMClient):
             normalized_usage = None
             if usage_details:
                 provider = usage_details.get("provider", self.provider_name)
-                if provider in ["anthropic", "moonshot", "kimi_coding", "thinking_machines", "tinker"]:
+                if provider in ["anthropic", "moonshot", "minimax", "kimi_coding", "thinking_machines", "tinker"]:
                     normalized_usage = {
                         "input": usage_details.get("input_tokens", 0),
                         "output": usage_details.get("output_tokens", 0),
@@ -568,7 +568,7 @@ class MinimalLangfuseStreamWrapper:
         usage_metadata = message.usage_metadata
         provider = usage_metadata.get("provider", "")
 
-        if provider in ["anthropic", "moonshot", "kimi_coding"]:
+        if provider in ["anthropic", "moonshot", "minimax", "kimi_coding"]:
             return {
                 "input": usage_metadata.get("input_tokens", 0),
                 "output": usage_metadata.get("output_tokens", 0),
