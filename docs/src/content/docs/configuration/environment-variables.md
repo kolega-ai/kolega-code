@@ -48,6 +48,7 @@ provider or model.
 | `XAI_API_KEY` | x.ai |
 | `DASHSCOPE_API_KEY` | DashScope (Alibaba) |
 | `MOONSHOT_API_KEY` | Moonshot |
+| `MINIMAX_API_KEY` | MiniMax |
 | `DEEPSEEK_API_KEY` | DeepSeek |
 | `ZAI_API_KEY` | Z.AI (GLM Coding Plan) |
 | `KIMI_CODING_API_KEY` | Kimi Coding Plan |

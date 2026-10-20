@@ -124,7 +124,7 @@ class LLMClient:
         provider so the caller can raise a clear error.
         """
         p = provider.lower()
-        if p in ("anthropic", "moonshot", "zai", "kimi_coding", "thinking_machines"):
+        if p in ("anthropic", "moonshot", "minimax", "zai", "kimi_coding", "thinking_machines"):
             from .providers.anthropic import AnthropicProvider
 
             return AnthropicProvider
@@ -246,6 +246,12 @@ class LLMClient:
                 "moonshot": "https://api.moonshot.ai/anthropic",
                 "zai": "https://api.z.ai/api/anthropic",
                 "kimi_coding": "https://api.kimi.com/coding",
+                # MiniMax's Anthropic-compatible endpoint (the vendor's recommended
+                # path); the Anthropic SDK appends /v1/messages and
+                # /v1/messages/count_tokens to this base. The China-mainland
+                # platform (api.minimaxi.com) is a separate account system, reachable
+                # through a custom endpoint if needed.
+                "minimax": "https://api.minimax.io/anthropic",
                 "ollama_cloud": "https://ollama.com/v1",
                 "openrouter": "https://openrouter.ai/api/v1",
                 # Responses-compatible; /v1/responses is an accepted alias of /v1/agent.

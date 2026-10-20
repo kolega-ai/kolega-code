@@ -31,6 +31,7 @@ Anthropic-compatible):
 | x.ai (Grok) | `xai` | `XAI_API_KEY` |
 | DashScope (Alibaba) | `dashscope` | `DASHSCOPE_API_KEY` |
 | Moonshot (Kimi) | `moonshot` | `MOONSHOT_API_KEY` |
+| MiniMax | `minimax` | `MINIMAX_API_KEY` |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` |
 | Z.AI (GLM Coding Plan) | `zai` | `ZAI_API_KEY` |
 | Kimi Coding Plan | `kimi_coding` | `KIMI_CODING_API_KEY` |
@@ -156,6 +157,26 @@ IDs use deep thinking with fixed `max` effort. **`kimi-for-coding-highspeed`** (
 Code HighSpeed, Allegretto and higher) is also available. With thinking effort `auto`
 (enabled) the `kimi-for-coding` IDs route to **K2.7 Code**, and with `none` (disabled)
 they route to **K2.6**. Set `KIMI_CODING_API_KEY` to your Kimi Coding Plan key.
+</Aside>
+
+<Aside type="tip">
+**MiniMax.** The `minimax` provider uses MiniMax's Anthropic-compatible endpoint
+(`https://api.minimax.io/anthropic`) with `MINIMAX_API_KEY`, and is distinct from
+the MiniMax models reachable through OpenRouter, Fireworks, or Ollama Cloud. The
+default is **`MiniMax-M3.1-Flash`**, which accepts text and image input with a 1M
+input window and a separate 524,288-token output allowance. It requires adaptive
+thinking, so thinking effort is tunable from `low` through `max` but cannot be
+disabled (`none` returns a 400). **`MiniMax-M3`** shares the same window and
+output ceiling but does not surface reasoning as thinking blocks. The M2
+generation — **`MiniMax-M2.7`**, **`MiniMax-M2.5`**, **`MiniMax-M2.1`**,
+**`MiniMax-M2`** and their `-highspeed` variants — is text-only, always streams
+thinking blocks, and shares one 256K input window with its 196,608-token output
+allowance.
+
+MiniMax runs two account systems: this provider targets the international
+platform (`platform.minimax.io`). Keys from the China-mainland platform
+(`platform.minimaxi.com`) are not interchangeable; to use that endpoint, add it
+as a custom endpoint with the `anthropic` API style.
 </Aside>
 
 <Aside type="tip">
@@ -507,6 +528,7 @@ models in the TUI.
 | Moonshot `kimi-k3` | `max` | `max` |
 | Moonshot `kimi-k2.7-code` | `auto` | `auto` |
 | Moonshot `kimi-k2.6` | `auto`, `none` | `auto` |
+| MiniMax `MiniMax-M3.1-Flash` | `low`, `medium`, `high`, `xhigh`, `max` | `max` |
 | Kimi Coding Plan `k3`, `k3-256k` | `max` | `max` |
 | Kimi Coding Plan `kimi-for-coding`, `kimi-for-coding-highspeed` | `auto`, `none` | `auto` |
 | Z.AI `glm-5.3` | `high`, `max` | `max` |

@@ -30,6 +30,7 @@ from kolega_code.llm.specs import (
 # appear.
 PROVIDER_LABELS: dict[ModelProvider, str] = {
     ModelProvider.MOONSHOT: "Moonshot AI",
+    ModelProvider.MINIMAX: "MiniMax",
     ModelProvider.DEEPSEEK: "DeepSeek AI",
     ModelProvider.ZAI: "Z.AI (GLM Coding Plan)",
     ModelProvider.KIMI_CODING: "Kimi Coding Plan",
@@ -65,6 +66,16 @@ MODEL_LABELS: dict[str, str] = {
     "kimi-k2.7-code": "Kimi K2.7 Code",
     "kimi-k2.7-code-highspeed": "Kimi K2.7 Code (High-Speed)",
     "kimi-k2.6": "Kimi K2.6",
+    # MiniMax (first-party platform, Anthropic-compatible endpoint)
+    "MiniMax-M3.1-Flash": "MiniMax M3.1 Flash",
+    "MiniMax-M3": "MiniMax M3",
+    "MiniMax-M2.7": "MiniMax M2.7",
+    "MiniMax-M2.7-highspeed": "MiniMax M2.7 (High-Speed)",
+    "MiniMax-M2.5": "MiniMax M2.5",
+    "MiniMax-M2.5-highspeed": "MiniMax M2.5 (High-Speed)",
+    "MiniMax-M2.1": "MiniMax M2.1",
+    "MiniMax-M2.1-highspeed": "MiniMax M2.1 (High-Speed)",
+    "MiniMax-M2": "MiniMax M2",
     # Kimi Coding Plan
     "k3": "Kimi K3 (256K)",
     "k3-256k": "Kimi K3-256K",
@@ -191,6 +202,7 @@ MODEL_LABELS: dict[str, str] = {
 # "available set is everything, default pick is curated" split.
 PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     ModelProvider.MOONSHOT: "kimi-k3",
+    ModelProvider.MINIMAX: "MiniMax-M3.1-Flash",
     ModelProvider.DEEPSEEK: "deepseek-flash",
     ModelProvider.ZAI: "glm-5.3",
     ModelProvider.KIMI_CODING: "kimi-for-coding",
