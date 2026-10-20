@@ -377,9 +377,15 @@ async def test_blocked_background_pump_rearms_and_duplicate_starts_do_not_overla
         agent.continue_gate.set()
         await asyncio.wait_for(agent.continued.wait(), 2)
         await wait_for_turn_idle(app, pilot)
-        await pilot.pause(0.05)
+        # Delivery is driven by the 10 ms drain timer or the 0.25 s session-input
+        # interval, so it can land after a fixed pause on a loaded runner. Poll
+        # the mailbox instead of assuming a delivery latency.
+        await _wait_for(
+            pilot,
+            lambda: manager.pending_count == 0,
+            description="the delivered completion to leave the pending mailbox",
+        )
 
-        assert manager.pending_count == 0
         assert agent.continuations == 1
         assert agent.max_active_turns == 1
 
@@ -416,11 +422,14 @@ async def test_explicit_stop_delivers_background_completion_without_restarting_p
 
         app.action_cancel_generation()
         await wait_for_turn_idle(app, pilot)
-        await pilot.pause(0.05)
+        await _wait_for(
+            pilot,
+            lambda: manager.pending_count == 0,
+            description="the cancelled turn's queued completion to be delivered",
+        )
 
         assert agent.messages == ["work"]
         assert agent.continuations == 0
-        assert manager.pending_count == 0
         assert any("stop-path child report" in text for text in agent.appended_user_texts)
         completion_entries = [entry for entry in app.conversation_entries if entry.origin is not None]
         assert any(
