@@ -505,3 +505,19 @@ def _build_mention_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # cached snapshot only (never walks on a keystroke).
     app.file_index.refresh()
     return app
+
+
+async def wait_for_layout(pilot, predicate, *, timeout: float = 6.0) -> None:
+    """Poll until a layout-dependent predicate holds.
+
+    Textual settles regions on a second layout pass, so a single ``pilot.pause()``
+    before a geometry assertion races on loaded runners (and xdist's 12 workers
+    saturate the CPU locally too). Callers pass a predicate over the widgets they
+    are about to assert on.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        await pilot.pause(0.01)
+    raise AssertionError("Timed out waiting for layout to settle")
