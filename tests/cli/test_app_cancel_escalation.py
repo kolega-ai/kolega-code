@@ -77,8 +77,9 @@ async def test_escape_forces_stop_when_the_worker_ignores_cancellation(
         agent = await _start_stuck_turn(app, pilot)
 
         app.action_cancel_generation()
-        await pilot.pause(0.02)
-        # The cooperative stop is painted immediately…
+        # Painted synchronously by the action, before any timer callback can run.
+        # (A pause here raced the 50 ms watchdog on a loaded runner and observed the
+        # already-settled state.)
         assert app._turn_status_text == messages.STOP_REQUESTED
         assert app._turn_started_at is not None
 

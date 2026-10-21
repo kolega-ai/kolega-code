@@ -106,8 +106,8 @@ async def _open_settings(pilot, app, category: str | None = None):
         pilot,
         lambda: (
             isinstance(app.screen, SettingsScreen)
-            and not app.screen._initializing
             and bool(app.screen.query("#close_settings"))
+            and bool(app.screen.query("#settings_categories"))
         ),
     )
     screen = app.screen
