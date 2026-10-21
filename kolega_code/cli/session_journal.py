@@ -283,6 +283,7 @@ class SessionJournal:
         lock: Optional[threading.RLock] = None,
         artifact_reference_dir: Optional[Path] = None,
         cross_process_lock: Optional[BaseFileLock] = None,
+        owns_cross_process_lock: Optional[Callable[[], bool]] = None,
     ) -> None:
         self.session_id = session_id
         self.session_dir = session_dir
@@ -291,6 +292,10 @@ class SessionJournal:
         self.artifact_reference_dir = artifact_reference_dir or self.artifacts_dir
         self._lock = lock or threading.RLock()
         self._cross_process_lock: Optional[BaseFileLock] = cross_process_lock
+        #: True while this process holds the session's cross-process lock for its
+        #: lifetime (TUI/ACP ownership), which makes a per-append tail resync
+        #: pointless: no other writer can have appended since.
+        self._owns_cross_process_lock: Callable[[], bool] = owns_cross_process_lock or (lambda: False)
         self._loaded = False
         self._next_seq = 1
         self._epoch_id: Optional[str] = None
@@ -351,6 +356,12 @@ class SessionJournal:
     ) -> SessionEvent:
         with self._lock:
             if self._cross_process_lock is not None:
+                # A process that owns the session for its lifetime (the TUI, ACP)
+                # cannot race another writer, so the per-event tail resync is pure
+                # overhead on the hot path: two syscalls, a 64 KB read and a JSON
+                # parse, all under both locks. Evaluate before acquiring, because
+                # inside the context the lock is always held.
+                resync = not self._owns_cross_process_lock()
                 try:
                     with self._cross_process_lock:
                         return self._append_locked(
@@ -361,6 +372,7 @@ class SessionJournal:
                             epoch_id=epoch_id,
                             artifacts=artifacts,
                             agent=agent,
+                            resync=resync,
                         )
                 except Timeout as exc:
                     raise SessionJournalError(
@@ -386,10 +398,11 @@ class SessionJournal:
         epoch_id: Optional[str] = None,
         artifacts: Optional[list[dict[str, Any]]] = None,
         agent: Optional[AgentStamp] = None,
+        resync: bool = True,
     ) -> SessionEvent:
         """Allocate and persist one event; callers hold the process lock and, when configured, the cross-process lock."""
         self._ensure_loaded_locked()
-        if self._cross_process_lock is not None:
+        if resync and self._cross_process_lock is not None:
             self._resync_seq_from_tail_locked()
         resolved_epoch = epoch_id or self._epoch_id
         if not resolved_epoch:

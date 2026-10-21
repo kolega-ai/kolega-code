@@ -329,6 +329,10 @@ class SessionStore:
         self._locks_guard = threading.RLock()
         self._locks: dict[str, threading.RLock] = {}
         self._session_locks: dict[str, BaseFileLock] = {}
+        #: Sessions whose cross-process lock this process holds for its lifetime.
+        #: The journal skips its per-append tail resync for these: no other writer
+        #: can have appended, so the resync only costs syscalls under the lock.
+        self._owned_session_locks: set[str] = set()
         self._journals: dict[str, SessionJournal] = {}
         self._recorders: dict[str, SessionRecorder] = {}
 
@@ -532,17 +536,14 @@ class SessionStore:
             except BaseException as exc:
                 # Balance only this claim; don't release an earlier owner in
                 # the same store when validation fails.
-                self._session_lock_for(session_id).release()
+                self._release_owned_session_lock(session_id)
                 if isinstance(exc, (KeyError, TypeError, ValueError)):
                     raise SessionStoreError("The saved session metadata is invalid.") from exc
                 raise
 
     def release_session_lock(self, session_id: str) -> None:
         """Release one fully stopped session without releasing a resume target."""
-        with self._locks_guard:
-            lock = self._session_locks.get(session_id)
-        if lock is not None and lock.is_locked:
-            lock.release(force=True)
+        self._release_owned_session_lock(session_id, force=True)
 
     def journal(self, session_id: str) -> SessionJournal:
         with self._locks_guard:
@@ -553,6 +554,7 @@ class SessionStore:
                     self.session_dir_for(session_id),
                     self._lock_for(session_id),
                     cross_process_lock=self._session_lock_for(session_id),
+                    owns_cross_process_lock=lambda sid=session_id: sid in self._owned_session_locks,
                 )
                 self._journals[session_id] = journal
             return journal
@@ -591,6 +593,27 @@ class SessionStore:
             raise SessionLockedError(
                 f"Session {session_id} is already open in another kolega-code instance; close it there before retrying."
             ) from exc
+        with self._locks_guard:
+            self._owned_session_locks.add(session_id)
+
+    def _release_owned_session_lock(self, session_id: str, *, force: bool = False) -> None:
+        """Release this process's claim, or balance one nested claim.
+
+        ``force=False`` mirrors the historical "balance only this claim" behaviour:
+        a failed nested claim must leave an earlier owner's claim intact. Ownership
+        bookkeeping follows the OS lock, so the session only stops counting as
+        owned once the last claim is gone.
+        """
+        with self._locks_guard:
+            lock = self._session_locks.get(session_id)
+        if lock is not None and lock.is_locked:
+            lock.release(force=True) if force else lock.release()
+            still_held = not force and lock.is_locked
+        else:
+            still_held = False
+        if not still_held:
+            with self._locks_guard:
+                self._owned_session_locks.discard(session_id)
 
     def repair_sequence(self, session_id: str) -> int:
         """Renumber a corrupted journal's events 1..N in file order; returns the event count.
@@ -606,7 +629,7 @@ class SessionStore:
             try:
                 return self.journal(session_id).repair_sequence()
             finally:
-                self._session_lock_for(session_id).release()
+                self._release_owned_session_lock(session_id)
 
     def release_session_locks(self) -> None:
         """Release every cross-process session lock held by this store.
@@ -618,10 +641,9 @@ class SessionStore:
         releases them via ``flock``.
         """
         with self._locks_guard:
-            locks = list(self._session_locks.values())
-        for lock in locks:
-            if lock.is_locked:
-                lock.release(force=True)
+            session_ids = list(self._session_locks)
+        for session_id in session_ids:
+            self._release_owned_session_lock(session_id, force=True)
 
     def start_epoch(self, session_id: str, reason: str) -> str:
         return self.recorder(session_id).start_epoch(reason)

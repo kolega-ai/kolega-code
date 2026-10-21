@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 import traceback
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, TypeVar
@@ -254,7 +254,7 @@ class KolegaCodeApp(
         _journal = store.journal(session.session_id)
         self.recording_connection_manager = RecordingConnectionManager(
             self.connection_manager,
-            FileSessionEventStore(_journal),
+            FileSessionEventStore(_journal, on_stall=self._record_journal_stall),
             session_id=session.session_id,
             artifact_store=FileArtifactStore(_journal),
         )
@@ -313,6 +313,14 @@ class KolegaCodeApp(
         self._extension_bundle = None
         self.agent = None
         self.agent_worker = None
+        #: Stop escalation state: a cancel that cannot land inside the worker
+        #: (parked journal write, shielded finalizer) must still free the UI.
+        self._stop_pending = False
+        self._stop_watchdog = None
+        self._stop_force_after_seconds = tui_constants.STOP_FORCE_AFTER_SECONDS
+        #: Bound on the post-turn history save; a stalled journal write must not
+        #: keep the turn's result (a captured plan) off screen.
+        self._turn_save_timeout_seconds = tui_constants.TURN_SAVE_TIMEOUT_SECONDS
         self.conversation_entries: list[tui_state.ConversationEntry] = []
         self._stream_entries: dict[str, tui_state.ConversationEntry] = {}
         self._tool_entries: dict[str, tui_state.ConversationEntry] = {}
@@ -1207,6 +1215,34 @@ class KolegaCodeApp(
             snapshot = self._session_snapshot_locked()
             await asyncio.to_thread(self.store.save, snapshot)
             self.session.updated_at = snapshot.updated_at
+
+    async def _save_session_with_deadline(self, save: Awaitable[None]) -> bool:
+        """Await a session write, abandoning it when journal I/O stalls.
+
+        Metadata and projection writes are a convenience: the journal already
+        holds canonical history. A write wedged behind the session lock must not
+        hide a finished turn's result (a captured plan) or keep the turn worker
+        alive, so the caller continues and the stall is reported in the log.
+        """
+        try:
+            await asyncio.wait_for(save, timeout=self._turn_save_timeout_seconds)
+            return True
+        except asyncio.TimeoutError:
+            self._log_status(messages.TURN_SAVE_TIMEOUT, "warn")
+            return False
+
+    def _record_journal_stall(self, payload: dict[str, Any]) -> None:
+        """Persist a journal stall/timeout to the session's diagnostics timeline.
+
+        ``kind`` is ``slow`` (a write that finished but took seconds), ``timeout``
+        (the await was abandoned; the thread may still finish) or ``failed`` (the
+        abandoned write raised later). Together with the loop-gap histogram this
+        is what distinguishes "the UI was busy" from "one writer wedged".
+        """
+        diag = getattr(self, "_diag", None)
+        if diag is None:
+            return
+        diag.record("journal_stall", **payload)
 
     async def _save_workspace_switch_async(
         self,
@@ -2593,8 +2629,12 @@ class KolegaCodeApp(
             if worker is not None:
                 worker.cancel()
                 try:
-                    await worker.wait()
-                except (WorkerCancelled, WorkerFailed):
+                    # Bounded: a worker parked in a wait that swallows cancellation
+                    # (a blocked journal write) must not hold the terminal hostage
+                    # on quit. Teardown continues and the process exits; the stuck
+                    # thread dies with it.
+                    await asyncio.wait_for(worker.wait(), timeout=max(1.0, self._stop_force_after_seconds))
+                except (WorkerCancelled, WorkerFailed, asyncio.TimeoutError):
                     pass
             await self._retire_background_jobs()
             if self._watchdog is not None:
@@ -2604,6 +2644,9 @@ class KolegaCodeApp(
             await self.recording_connection_manager.flush()
             # Never leave a port listening on someone's network after they quit.
             await self._stop_share_server()
+            # ``saved`` gates the resume hint/relaunch: it becomes True only after a
+            # successful save (no agent, or the history write completed in time).
+            saved = self.agent is None
             if self.agent is not None:
                 fire = getattr(self.agent, "fire_hook", None)
                 if fire is not None:
@@ -2611,8 +2654,17 @@ class KolegaCodeApp(
                         await fire(HookEvent.SESSION_END, {"reason": "quit"})
                     except Exception:
                         pass
-                await self._save_session_history_async()
-            saved = True
+                try:
+                    # Bounded for the same reason as the worker wait above: a parked
+                    # worker can still hold ``_persistence_lock``, and the canonical
+                    # history is already in the journal, so quit instead of hanging.
+                    await asyncio.wait_for(
+                        self._save_session_history_async(), timeout=max(1.0, self._stop_force_after_seconds)
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                else:
+                    saved = True
         finally:
             # Generation teardown and the sink drain run even when an earlier
             # step raised; the original failure still propagates.
@@ -2751,7 +2803,10 @@ class KolegaCodeApp(
     async def _show_plan_for_decision(self, plan: str, *, notification: str) -> None:
         self._plan_pending = True
         self._plan_decision_active = True
-        await self._save_session_async()
+        # Render before persisting. Everything the user must see is in-memory
+        # state; the save only makes it durable. Doing the write first meant a
+        # stalled journal kept a finished plan off screen entirely (the turn's
+        # last write parked and the card was never created).
         self._refresh_planning_sidebar()
         self._add_conversation_entry(tui_state.ConversationEntry(kind="plan", content=plan, complete=True))
         self._set_plan_actions_visible(True, allow_discuss=True)
@@ -2759,6 +2814,7 @@ class KolegaCodeApp(
         self._set_chat_enabled(False)
         self._refresh_input_area_visibility()
         self._notify_user(notification)
+        await self._save_session_with_deadline(self._save_session_async())
 
     async def _implement_pending_plan(self, *, clear_context: bool = False) -> None:
         plan = self._latest_plan
@@ -3322,7 +3378,7 @@ class KolegaCodeApp(
         journal = self.store.journal(new_record.session_id)
         self.recording_connection_manager = RecordingConnectionManager(
             self.connection_manager,
-            FileSessionEventStore(journal),
+            FileSessionEventStore(journal, on_stall=self._record_journal_stall),
             session_id=new_record.session_id,
             artifact_store=FileArtifactStore(journal),
         )

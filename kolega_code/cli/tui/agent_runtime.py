@@ -285,7 +285,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             if self.agent_worker is not owner:
                 return False
             self._finish_turn_progress(messages.FINISHED, tui_state.TurnState.IDLE)
-            await self._save_session_history_async()
+            # Bounded: the history save rewrites metadata through the journal, and a
+            # write wedged behind the session lock used to leave the turn parked here
+            # forever — the dashboard said "Finished" while the plan card (the next
+            # step) never appeared. The journal is canonical, so a skipped projection
+            # refresh is recoverable; an invisible plan is not.
+            await self._save_session_with_deadline(self._save_session_history_async())
             if self.agent_worker is not owner:
                 return False
             await self._capture_completed_plan()
@@ -334,6 +339,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             if self.agent_worker is owner:
                 self._active_progress_entry = None
                 self._turn_active = False
+                # The worker honored (or outlived) the stop: no escalation is
+                # needed, and the watchdog must not fire during the next turn.
+                self._stop_pending = False
+                self._disarm_stop_watchdog()
                 if not self._exit:
                     self._flush_terminal_output()
                     self._flush_log_output()
@@ -482,6 +491,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             # via the exclusive ``turns`` worker group) and Esc can interrupt the loop.
             if self.agent_worker is owner:
                 self.agent_worker = None
+                # A stop can land outside ``_run_turn_stream``'s finalizer (while a
+                # pending workspace switch applies, or the goal verifier runs), so
+                # the dashboard may still be painted "Stopping…" with a live turn.
+                # Settle it here: this is the last point that owns the turn.
+                if self._stop_pending and self._turn_started_at is not None:
+                    self._force_settle_stop()
                 self._refresh_shortcut_context()
                 self._schedule_maybe_start_queued_message()
 
@@ -937,6 +952,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         finally:
             if self.agent_worker is owner:
                 self.agent_worker = None
+                if self._stop_pending and self._turn_started_at is not None:
+                    self._force_settle_stop()
                 self._refresh_shortcut_context()
                 self._schedule_maybe_start_queued_message()
 
@@ -1498,6 +1515,14 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                     if self.show_logs:
                         self._write_log(text, "info")
                     self._update_activity_progress(text)
+                    if event.content.get("retry"):
+                        # A retry belongs in the transcript, not only in a status line
+                        # that the next stream delta overwrites. Without this the user
+                        # sees one long freeze and cannot tell a flapping connection
+                        # from a slow model.
+                        self._add_conversation_entry(
+                            tui_state.ConversationEntry(kind="system", content=text, complete=True, tone="warning")
+                        )
         elif self.show_logs:
             text = self._display_text_from_event(event)
             if text:
@@ -1520,14 +1545,80 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._cancel_pending_question()
             self._cancel_pending_approval()
             self._restore_queued_messages_to_composer()
+            if self._stop_pending:
+                # Escalation. The worker already had a stop request and has not
+                # finished: a cooperative cancel cannot land because the worker is
+                # parked in a wait that swallows CancelledError (the agent's turn
+                # finalizers wait on journal writes that a cancel cannot abandon).
+                # Repeated cancel() calls would keep repainting "Stopping…" forever,
+                # so detach the worker and settle the dashboard now.
+                self._force_settle_stop()
+                return
+            self._stop_pending = True
             self.agent_worker.cancel()
+            self._arm_stop_watchdog()
             self._notify_user(messages.CANCEL_REQUESTED, severity="warning")
             return
-        # Nothing is running: clear a pending scheduled-loop wakeup, the way Esc
-        # clears any other pending action. With no turn and no loop this stays a
-        # no-op.
+        # Nothing is running: a dashboard still showing a live turn belongs to a
+        # worker that vanished without finalizing (it was detached or crashed
+        # before _finish_turn_progress). Settle it instead of swallowing the key.
+        if self._turn_started_at is not None:
+            self._force_settle_stop()
+            return
+        # Clear a pending scheduled-loop wakeup, the way Esc clears any other
+        # pending action. With no turn and no loop this stays a no-op.
         if self._scheduled_loop is not None and self._scheduled_loop.is_active:
             self._request_loop_stop(messages.LOOP_STOPPED_BY_USER.format(iterations=self._scheduled_loop.iterations))
+
+    def _arm_stop_watchdog(self) -> None:
+        """Settle the dashboard if the worker has not stopped after a grace period."""
+        self._disarm_stop_watchdog()
+        try:
+            self._stop_watchdog = self.set_timer(
+                max(0.0, self._stop_force_after_seconds), self._force_settle_stop, name="stop-watchdog"
+            )
+        except Exception:  # noqa: BLE001 - a timer is an enhancement; Esc still works
+            self._stop_watchdog = None
+
+    def _disarm_stop_watchdog(self) -> None:
+        timer, self._stop_watchdog = self._stop_watchdog, None
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception:  # noqa: BLE001 - already fired or the loop is closing
+                pass
+
+    def _force_settle_stop(self) -> None:
+        """Return the UI to a usable state even when the turn worker will not die.
+
+        The dashboard's only path out of ``STOPPING`` used to be
+        ``_finish_turn_progress`` inside the turn worker, so a worker that cannot
+        honor a cancel left the app stuck on "Stopping…" indefinitely. Detach it:
+        ownership checks make its eventual completion a no-op for the UI, and
+        queued input can run again.
+        """
+        if self._exit:
+            return
+        self._stop_pending = False
+        self._disarm_stop_watchdog()
+        worker, self.agent_worker = self.agent_worker, None
+        if worker is not None:
+            worker.cancel()
+        self._turn_active = False
+        self._finalize_sub_agent_activities()
+        self._finalize_workflow_activities()
+        self._finish_turn_progress(messages.STOPPED_BY_USER, tui_state.TurnState.STOPPED)
+        if self._plan_decision_active:
+            self._set_composer_status(messages.PLAN_READY_PLACEHOLDER)
+            self._set_chat_enabled(False)
+        else:
+            self._set_chat_enabled(self.agent is not None)
+        self._refresh_shortcut_context()
+        self._schedule_primary_focus_restore()
+        self._schedule_maybe_start_queued_message()
+        if worker is not None:
+            self._log_status(messages.STOP_FORCED, "warn")
+            self._notify_user(messages.STOP_FORCED, severity="warning")
 
     def _log_mcp_tool_name_warnings(self, mcp_config: LoadedMCPConfig) -> None:
         """Warn in the log pane when verified MCP tools get provider-adjusted wire names.

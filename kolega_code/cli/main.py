@@ -9,11 +9,14 @@ import faulthandler
 import importlib.util
 import json
 import logging
+import os
 import sys
+import threading
+import time
 import uuid
 import webbrowser
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from kolega_code.agent import CoderAgent
 from kolega_code.config import EditProtocol
@@ -1156,6 +1159,38 @@ def _print_quit_resume_hint(session_id: str) -> None:
     _print_styled(messages.SESSION_RESUME_HINT.format(session_id=session_id), style="success")
 
 
+#: How long interpreter shutdown may take before the process exits regardless.
+#: Shutdown waits for the default executor's threads; a journal write wedged on a
+#: file lock never returns and would hold the terminal forever.
+EXIT_WATCHDOG_SECONDS = 15.0
+
+
+def _arm_exit_watchdog(
+    seconds: float = EXIT_WATCHDOG_SECONDS, *, force_exit: Callable[[int], None] = os._exit
+) -> threading.Thread:
+    """Force process exit if interpreter shutdown cannot finish.
+
+    Teardown has already run by the time this is armed, so the only thing left is
+    waiting on worker threads that a stuck write may never release. The watchdog is
+    a daemon thread: a normal exit kills it silently and it only fires when
+    shutdown is genuinely wedged.
+    """
+
+    def _force() -> None:
+        time.sleep(seconds)
+        try:
+            sys.stderr.write("\nShutdown is taking too long (a worker thread is stuck); exiting.\n")
+            sys.stderr.flush()
+            sys.stdout.flush()
+        except Exception:  # noqa: BLE001 - exiting anyway
+            pass
+        force_exit(0)
+
+    watchdog = threading.Thread(target=_force, name="kolega-exit-watchdog", daemon=True)
+    watchdog.start()
+    return watchdog
+
+
 def _run_tui(args: argparse.Namespace) -> int:
     if importlib.util.find_spec("textual") is None:
         print("Textual is not installed. Reinstall the CLI with: uv tool install --force kolega-code", file=sys.stderr)
@@ -1324,6 +1359,9 @@ def _run_tui(args: argparse.Namespace) -> int:
                 # session, so the terminal now shows how to resume exactly this one.
                 if clean_quit and current_session_id:
                     _print_quit_resume_hint(current_session_id)
+                # Teardown is done; guard interpreter shutdown, which waits for the
+                # default executor's threads and can hang on a wedged journal write.
+                _arm_exit_watchdog()
                 break
 
         try:

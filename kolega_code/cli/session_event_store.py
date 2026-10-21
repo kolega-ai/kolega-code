@@ -21,8 +21,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from pathlib import Path
-from typing import Any, AsyncIterator, Collection, Optional
+from typing import Any, AsyncIterator, Callable, Collection, Optional
 
 from kolega_code.events import AgentEvent, ArtifactRef
 from kolega_code.session.store import (
@@ -40,6 +41,17 @@ UI_EVENT_PREFIX = "ui."
 #: How often a follower checks for new records. Low enough to feel live, high
 #: enough that idle followers cost nothing measurable.
 TAIL_POLL_SECONDS = 0.15
+
+#: Upper bound on waiting for a journal write. A write can block inside the
+#: journal's process-wide lock (file I/O on a stalled volume) with no timeout of
+#: its own; recording is an enhancement to live delivery, so the caller is
+#: released instead of hanging forever. The worker thread is not interrupted: it
+#: finishes the write on its own, and the row lands (possibly late).
+RECORD_APPEND_TIMEOUT_SECONDS = 30.0
+
+#: A successful write slower than this is worth reporting: it is the early
+#: warning before the lock wedges far enough to hit the timeout.
+RECORD_APPEND_SLOW_SECONDS = 5.0
 
 
 class FileArtifactStore(ArtifactStore):
@@ -80,17 +92,87 @@ class FileArtifactStore(ArtifactStore):
 class FileSessionEventStore(SessionEventStore):
     """Session event store over the journal's append-only JSONL log."""
 
-    def __init__(self, journal: SessionJournal) -> None:
+    def __init__(
+        self,
+        journal: SessionJournal,
+        *,
+        append_timeout: Optional[float] = RECORD_APPEND_TIMEOUT_SECONDS,
+        on_stall: Optional[Callable[[dict[str, Any]], None]] = None,
+    ) -> None:
         self._journal = journal
         self._session_id = journal.session_id
         self._events_path: Path = journal.events_path
+        self._append_timeout = append_timeout
+        self._on_stall = on_stall
 
     # -- Writing -----------------------------------------------------------
 
     async def append(self, event: AgentEvent) -> int:
-        seq = await asyncio.to_thread(self._append_sync, event)
+        """Append one event, without letting a wedged journal write hang the caller.
+
+        The write runs on a worker thread because ``SessionJournal.append`` takes
+        a process-wide RLock and does file I/O. That write can block on a stalled
+        filesystem while holding the lock, and the coroutine awaiting it then
+        waits forever — which is what parked a turn's final bookkeeping for half
+        an hour. Recording is an enhancement to live delivery, so the await is
+        bounded: on timeout the caller continues and the thread still finishes
+        the write (the row lands, possibly late, with a correct seq).
+        """
+        started = time.monotonic()
+        write = asyncio.ensure_future(asyncio.to_thread(self._append_sync, event))
+        try:
+            if self._append_timeout is None:
+                seq = await asyncio.shield(write)
+            else:
+                seq = await asyncio.wait_for(asyncio.shield(write), timeout=self._append_timeout)
+        except asyncio.TimeoutError:
+            self._report("timeout", event, time.monotonic() - started)
+            write.add_done_callback(self._report_late_failure)
+            raise
+        except asyncio.CancelledError:
+            # Keep the write, but still surface a failure that lands after the
+            # caller went away.
+            write.add_done_callback(self._report_late_failure)
+            raise
         event.seq = seq
+        elapsed = time.monotonic() - started
+        if elapsed >= RECORD_APPEND_SLOW_SECONDS:
+            self._report("slow", event, elapsed)
         return seq
+
+    def _report_late_failure(self, task: "asyncio.Future[int]") -> None:
+        """Surface (and retrieve) an abandoned write's outcome."""
+        if task.cancelled():
+            return
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            self._report("failed", None, 0.0, error=exc)
+
+    def _report(
+        self,
+        kind: str,
+        event: Optional[AgentEvent],
+        elapsed: float,
+        *,
+        error: Optional[BaseException] = None,
+    ) -> None:
+        if self._on_stall is None:
+            return
+        payload: dict[str, Any] = {
+            "kind": kind,
+            "elapsed_s": round(elapsed, 3),
+            "timeout_s": self._append_timeout,
+            "event_type": getattr(event, "event_type", None),
+            "sender": getattr(event, "sender", None),
+            "error": f"{type(error).__name__}: {error}" if error is not None else None,
+        }
+        try:
+            self._on_stall(payload)
+        except Exception:  # noqa: BLE001 - reporting must never break recording
+            pass
 
     def _append_sync(self, event: AgentEvent) -> int:
         try:
