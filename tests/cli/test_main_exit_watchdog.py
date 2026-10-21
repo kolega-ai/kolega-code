@@ -29,3 +29,18 @@ def test_exit_watchdog_stays_quiet_while_shutdown_completes() -> None:
     time.sleep(0.05)
 
     assert exits == []
+
+
+def test_exit_watchdog_can_be_disarmed() -> None:
+    """A normal return from ``asyncio.run`` must disarm it.
+
+    ``_run_tui`` is called in-process by tests and embedded hosts; a watchdog that
+    outlived that call killed xdist workers seconds later ("node down" runs).
+    """
+    exits: list[int] = []
+    cancel = _arm_exit_watchdog(0.01, force_exit=exits.append)
+
+    cancel.set()
+
+    time.sleep(0.05)
+    assert exits == []

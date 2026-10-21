@@ -12,7 +12,6 @@ import logging
 import os
 import sys
 import threading
-import time
 import uuid
 import webbrowser
 from pathlib import Path
@@ -1167,17 +1166,23 @@ EXIT_WATCHDOG_SECONDS = 15.0
 
 def _arm_exit_watchdog(
     seconds: float = EXIT_WATCHDOG_SECONDS, *, force_exit: Callable[[int], None] = os._exit
-) -> threading.Thread:
+) -> threading.Event:
     """Force process exit if interpreter shutdown cannot finish.
 
     Teardown has already run by the time this is armed, so the only thing left is
-    waiting on worker threads that a stuck write may never release. The watchdog is
-    a daemon thread: a normal exit kills it silently and it only fires when
-    shutdown is genuinely wedged.
+    waiting on worker threads that a stuck write may never release.
+
+    Returns a cancel event, and the caller **must** set it when control returns
+    normally: ``_run_tui`` is also called in-process (tests, embedded hosts), and a
+    watchdog that outlives the call would kill that process some seconds later.
+    When shutdown is genuinely wedged the call never returns, which is exactly when
+    the watchdog must fire.
     """
+    cancel = threading.Event()
 
     def _force() -> None:
-        time.sleep(seconds)
+        if cancel.wait(seconds):
+            return  # disarmed: the process got past shutdown on its own
         try:
             sys.stderr.write("\nShutdown is taking too long (a worker thread is stuck); exiting.\n")
             sys.stderr.flush()
@@ -1186,9 +1191,8 @@ def _arm_exit_watchdog(
             pass
         force_exit(0)
 
-    watchdog = threading.Thread(target=_force, name="kolega-exit-watchdog", daemon=True)
-    watchdog.start()
-    return watchdog
+    threading.Thread(target=_force, name="kolega-exit-watchdog", daemon=True).start()
+    return cancel
 
 
 def _run_tui(args: argparse.Namespace) -> int:
@@ -1328,6 +1332,11 @@ def _run_tui(args: argparse.Namespace) -> int:
             if cleanup_error is not None:
                 raise cleanup_error
 
+        #: Set when the app loop finishes and the exit watchdog is armed. A normal
+        #: return from ``asyncio.run`` (including the in-process calls tests and
+        #: embedded hosts make) must disarm it; only a wedged shutdown leaves it set.
+        armed_watchdogs: list[threading.Event] = []
+
         async def _run_app_loop() -> None:
             next_project_path = initial_project_path
             next_session: SessionRecord | None = None
@@ -1361,7 +1370,8 @@ def _run_tui(args: argparse.Namespace) -> int:
                     _print_quit_resume_hint(current_session_id)
                 # Teardown is done; guard interpreter shutdown, which waits for the
                 # default executor's threads and can hang on a wedged journal write.
-                _arm_exit_watchdog()
+                # Disarmed below if `asyncio.run` returns.
+                armed_watchdogs.append(_arm_exit_watchdog())
                 break
 
         try:
@@ -1396,6 +1406,11 @@ def _run_tui(args: argparse.Namespace) -> int:
             raise
         return 0
     finally:
+        # Reaching here means the process is going to keep running (or exit
+        # promptly): a watchdog left armed would eventually kill an in-process
+        # caller such as the test suite or an embedded host.
+        for cancel in armed_watchdogs:
+            cancel.set()
         store.release_session_locks()
 
 
