@@ -100,19 +100,34 @@ catalog includes these chat/function-calling families and eligible aliases:
 | --- | ---: | --- | --- |
 | Medium 3.5 / `mistral-medium-3-5` | 262,144 | Yes | `none`, `high` |
 | Small 4 / `mistral-small-2603` | 262,144 | Yes | `none`, `high` |
-| Large 4 **preview** / `mistral-large-4` | 524,288 | Yes | `none`, `high` |
+| Large 4 / `mistral-large-4` | 1,048,576 | Yes | `none`, `high` |
+| Large 3 / `mistral-large-2512` | 262,144 | Yes | No control |
 | Ministral 3 3B / `ministral-3b-2512` | 131,072 | Yes | No control |
 | Ministral 3 8B / `ministral-8b-2512` | 262,144 | Yes | No control |
 | Ministral 3 14B / `ministral-14b-2512` | 262,144 | Yes | No control |
 | Codestral / `codestral-2508` | 256,000 | No | No control |
 
-**Large 4 preview access depends on the account/subscription.** Its authenticated
-model metadata advertises vision, reasoning, and function calling, but catalog
-visibility does not guarantee successful inference. The current picker also
-accepts `mistral-large-4-0`. Eligible aliases such as `mistral-medium-latest`,
-`mistral-small-latest`, the Ministral `*-latest` IDs, and `codestral-latest` are
-mutable: their target and capabilities may change. Catalog metadata is not a
-live access check.
+Windows and capabilities mirror Mistral's authenticated `GET /v1/models`, which
+is authoritative for what the configured account can reach. Catalog visibility
+still does not guarantee successful inference: a model can return HTTP 403 when
+the subscription tier or an organization policy excludes it. The picker also
+accepts the listed aliases, such as `mistral-large-4-0`, `mistral-large-latest`
+and `mistral-code-latest`; those targets are mutable and their capabilities may
+change.
+
+Mistral publishes new models between Kolega Code releases. `models refresh`
+fetches the live list once and caches it locally:
+
+```bash
+kolega-code models refresh --provider mistral
+```
+
+The endpoint is authenticated, so the command needs `MISTRAL_API_KEY` or a key
+saved in Settings. A refresh only adds models Kolega does not already know; it
+never rewrites a bundled spec or the picker default. Cached entries are not
+marketed as the release's reviewed set and are never marked featured. Set
+`KOLEGA_CODE_MISTRAL_CATALOG` to pin the cache path or
+`KOLEGA_CODE_DISABLE_MISTRAL_CATALOG=1` to ignore it.
 
 As with every provider, CLI flags must name both provider and model:
 
@@ -122,8 +137,9 @@ kolega-code models list --provider mistral
 ```
 
 Image input is enabled only on vision-capable catalog models, including Ministral
-3; Codestral is text-only. Medium/Small/Large expose `none` (thinking off, the
-default) and `high` (thinking on), rather than the OpenAI effort ladder.
+3; Codestral is text-only. Medium 3.5, Small 4 and Large 4 expose `none`
+(thinking off, the default) and `high` (thinking on), rather than the OpenAI
+effort ladder; Large 3 and the Ministral/Codestral families expose no control.
 Same-provider reasoning is replayed in Mistral's native structured content
 format, preserving replay metadata rather than turning thinking into visible
 answer text. Models and their capabilities come from the shared catalog used by

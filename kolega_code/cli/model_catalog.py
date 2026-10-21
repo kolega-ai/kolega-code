@@ -21,6 +21,7 @@ from typing import Any, Iterable, Optional, Sequence
 
 from kolega_code.config import ModelProvider
 from kolega_code.llm.specs import MODEL_SPECS, is_featured_model
+from kolega_code.llm.specs import mistral_catalog as mistral
 from kolega_code.llm.specs import ollama_cloud_catalog as ollama_cloud
 from kolega_code.llm.specs import openrouter_catalog as openrouter
 from kolega_code.llm.specs import perplexity_catalog as perplexity
@@ -29,12 +30,16 @@ from kolega_code.llm.specs.validation import validate_model_spec
 
 from .provider_registry import PROVIDER_LABELS, get_ui_model, rebuild_ui_model_options
 from .session_store import default_state_dir
+from .settings import SettingsStore, SettingsStoreError
 
 # Overlay sources keyed by provider value. Each entry exposes PROVIDER,
 # MODELS_URL, CACHE_FILENAME, fetch_models(), catalog_entries(), load_cache()
 # and save_cache(). The Perplexity entry is a duck-typed catalog object rather
-# than a module — same contract.
+# than a module — same contract. An entry that publishes ``API_KEY_ENV`` is
+# authenticated: ``models refresh`` resolves that credential and passes it to
+# ``fetch_models(api_key=...)``; every other source is fetched anonymously.
 OVERLAY_SOURCES = {
+    mistral.PROVIDER: mistral,
     ollama_cloud.PROVIDER: ollama_cloud,
     openrouter.PROVIDER: openrouter,
     tinker.PROVIDER: tinker,
@@ -57,6 +62,36 @@ def _overlay_module(catalog: str) -> Any:
             f"No refreshable catalog for provider '{catalog}'. Valid: {', '.join(sorted(OVERLAY_SOURCES))}"
         )
     return module
+
+
+def _overlay_api_key(provider: str, env_name: str) -> Optional[str]:
+    """Resolve the credential an authenticated overlay needs.
+
+    Mirrors ``config._api_key_for_provider`` precedence: an exported environment
+    variable wins over a key saved in Settings. The CLI never reads the repo
+    ``.env``, so a key saved through onboarding/Settings is the common case. An
+    unreadable settings file degrades to "no key" instead of aborting the
+    command with a traceback.
+    """
+    key = (os.environ.get(env_name) or "").strip()
+    if key:
+        return key
+    try:
+        stored = SettingsStore().load().get_api_key(provider)
+    except (SettingsStoreError, OSError):
+        return None
+    return (stored or "").strip() or None
+
+
+def _overlay_fetch_kwargs(provider: str, module: Any) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    """Return ``(fetch kwargs, error message)`` for one overlay source."""
+    env_name = getattr(module, "API_KEY_ENV", None)
+    if not env_name:
+        return {}, None
+    api_key = _overlay_api_key(provider, str(env_name))
+    if not api_key:
+        return None, f"Refreshing the {provider} catalog needs {env_name} (or a key saved in Settings)."
+    return {"api_key": api_key}, None
 
 
 def _catalog_env_names(catalog: str) -> tuple[str, str]:
@@ -248,9 +283,15 @@ def run_models_refresh(args: Any, printer, error_printer) -> int:
         error_printer(f"No refreshable catalog for provider '{provider}'. Valid: {', '.join(sorted(OVERLAY_SOURCES))}.")
         return 2
 
+    fetch_kwargs, credential_error = _overlay_fetch_kwargs(provider, module)
+    if credential_error is not None:
+        error_printer(credential_error)
+        return 2
+    assert fetch_kwargs is not None
+
     printer(f"Fetching {module.MODELS_URL} ...")
     try:
-        payload = module.fetch_models()
+        payload = module.fetch_models(**fetch_kwargs)
         entries = module.catalog_entries(payload)
     except Exception as exc:  # noqa: BLE001 - surface the cause, whatever the transport raised
         error_printer(f"Could not refresh the {provider} catalog: {exc}")

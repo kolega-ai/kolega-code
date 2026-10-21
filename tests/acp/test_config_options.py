@@ -192,6 +192,47 @@ async def test_real_factory_builds_both_options(isolated_cli_env: None, tmp_path
 
 
 @pytest.mark.asyncio
+async def test_model_option_lists_a_provider_with_only_an_exported_key(
+    isolated_cli_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An editor-spawned ACP process must honour the same env keys as the CLI."""
+    monkeypatch.setenv("MISTRAL_API_KEY", "exported-key")
+    agent, cm = build_agent(tmp_path)
+    record = SessionRecord.create(Path(tmp_path), "cli", {})
+    session = AcpSession(session_id=record.session_id, record=record, agent=agent, manager=cm)
+    factory = AgentFactory()
+    factory._load_settings()  # noqa: SLF001
+    assert factory._settings is not None
+    # No saved keys at all, plus one reserved (non-provider) key that must not
+    # invent a group of its own.
+    factory._settings.api_keys.clear()
+    factory._settings.api_keys["tavily"] = "search-key"
+
+    model_option = next(option for option in factory.config_options_for(session) if option.id == CONFIG_MODEL)
+
+    assert [group.name for group in model_option.options] == ["Mistral AI"]
+    mistral_group = model_option.options[0]
+    assert mistral_group.group == "mistral"
+    assert all(option.value.startswith("mistral/") for option in mistral_group.options)
+
+
+@pytest.mark.asyncio
+async def test_model_option_lists_a_provider_with_only_a_saved_key(isolated_cli_env: None, tmp_path: Path) -> None:
+    agent, cm = build_agent(tmp_path)
+    record = SessionRecord.create(Path(tmp_path), "cli", {})
+    session = AcpSession(session_id=record.session_id, record=record, agent=agent, manager=cm)
+    factory = AgentFactory()
+    factory._load_settings()  # noqa: SLF001
+    assert factory._settings is not None
+    factory._settings.api_keys.clear()
+    factory._settings.api_keys["mistral"] = "saved-key"
+
+    model_option = next(option for option in factory.config_options_for(session) if option.id == CONFIG_MODEL)
+
+    assert [group.name for group in model_option.options] == ["Mistral AI"]
+
+
+@pytest.mark.asyncio
 async def test_set_config_option_mode_switches_without_touching_task_list(tmp_path: Path) -> None:
     from acp.schema import AgentPlanUpdate, CurrentModeUpdate
 
