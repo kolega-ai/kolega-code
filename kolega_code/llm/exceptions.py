@@ -113,6 +113,39 @@ class LLMTimeout(LLMConnectionError):
     specific kind of LLMConnectionError, e.g. a streaming read exceeding its timeout."""
 
 
+class LLMStreamStalled(LLMTimeout):
+    """Raised when an open stream delivers nothing within its deadline.
+
+    Carries the facts the retry policy and the UI need: a stall with **no output at
+    all** means the endpoint never answered, so retrying it more than once buys
+    another full deadline for nothing. ``stage`` is ``first_chunk`` before any event
+    arrived and ``stream`` once output had started.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider: Optional[str] = None,
+        stage: str = "stream",
+        waited_s: float = 0.0,
+        timeout_s: float = 0.0,
+        bytes_received: int = 0,
+        partial_output: bool = False,
+    ) -> None:
+        super().__init__(message=message, provider=provider)
+        self.stage = stage
+        self.waited_s = waited_s
+        self.timeout_s = timeout_s
+        self.bytes_received = bytes_received
+        self.partial_output = partial_output
+
+    @property
+    def zero_output(self) -> bool:
+        """True when the stream never produced a single character."""
+        return self.bytes_received <= 0
+
+
 class LLMUnprocessableEntityError(LLMError):
     """Raised when the request is well-formed but cannot be processed."""
 

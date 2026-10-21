@@ -56,7 +56,18 @@ watchdog tells them apart:
 - **Waiting on the network.** Here the loop is *not* blocked, so the watchdog stays
   quiet — but the timeline shows an LLM request that started and never finished. A
   request open for minutes with no matching completion points at a stalled network
-  read rather than a CPU hang.
+  read rather than a CPU hang. Kolega Code bounds that wait itself: while a stream is
+  silent the status line counts the gap ("no data for 1m 15s"), every retry is written
+  into the transcript with its attempt number, and the turn ends with the endpoint,
+  attempt count and elapsed time rather than hanging. A stall that produced no output
+  at all is retried only once, so a dead endpoint fails in about a minute instead of
+  accumulating several full deadlines. Tune the budgets with the `KOLEGA_STREAM_*`
+  and `KOLEGA_LLM_RETRY_BUDGET` variables on the
+  [environment variables](../../configuration/environment-variables/) page.
+- **A finished turn that never showed its result.** The timeline's `journal_stall`
+  entries mark session writes that ran long (or were abandoned) while holding the
+  journal's lock; a healthy loop plus one of those means the delay was persistence,
+  not the model.
 
 That distinction is usually the first thing you need to know, and the diagnostics
 capture it without any action on your part.

@@ -47,6 +47,12 @@ from kolega_code.llm.models import (
 from kolega_code.llm.providers.base import BaseLLMProvider
 from kolega_code.llm.providers.mistral import MistralProvider
 from kolega_code.llm.providers.models import GenerationParams, TokenCount
+from kolega_code.llm.timeouts import (
+    STREAM_CONNECT_TIMEOUT,
+    STREAM_POOL_TIMEOUT,
+    STREAM_READ_TIMEOUT,
+    STREAM_WRITE_TIMEOUT,
+)
 
 MODEL = "mistral-medium-3-5"
 USAGE = {"prompt_tokens": 31, "completion_tokens": 12, "total_tokens": 43}
@@ -1109,7 +1115,12 @@ async def test_rate_limiter_and_streaming_timeout_contract(wire: MistralWire) ->
     await _consume(wire.provider)
     assert wire.provider.rate_limiter.acquire.await_count == 2
     timeout = wire.requests[-1].extensions["timeout"]
-    assert timeout == {"connect": 10.0, "read": 300.0, "write": 30.0, "pool": 10.0}
+    assert timeout == {
+        "connect": STREAM_CONNECT_TIMEOUT,
+        "read": STREAM_READ_TIMEOUT,
+        "write": STREAM_WRITE_TIMEOUT,
+        "pool": STREAM_POOL_TIMEOUT,
+    }
 
 
 @pytest.mark.asyncio
