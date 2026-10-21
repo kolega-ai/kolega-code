@@ -18,6 +18,7 @@ DEFAULT = "mistral-medium-3-5"
 REQUIRED_MODELS = {
     DEFAULT,
     "mistral-small-2603",
+    "mistral-large-2512",
     "codestral-2508",
     "ministral-3b-2512",
     "ministral-8b-2512",
@@ -33,7 +34,7 @@ def test_native_provider_is_registered_and_medium_is_first_default() -> None:
     provider = ModelProvider(PROVIDER)
     catalog = _catalog()
     assert REQUIRED_MODELS <= catalog.keys()
-    assert {"mistral-large-4", "mistral-large-4-0"} & catalog.keys(), "Include the native Large 4 preview"
+    assert {"mistral-large-4", "mistral-large-4-0"} & catalog.keys(), "Include the native Large 4"
     assert next(iter(catalog)) == DEFAULT
     assert PROVIDER_DEFAULT_MODEL[provider] == DEFAULT
     assert LLMClient._provider_class(PROVIDER) is MistralProvider
@@ -77,7 +78,16 @@ def test_only_eligible_chat_families_are_seeded_not_retired_or_non_chat_models()
     assert catalog
     for model in catalog:
         assert model.startswith(
-            ("mistral-medium", "mistral-small", "mistral-large-4", "mistral-large-latest", "ministral-", "codestral-")
+            (
+                "mistral-medium",
+                "mistral-small",
+                "mistral-large-4",
+                "mistral-large-2512",
+                "mistral-large-latest",
+                "mistral-code-",
+                "ministral-",
+                "codestral-",
+            )
         ), model
         assert not any(
             excluded in model for excluded in ("devstral", "magistral", "embed", "ocr", "voxtral", "moderation")

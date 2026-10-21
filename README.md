@@ -224,19 +224,26 @@ kolega-code . --provider mistral --model mistral-medium-3-5
 ```
 
 The picker defaults to Mistral Medium 3.5 and includes Mistral Small 4
-(`mistral-small-2603`), Mistral Large 4 **preview** (`mistral-large-4`),
-Ministral 3 (3B/8B/14B), Codestral, and eligible native aliases. Large 4 access
-depends on the account/subscription; a catalog entry does not guarantee access.
-Aliases, especially `latest`, can change their target and capabilities.
+(`mistral-small-2603`), Mistral Large 4 (`mistral-large-4`), Mistral Large 3
+(`mistral-large-2512`), Ministral 3 (3B/8B/14B), Codestral, and eligible native
+aliases. Windows and capabilities mirror Mistral's authenticated model list; a
+catalog entry does not guarantee access, because subscription tiers and
+organization policies still apply. Aliases, especially `latest`, can change
+their target and capabilities.
 
 Medium 3.5, Small 4, Large 4, and Ministral 3 support image input; Codestral is
-text-only. Medium/Small/Large expose `none` (default) or `high` thinking, with
-same-provider reasoning replayed in Mistral's native format. Token counting is
+text-only. Medium 3.5, Small 4 and Large 4 expose `none` (default) or `high`
+thinking, with same-provider reasoning replayed in Mistral's native format;
+Large 3, Ministral 3 and Codestral expose no thinking control. Token counting is
 a conservative local estimate with a safety margin, not an exact Mistral
 tokenizer. The catalog's 32,768-token output reservation is Kolega's budgeting
 policy, not a verified native maximum-output ceiling. Kolega Code runs the local
 function-tool loop; Mistral-hosted server tools are not enabled. Native Mistral
 keys and model IDs are separate from gateway credentials and routes.
+
+Mistral publishes models between releases; `kolega-code models refresh --provider mistral`
+caches the live list locally. It adds only models Kolega does not already ship
+and never overrides a bundled spec.
 
 ## Requirements
 

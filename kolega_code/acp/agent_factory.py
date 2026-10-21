@@ -18,6 +18,7 @@ the process keeps serving.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Awaitable, Callable, cast
 
@@ -38,7 +39,7 @@ from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.prompts import BUILD_QUESTION_PROMPT, PLANNING_QUESTION_PROMPT
 from kolega_code.agent.tool_definitions import tool_description_asset
 from kolega_code.agent.volatile_context import VolatileSection
-from kolega_code.cli.config import CliConfigOverrides, build_agent_config, config_summary
+from kolega_code.cli.config import API_KEY_ENV, CliConfigOverrides, build_agent_config, config_summary
 from kolega_code.cli.connection import CliConnectionManager
 from kolega_code.cli.provider_registry import PROVIDER_LABELS, ui_model_options
 from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
@@ -247,12 +248,24 @@ class AgentFactory:
             settings_store=self._settings_store,
         )
 
-    def _model_option(self, session: AcpSession) -> SessionConfigOptionSelect:
+    def _configured_providers(self) -> list[str]:
+        """Providers the editor can offer: saved keys plus exported credentials.
+
+        ACP spawns as a child of the editor, which inherits the shell
+        environment. The CLI already treats an exported ``*_API_KEY`` as
+        sufficient, so an env-only provider must not be invisible here just
+        because it was never saved through onboarding.
+        """
         assert self._settings is not None
+        providers = {provider for provider, key in self._settings.api_keys.items() if key}
+        providers.update(
+            provider.value for provider, env_name in API_KEY_ENV.items() if (os.environ.get(env_name) or "").strip()
+        )
+        return sorted(providers)
+
+    def _model_option(self, session: AcpSession) -> SessionConfigOptionSelect:
         groups: list[SessionConfigSelectGroup] = []
-        for provider, key in sorted(self._settings.api_keys.items()):
-            if not key:
-                continue
+        for provider in self._configured_providers():
             options = [
                 SessionConfigSelectOption(value=f"{provider}/{model}", name=label)
                 for label, model in ui_model_options(provider)

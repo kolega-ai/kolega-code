@@ -6,6 +6,24 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- **Mistral model refresh.** `kolega-code models refresh --provider mistral`
+  caches Mistral's live, account-visible model list so models published after a
+  release resolve without upgrading. The endpoint is authenticated, so the
+  command uses `MISTRAL_API_KEY` or a key saved in Settings. A refresh only adds
+  models Kolega does not already know and never overrides a bundled spec.
+
+### Fixed
+
+- **Mistral catalog drift.** Large 4's context window is 1,048,576 tokens (was
+  524,288), Mistral Large 3 (`mistral-large-2512`) and its `latest` alias are now
+  catalogued, and `mistral-code-latest` resolves to Codestral. Large 4 is no
+  longer labelled a preview.
+- **ACP model picker honours exported credentials.** Editor sessions now list
+  providers whose API key comes from the environment, matching the CLI, instead
+  of only providers saved through onboarding.
+
 ## 0.44.0 - 2026-10-19
 
 ### Added

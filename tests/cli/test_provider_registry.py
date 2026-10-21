@@ -24,10 +24,11 @@ def test_mistral_native_models_are_discoverable_and_medium_35_is_default() -> No
     assert {
         ("Mistral Medium 3.5", "mistral-medium-3-5"),
         ("Mistral Small 4", "mistral-small-2603"),
-        ("Mistral Large 4 (Preview)", "mistral-large-4"),
+        ("Mistral Large 4", "mistral-large-4"),
+        ("Mistral Large 3", "mistral-large-2512"),
     } <= set(options)
     assert [model for _label, model in options] == [model for provider, model in MODEL_SPECS if provider == "mistral"]
-    assert len(options) == 18
+    assert len(options) == 21
     assert len({label for label, _model in options}) == len(options)
 
     for label, model in options:
@@ -53,11 +54,14 @@ def test_mistral_thinking_and_vision_selectors_follow_native_capabilities() -> N
     assert {model for _label, model in options} - {model for _label, model in vision_options} == {
         "codestral-2508",
         "codestral-latest",
+        "mistral-code-latest",
     }
     for _label, model in options:
         option = get_ui_model("mistral", model)
         assert option is not None
-        if model.startswith(("mistral-medium", "mistral-small", "mistral-large")):
+        # Large 3 and the Ministral/Codestral families expose no native effort
+        # control; the effort selector must follow the catalog, not the id.
+        if get_model_specs("mistral", model).get("thinking_effort"):
             assert ui_thinking_effort_options("mistral", model) == [("None", "none"), ("High", "high")]
             assert option.default_thinking_effort == "none"
         else:

@@ -326,13 +326,18 @@ def test_native_mistral_discovery_requires_its_own_key_and_redacts_it() -> None:
     assert [entry["provider"] for entry in catalog["providers"]] == ["mistral"]
     models = {entry["model"]: entry for entry in catalog["providers"][0]["models"]}
     assert set(models) == {model for provider, model in MODEL_SPECS if provider == "mistral"}
-    assert len(models) == 18
+    assert len(models) == 21
     for model in ("mistral-medium-3-5", "mistral-small-2603", "mistral-large-4", "mistral-large-4-0"):
         assert models[model]["thinking_efforts"] == ["none", "high"]
         assert models[model]["default_thinking_effort"] == "none"
         assert models[model]["override_effort"] == "string"
         assert models[model]["supports_vision"] is True
-    for model, vision in (("ministral-3b-2512", True), ("codestral-2508", False)):
+    for model, vision in (
+        ("ministral-3b-2512", True),
+        ("codestral-2508", False),
+        ("mistral-large-2512", True),
+        ("mistral-code-latest", False),
+    ):
         assert models[model]["thinking_efforts"] == []
         assert models[model]["override_effort"] == "null"
         assert models[model]["supports_vision"] is vision

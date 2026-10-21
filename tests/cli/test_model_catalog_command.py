@@ -588,6 +588,146 @@ def test_ollama_cloud_refresh_failure_leaves_existing_cache_untouched(tmp_path: 
     assert path.read_bytes() == original
 
 
+# --- Mistral overlay (the authenticated source) ---------------------------
+
+
+def _mistral_payload() -> dict:
+    """Two models: one already bundled, one only the live catalog knows about."""
+
+    def entry(
+        identifier: str,
+        *,
+        name: str | None = None,
+        billing: str | None = None,
+        context: int = 262144,
+        reasoning: bool = False,
+    ) -> dict:
+        return {
+            "id": identifier,
+            "name": name or identifier,
+            "billing_model_name": billing or identifier,
+            "max_context_length": context,
+            "default_model_temperature": 1.0,
+            "deprecation": None,
+            "capabilities": {
+                "completion_chat": True,
+                "function_calling": True,
+                "reasoning": reasoning,
+                "vision": False,
+            },
+        }
+
+    return {
+        "object": "list",
+        "data": [
+            entry(
+                "mistral-medium-3-5",
+                name="mistral-medium-latest",
+                billing="mistral-medium-3-5",
+                reasoning=True,
+            ),
+            entry("zai-glm-5-3", context=1048576, reasoning=True),
+        ],
+    }
+
+
+def test_mistral_refresh_requires_a_key(isolated_cli_env: None, tmp_path: Path) -> None:
+    lines, printer = _collect()
+    errors, error_printer = _collect()
+
+    exit_code = model_catalog.run_models_refresh(_args(provider="mistral", state_dir=tmp_path), printer, error_printer)
+
+    assert exit_code == 2
+    assert "MISTRAL_API_KEY" in "\n".join(errors)
+    assert lines == []
+
+
+def _stub_mistral_fetch(monkeypatch, seen: list[str]) -> None:
+    from kolega_code.llm.specs import mistral_catalog as mistral
+
+    def fake_fetch(*, api_key: str, timeout: float = 30.0) -> dict:
+        seen.append(api_key)
+        return _mistral_payload()
+
+    monkeypatch.setattr(mistral, "fetch_models", fake_fetch)
+
+
+def test_mistral_refresh_uses_the_exported_key(isolated_cli_env: None, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MISTRAL_API_KEY", "exported-key")
+    seen: list[str] = []
+    _stub_mistral_fetch(monkeypatch, seen)
+    _lines, printer = _collect()
+    errors, error_printer = _collect()
+
+    exit_code = model_catalog.run_models_refresh(_args(provider="mistral", state_dir=tmp_path), printer, error_printer)
+
+    assert exit_code == 0, errors
+    assert seen == ["exported-key"]
+
+
+def test_mistral_refresh_falls_back_to_a_key_saved_in_settings(
+    isolated_cli_env: None, tmp_path: Path, monkeypatch
+) -> None:
+    from kolega_code.cli.settings import SettingsStore
+
+    store = SettingsStore()
+    settings = store.load()
+    settings.set_api_key("mistral", "saved-key")
+    store.save(settings)
+
+    seen: list[str] = []
+    _stub_mistral_fetch(monkeypatch, seen)
+    lines, printer = _collect()
+    errors, error_printer = _collect()
+
+    exit_code = model_catalog.run_models_refresh(_args(provider="mistral", state_dir=tmp_path), printer, error_printer)
+
+    assert exit_code == 0, errors
+    assert seen == ["saved-key"]
+
+
+def test_mistral_refresh_writes_its_own_cache_and_keeps_bundled_ids(
+    isolated_cli_env: None, tmp_path: Path, monkeypatch
+) -> None:
+    from kolega_code.llm.specs import mistral_catalog as mistral
+
+    monkeypatch.setenv("MISTRAL_API_KEY", "exported-key")
+    seen: list[str] = []
+    _stub_mistral_fetch(monkeypatch, seen)
+    lines, printer = _collect()
+    errors, error_printer = _collect()
+
+    exit_code = model_catalog.run_models_refresh(_args(provider="mistral", state_dir=tmp_path), printer, error_printer)
+
+    assert exit_code == 0, errors
+    cached = mistral.load_cache(tmp_path / mistral.CACHE_FILENAME)
+    assert [identifier for identifier, _spec in cached] == ["mistral-medium-3-5", "zai-glm-5-3"]
+    assert "1 not in the bundled catalog" in "\n".join(lines)
+    assert "zai-glm-5-3" in "\n".join(lines)
+
+
+def test_mistral_overlay_adds_new_models_and_honours_the_disable_env(tmp_path: Path, restore_catalog) -> None:
+    from kolega_code.llm.specs import mistral_catalog as mistral
+
+    entries = mistral.catalog_entries(_mistral_payload())
+    path = tmp_path / mistral.CACHE_FILENAME
+    mistral.save_cache(path, entries, fetched_at="2026-10-21T00:00:00+00:00")
+
+    added = model_catalog.apply_catalog_overlay(tmp_path, env={}, catalog=mistral.PROVIDER)
+
+    assert added == 1
+    assert ("mistral", "zai-glm-5-3") in MODEL_SPECS
+    # The bundled entry keeps its reviewed spec; the overlay never overrides it.
+    assert MODEL_SPECS[("mistral", "mistral-medium-3-5")]["context_length"] == 262144
+
+    disabled = model_catalog.apply_catalog_overlay(
+        tmp_path,
+        env={"KOLEGA_CODE_DISABLE_MISTRAL_CATALOG": "1"},
+        catalog=mistral.PROVIDER,
+    )
+    assert disabled == 0
+
+
 # --- /model resolution ----------------------------------------------------
 
 

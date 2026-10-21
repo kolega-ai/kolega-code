@@ -174,7 +174,7 @@ def _calc_tool() -> ToolDefinition:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", [*MODELS_REASONING, "ministral-8b-2512", "codestral-2508"])
+@pytest.mark.parametrize("model", [*MODELS_REASONING, "mistral-large-2512", "ministral-8b-2512", "codestral-2508"])
 async def test_live_streaming_tool_cycle_then_second_round_native_reasoning_replay(
     model: str,
     client_factory: Callable[[str], LLMClient],
@@ -313,7 +313,7 @@ async def test_live_vision_generated_local_png_exact_red_blue_content(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", [MODEL_REASONING, "mistral-large-4", "ministral-8b-2512"])
+@pytest.mark.parametrize("model", [MODEL_REASONING, "mistral-large-4", "mistral-large-2512", "ministral-8b-2512"])
 async def test_live_tool_image_result_native_replay_if_supported(
     model: str, client_factory: Callable[[str], LLMClient]
 ) -> None:

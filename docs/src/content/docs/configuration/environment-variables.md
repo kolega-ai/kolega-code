@@ -71,11 +71,20 @@ model such as `mistral-medium-3-5`; the key alone does not select a model.
 This is a native Mistral key, not an OpenRouter or other gateway key. As with
 other provider keys, an exported `MISTRAL_API_KEY` takes precedence over a saved
 Settings key. On Medium 3.5, Small 4, and Large 4,
-`KOLEGA_CODE_THINKING_EFFORT` accepts `none` (default) or `high`; Ministral 3 and
-Codestral do not expose this control. Large 4 is an account/subscription-dependent
-preview, and `latest` aliases can change. See
-[Providers and Models](../providers-and-models/) for image support and local
-token-budgeting limitations.
+`KOLEGA_CODE_THINKING_EFFORT` accepts `none` (default) or `high`; Large 3,
+Ministral 3 and Codestral do not expose this control. `latest` aliases can
+change. See [Providers and Models](../providers-and-models/) for image support
+and local token-budgeting limitations.
+
+### Mistral catalog
+
+| Variable | Purpose |
+| --- | --- |
+| `KOLEGA_CODE_MISTRAL_CATALOG` | Read the refreshed model cache from this path instead of the state directory. |
+| `KOLEGA_CODE_DISABLE_MISTRAL_CATALOG` | Ignore any refreshed cache and use only the catalog bundled with this release. |
+
+The refresh endpoint is authenticated, so `kolega-code models refresh --provider mistral`
+requires `MISTRAL_API_KEY` or a key saved in Settings.
 
 ### Ollama Cloud catalog
 
