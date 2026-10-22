@@ -14,9 +14,7 @@ import pytest
 
 from kolega_code.llm.exceptions import LLMRateLimitError, LLMStreamStalled
 
-#: Cells the turn-status strip has for its label on a 120-column terminal, after the
-#: right-hand dashboard, the spinner and the "· 2m 35s · Esc to interrupt" suffix.
-#: Stall notices must survive that budget; anything longer is silently cut mid-word.
+#: The strip's label budget on a 120-column terminal; longer text is cut mid-word.
 _STRIP_BUDGET = 52
 
 
@@ -108,8 +106,6 @@ async def test_retry_status_carries_structure_for_the_transcript(base_agent, moc
     assert content["cap"] == base_agent.primary_model_config.rate_limits.loop_max_retries
     assert content["stalled"] is True
     assert content["partial_output"] is True
-    # One lead, then only what happens next. The strip is a single narrow line, so
-    # the endpoint and the silence are logged rather than spoken.
     message = content["message"]
     assert message.startswith("Connection issue — retrying (1/")
     assert len(message) <= _STRIP_BUDGET
@@ -119,7 +115,6 @@ async def test_retry_status_carries_structure_for_the_transcript(base_agent, moc
 
 @pytest.mark.asyncio
 async def test_rate_limit_retry_uses_the_same_short_notice(base_agent, mock_connection_manager):
-    """Every retryable failure gets the one lead; the provider body stays in the log."""
     body = "OpenAI APIError: Error code: 429 - Rate limit reached for gpt-5 on requests per min (RPM): Limit 500."
 
     with patch("kolega_code.agent.baseagent.asyncio.sleep", side_effect=_no_sleep):
@@ -138,7 +133,6 @@ async def test_stall_heartbeat_fits_the_status_strip(base_agent, mock_connection
     content = _status_events(mock_connection_manager)[0].content
     assert content["message"] == "Connection issue — waiting for a response…"
     assert len(content["message"]) <= _STRIP_BUDGET
-    # The timing the copy used to spell out is still on the wire for the UI.
     assert content["seconds_since_data"] == 75.0
     assert content["timeout_s"] == 90.0
 
