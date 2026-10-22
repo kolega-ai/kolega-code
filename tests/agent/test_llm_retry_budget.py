@@ -12,7 +12,12 @@ from unittest.mock import patch
 
 import pytest
 
-from kolega_code.llm.exceptions import LLMStreamStalled
+from kolega_code.llm.exceptions import LLMRateLimitError, LLMStreamStalled
+
+#: Cells the turn-status strip has for its label on a 120-column terminal, after the
+#: right-hand dashboard, the spinner and the "· 2m 35s · Esc to interrupt" suffix.
+#: Stall notices must survive that budget; anything longer is silently cut mid-word.
+_STRIP_BUDGET = 52
 
 
 def _zero_output_stall(waited_s: float = 90.0) -> LLMStreamStalled:
@@ -103,12 +108,43 @@ async def test_retry_status_carries_structure_for_the_transcript(base_agent, moc
     assert content["cap"] == base_agent.primary_model_config.rate_limits.loop_max_retries
     assert content["stalled"] is True
     assert content["partial_output"] is True
-    assert "stalled" in content["message"].lower()
-    assert "Retrying (1/" in content["message"]
+    # One lead, then only what happens next. The strip is a single narrow line, so
+    # the endpoint and the silence are logged rather than spoken.
+    message = content["message"]
+    assert message.startswith("Connection issue — retrying (1/")
+    assert len(message) <= _STRIP_BUDGET
+    assert endpoint not in message
+    assert "stalled" not in message.lower()
 
 
 @pytest.mark.asyncio
-async def test_exhausted_message_names_the_endpoint_and_advice(base_agent, mock_connection_manager, endpoint):
+async def test_rate_limit_retry_uses_the_same_short_notice(base_agent, mock_connection_manager):
+    """Every retryable failure gets the one lead; the provider body stays in the log."""
+    body = "OpenAI APIError: Error code: 429 - Rate limit reached for gpt-5 on requests per min (RPM): Limit 500."
+
+    with patch("kolega_code.agent.baseagent.asyncio.sleep", side_effect=_no_sleep):
+        await base_agent.handle_llm_error(LLMRateLimitError(message=body, provider="openai"))
+
+    message = _status_events(mock_connection_manager)[0].content["message"]
+    assert message.startswith("Connection issue — retrying (1/")
+    assert len(message) <= _STRIP_BUDGET
+    assert "429" not in message
+
+
+@pytest.mark.asyncio
+async def test_stall_heartbeat_fits_the_status_strip(base_agent, mock_connection_manager):
+    await base_agent._emit_stream_wait_status(0, waited_s=75.0, limit_s=90.0)
+
+    content = _status_events(mock_connection_manager)[0].content
+    assert content["message"] == "Connection issue — waiting for a response…"
+    assert len(content["message"]) <= _STRIP_BUDGET
+    # The timing the copy used to spell out is still on the wire for the UI.
+    assert content["seconds_since_data"] == 75.0
+    assert content["timeout_s"] == 90.0
+
+
+@pytest.mark.asyncio
+async def test_exhausted_message_counts_attempts_without_the_endpoint(base_agent, mock_connection_manager, endpoint):
     base_agent._llm_retry_budget_seconds = 0.0
 
     with (
@@ -120,6 +156,6 @@ async def test_exhausted_message_names_the_endpoint_and_advice(base_agent, mock_
     events = [event for event in _status_events(mock_connection_manager) if event.content["status"] == "error"]
     assert events, "no terminal error status was emitted"
     message = events[-1].content["message"]
-    assert "No data at all" in message
-    assert endpoint in message
-    assert "VPN" in message
+    assert message.startswith("Connection issue — no response after 1 attempt")
+    assert endpoint not in message
+    assert "VPN" not in message
