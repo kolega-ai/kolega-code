@@ -107,7 +107,6 @@ async def test_silence_reports_a_heartbeat_before_the_deadline(base_agent, mock_
     assert content["stage"] == "first_chunk"
     assert content["seconds_since_data"] >= 0.0
     assert content["timeout_s"] == 0.15
-    # One short lead: the strip cannot fit the timing, so it rides on the fields above.
     assert content["message"] == "Connection issue — waiting for a response…"
 
 

@@ -1159,8 +1159,8 @@ def _print_quit_resume_hint(session_id: str) -> None:
 
 
 #: How long interpreter shutdown may take before the process exits regardless.
-#: Shutdown waits for the default executor's threads; a journal write wedged on a
-#: file lock never returns and would hold the terminal forever.
+#: Shutdown waits on executor threads, and a journal write wedged on a file lock
+#: never returns.
 EXIT_WATCHDOG_SECONDS = 15.0
 
 
@@ -1169,14 +1169,13 @@ def _arm_exit_watchdog(
 ) -> threading.Event:
     """Force process exit if interpreter shutdown cannot finish.
 
-    Teardown has already run by the time this is armed, so the only thing left is
-    waiting on worker threads that a stuck write may never release.
+    Teardown has already run, so the only thing left is waiting on worker threads
+    a stuck write may never release.
 
-    Returns a cancel event, and the caller **must** set it when control returns
-    normally: ``_run_tui`` is also called in-process (tests, embedded hosts), and a
-    watchdog that outlives the call would kill that process some seconds later.
-    When shutdown is genuinely wedged the call never returns, which is exactly when
-    the watchdog must fire.
+    Returns a cancel event; the caller **must** set it when control returns
+    normally, since ``_run_tui`` is also called in-process (tests, embedded hosts).
+    When shutdown is genuinely wedged the call never returns, which is exactly
+    when the watchdog must fire.
     """
     cancel = threading.Event()
 
@@ -1332,9 +1331,8 @@ def _run_tui(args: argparse.Namespace) -> int:
             if cleanup_error is not None:
                 raise cleanup_error
 
-        #: Set when the app loop finishes and the exit watchdog is armed. A normal
-        #: return from ``asyncio.run`` (including the in-process calls tests and
-        #: embedded hosts make) must disarm it; only a wedged shutdown leaves it set.
+        #: Armed when the app loop finishes. A normal return from ``asyncio.run``,
+        #: including in-process calls from tests and embedded hosts, must disarm it.
         armed_watchdogs: list[threading.Event] = []
 
         async def _run_app_loop() -> None:
@@ -1406,9 +1404,7 @@ def _run_tui(args: argparse.Namespace) -> int:
             raise
         return 0
     finally:
-        # Reaching here means the process is going to keep running (or exit
-        # promptly): a watchdog left armed would eventually kill an in-process
-        # caller such as the test suite or an embedded host.
+        # Control came back, so leave no watchdog armed to kill a later caller.
         for cancel in armed_watchdogs:
             cancel.set()
         store.release_session_locks()
