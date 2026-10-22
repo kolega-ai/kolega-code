@@ -98,6 +98,62 @@ _SUB_AGENT_STREAM_EVENTS = frozenset(
 
 
 class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
+    def _agent_execution_draining(self) -> bool:
+        return bool(getattr(self, "_draining_agent_tasks", ()))
+
+    def _track_agent_execution(self) -> None:
+        task = asyncio.current_task()
+        if task is not None and getattr(self, "_agent_execution_task", None) is not task:
+            self._agent_execution_task = task
+            task.add_done_callback(self._agent_execution_finished)
+
+    def _agent_execution_finished(self, task: asyncio.Task) -> None:
+        if not task.cancelled():
+            task.exception()
+        if getattr(self, "_agent_execution_task", None) is task:
+            self._agent_execution_task = None
+        draining = getattr(self, "_draining_agent_tasks", None)
+        if draining is None or task not in draining:
+            return
+        draining.discard(task)
+        if not self._exit and getattr(self, "_session_shutdown_task", None) is None:
+            self._refresh_shortcut_context()
+            if not draining and self._pending_workspace_switch is not None and self.agent_worker is None:
+                operation: asyncio.Task[None]
+
+                async def wait_for_recovery() -> None:
+                    await asyncio.sleep(0)
+                    await asyncio.shield(operation)
+
+                owner = self.run_worker(
+                    wait_for_recovery,
+                    name="kolega-drained-workspace-switch",
+                    group="turns",
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+                self.agent_worker = owner
+                # Stop can cancel the Worker before its coroutine starts. The
+                # committed switch must survive and remain tracked regardless.
+                operation = asyncio.create_task(self._finish_drained_workspace_switch(owner))
+                self._agent_execution_task = operation
+                operation.add_done_callback(self._agent_execution_finished)
+            else:
+                self._schedule_pending_inputs()
+
+    async def _finish_drained_workspace_switch(self, owner: object) -> None:
+        try:
+            await self._apply_pending_workspace_switch()
+        except Exception as exc:
+            self._notify_user(f"Could not complete the workspace switch after Stop: {exc}", severity="error")
+        finally:
+            if self.agent_worker is owner:
+                self.agent_worker = None
+                if self._stop_pending:
+                    self._force_settle_stop()
+                self._refresh_shortcut_context()
+                self._schedule_pending_inputs()
+
     def _handle_control_request(self, event: AgentEvent) -> None:
         """Show a prompt the agent raised on the control channel.
 
@@ -228,7 +284,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         return self.agent.process_message_stream(message)
 
     async def _consume_agent_stream(self, stream) -> None:
+        owner = self.agent_worker
         async for chunk in stream:
+            if self.agent_worker is not owner:
+                continue
             if chunk.get("type") == "response":
                 if chunk.get("content"):
                     self._update_progress(
@@ -267,6 +326,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         previous turn's result immediately and Esc during a slow capture
         resolves through the normal cancelled path.
         """
+        if self._agent_execution_draining():
+            return True
         owner = self.agent_worker
         cancelled_by_user = False
         self._begin_turn_progress(
@@ -276,6 +337,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         try:
             if checkpoint_label is not None:
                 await self._record_turn_checkpoint(checkpoint_label)
+                if self.agent_worker is not owner:
+                    return False
                 self._update_progress(messages.WORKING, complete=False, state=tui_state.TurnState.GENERATING)
             self._log_status(messages.GENERATING, "ok")
             await self._consume_agent_stream(stream_factory())
@@ -432,17 +495,28 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         scheduled-loop driver, for one — have to learn about it from this return
         value rather than from an exception.
         """
+        # run_async uses eager tasks on Python 3.12+: let the caller publish
+        # the Worker before capturing ownership (run_test doesn't do this).
+        await asyncio.sleep(0)
         owner = self.agent_worker
         try:
+            if self._agent_execution_draining():
+                self._queue_user_message(message, attachments)
+                return False
+            self._track_agent_execution()
             if self.agent is None:
                 return False
             if self._background_retirement is not None:
                 await self._attach_background_jobs()
+                if self.agent_worker is not owner:
+                    return False
             self._background_paused = False
             self._background_delivery_failed = False
             self._schedule_background_status_refresh()
             if self._background_jobs is not None:
                 await self._background_jobs.deliver(self.agent)
+                if self.agent_worker is not owner:
+                    return False
             cancelled_by_user = await self._run_turn_stream(
                 lambda: self._agent_turn_stream(message, attachments),
                 checkpoint_label=turn_label or message,
@@ -480,7 +554,11 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             # An unexpected stream error must not strand a committed switch:
             # the journal already names the new workspace, so apply the rebuild
             # even though no continuation turn will run.
-            if self.agent_worker is owner and self._pending_workspace_switch is not None:
+            if (
+                self.agent_worker is owner
+                and self._pending_workspace_switch is not None
+                and not self._agent_execution_draining()
+            ):
                 await self._apply_pending_workspace_switch()
             # The turn worker owns ``agent_worker`` for its whole lifetime, including
             # the goal loop's verifier phase. Clearing it only here keeps the app
@@ -771,19 +849,25 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         """Dispatch the read-only verifier and update goal bookkeeping. Returns the verdict."""
         assert self.agent is not None
         assert self._goal is not None
+        owner = self.agent_worker
         self._set_status_activity(messages.GOAL_EVALUATING)
         self._refresh_status_dashboard()
         verdict = await self.agent.evaluate_goal_condition(self._goal.condition)
+        if self.agent_worker is not owner:
+            return verdict
         self._goal.last_reason = verdict.reason
         self._goal.last_evaluated_at = now_iso()
         return verdict
 
     async def _run_goal_loop(self) -> None:
         """Evaluate → continue loop, run after a successful (non-cancelled) turn."""
+        owner = self.agent_worker
         try:
             while self._goal is not None and self._goal.is_active:
                 self._drain_goal_tokens()
                 verdict = await self._evaluate_active_goal()
+                if self.agent_worker is not owner:
+                    return
                 if verdict.met:
                     await self._complete_goal(verdict)
                     break
@@ -803,13 +887,19 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                     )
                 )
                 cancelled = await self._run_turn_stream(lambda: self._agent_turn_stream(nudge))
+                if self.agent_worker is not owner:
+                    return
                 # The goal nudge is itself the continuation, so a switch
                 # committed during this turn only needs the rebuild applied.
                 await self._apply_pending_workspace_switch()
+                if self.agent_worker is not owner:
+                    return
                 if cancelled:
                     await self._pause_goal(messages.GOAL_PAUSED.format(reason="Stopped by user. "))
                     break
         except asyncio.CancelledError:
+            if self.agent_worker is not owner:
+                return
             # Cancelled between work turns (e.g. Esc while the verifier was running).
             # Pause so the goal survives and can be resumed, like the nudge-turn cancel.
             if self._goal is not None and not self._goal.met and not self._goal.paused:
@@ -917,8 +1007,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         changed()
 
     async def _process_background_completions(self, jobs: BackgroundAgentManager) -> None:
+        await asyncio.sleep(0)  # Publish agent_worker before eager execution captures it.
         owner = self.agent_worker
         try:
+            if self._agent_execution_draining():
+                return
+            self._track_agent_execution()
             agent = self.agent
             if (
                 agent is None
@@ -928,11 +1022,17 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             ):
                 return
             await self._drain_pending_events()
+            if self.agent_worker is not owner:
+                return
             await jobs.deliver(agent)
+            if self.agent_worker is not owner:
+                return
             if agent.background_needs_turn and not self._background_paused:
                 await self._run_turn_stream(lambda: agent.continue_from_history_stream(), preserve_inspector=True)
             else:
                 await self._save_session_history_async()
+            if self.agent_worker is not owner:
+                return
             await self._cleanup_retired_agent_generations()
         except asyncio.CancelledError:
             if self.agent_worker is owner:
@@ -1212,7 +1312,11 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
 
     def _schedule_pending_inputs(self) -> None:
         """Rearm on owner release/unblock only when there is actual work."""
-        if self._background_rebuilding or self._background_retirement is not None:
+        if (
+            self._background_rebuilding
+            or self._background_retirement is not None
+            or getattr(self, "_session_shutdown_task", None) is not None
+        ):
             return
         jobs = self._background_jobs
         if self._queued_messages or (
@@ -1232,11 +1336,13 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._startup_pending
             or self.agent is None
             or self._exit
+            or getattr(self, "_session_shutdown_task", None) is not None
             or self._background_rebuilding
             or self._background_retirement is not None
             or self._pending_workspace_switch is not None
             or self._handoff_in_progress
             or self._rewind_running
+            or self._agent_execution_draining()
         ):
             return False
         if self._turn_active or self.agent_worker is not None:
@@ -1303,11 +1409,13 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         Runs on the TUI event loop inside the turn worker, so mutating the
         queue here is race-free with the composer.
         """
-        if not self._queued_messages:
+        if self._agent_execution_draining() or not self._queued_messages:
             return []
         # Render tool events already emitted so tool output stays above the
         # interjected user entries in the transcript.
         await self._drain_pending_events()
+        if self._agent_execution_draining():
+            return []
         # Snapshot after the await: an Esc during the drain restores whatever
         # is still in the list, so anything taken here is genuinely delivered.
         taken = list(self._queued_messages)
@@ -1423,13 +1531,28 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         self._diag_tee(event)
         if event.event_type in ("llm_error", "llm_request"):
             return  # diagnostics-only events; persisted by the tee, nothing to render
-        if event.event_type == KnownEventType.CONTROL_REQUESTED:
-            self._handle_control_request(event)
-            return
         if event.event_type == KnownEventType.CONTROL_RESOLVED:
             resolved_id = str(event.content.get("request_id") or "")
             self._clear_approval_if_resolved(resolved_id)
             self._clear_question_if_resolved(resolved_id)
+            return
+        if (
+            self._agent_execution_draining()
+            and not event.sub_agent_info
+            and event.event_type not in ("log_message", "terminal_output", "file_edit_preview")
+        ):
+            if (
+                event.event_type == KnownEventType.CONTROL_REQUESTED
+                and self.control_channel.controller == tui_constants.TUI_CLIENT_ID
+            ):
+                request_id = str(event.content.get("request_id") or "")
+                for request in self.control_channel.pending():
+                    if request.request_id == request_id:
+                        self.control_channel.respond(request_id, request.default, client_id=tui_constants.TUI_CLIENT_ID)
+                        break
+            return
+        if event.event_type == KnownEventType.CONTROL_REQUESTED:
+            self._handle_control_request(event)
             return
         if event.sub_agent_info and event.event_type in _SUB_AGENT_STREAM_EVENTS:
             self._render_sub_agent_delta(event)
@@ -1585,8 +1708,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         The dashboard's only path out of ``STOPPING`` used to be
         ``_finish_turn_progress`` inside the turn worker, so a worker that cannot
         honor a cancel left the app stuck on "Stopping…" indefinitely. Detach it:
-        ownership checks make its eventual completion a no-op for the UI, and
-        queued input can run again.
+        ownership checks make its eventual completion a no-op for the UI. Input
+        remains editable, but execution and rebuilds stay fenced until the
+        detached task has finished its durable cleanup.
         """
         if self._exit:
             return
@@ -1594,6 +1718,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         self._disarm_stop_watchdog()
         worker, self.agent_worker = self.agent_worker, None
         if worker is not None:
+            task = getattr(self, "_agent_execution_task", None)
+            if task is not None and not task.done():
+                if getattr(self, "_draining_agent_tasks", None) is None:
+                    self._draining_agent_tasks = set()
+                self._draining_agent_tasks.add(task)
+            worker.exit_on_error = False
             worker.cancel()
         self._turn_active = False
         self._finalize_sub_agent_activities()
@@ -1764,6 +1894,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         restore_transcript: bool = True,
         preserve_queued: bool = False,
     ) -> None:
+        if self._agent_execution_draining() and asyncio.current_task() is not self._workspace_switch_task:
+            raise RuntimeError("The previous turn is still finishing cleanup; wait before rebuilding the agent.")
         previous = self._background_rebuilding
         self._background_rebuilding = True
         try:
@@ -2008,6 +2140,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         leaves the generation and its reports owned for a later retry. Cleanup
         failures after retirement are reported, never raised.
         """
+        if self._agent_execution_draining() and asyncio.current_task() is not self._workspace_switch_task:
+            self._agent_cleanup_failed = True
+            return
         if not preserve_background or self._background_retirement is not None:
             await self._retire_background_jobs(agent=self.agent)
         agent = self.agent

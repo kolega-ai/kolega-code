@@ -246,6 +246,10 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         await self._set_interaction_mode(tui_constants.BUILD_INTERACTION_MODE)
 
     async def _command_gigacode(self, args: str) -> None:
+        if self._agent_execution_draining():
+            self._show_composer_hint(messages.BLOCK_STOP_BEFORE_MODE_SWITCH)
+            self._notify_user(messages.BLOCK_STOP_BEFORE_MODE_SWITCH, severity="warning")
+            return
         if self.agent is None:
             self._set_settings_status(messages.SETTINGS_REQUIRED, tone="warning")
             return
@@ -296,6 +300,10 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             self._notify_user("Usage: /web-search [auto|hosted|client|off]", severity="warning")
             return
 
+        if self._agent_execution_draining():
+            self._show_composer_hint(messages.BLOCK_STOP_BEFORE_MODE_SWITCH)
+            self._notify_user(messages.BLOCK_STOP_BEFORE_MODE_SWITCH, severity="warning")
+            return
         self._web_search_mode = clean
         self.agent.apply_web_search_mode(clean)
         await self._save_session_async()
@@ -325,7 +333,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
 
         # /goal clear | stop | off | reset | none | cancel
         if first_lower in GOAL_CLEAR_ALIASES:
-            if self._turn_active or self.agent_worker is not None:
+            if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
                 self._show_composer_hint(messages.GOAL_BLOCK_STOP_FIRST)
                 self._notify_user(messages.GOAL_BLOCK_STOP_FIRST, severity="warning")
                 return
@@ -353,7 +361,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         if self.agent is None:
             self._set_settings_status(messages.GOAL_BLOCK_SETTINGS, tone="warning")
             return
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._show_composer_hint(messages.GOAL_BLOCK_STOP_FIRST)
             self._notify_user(messages.GOAL_BLOCK_STOP_FIRST, severity="warning")
             return
@@ -408,6 +416,10 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             return
 
         if command.action == "stop":
+            if self._agent_execution_draining():
+                self._show_composer_hint(messages.LOOP_BLOCK_STOP_FIRST)
+                self._notify_user(messages.LOOP_BLOCK_STOP_FIRST, severity="warning")
+                return
             if self._scheduled_loop is None or self._scheduled_loop.stopped:
                 self._add_conversation_entry(
                     tui_state.ConversationEntry(kind="system", content=messages.LOOP_NONE_ACTIVE)
@@ -429,7 +441,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         if self.agent is None:
             self._set_settings_status(messages.LOOP_BLOCK_SETTINGS, tone="warning")
             return
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._show_composer_hint(messages.LOOP_BLOCK_STOP_FIRST)
             self._notify_user(messages.LOOP_BLOCK_STOP_FIRST, severity="warning")
             return
@@ -517,7 +529,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
                 else:
                     selectors.append(part)
 
-            if self._turn_active or self.agent_worker is not None:
+            if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
                 message = "Stop the current turn before dumping prompt overrides."
                 self._show_composer_hint(message)
                 self._notify_user(message, severity="warning")
@@ -676,7 +688,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             )
             return
 
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._notify_user("Cannot retitle while a turn is in progress.", severity="warning")
             return
 
@@ -867,7 +879,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             self._notify_user(messages.BLOCK_PENDING_APPROVAL, severity="warning")
             return
 
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._show_composer_hint(messages.BLOCK_STOP_BEFORE_INIT)
             self._notify_user(messages.BLOCK_STOP_BEFORE_INIT, severity="warning")
             return
@@ -924,7 +936,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         provider = self.settings.active_provider or UI_DEFAULT_PROVIDER
         model_options = ui_model_options(provider)
         if not args:
-            if self._turn_active or self.agent_worker is not None:
+            if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
                 self._show_composer_hint(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH)
                 self._notify_user(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH, severity="warning")
                 return
@@ -959,7 +971,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             self._set_composer_status(messages.MODEL_PLACEHOLDER)
             return
 
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._show_composer_hint(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH)
             self._notify_user(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH, severity="warning")
             return
@@ -1001,6 +1013,10 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         await self._switch_model(pending.provider, matched)
 
     async def _switch_model(self, provider: str, model: str) -> None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
+            self._show_composer_hint(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH)
+            self._notify_user(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH, severity="warning")
+            return
         self._cancel_pending_model_selection()
         self._cancel_pending_effort_selection()
         self.settings.active_provider = provider
@@ -1068,7 +1084,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         The flow can wait up to a few minutes for the browser round-trip, so it
         runs as a worker to keep the UI responsive.
         """
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._show_composer_hint(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH)
             self._notify_user(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH, severity="warning")
             return
@@ -1091,6 +1107,10 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=text, tone="error"))
             return
 
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
+            self._show_composer_hint(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH)
+            self._notify_user(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH, severity="warning")
+            return
         self.settings.set_oauth_token(chatgpt_constants.PROVIDER_KEY, tokens.model_dump(mode="json"))
         self.settings_store.save(self.settings)
         self._add_conversation_entry(
@@ -1124,6 +1144,10 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             self._notify_user(messages.LOGOUT_UNKNOWN_TARGET.format(target=target, targets=targets), severity="warning")
 
     def _logout_chatgpt(self) -> None:
+        if self._agent_execution_draining():
+            self._show_composer_hint(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH)
+            self._notify_user(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH, severity="warning")
+            return
         if not self.settings.has_oauth_token(chatgpt_constants.PROVIDER_KEY):
             self._notify_user(messages.CHATGPT_LOGOUT_NONE, severity="warning")
             return
@@ -1140,7 +1164,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             return
 
         if not args:
-            if self._turn_active or self.agent_worker is not None:
+            if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
                 self._show_composer_hint(messages.BLOCK_STOP_BEFORE_EFFORT_SWITCH)
                 self._notify_user(messages.BLOCK_STOP_BEFORE_EFFORT_SWITCH, severity="warning")
                 return
@@ -1169,7 +1193,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             self._set_composer_status(messages.EFFORT_PLACEHOLDER)
             return
 
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._show_composer_hint(messages.BLOCK_STOP_BEFORE_EFFORT_SWITCH)
             self._notify_user(messages.BLOCK_STOP_BEFORE_EFFORT_SWITCH, severity="warning")
             return
@@ -1219,6 +1243,10 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         await self._switch_thinking_effort(pending.provider, pending.model, matched)
 
     async def _switch_thinking_effort(self, provider: str, model: str, effort: str) -> None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
+            self._show_composer_hint(messages.BLOCK_STOP_BEFORE_EFFORT_SWITCH)
+            self._notify_user(messages.BLOCK_STOP_BEFORE_EFFORT_SWITCH, severity="warning")
+            return
         self._cancel_pending_effort_selection()
         self.settings.active_provider = provider
         self.settings.active_model = model
@@ -1285,6 +1313,9 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         await self._switch_theme(matched)
 
     async def _switch_theme(self, name: str) -> None:
+        if self._agent_execution_draining():
+            self._set_settings_status("Stop the active turn before applying settings.", "warning")
+            return
         self._cancel_pending_theme_selection()
         self.settings.active_theme = name
         self.settings_store.save(self.settings)
@@ -1518,7 +1549,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content="\n".join(lines)))
 
     async def _command_update(self, args: str) -> None:
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._show_composer_hint(messages.BLOCK_STOP_BEFORE_UPDATE)
             self._notify_user(messages.BLOCK_STOP_BEFORE_UPDATE, severity="warning")
             return
@@ -1580,7 +1611,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         """
         if self._handoff_in_progress:
             return
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._show_composer_hint(messages.BLOCK_STOP_BEFORE_HANDOFF)
             self._notify_user(messages.BLOCK_STOP_BEFORE_HANDOFF, severity="warning")
             return
@@ -1665,7 +1696,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             self._notify_user(messages.BLOCK_PLAN_DECISION_SKILL, severity="warning")
             return True
 
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._show_composer_hint(messages.BLOCK_STOP_BEFORE_SKILL)
             self._notify_user(messages.BLOCK_STOP_BEFORE_SKILL, severity="warning")
             return True

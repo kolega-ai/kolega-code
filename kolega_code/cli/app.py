@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 import traceback
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, TypeVar
@@ -25,7 +25,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.filter import LineFilter
 from textual.screen import Screen
 from textual.timer import Timer
-from textual.worker import WorkerCancelled, WorkerFailed, WorkerState
+from textual.worker import WorkerState
 from textual.widgets import (
     Button,
     OptionList,
@@ -301,6 +301,7 @@ class KolegaCodeApp(
         #: Set when action_quit saves the session cleanly; main.py prints the
         #: resume-with-session-ID hint only when this is True.
         self._quit_cleanly = False
+        self._on_shutdown_requested: Callable[[], None] | None = None
         self._session_shutdown_task: asyncio.Task[None] | None = None
         self._startup_task: asyncio.Task[None] | None = None
         self._startup_complete = asyncio.Event()
@@ -313,6 +314,8 @@ class KolegaCodeApp(
         self._extension_bundle = None
         self.agent = None
         self.agent_worker = None
+        self._agent_execution_task: asyncio.Task | None = None
+        self._draining_agent_tasks: set[asyncio.Task] = set()
         #: Stop escalation state: a cancel that cannot land inside the worker
         #: (parked journal write, shielded finalizer) must still free the UI.
         self._stop_pending = False
@@ -330,6 +333,7 @@ class KolegaCodeApp(
         self._sub_agent_seq = 0
         self._session_file_changes: list[tui_state.SessionFileChange] = []
         self._pending_workspace_switch: Optional[tui_state.PendingWorkspaceSwitch] = None
+        self._workspace_switch_task: asyncio.Task | None = None
         self._background_jobs: Optional[BackgroundAgentManager] = None
         self._background_retirement: Optional[tuple[BackgroundAgentManager, BaseAgent | None, bool]] = None
         self._background_paused: bool = False
@@ -402,6 +406,8 @@ class KolegaCodeApp(
         self._onboarding_skipped = False
         self._permission_lock = asyncio.Lock()
         self._persistence_lock = asyncio.Lock()
+        self._pending_session_saves: set[asyncio.Task[None]] = set()
+        self._shutdown_worker_waiters: set[asyncio.Task] = set()
         self._pending_model_selection: Optional[tui_state.PendingModelSelection] = None
         self._pending_effort_selection: Optional[tui_state.PendingEffortSelection] = None
         self._pending_theme_selection: Optional[tui_state.PendingThemeSelection] = None
@@ -577,7 +583,16 @@ class KolegaCodeApp(
     # ------------------------------------------------------------------
 
     def _peer_status(self) -> str:
-        return "busy" if (self._startup_pending or self._turn_active or self.agent_worker is not None) else "idle"
+        return (
+            "busy"
+            if (
+                self._startup_pending
+                or self._turn_active
+                or self.agent_worker is not None
+                or self._agent_execution_draining()
+            )
+            else "idle"
+        )
 
     def _register_with_inbox(self) -> None:
         """Publish this session's live entry so sibling sessions can see and
@@ -864,6 +879,7 @@ class KolegaCodeApp(
         if (
             self._startup_pending
             or self._resume_in_progress
+            or self._agent_execution_draining()
             or not self._recent_sessions_available
             or self._modal_cover_active
         ):
@@ -880,6 +896,8 @@ class KolegaCodeApp(
         was_disabled = composer.disabled
         composer.disabled = True
         try:
+            if self._agent_execution_draining():
+                return
             claim = asyncio.create_task(asyncio.to_thread(self.store.claim_for_resume, session_id, self.project_path))
             try:
                 record = await asyncio.shield(claim)
@@ -904,7 +922,12 @@ class KolegaCodeApp(
             active_path, warning = await asyncio.to_thread(
                 resolve_active_project, record, self.store, self.project_path, persist_fallback=False
             )
-            if not self._recent_sessions_available or self._turn_active or self.agent_worker is not None:
+            if (
+                not self._recent_sessions_available
+                or self._turn_active
+                or self.agent_worker is not None
+                or self._agent_execution_draining()
+            ):
                 return
             reasons: list[str] = []
             if composer.text or self._pending_image_attachments:
@@ -922,7 +945,12 @@ class KolegaCodeApp(
                 self._on_fullscreen_modal_dismissed()
                 if not confirmed:
                     return
-            if not self._recent_sessions_available or self._turn_active or self.agent_worker is not None:
+            if (
+                not self._recent_sessions_available
+                or self._turn_active
+                or self.agent_worker is not None
+                or self._agent_execution_draining()
+            ):
                 return
             # Preserve the current record before committing to closing its UI.
             await self._save_session_history_async()
@@ -1211,13 +1239,33 @@ class KolegaCodeApp(
 
     async def _save_session_async(self) -> None:
         """Persist lightweight session state without blocking Textual's loop."""
+        await self._await_session_save(self._save_session_impl())
+
+    async def _await_session_save(self, write: Coroutine[Any, Any, None]) -> None:
+        """Keep ownership until a write's thread finishes, even if its caller leaves.
+
+        Cancelling ``to_thread`` cannot stop the actual write. Releasing the
+        persistence lock on caller cancellation would let a newer snapshot reach
+        disk first and then be overwritten by that older, still-running write.
+        """
+        task = asyncio.create_task(write)
+        self._pending_session_saves.add(task)
+        task.add_done_callback(self._session_save_finished)
+        await asyncio.shield(task)
+
+    def _session_save_finished(self, task: asyncio.Task[None]) -> None:
+        self._pending_session_saves.discard(task)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            self._record_journal_stall({"kind": "failed", "event_type": "session_save", "error": str(error)})
+
+    async def _save_session_impl(self) -> None:
         async with self._persistence_lock:
             snapshot = self._session_snapshot_locked()
             await asyncio.to_thread(self.store.save, snapshot)
             self.session.updated_at = snapshot.updated_at
 
     async def _save_session_with_deadline(self, save: Awaitable[None]) -> bool:
-        """Await a session write, abandoning it when journal I/O stalls.
+        """Bound a caller's wait without cancelling the underlying write.
 
         Metadata and projection writes are a convenience: the journal already
         holds canonical history. A write wedged behind the session lock must not
@@ -1229,6 +1277,9 @@ class KolegaCodeApp(
             return True
         except asyncio.TimeoutError:
             self._log_status(messages.TURN_SAVE_TIMEOUT, "warn")
+            self._record_journal_stall(
+                {"kind": "timeout", "event_type": "session_save", "timeout_s": self._turn_save_timeout_seconds}
+            )
             return False
 
     def _record_journal_stall(self, payload: dict[str, Any]) -> None:
@@ -1242,7 +1293,9 @@ class KolegaCodeApp(
         diag = getattr(self, "_diag", None)
         if diag is None:
             return
-        diag.record("journal_stall", **payload)
+        fields = dict(payload)
+        fields["failure_kind"] = fields.pop("kind", "unknown")
+        diag.record("journal_stall", **fields)
 
     async def _save_workspace_switch_async(
         self,
@@ -1255,6 +1308,27 @@ class KolegaCodeApp(
         new_branch: str,
     ) -> None:
         """Atomically persist switch metadata and its durable journal boundary."""
+        await self._await_session_save(
+            self._save_workspace_switch_impl(
+                old_root=old_root,
+                new_root=new_root,
+                old_label=old_label,
+                new_label=new_label,
+                old_branch=old_branch,
+                new_branch=new_branch,
+            )
+        )
+
+    async def _save_workspace_switch_impl(
+        self,
+        *,
+        old_root: Path,
+        new_root: Path,
+        old_label: str,
+        new_label: str,
+        old_branch: str,
+        new_branch: str,
+    ) -> None:
         async with self._persistence_lock:
             snapshot = self._session_snapshot_locked()
             await asyncio.to_thread(
@@ -1277,6 +1351,9 @@ class KolegaCodeApp(
         has already been appended at semantic turn boundaries. Keeping this local
         projection current avoids replaying the entire JSONL log after every turn.
         """
+        await self._await_session_save(self._save_session_history_impl())
+
+    async def _save_session_history_impl(self) -> None:
         async with self._persistence_lock:
             agent = self.agent
             if agent is None:
@@ -1340,7 +1417,7 @@ class KolegaCodeApp(
         stripped_text = text.strip()
         self._persist_prompt_history(event.composer)
         if stripped_text.lower() in THREAD_RESET_COMMANDS:
-            if self._turn_active or self.agent_worker is not None:
+            if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
                 self._show_composer_hint(messages.BLOCK_STOP_BEFORE_RESET)
                 self._notify_user(messages.BLOCK_STOP_BEFORE_RESET, severity="warning")
                 return
@@ -1430,6 +1507,7 @@ class KolegaCodeApp(
         if (
             self._turn_active
             or self.agent_worker is not None
+            or self._agent_execution_draining()
             or self._background_rebuilding
             or self._background_retirement is not None
             or self._pending_workspace_switch is not None
@@ -1627,7 +1705,7 @@ class KolegaCodeApp(
             self._set_composer_status(messages.APPROVAL_PLACEHOLDER)
             self._notify_user(messages.BLOCK_PENDING_APPROVAL, severity="warning")
             return True
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._show_composer_hint(messages.BLOCK_STOP_BEFORE_MODE_SWITCH)
             self._notify_user(messages.BLOCK_STOP_BEFORE_MODE_SWITCH, severity="warning")
             return True
@@ -1638,6 +1716,9 @@ class KolegaCodeApp(
         return False
 
     def _permission_mode_switch_blocked(self) -> bool:
+        if self._agent_execution_draining():
+            self._notify_user(messages.BLOCK_STOP_BEFORE_MODE_SWITCH, severity="warning")
+            return True
         if self._pending_approval is not None:
             self._set_composer_status(messages.APPROVAL_PLACEHOLDER)
             self._notify_user(messages.BLOCK_PENDING_APPROVAL_MODE_SWITCH, severity="warning")
@@ -1775,7 +1856,7 @@ class KolegaCodeApp(
         self._push_fullscreen_modal(screen)
 
     def _memory_mutation_blocked(self) -> bool:
-        if not self._turn_active and self.agent_worker is None:
+        if not self._turn_active and self.agent_worker is None and not self._agent_execution_draining():
             return False
         self._notify_user(
             "Wait for the active agent turn to finish, or cancel it, before changing memory.",
@@ -1989,39 +2070,54 @@ class KolegaCodeApp(
             old_info = None
         old_branch = old_info.branch if old_info is not None else ""
 
-        previous_active_metadata = self.session.active_project_path
-        self.session.active_project_path = None if new_root == self.project_path else str(new_root)
-        try:
-            # The boundary is durable before the model is told the switch
-            # happened: a crash between now and the rebuild resumes in the new
-            # workspace, which is what the transcript claims.
-            await self._save_workspace_switch_async(
-                old_root=old_root,
-                new_root=new_root,
-                old_label=old_root.name,
-                new_label=new_root.name,
-                old_branch=old_branch,
-                new_branch=target.branch,
-            )
-        except Exception as exc:
-            self.session.active_project_path = previous_active_metadata
-            raise ToolError(
-                f"Could not persist the workspace switch; the active workspace is unchanged: {exc}"
-            ) from exc
-
-        self._pending_workspace_switch = tui_state.PendingWorkspaceSwitch(
+        pending = tui_state.PendingWorkspaceSwitch(
             new_root=new_root,
             old_root=old_root,
             branch=target.branch,
             old_branch=old_branch,
-            previous_active_metadata=previous_active_metadata,
+            previous_active_metadata=self.session.active_project_path,
         )
+        # A retained save can outlive its caller. Keep the commit and pending
+        # rebuild registration together before cancellation releases execution.
+        operation = asyncio.create_task(self._commit_workspace_switch(pending))
+        cancelled = False
+        while not operation.done():
+            try:
+                await asyncio.shield(operation)
+            except asyncio.CancelledError:
+                cancelled = True
+        operation.result()
+        if cancelled:
+            raise asyncio.CancelledError
+
         branch_note = f" on branch `{target.branch}`" if target.branch else ""
         return (
             f"Committed a switch of the active workspace to `{new_root}`{branch_note}. It takes effect when "
             "this turn ends, so end your turn now — further tool calls this turn would still run in the "
             "previous workspace. You will be prompted to continue in the new workspace."
         )
+
+    async def _commit_workspace_switch(self, pending: tui_state.PendingWorkspaceSwitch) -> None:
+        self.session.active_project_path = None if pending.new_root == self.project_path else str(pending.new_root)
+        try:
+            # The boundary is durable before the model is told the switch
+            # happened: a crash between now and the rebuild resumes in the new
+            # workspace, which is what the transcript claims.
+            await self._save_workspace_switch_async(
+                old_root=pending.old_root,
+                new_root=pending.new_root,
+                old_label=pending.old_root.name,
+                new_label=pending.new_root.name,
+                old_branch=pending.old_branch,
+                new_branch=pending.branch,
+            )
+        except Exception as exc:
+            self.session.active_project_path = pending.previous_active_metadata
+            raise ToolError(
+                f"Could not persist the workspace switch; the active workspace is unchanged: {exc}"
+            ) from exc
+
+        self._pending_workspace_switch = pending
 
     async def _apply_pending_workspace_switch(self) -> Optional[str]:
         """Rebuild the workspace for a committed switch once the stream is over.
@@ -2053,6 +2149,15 @@ class KolegaCodeApp(
             self._background_rebuilding = previous
 
     async def _finish_pending_workspace_switch(self, pending: tui_state.PendingWorkspaceSwitch) -> Optional[str]:
+        owner = asyncio.current_task()
+        self._workspace_switch_task = owner
+        try:
+            return await self._finish_pending_workspace_switch_impl(pending)
+        finally:
+            if self._workspace_switch_task is owner:
+                self._workspace_switch_task = None
+
+    async def _finish_pending_workspace_switch_impl(self, pending: tui_state.PendingWorkspaceSwitch) -> Optional[str]:
         branch_note = f" on branch `{pending.branch}`" if pending.branch else ""
         worktree_label = pending.branch or pending.new_root.name
         try:
@@ -2324,7 +2429,7 @@ class KolegaCodeApp(
 
     async def _rewind_worker(self, baseline_id: Optional[int], label: str, paths: Optional[set[str]] = None) -> None:
         """Restore files to the checkpoint and (whole-turn only) rewind the conversation."""
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._notify_user(messages.REWIND_BLOCKED_TURN, severity="warning")
             return
         tracker = self._session_diff_tracker
@@ -2613,11 +2718,43 @@ class KolegaCodeApp(
         # All callers share one teardown, which survives cancellation of any
         # individual caller and is also awaited by the launcher.
         if self._session_shutdown_task is None:
+            if self._on_shutdown_requested is not None:
+                self._on_shutdown_requested()
             self._session_shutdown_task = asyncio.create_task(self._shutdown_session())
         await asyncio.shield(self._session_shutdown_task)
 
+    def _shutdown_worker_wait_finished(self, task: asyncio.Task) -> None:
+        self._shutdown_worker_waiters.discard(task)
+        if not task.cancelled():
+            task.exception()
+
+    async def _wait_for_agent_shutdown(self) -> bool:
+        worker = self.agent_worker
+        waiters = set(self._draining_agent_tasks)
+        task = self._agent_execution_task
+        if task is not None and not task.done():
+            waiters.add(task)
+        if worker is not None:
+            worker.cancel()
+            waiter = asyncio.create_task(worker.wait())
+            self._shutdown_worker_waiters.add(waiter)
+            waiter.add_done_callback(self._shutdown_worker_wait_finished)
+            waiters.add(waiter)
+        if not waiters:
+            return True
+        _, pending = await asyncio.wait(waiters, timeout=max(1.0, self._stop_force_after_seconds))
+        if not pending:
+            return True
+        task = self._agent_execution_task
+        if task is not None and not task.done():
+            self._draining_agent_tasks.add(task)
+        if self.agent_worker is worker:
+            self.agent_worker = None
+        return False
+
     async def _shutdown_session(self) -> None:
         saved = False
+        turns_settled = True
         self._background_rebuilding = True
         self._background_paused = True
         try:
@@ -2625,16 +2762,10 @@ class KolegaCodeApp(
             # default instead of leaving a turn waiting on a closing window.
             self.control_channel.release(tui_constants.TUI_CLIENT_ID)
             await self._cancel_startup()
-            worker = self.agent_worker
-            if worker is not None:
-                worker.cancel()
-                try:
-                    # Bounded: a worker parked on a blocked journal write swallows
-                    # cancellation. Teardown continues; the stuck thread dies with
-                    # the process.
-                    await asyncio.wait_for(worker.wait(), timeout=max(1.0, self._stop_force_after_seconds))
-                except (WorkerCancelled, WorkerFailed, asyncio.TimeoutError):
-                    pass
+            turns_settled = await self._wait_for_agent_shutdown()
+            if not turns_settled:
+                self._agent_cleanup_failed = True
+                return
             await self._retire_background_jobs()
             if self._watchdog is not None:
                 self._watchdog.stop()
@@ -2668,10 +2799,13 @@ class KolegaCodeApp(
             # step raised; the original failure still propagates.
             try:
                 try:
-                    await self._cleanup_agent_generation()
+                    if self._watchdog is not None:
+                        self._watchdog.stop()
+                    if turns_settled:
+                        await self._cleanup_agent_generation()
                     # After cleanup: cancelled streams settle their failures into
                     # the ledger first, so the drain below captures them.
-                    if self._usage_sink is not None:
+                    if turns_settled and self._usage_sink is not None:
                         await self._usage_sink.aclose()
                 finally:
                     await self._stop_inbox_socket()
@@ -2698,6 +2832,8 @@ class KolegaCodeApp(
             raise ValueError(f"Unknown interaction mode: {interaction_mode}")
         if self.interaction_mode == interaction_mode:
             return
+        if self._agent_execution_draining():
+            raise RuntimeError("The previous turn is still finishing cleanup; wait before switching modes.")
 
         previous_tool_names = self._agent_tool_names()
         had_history = self.agent is not None and bool(getattr(self.agent, "history", None))
@@ -2761,6 +2897,8 @@ class KolegaCodeApp(
         await self._save_session_history_async()
 
     async def _set_permission_mode(self, permission_mode: PermissionMode | str) -> None:
+        if self._permission_mode_switch_blocked():
+            return
         mode = normalize_permission_mode(permission_mode, default=self.permission_mode)
         if self.permission_mode == mode:
             return
@@ -2814,7 +2952,13 @@ class KolegaCodeApp(
 
     async def _implement_pending_plan(self, *, clear_context: bool = False) -> None:
         plan = self._latest_plan
-        if not plan or not self._plan_pending or self._turn_active or self.agent_worker is not None:
+        if (
+            not plan
+            or not self._plan_pending
+            or self._turn_active
+            or self.agent_worker is not None
+            or self._agent_execution_draining()
+        ):
             return
 
         # Leave self._latest_plan set so the planning sidebar keeps showing the
@@ -3239,6 +3383,8 @@ class KolegaCodeApp(
         self._clear_queued_messages()
 
     async def _reset_current_thread(self, *, preserve_loop: bool = False) -> None:
+        if self._agent_execution_draining():
+            raise RuntimeError("The previous turn is still finishing cleanup; wait before resetting the thread.")
         previous = self._background_rebuilding
         self._background_rebuilding = True
         try:
@@ -3330,6 +3476,8 @@ class KolegaCodeApp(
         the new session records it as ``parent_session_id`` and restores the
         document as its opening conversation.
         """
+        if self._agent_execution_draining():
+            raise RuntimeError("The previous turn is still finishing cleanup; wait before handing off the session.")
         await self._retire_background_jobs()
         # 1) Final durable flush of the old session while its agent/recorder are
         #    still live and bound to the old session id.

@@ -41,6 +41,7 @@ from kolega_code.llm.exceptions import (
     LLMInternalServerError,
     LLMRateLimitError,
     LLMStreamStalled,
+    LLMTimeout,
     llm_error_message,
     map_to_llm_error,
 )
@@ -100,6 +101,29 @@ PROJECT_GUIDANCE_FILES = ("AGENTS.md", "KOLEGA.md")
 
 #: The status strip is one narrow line, so every stall notice opens with this fixed lead.
 STALL_NOTICE_LEAD = "Connection issue"
+
+_STREAM_CLEANUP_TIMEOUT = 0.1
+_STREAM_CLEANUP_TASKS: set[asyncio.Future[Any]] = set()
+
+
+def _retain_stream_cleanup(task: asyncio.Future[Any]) -> None:
+    _STREAM_CLEANUP_TASKS.add(task)
+
+    def finished(done: asyncio.Future[Any]) -> None:
+        _STREAM_CLEANUP_TASKS.discard(done)
+        if not done.cancelled():
+            error = done.exception()
+            if error is not None:
+                logger.debug("Abandoned stream operation failed: %s", error)
+
+    task.add_done_callback(finished)
+
+
+@dataclass
+class _StreamGuardState:
+    started_at: float
+    pending: Optional[asyncio.Future[Any]] = None
+
 
 # System prompt for `prompt`/`agent` lifecycle hooks: the model's only job is a
 # yes/no decision returned as a compact JSON object.
@@ -2120,71 +2144,155 @@ class BaseAgent(LogMixin):
             partial_output=bytes_received > 0,
         )
 
-    async def _iter_stream_with_stall_guard(self, stream: Any) -> AsyncGenerator[Any, None]:
-        """Yield provider events, failing deterministically when the stream goes silent.
+    def _remaining_llm_retry_budget(self) -> Optional[float]:
+        if self._llm_retry_budget_started is None:
+            return None
+        return self._llm_retry_budget_seconds - (time.monotonic() - self._llm_retry_budget_started)
 
-        The transport read timeout bounds one socket read and says nothing to the
-        user, so it cannot distinguish "the endpoint never answered" (a connectivity
-        problem) from "a long gap mid-answer" (a slow model). This guard applies a
-        stage-specific deadline per event, reports a heartbeat while it waits so the
-        UI can show a countdown instead of a frozen label, and raises
-        :class:`LLMStreamStalled` with the facts the retry policy needs.
+    def _llm_retry_budget_error(self) -> LLMTimeout:
+        return LLMTimeout(
+            "LLM retry wall-clock budget exhausted.",
+            provider=self.primary_model_config.provider.value,
+        )
 
-        The pending read is wrapped in ``asyncio.shield`` between heartbeat slices:
-        cancelling it to sample the clock would tear down the provider's stream.
-        """
+    async def _await_stream_operation(
+        self, pending: asyncio.Future[Any], *, received: int, bytes_received: int, last_data: float
+    ) -> Any:
+        limit = self._stream_first_chunk_timeout if received == 0 else self._stream_idle_timeout
+        next_heartbeat = self._stream_heartbeat_seconds
+        while True:
+            budget_left = self._remaining_llm_retry_budget()
+            if budget_left is not None and budget_left <= 0:
+                raise self._llm_retry_budget_error()
+            waited = time.monotonic() - last_data
+            if waited >= limit:
+                raise self._stream_stall_error(
+                    stage="first_chunk" if received == 0 else "stream",
+                    bytes_received=bytes_received,
+                    waited_s=waited,
+                    limit_s=limit,
+                )
+            if pending.done():
+                return pending.result()
+            slice_s = min(self._stream_heartbeat_seconds, limit - waited)
+            if budget_left is not None:
+                slice_s = min(slice_s, budget_left)
+            # Unlike wait_for, wait never waits for a cancellation-resistant source
+            # to acknowledge cancellation, or cancels it just to sample the clock.
+            done, _ = await asyncio.wait({pending}, timeout=max(0.0, slice_s))
+            if done:
+                continue
+            waited = time.monotonic() - last_data
+            if waited >= next_heartbeat and waited < limit:
+                next_heartbeat = waited + self._stream_heartbeat_seconds
+                await self._emit_stream_wait_status(received, waited, limit)
+
+    async def _finish_stream_cleanup(self, cleanup: Awaitable[Any]) -> Any:
+        task = asyncio.ensure_future(cleanup)
+        _retain_stream_cleanup(task)
+        done, _ = await asyncio.wait({task}, timeout=_STREAM_CLEANUP_TIMEOUT)
+        return task.result() if done else False
+
+    @contextlib.asynccontextmanager
+    async def _open_stream_with_stall_guard(
+        self, setup: Callable[[], Awaitable[AbstractAsyncContextManager[Any]]]
+    ) -> AsyncGenerator[Tuple[Any, _StreamGuardState], None]:
+        budget_left = self._remaining_llm_retry_budget()
+        if budget_left is not None and budget_left <= 0:
+            raise self._llm_retry_budget_error()
+        state = _StreamGuardState(started_at=time.monotonic())
+        abandoned = False
+
+        async def enter() -> Tuple[AbstractAsyncContextManager[Any], Any]:
+            budget_left = self._remaining_llm_retry_budget()
+            if budget_left is not None and budget_left <= 0:
+                raise self._llm_retry_budget_error()
+            cm = await setup()
+            if abandoned:
+                return cm, None
+            try:
+                return cm, await cm.__aenter__()
+            except BaseException:
+                with contextlib.suppress(Exception):
+                    await cm.__aexit__(*sys.exc_info())
+                raise
+
+        pending = asyncio.ensure_future(enter())
+        try:
+            cm, stream = await self._await_stream_operation(
+                pending, received=0, bytes_received=0, last_data=state.started_at
+            )
+        except BaseException:
+            abandoned = True
+            exc_info = sys.exc_info()
+            pending.cancel()
+
+            async def close_late_setup() -> None:
+                try:
+                    late_cm, _ = await pending
+                except BaseException:
+                    return
+                await late_cm.__aexit__(*exc_info)
+
+            # The setup may swallow cancellation and return an open stream later.
+            # Keep its eventual close alive without holding up the turn.
+            with contextlib.suppress(Exception):
+                await self._finish_stream_cleanup(close_late_setup())
+            raise
+
+        async def exit_stream(exc_info: Any) -> Any:
+            if state.pending is not None:
+                with contextlib.suppress(BaseException):
+                    await state.pending
+            return await cm.__aexit__(*exc_info)
+
+        try:
+            yield stream, state
+        except BaseException:
+            exc_info = sys.exc_info()
+            suppressed = await self._finish_stream_cleanup(exit_stream(exc_info))
+            if not suppressed or isinstance(exc_info[1], asyncio.CancelledError):
+                raise
+        else:
+            await self._finish_stream_cleanup(exit_stream((None, None, None)))
+
+    async def _iter_stream_with_stall_guard(
+        self, stream: Any, *, state: Optional[_StreamGuardState] = None
+    ) -> AsyncGenerator[Any, None]:
+        state = state or _StreamGuardState(started_at=time.monotonic())
         received = 0
         bytes_received = 0
-        last_data = time.monotonic()
-        next_heartbeat = self._stream_heartbeat_seconds
+        last_data = state.started_at
         iterator = stream.__aiter__()
-        pending: Optional[asyncio.Future[Any]] = asyncio.ensure_future(iterator.__anext__())
+        state.pending = asyncio.ensure_future(iterator.__anext__())
         try:
             while True:
-                limit = self._stream_first_chunk_timeout if received == 0 else self._stream_idle_timeout
-                waited = time.monotonic() - last_data
-                if waited >= limit:
-                    stage = "first_chunk" if received == 0 else "stream"
-                    raise self._stream_stall_error(
-                        stage=stage, bytes_received=bytes_received, waited_s=waited, limit_s=limit
-                    )
-                assert pending is not None
-                slice_s = max(0.001, min(self._stream_heartbeat_seconds, limit - waited))
-                try:
-                    event = await asyncio.wait_for(asyncio.shield(pending), timeout=slice_s)
-                except asyncio.TimeoutError:
-                    waited = time.monotonic() - last_data
-                    if waited >= limit:
-                        stage = "first_chunk" if received == 0 else "stream"
-                        raise self._stream_stall_error(
-                            stage=stage,
-                            bytes_received=bytes_received,
-                            waited_s=waited,
-                            limit_s=limit,
-                        )
-                    if waited >= next_heartbeat:
-                        next_heartbeat = waited + self._stream_heartbeat_seconds
-                        await self._emit_stream_wait_status(received, waited, limit)
-                    continue
+                assert state.pending is not None
+                event = await self._await_stream_operation(
+                    state.pending, received=received, bytes_received=bytes_received, last_data=last_data
+                )
                 received += 1
                 bytes_received += self._stream_event_chars(event)
                 last_data = time.monotonic()
-                next_heartbeat = self._stream_heartbeat_seconds
                 yield event
-                pending = asyncio.ensure_future(iterator.__anext__())
+                state.pending = asyncio.ensure_future(iterator.__anext__())
         except StopAsyncIteration:
             return
         finally:
-            if pending is not None and not pending.done():
-                # Cancel the in-flight read and let it unwind here rather than leaving a
-                # task holding the provider connection after the turn moved on.
-                pending.cancel()
-                with contextlib.suppress(BaseException):
-                    await pending
+            if state.pending is not None:
+                if not state.pending.done():
+                    state.pending.cancel()
+                _retain_stream_cleanup(state.pending)
+                await asyncio.wait({state.pending}, timeout=0)
 
     @staticmethod
     def _stream_event_chars(event: Any) -> int:
-        return len(getattr(event, "text", "") or "") + len(getattr(event, "thinking", "") or "")
+        tool_delta = getattr(event, "tool_call_delta", None) or {}
+        return (
+            len(getattr(event, "text", "") or "")
+            + len(getattr(event, "thinking", "") or "")
+            + len(tool_delta.get("input_delta", "") or "")
+        )
 
     async def _emit_stream_wait_status(self, received: int, waited_s: float, limit_s: float) -> None:
         """Report a silent stream while it is still inside its deadline.
@@ -2289,6 +2397,7 @@ class BaseAgent(LogMixin):
                 # Full jitter on capped exponential backoff de-correlates concurrent agents.
                 backoff = min(30.0, 2.0 * (2 ** (self._consecutive_llm_retries - 1)))
                 delay = random.uniform(0, backoff)
+            delay = min(delay, max(0.0, self._remaining_llm_retry_budget() or 0.0))
             await self.log_warning(
                 f"Transient LLM error ({error}); retry {self._consecutive_llm_retries}/{cap} in {delay:.1f}s.",
                 sender=self.agent_name,
@@ -2308,7 +2417,17 @@ class BaseAgent(LogMixin):
                 partial_output=bool(stall is not None and stall.partial_output),
                 budget_left_s=round(max(0.0, self._llm_retry_budget_seconds - budget_used), 1),
             )
-            await asyncio.sleep(delay)
+            await asyncio.sleep(min(delay, max(0.0, self._remaining_llm_retry_budget() or 0.0)))
+            if (self._remaining_llm_retry_budget() or 0.0) <= 0:
+                await self.emitter.llm_status(
+                    "error",
+                    self._retry_exhausted_message(
+                        error,
+                        attempts=self._consecutive_llm_retries,
+                        budget_used_s=time.monotonic() - self._llm_retry_budget_started,
+                    ),
+                )
+                raise error
             await self.log_info("Resuming after backoff.", sender=self.agent_name)
             # Don't re-raise - the turn loop re-issues the request.
 
@@ -3038,6 +3157,7 @@ class BaseAgent(LogMixin):
                 )
 
                 assert self.tool_collection is not None, "tool_collection must be initialized before streaming"
+                tool_collection = self.tool_collection
                 # ``LLMClient.stream`` is typed as ``AsyncContextManager | Coroutine[..., AsyncContextManager]]``
                 # because providers may define ``stream`` either way; every concrete
                 # provider is ``async def``, so the call is always a coroutine that we
@@ -3051,30 +3171,33 @@ class BaseAgent(LogMixin):
                 # provider does all of it in __aenter__), not at stream().
                 self.background_needs_turn = False
                 with llm_call_origin(self._main_loop_origin()):
-                    stream_cm = await cast(
-                        Coroutine[Any, Any, AbstractAsyncContextManager[Any]],
-                        self.llm.stream(
-                            system=self.system_prompt,
-                            max_completion_tokens=self.model_completion_tokens,
-                            temperature=self.model_default_temperature,
-                            messages=fixed_history,
-                            model=self.primary_model_config.model,
-                            tools=self.tool_collection.get_tool_list(),
-                            thinking=self.primary_model_config.thinking_effort,
-                            hosted_web_search=self.hosted_web_search_active,
-                            server_tools=self.server_tools or None,
-                            # The strict per-run budget rechecks this request inside
-                            # the client; hand it the count already taken for the
-                            # gauge (same history) so it is not counted twice.
-                            _precomputed_input_tokens=token_count.input_tokens,
-                        ),
-                    )
-                    async with stream_cm as stream:
+
+                    def stream_setup() -> Coroutine[Any, Any, AbstractAsyncContextManager[Any]]:
+                        return cast(
+                            Coroutine[Any, Any, AbstractAsyncContextManager[Any]],
+                            self.llm.stream(
+                                system=self.system_prompt,
+                                max_completion_tokens=self.model_completion_tokens,
+                                temperature=self.model_default_temperature,
+                                messages=fixed_history,
+                                model=self.primary_model_config.model,
+                                tools=tool_collection.get_tool_list(),
+                                thinking=self.primary_model_config.thinking_effort,
+                                hosted_web_search=self.hosted_web_search_active,
+                                server_tools=self.server_tools or None,
+                                # The strict per-run budget rechecks this request inside
+                                # the client; hand it the count already taken for the
+                                # gauge (same history) so it is not counted twice.
+                                _precomputed_input_tokens=token_count.input_tokens,
+                            ),
+                        )
+
+                    async with self._open_stream_with_stall_guard(stream_setup) as (stream, stream_state):
                         # A silent stream is bounded by the stall guard rather than by the
                         # transport read timeout: it knows whether anything ever arrived,
                         # reports a countdown while waiting, and fails with an actionable
                         # error instead of a bare socket timeout.
-                        async for event in self._iter_stream_with_stall_guard(stream):
+                        async for event in self._iter_stream_with_stall_guard(stream, state=stream_state):
                             if event.type == "text":
                                 if thinking_started or current_thinking:
                                     yield {

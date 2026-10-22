@@ -161,7 +161,7 @@ class LoopRuntimeMixin(tui_app_base.KolegaAppBase):
         close the scheduling window immediately and persist afterwards.
         """
         state = self._scheduled_loop
-        if state is None or state.stopped:
+        if state is None or state.stopped or self._agent_execution_draining():
             return False
         state.stopped = True
         state.deferred = False
@@ -223,6 +223,7 @@ class LoopRuntimeMixin(tui_app_base.KolegaAppBase):
             and not self._loop_iteration_active
             and not self._turn_active
             and self.agent_worker is None
+            and not self._agent_execution_draining()
             and not self._queued_messages
             and self._pending_question is None
             and self._pending_approval is None
@@ -235,7 +236,7 @@ class LoopRuntimeMixin(tui_app_base.KolegaAppBase):
     async def _loop_tick(self) -> None:
         """One scheduler tick: end, defer, or fire."""
         state = self._scheduled_loop
-        if state is None or state.stopped:
+        if state is None or state.stopped or self._agent_execution_draining():
             return
 
         now = now_local()
@@ -264,7 +265,7 @@ class LoopRuntimeMixin(tui_app_base.KolegaAppBase):
 
     def _launch_loop_iteration(self) -> bool:
         """Start one iteration in the exclusive ``turns`` worker group."""
-        if self._scheduled_loop is None or self.agent is None:
+        if self._scheduled_loop is None or self.agent is None or self._agent_execution_draining():
             return False
         # Set before run_worker so a tick landing between here and the worker's
         # first await cannot start a second iteration.
@@ -318,6 +319,9 @@ class LoopRuntimeMixin(tui_app_base.KolegaAppBase):
 
     async def _run_loop_iteration(self) -> None:
         """Run one scheduled iteration as an ordinary turn."""
+        await asyncio.sleep(0)  # The caller must publish agent_worker before eager entry.
+        self._track_agent_execution()
+        owner = self.agent_worker
         state = self._scheduled_loop
         if state is None:
             self._loop_iteration_active = False
@@ -336,6 +340,8 @@ class LoopRuntimeMixin(tui_app_base.KolegaAppBase):
 
             if state.fresh and iteration > 1:
                 await self._reset_current_thread(preserve_loop=True)
+                if self.agent_worker is not owner:
+                    return
                 self._add_conversation_entry(
                     tui_state.ConversationEntry(kind="system", content=messages.LOOP_ITERATION_FRESH)
                 )
@@ -366,6 +372,8 @@ class LoopRuntimeMixin(tui_app_base.KolegaAppBase):
             )
             turn_started = True
             cancelled = await self._process_message(turn_prompt, turn_label=f"Loop {iteration}: {prompt}")
+            if self._agent_execution_draining():
+                return
             if cancelled:
                 self._drain_loop_tokens(state, iteration_mark)
                 await self._stop_loop(messages.LOOP_STOPPED_BY_USER.format(iterations=iteration))
@@ -382,6 +390,6 @@ class LoopRuntimeMixin(tui_app_base.KolegaAppBase):
             raise
         finally:
             self._loop_iteration_active = False
-            if not turn_started:
+            if not turn_started and self.agent_worker is owner:
                 self.agent_worker = None
                 self._schedule_maybe_start_queued_message()

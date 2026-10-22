@@ -1158,19 +1158,14 @@ def _print_quit_resume_hint(session_id: str) -> None:
     _print_styled(messages.SESSION_RESUME_HINT.format(session_id=session_id), style="success")
 
 
-#: How long interpreter shutdown may take before the process exits regardless.
-#: Shutdown waits on executor threads, and a journal write wedged on a file lock
-#: never returns.
+#: App shutdown can stall on cancellation-resistant tasks or blocked executor threads.
 EXIT_WATCHDOG_SECONDS = 15.0
 
 
 def _arm_exit_watchdog(
     seconds: float = EXIT_WATCHDOG_SECONDS, *, force_exit: Callable[[int], None] = os._exit
 ) -> threading.Event:
-    """Force process exit if interpreter shutdown cannot finish.
-
-    Teardown has already run, so the only thing left is waiting on worker threads
-    a stuck write may never release.
+    """Force process exit if app or interpreter shutdown cannot finish.
 
     Returns a cancel event; the caller **must** set it when control returns
     normally, since ``_run_tui`` is also called in-process (tests, embedded hosts).
@@ -1183,7 +1178,7 @@ def _arm_exit_watchdog(
         if cancel.wait(seconds):
             return  # disarmed: the process got past shutdown on its own
         try:
-            sys.stderr.write("\nShutdown is taking too long (a worker thread is stuck); exiting.\n")
+            sys.stderr.write("\nShutdown is taking too long (a task or worker thread is stuck); exiting.\n")
             sys.stderr.flush()
             sys.stdout.flush()
         except Exception:  # noqa: BLE001 - exiting anyway
@@ -1208,6 +1203,7 @@ def _run_tui(args: argparse.Namespace) -> int:
         "config": None,
         "session_id": None,
     }
+    armed_watchdogs: list[threading.Event] = []
     try:
         initial_project_path = _select_startup_project(args.project_path, args)
         try:
@@ -1294,6 +1290,15 @@ def _run_tui(args: argparse.Namespace) -> int:
                 extension_selection=extension_selection,
                 resuming_session=resuming_session,
             )
+            exit_watchdog: threading.Event | None = None
+
+            def _arm_app_exit_watchdog() -> None:
+                nonlocal exit_watchdog
+                if exit_watchdog is None:
+                    exit_watchdog = _arm_exit_watchdog()
+                    armed_watchdogs.append(exit_watchdog)
+
+            app._on_shutdown_requested = _arm_app_exit_watchdog
             crash_context.update(
                 {
                     "settings": settings,
@@ -1331,10 +1336,6 @@ def _run_tui(args: argparse.Namespace) -> int:
             if cleanup_error is not None:
                 raise cleanup_error
 
-        #: Armed when the app loop finishes. A normal return from ``asyncio.run``,
-        #: including in-process calls from tests and embedded hosts, must disarm it.
-        armed_watchdogs: list[threading.Event] = []
-
         async def _run_app_loop() -> None:
             next_project_path = initial_project_path
             next_session: SessionRecord | None = None
@@ -1346,6 +1347,8 @@ def _run_tui(args: argparse.Namespace) -> int:
                 try:
                     await app.run_async()
                 finally:
+                    # Also guard crashes/direct exits that bypass action_quit.
+                    app._on_shutdown_requested()
                     await _close_app(app)
                     crash_context["session_id"] = getattr(app.session, "session_id", crash_context["session_id"])
 
@@ -1360,16 +1363,13 @@ def _run_tui(args: argparse.Namespace) -> int:
                     next_project_path = Path(selected.project_path).expanduser().resolve()
                     next_session = selected
                     apply_name = False
+                    armed_watchdogs.pop().set()
                     continue
 
                 # Normal quit only: action_quit set _quit_cleanly after saving the
                 # session, so the terminal now shows how to resume exactly this one.
                 if clean_quit and current_session_id:
                     _print_quit_resume_hint(current_session_id)
-                # Teardown is done; guard interpreter shutdown, which waits for the
-                # default executor's threads and can hang on a wedged journal write.
-                # Disarmed below if `asyncio.run` returns.
-                armed_watchdogs.append(_arm_exit_watchdog())
                 break
 
         try:

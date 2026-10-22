@@ -62,7 +62,10 @@ CANCEL_REQUESTED = "Cancellation requested."
 STOP_FORCED = "Stopped. The turn did not exit; it was detached and may still finish its pending write."
 #: The post-turn history save missed its deadline (journal I/O stalled); the turn
 #: still finalizes so the plan/next step is reachable.
-TURN_SAVE_TIMEOUT = "Session save is slow (journal I/O); continuing without it. History is already in the journal."
+TURN_SAVE_TIMEOUT = (
+    "Session save is slow (journal I/O); continuing while it finishes in the background. "
+    "Recent session settings may not be durable yet."
+)
 WAITING_FOR_ANSWER = "Waiting for your answer…"
 WAITING_FOR_PERMISSION = "Waiting for permission…"
 QUEUED_MESSAGE = "Queued. It will be delivered to the agent at the next tool boundary, or when this turn finishes."
