@@ -6,16 +6,47 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.45.0 - 2026-10-22
+
 ### Added
 
+- **First-party MiniMax support.** Select `minimax` with `MINIMAX_API_KEY`
+  or a key saved in Settings. Includes MiniMax M3.1 Flash (the default), M3,
+  and the M2 family, with streaming, tool calling, usage reporting, image
+  input on M3 models, and adjustable adaptive thinking on M3.1 Flash.
 - **Mistral model refresh.** `kolega-code models refresh --provider mistral`
   caches Mistral's live, account-visible model list so models published after a
   release resolve without upgrading. The endpoint is authenticated, so the
   command uses `MISTRAL_API_KEY` or a key saved in Settings. A refresh only adds
   models Kolega does not already know and never overrides a bundled spec.
 
+### Changed
+
+- Reduced session-recording overhead during long turns by avoiding redundant
+  journal reads while the process exclusively owns the session.
+- Updated the documentation site's image-processing dependency, sharp, to 0.35.5.
+
 ### Fixed
 
+- **Completed turns no longer leave the TUI stuck as busy on Python 3.12+.**
+  Ordinary turns, background-agent continuations, and scheduled loops now
+  release their timer and active-turn state correctly.
+- **Stop no longer remains indefinitely on "Stopping…".** A second Stop or
+  five-second grace period restores the UI while unfinished cleanup remains
+  isolated. New turns and session, model, or settings changes wait for that
+  cleanup; late output cannot overwrite the current UI.
+- **Silent model requests are bounded.** Separate first-response and idle
+  deadlines, bounded retries, and bounded stream cleanup prevent long,
+  unexplained waits. Compact connection-status notices keep the next action
+  visible even in narrow terminals; detailed errors remain in diagnostics.
+- Slow session writes no longer indefinitely hide finished plans or prevent
+  turn finalization. Writes continue in the background with warnings and
+  diagnostics, and older delayed saves cannot overwrite newer state.
+- Worktree switches committed before cancellation are completed or recovered
+  safely before queued work resumes.
+- Quit now uses bounded waits and a final process-exit watchdog for stuck
+  cleanup or worker threads. The watchdog is disarmed when shutdown returns
+  normally.
 - **Mistral catalog drift.** Large 4's context window is 1,048,576 tokens (was
   524,288), Mistral Large 3 (`mistral-large-2512`) and its `latest` alias are now
   catalogued, and `mistral-code-latest` resolves to Codestral. Large 4 is no
@@ -23,6 +54,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 - **ACP model picker honours exported credentials.** Editor sessions now list
   providers whose API key comes from the environment, matching the CLI, instead
   of only providers saved through onboarding.
+
+### Security
+
+- Updated aiohttp to 3.14.5 for three parser/timeout advisories, with its
+  required yarl update to 1.25.1.
+- Updated Pillow to 13.0.0 in the application and standalone eval bundle for
+  eight security advisories.
+- Updated certifi to 2026.10.19, removing compromised emSign roots.
 
 ## 0.44.0 - 2026-10-19
 
