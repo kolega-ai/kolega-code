@@ -34,7 +34,7 @@ async def test_retry_status_becomes_a_transcript_entry(tmp_path: Path, monkeypat
             _status(
                 {
                     "status": "info",
-                    "message": "Connection issue — stream stalled. Retrying (1/3) in 8s…",
+                    "message": "Connection issue — retrying (1/3) in 8s…",
                     "retry": True,
                     "attempt": 1,
                     "cap": 3,
@@ -46,7 +46,7 @@ async def test_retry_status_becomes_a_transcript_entry(tmp_path: Path, monkeypat
 
         notices = _transcript_notices(app)
         assert notices, "retry was not surfaced in the transcript"
-        assert "Retrying (1/3)" in notices[-1].content
+        assert "retrying (1/3)" in notices[-1].content
         assert notices[-1].tone == "warning"
 
 
@@ -60,7 +60,7 @@ async def test_stall_heartbeat_stays_out_of_the_transcript(tmp_path: Path, monke
             _status(
                 {
                     "status": "info",
-                    "message": "Waiting for the first response — no data for 1m 15s (gives up at 1m 30s)",
+                    "message": "Connection issue — waiting for a response…",
                     "stall": True,
                     "seconds_since_data": 75.0,
                     "timeout_s": 90.0,
@@ -70,4 +70,4 @@ async def test_stall_heartbeat_stays_out_of_the_transcript(tmp_path: Path, monke
         await pilot.pause()
 
         assert _transcript_notices(app) == []
-        assert "no data" in app._turn_status_text.lower()
+        assert "connection issue" in app._turn_status_text.lower()

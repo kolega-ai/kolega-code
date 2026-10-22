@@ -98,6 +98,12 @@ logger = logging.getLogger(__name__)
 
 PROJECT_GUIDANCE_FILES = ("AGENTS.md", "KOLEGA.md")
 
+#: Single lead for every stalled-stream notice. The status strip is one narrow line
+#: that already carries a spinner, the turn's elapsed time and the interrupt hint, so
+#: the notice stays short: this prefix plus what happens next (the retry count). The
+#: endpoint, silence and byte count live in the log and the llm_error diagnostic.
+STALL_NOTICE_LEAD = "Connection issue"
+
 # System prompt for `prompt`/`agent` lifecycle hooks: the model's only job is a
 # yes/no decision returned as a compact JSON object.
 HOOK_DECISION_SYSTEM_PROMPT = (
@@ -2186,16 +2192,15 @@ class BaseAgent(LogMixin):
     async def _emit_stream_wait_status(self, received: int, waited_s: float, limit_s: float) -> None:
         """Report a silent stream while it is still inside its deadline.
 
-        A heartbeat (not an error) so the user sees a countdown rather than a frozen
-        "Reading model response…" for minutes.
+        A heartbeat (not an error) so the user sees the strip change rather than a
+        frozen "Reading model response…" for minutes. The timing rides on the
+        structured fields: the strip has no room for it, and it already ticks the
+        turn's elapsed time next to this label.
         """
-        model = self.primary_model_config.model
-        lead = "Waiting for the first response" if received == 0 else "Waiting for the rest of the response"
         try:
             await self.emitter.llm_status(
                 "info",
-                f"{lead} — no data from {model} for {self._format_wait(waited_s)} "
-                f"(gives up at {self._format_wait(limit_s)})",
+                f"{STALL_NOTICE_LEAD} — waiting for a response…",
                 stall=True,
                 seconds_since_data=round(waited_s, 1),
                 timeout_s=limit_s,
@@ -2205,30 +2210,23 @@ class BaseAgent(LogMixin):
             # A status heartbeat must never break the turn it is describing.
             pass
 
-    def _retry_status_message(self, error: Exception, *, attempt: int, cap: int, delay: float) -> str:
-        """User-facing retry notice: what failed, how far along the budget is, and why."""
-        endpoint = self.llm.provider.base_url
-        if isinstance(error, LLMStreamStalled):
-            if error.zero_output:
-                detail = f"no data from {endpoint} after {self._format_wait(error.waited_s)}"
-            else:
-                detail = (
-                    f"stream from {endpoint} stalled for {self._format_wait(error.waited_s)} "
-                    f"after {error.bytes_received} character(s)"
-                )
-        else:
-            detail = str(error) or type(error).__name__
-        return f"Connection issue — {detail}. Retrying ({attempt}/{cap}) in {delay:.0f}s…"
+    def _retry_status_message(self, *, attempt: int, cap: int, delay: float) -> str:
+        """Short strip copy: one lead, then what happens next and how many tries.
+
+        Whatever failed (a stalled stream, a rate limit, a provider 5xx) already has
+        its detail in the log line and the ``llm_error`` diagnostic — including the
+        provider's own message. The strip is one narrow line that ellipsizes its
+        tail, so repeating that detail here only pushes the retry count off screen.
+        """
+        return f"{STALL_NOTICE_LEAD} — retrying ({attempt}/{cap}) in {delay:.0f}s…"
 
     def _retry_exhausted_message(self, error: Exception, *, attempts: int, budget_used_s: float) -> str:
-        """Terminal message: name the endpoint, attempts, elapsed time, and what to check."""
+        """Terminal message: the same one lead, plus how hard it tried and for how long."""
         if isinstance(error, LLMStreamStalled):
-            endpoint = self.llm.provider.base_url
-            kind = "No data at all" if error.zero_output else "Repeated stalls"
+            attempt_word = "attempt" if attempts == 1 else "attempts"
             return (
-                f"{kind} from {endpoint}: {attempts} attempt(s) over {self._format_wait(budget_used_s)} "
-                f"(last silence {self._format_wait(error.waited_s)}). "
-                "Check the network, VPN, proxy, or firewall for this endpoint."
+                f"{STALL_NOTICE_LEAD} — no response after {attempts} {attempt_word} "
+                f"over {self._format_wait(budget_used_s)}."
             )
         return llm_error_message(
             error if isinstance(error, LLMError) else LLMError(str(error)),
@@ -2313,7 +2311,7 @@ class BaseAgent(LogMixin):
             # instead of only flashing it in the status strip.
             await self.emitter.llm_status(
                 "info",
-                self._retry_status_message(error, attempt=self._consecutive_llm_retries, cap=cap, delay=delay),
+                self._retry_status_message(attempt=self._consecutive_llm_retries, cap=cap, delay=delay),
                 retry=True,
                 attempt=self._consecutive_llm_retries,
                 cap=cap,
