@@ -99,9 +99,6 @@ logger = logging.getLogger(__name__)
 
 PROJECT_GUIDANCE_FILES = ("AGENTS.md", "KOLEGA.md")
 
-#: The status strip is one narrow line, so every stall notice opens with this fixed lead.
-STALL_NOTICE_LEAD = "Connection issue"
-
 _STREAM_CLEANUP_TIMEOUT = 0.1
 _STREAM_CLEANUP_TASKS: set[asyncio.Future[Any]] = set()
 
@@ -2160,6 +2157,7 @@ class BaseAgent(LogMixin):
     ) -> Any:
         limit = self._stream_first_chunk_timeout if received == 0 else self._stream_idle_timeout
         next_heartbeat = self._stream_heartbeat_seconds
+        reported_wait = False
         while True:
             budget_left = self._remaining_llm_retry_budget()
             if budget_left is not None and budget_left <= 0:
@@ -2173,7 +2171,10 @@ class BaseAgent(LogMixin):
                     limit_s=limit,
                 )
             if pending.done():
-                return pending.result()
+                result = pending.result()
+                if reported_wait:
+                    await self._emit_stream_resume_status()
+                return result
             slice_s = min(self._stream_heartbeat_seconds, limit - waited)
             if budget_left is not None:
                 slice_s = min(slice_s, budget_left)
@@ -2186,6 +2187,7 @@ class BaseAgent(LogMixin):
             if waited >= next_heartbeat and waited < limit:
                 next_heartbeat = waited + self._stream_heartbeat_seconds
                 await self._emit_stream_wait_status(received, waited, limit)
+                reported_wait = True
 
     async def _finish_stream_cleanup(self, cleanup: Awaitable[Any]) -> Any:
         task = asyncio.ensure_future(cleanup)
@@ -2302,7 +2304,7 @@ class BaseAgent(LogMixin):
         try:
             await self.emitter.llm_status(
                 "info",
-                f"{STALL_NOTICE_LEAD} — waiting for a response…",
+                "Waiting for response…",
                 stall=True,
                 seconds_since_data=round(waited_s, 1),
                 timeout_s=limit_s,
@@ -2312,18 +2314,21 @@ class BaseAgent(LogMixin):
             # A status heartbeat must never break the turn it is describing.
             pass
 
-    def _retry_status_message(self, *, attempt: int, cap: int, delay: float) -> str:
+    async def _emit_stream_resume_status(self) -> None:
+        try:
+            await self.emitter.llm_status("info", "Reading model response…", resumed=True)
+        except Exception:
+            pass
+
+    def _retry_status_message(self, error: Exception, *, attempt: int, cap: int, delay: float) -> str:
         """Short strip copy; the failure detail is already in the log and ``llm_error``."""
-        return f"{STALL_NOTICE_LEAD} — retrying ({attempt}/{cap}) in {delay:.0f}s…"
+        lead = "Response timed out — retrying" if isinstance(error, LLMTimeout) else "Retrying request"
+        return f"{lead} ({attempt}/{cap}) in {delay:.0f}s…"
 
     def _retry_exhausted_message(self, error: Exception, *, attempts: int, budget_used_s: float) -> str:
-        """Terminal message: the same one lead, plus how hard it tried and for how long."""
         if isinstance(error, LLMStreamStalled):
             attempt_word = "attempt" if attempts == 1 else "attempts"
-            return (
-                f"{STALL_NOTICE_LEAD} — no response after {attempts} {attempt_word} "
-                f"over {self._format_wait(budget_used_s)}."
-            )
+            return f"Response timed out after {attempts} {attempt_word} over {self._format_wait(budget_used_s)}."
         return llm_error_message(
             error if isinstance(error, LLMError) else LLMError(str(error)),
             model=self.primary_model_config.model,
@@ -2408,7 +2413,7 @@ class BaseAgent(LogMixin):
             # instead of only flashing it in the status strip.
             await self.emitter.llm_status(
                 "info",
-                self._retry_status_message(attempt=self._consecutive_llm_retries, cap=cap, delay=delay),
+                self._retry_status_message(error, attempt=self._consecutive_llm_retries, cap=cap, delay=delay),
                 retry=True,
                 attempt=self._consecutive_llm_retries,
                 cap=cap,

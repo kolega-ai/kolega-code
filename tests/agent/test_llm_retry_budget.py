@@ -12,7 +12,13 @@ from unittest.mock import patch
 
 import pytest
 
-from kolega_code.llm.exceptions import LLMRateLimitError, LLMStreamStalled
+from kolega_code.llm.exceptions import (
+    LLMConnectionError,
+    LLMInternalServerError,
+    LLMRateLimitError,
+    LLMStreamStalled,
+    LLMTimeout,
+)
 
 #: The strip's label budget on a 120-column terminal; longer text is cut mid-word.
 _STRIP_BUDGET = 52
@@ -107,7 +113,7 @@ async def test_retry_status_carries_structure_for_the_transcript(base_agent, moc
     assert content["stalled"] is True
     assert content["partial_output"] is True
     message = content["message"]
-    assert message.startswith("Connection issue — retrying (1/")
+    assert message.startswith("Response timed out — retrying (1/")
     assert len(message) <= _STRIP_BUDGET
     assert endpoint not in message
     assert "stalled" not in message.lower()
@@ -121,17 +127,18 @@ async def test_rate_limit_retry_uses_the_same_short_notice(base_agent, mock_conn
         await base_agent.handle_llm_error(LLMRateLimitError(message=body, provider="openai"))
 
     message = _status_events(mock_connection_manager)[0].content["message"]
-    assert message.startswith("Connection issue — retrying (1/")
+    assert message.startswith("Retrying request (1/")
     assert len(message) <= _STRIP_BUDGET
     assert "429" not in message
 
 
 @pytest.mark.asyncio
-async def test_stall_heartbeat_fits_the_status_strip(base_agent, mock_connection_manager):
-    await base_agent._emit_stream_wait_status(0, waited_s=75.0, limit_s=90.0)
+@pytest.mark.parametrize("received", [0, 1])
+async def test_stall_heartbeat_fits_the_status_strip(base_agent, mock_connection_manager, received: int) -> None:
+    await base_agent._emit_stream_wait_status(received, waited_s=75.0, limit_s=90.0)
 
     content = _status_events(mock_connection_manager)[0].content
-    assert content["message"] == "Connection issue — waiting for a response…"
+    assert content["message"] == "Waiting for response…"
     assert len(content["message"]) <= _STRIP_BUDGET
     assert content["seconds_since_data"] == 75.0
     assert content["timeout_s"] == 90.0
@@ -150,6 +157,29 @@ async def test_exhausted_message_counts_attempts_without_the_endpoint(base_agent
     events = [event for event in _status_events(mock_connection_manager) if event.content["status"] == "error"]
     assert events, "no terminal error status was emitted"
     message = events[-1].content["message"]
-    assert message.startswith("Connection issue — no response after 1 attempt")
+    assert message.startswith("Response timed out after 1 attempt")
+    assert len(message) <= _STRIP_BUDGET
     assert endpoint not in message
     assert "VPN" not in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (LLMConnectionError("offline"), "Retrying request (1/"),
+        (LLMInternalServerError("overloaded"), "Retrying request (1/"),
+        (LLMTimeout("read timed out"), "Response timed out — retrying (1/"),
+    ],
+    ids=["connection", "overload", "timeout"],
+)
+async def test_retry_message_describes_the_failure_without_claiming_a_connection_issue(
+    base_agent, mock_connection_manager, error: Exception, expected: str
+) -> None:
+    with patch("kolega_code.agent.baseagent.asyncio.sleep", side_effect=_no_sleep):
+        await base_agent.handle_llm_error(error)
+
+    content = _status_events(mock_connection_manager)[0].content
+    assert content["retry"] is True
+    assert content["message"].startswith(expected)
+    assert len(content["message"]) <= _STRIP_BUDGET
