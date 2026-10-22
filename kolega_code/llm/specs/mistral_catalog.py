@@ -1,16 +1,11 @@
 """First-party Mistral catalog conversion for ``models refresh``.
 
-Mistral publishes its account-visible models at ``GET /v1/models``. Unlike the
-public overlay endpoints (OpenRouter, Ollama Cloud, Tinker), this one is
-authenticated, so ``fetch_models`` takes an API key instead of reading ambient
-configuration; the CLI resolves the credential and passes it in.
-
-The payload is not one row per model. A single model appears several times
-(``mistral-medium-3-5``, ``mistral-medium-latest``, ``mistral-vibe-cli-*``, …)
-and every row repeats the same ``aliases`` list. This module groups rows by
-billing identity and emits exactly one entry per underlying model under a
-canonical id. Alias coverage stays a curated concern of the bundled snapshot: a
-refresh discovers models, it does not re-derive the reviewed alias list.
+``GET /v1/models`` is authenticated, so ``fetch_models`` takes a key rather than
+reading ambient config. The payload is not one row per model: a single model
+appears under several ids (``mistral-medium-3-5``, ``mistral-medium-latest``, …)
+all sharing an ``aliases`` list. Rows are grouped by billing identity into one
+entry per underlying model. Aliases stay curated in the bundled snapshot — a
+refresh discovers models, it does not re-derive the reviewed list.
 """
 
 from __future__ import annotations
@@ -28,24 +23,18 @@ from .validation import validate_model_spec
 PROVIDER = "mistral"
 MODELS_URL = "https://api.mistral.ai/v1/models"
 
-# Marks this overlay as requiring a credential. ``models refresh`` resolves it
-# from ``MISTRAL_API_KEY`` (or a key saved in Settings) before calling
-# ``fetch_models``; overlays without this attribute are fetched anonymously.
+# Marks this overlay as credential-gated; overlays without it are fetched anonymously.
 API_KEY_ENV = "MISTRAL_API_KEY"
 
 CACHE_FILENAME = "mistral_models.json"
 CACHE_SCHEMA_VERSION = 1
 
-# Kolega's reserved output budget, not a native ceiling. Mistral's model list
-# reports ``max_context_length`` but no maximum-output field; the native
-# Chat Completion validation is the only place a real ceiling appears (Large 4
-# reports 262,144). Keeping a 32,768 reservation preserves input headroom under
-# the shared window.
+# Kolega's own reservation, not a native ceiling: the model list reports no
+# maximum-output field. Reserving headroom keeps input under the shared window.
 MAX_COMPLETION_TOKENS = 32768
 DEFAULT_TEMPERATURE = 1.0
 
-# Capabilities that make a chat-capable endpoint unusable as an agent model:
-# audio/OCR/moderation/embedding endpoints are published in the same list.
+# Audio/OCR/moderation/embedding endpoints share the same list but cannot run an agent.
 _NON_CHAT_CAPABILITIES = (
     "audio",
     "audio_transcription",
@@ -56,15 +45,11 @@ _NON_CHAT_CAPABILITIES = (
     "classification",
 )
 
-# Organization-gated research models. The account lists them but inference
-# returns HTTP 403 until an admin enables Labs access, so they are not offered.
+# Listed but 403s until an admin enables Labs access, so they are not offered.
 _EXCLUDED_ID_PREFIXES = ("labs-",)
 
-# Only first-party families get Kolega's thinking control. Mistral-hosted
-# third-party models report ``reasoning: true`` but do not share the effort
-# contract: ``zai-glm-5-3`` rejects ``reasoning_effort: "none"`` (only
-# low/high/max), which would break the default request path. They keep the
-# server default instead.
+# Third-party models report ``reasoning: true`` but reject parts of the effort
+# contract (``zai-glm-5-3`` refuses ``"none"``), so only first-party families get it.
 _REASONING_ID_PREFIXES = ("mistral-", "ministral-", "magistral-")
 
 
@@ -143,12 +128,7 @@ def _spec_for(identifier: str, item: Mapping[str, Any]) -> dict[str, Any] | None
 
 
 def catalog_entries(payload: Any) -> list[tuple[str, dict[str, Any]]]:
-    """Transform a Mistral ``/v1/models`` payload into ``(id, spec)`` entries.
-
-    One entry per underlying model, in the payload's own order (which is the
-    order the cache and the picker will show). Rows that share a billing
-    identity collapse onto their canonical id; aliases are not emitted.
-    """
+    """Transform a Mistral ``/v1/models`` payload into one ``(id, spec)`` per model."""
     rows = payload.get("data") if isinstance(payload, Mapping) else payload
     if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
         raise MistralCatalogError("Expected a JSON object with a 'data' list.")

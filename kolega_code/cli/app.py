@@ -2785,9 +2785,8 @@ class KolegaCodeApp(
                     except Exception:
                         pass
                 try:
-                    # Bounded for the same reason as the worker wait above: a parked
-                    # worker can still hold ``_persistence_lock``, and the canonical
-                    # history is already in the journal, so quit instead of hanging.
+                    # Bounded like the worker wait above: the canonical history is
+                    # already in the journal, so quit instead of hanging on the lock.
                     await asyncio.wait_for(
                         self._save_session_history_async(), timeout=max(1.0, self._stop_force_after_seconds)
                     )
@@ -2940,10 +2939,8 @@ class KolegaCodeApp(
     async def _show_plan_for_decision(self, plan: str, *, notification: str) -> None:
         self._plan_pending = True
         self._plan_decision_active = True
-        # Render before persisting. Everything the user must see is in-memory
-        # state; the save only makes it durable. Doing the write first meant a
-        # stalled journal kept a finished plan off screen entirely (the turn's
-        # last write parked and the card was never created).
+        # Render before persisting: a stalled journal write used to keep a finished
+        # plan off screen entirely.
         self._refresh_planning_sidebar()
         self._add_conversation_entry(tui_state.ConversationEntry(kind="plan", content=plan, complete=True))
         self._set_plan_actions_visible(True, allow_discuss=True)

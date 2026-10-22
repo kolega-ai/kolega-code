@@ -1158,9 +1158,7 @@ def _print_quit_resume_hint(session_id: str) -> None:
     _print_styled(messages.SESSION_RESUME_HINT.format(session_id=session_id), style="success")
 
 
-#: How long app/interpreter shutdown may take before the process exits regardless.
-#: Shutdown waits for the default executor's threads; a journal write wedged on a
-#: file lock never returns and would hold the terminal forever.
+#: App shutdown can stall on cancellation-resistant tasks or blocked executor threads.
 EXIT_WATCHDOG_SECONDS = 15.0
 
 
@@ -1169,11 +1167,10 @@ def _arm_exit_watchdog(
 ) -> threading.Event:
     """Force process exit if app or interpreter shutdown cannot finish.
 
-    Returns a cancel event, and the caller **must** set it when control returns
-    normally: ``_run_tui`` is also called in-process (tests, embedded hosts), and a
-    watchdog that outlives the call would kill that process some seconds later.
-    When shutdown is genuinely wedged the call never returns, which is exactly when
-    the watchdog must fire.
+    Returns a cancel event; the caller **must** set it when control returns
+    normally, since ``_run_tui`` is also called in-process (tests, embedded hosts).
+    When shutdown is genuinely wedged the call never returns, which is exactly
+    when the watchdog must fire.
     """
     cancel = threading.Event()
 
@@ -1407,9 +1404,7 @@ def _run_tui(args: argparse.Namespace) -> int:
             raise
         return 0
     finally:
-        # Reaching here means the process is going to keep running (or exit
-        # promptly): a watchdog left armed would eventually kill an in-process
-        # caller such as the test suite or an embedded host.
+        # Control came back, so leave no watchdog armed to kill a later caller.
         for cancel in armed_watchdogs:
             cancel.set()
         store.release_session_locks()

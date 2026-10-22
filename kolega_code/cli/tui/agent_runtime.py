@@ -348,10 +348,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             if self.agent_worker is not owner:
                 return False
             self._finish_turn_progress(messages.FINISHED, tui_state.TurnState.IDLE)
-            # Bounded: the history save rewrites metadata through the journal, and a
-            # write wedged behind the session lock used to leave the turn parked here
-            # forever — the dashboard said "Finished" while the plan card (the next
-            # step) never appeared. The journal is canonical, so a skipped projection
+            # Bounded: a journal write wedged on the session lock used to park the
+            # turn here forever. The journal is canonical, so a skipped projection
             # refresh is recoverable; an invisible plan is not.
             await self._save_session_with_deadline(self._save_session_history_async())
             if self.agent_worker is not owner:
@@ -562,17 +560,14 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 and not self._agent_execution_draining()
             ):
                 await self._apply_pending_workspace_switch()
-            # The turn worker owns ``agent_worker`` for its whole lifetime — including
-            # the goal loop's verifier phase, which runs between work turns. Clear it
-            # only here so the app stays "busy" during goal evaluation: submissions
-            # queue instead of running immediately (which would cancel the verifier
-            # via the exclusive ``turns`` worker group) and Esc can interrupt the loop.
+            # The turn worker owns ``agent_worker`` for its whole lifetime, including
+            # the goal loop's verifier phase. Clearing it only here keeps the app
+            # "busy" during evaluation: submissions queue instead of cancelling the
+            # verifier via the exclusive ``turns`` group, and Esc can interrupt it.
             if self.agent_worker is owner:
                 self.agent_worker = None
-                # A stop can land outside ``_run_turn_stream``'s finalizer (while a
-                # pending workspace switch applies, or the goal verifier runs), so
-                # the dashboard may still be painted "Stopping…" with a live turn.
-                # Settle it here: this is the last point that owns the turn.
+                # A stop can land outside ``_run_turn_stream``'s finalizer, leaving the
+                # dashboard painted "Stopping…" with a live turn. Settle it here.
                 if self._stop_pending and self._turn_started_at is not None:
                     self._force_settle_stop()
                 self._refresh_shortcut_context()
@@ -1639,10 +1634,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                         self._write_log(text, "info")
                     self._update_activity_progress(text)
                     if event.content.get("retry"):
-                        # A retry belongs in the transcript, not only in a status line
-                        # that the next stream delta overwrites. Without this the user
-                        # sees one long freeze and cannot tell a flapping connection
-                        # from a slow model.
+                        # A retry belongs in the transcript: the status line is
+                        # overwritten by the next stream delta, leaving the user
+                        # unable to tell a flapping connection from a slow model.
                         self._add_conversation_entry(
                             tui_state.ConversationEntry(kind="system", content=text, complete=True, tone="warning")
                         )
@@ -1669,12 +1663,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._cancel_pending_approval()
             self._restore_queued_messages_to_composer()
             if self._stop_pending:
-                # Escalation. The worker already had a stop request and has not
-                # finished: a cooperative cancel cannot land because the worker is
-                # parked in a wait that swallows CancelledError (the agent's turn
-                # finalizers wait on journal writes that a cancel cannot abandon).
-                # Repeated cancel() calls would keep repainting "Stopping…" forever,
-                # so detach the worker and settle the dashboard now.
+                # Escalation: the worker already had a stop request and has not
+                # finished, because it is parked in a wait that swallows
+                # CancelledError. Repeating cancel() would repaint "Stopping…"
+                # forever, so detach the worker and settle the dashboard now.
                 self._force_settle_stop()
                 return
             self._stop_pending = True
@@ -1682,14 +1674,13 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._arm_stop_watchdog()
             self._notify_user(messages.CANCEL_REQUESTED, severity="warning")
             return
-        # Nothing is running: a dashboard still showing a live turn belongs to a
-        # worker that vanished without finalizing (it was detached or crashed
-        # before _finish_turn_progress). Settle it instead of swallowing the key.
+        # Nothing is running, but the dashboard may still show a live turn from a
+        # worker that vanished before _finish_turn_progress. Settle it instead.
         if self._turn_started_at is not None:
             self._force_settle_stop()
             return
-        # Clear a pending scheduled-loop wakeup, the way Esc clears any other
-        # pending action. With no turn and no loop this stays a no-op.
+        # Clear a pending scheduled-loop wakeup the way Esc clears any other
+        # pending action; with no turn and no loop this is a no-op.
         if self._scheduled_loop is not None and self._scheduled_loop.is_active:
             self._request_loop_stop(messages.LOOP_STOPPED_BY_USER.format(iterations=self._scheduled_loop.iterations))
 

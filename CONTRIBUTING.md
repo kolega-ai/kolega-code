@@ -120,6 +120,18 @@ You can pass additional pytest arguments through the wrapper:
 ./run_tests.sh tests/test_git_env.py -ra
 ```
 
+## Comments
+
+Comments are rare here. Write one only where the code cannot say it: a non-obvious
+constraint, a failure mode, or a probed vendor behaviour.
+
+- Don't restate a self-explanatory constant or boolean in prose above it.
+- Don't write a docstring that rewords the signature, or one longer than the body it
+  documents.
+- Don't transcribe research (probe logs, vendor quirks) into a source-file banner —
+  that belongs in `docs/`, `CHANGELOG.md`, or the test that pins the behaviour.
+- Explain a subtle decision once, at the place it is made, not at every call site.
+
 ## Updating bundled skills
 
 Kolega Code vendors a reviewed, tagged snapshot from

@@ -99,10 +99,7 @@ logger = logging.getLogger(__name__)
 
 PROJECT_GUIDANCE_FILES = ("AGENTS.md", "KOLEGA.md")
 
-#: Single lead for every stalled-stream notice. The status strip is one narrow line
-#: that already carries a spinner, the turn's elapsed time and the interrupt hint, so
-#: the notice stays short: this prefix plus what happens next (the retry count). The
-#: endpoint, silence and byte count live in the log and the llm_error diagnostic.
+#: The status strip is one narrow line, so every stall notice opens with this fixed lead.
 STALL_NOTICE_LEAD = "Connection issue"
 
 _STREAM_CLEANUP_TIMEOUT = 0.1
@@ -2300,10 +2297,7 @@ class BaseAgent(LogMixin):
     async def _emit_stream_wait_status(self, received: int, waited_s: float, limit_s: float) -> None:
         """Report a silent stream while it is still inside its deadline.
 
-        A heartbeat (not an error) so the user sees the strip change rather than a
-        frozen "Reading model response…" for minutes. The timing rides on the
-        structured fields: the strip has no room for it, and it already ticks the
-        turn's elapsed time next to this label.
+        A heartbeat, not an error. The timing rides on the structured fields.
         """
         try:
             await self.emitter.llm_status(
@@ -2319,13 +2313,7 @@ class BaseAgent(LogMixin):
             pass
 
     def _retry_status_message(self, *, attempt: int, cap: int, delay: float) -> str:
-        """Short strip copy: one lead, then what happens next and how many tries.
-
-        Whatever failed (a stalled stream, a rate limit, a provider 5xx) already has
-        its detail in the log line and the ``llm_error`` diagnostic — including the
-        provider's own message. The strip is one narrow line that ellipsizes its
-        tail, so repeating that detail here only pushes the retry count off screen.
-        """
+        """Short strip copy; the failure detail is already in the log and ``llm_error``."""
         return f"{STALL_NOTICE_LEAD} — retrying ({attempt}/{cap}) in {delay:.0f}s…"
 
     def _retry_exhausted_message(self, error: Exception, *, attempts: int, budget_used_s: float) -> str:
