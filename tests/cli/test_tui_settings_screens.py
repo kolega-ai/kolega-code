@@ -10,7 +10,12 @@ from kolega_code.cli.provider_registry import DEEPSEEK_DEFAULT_MODEL, UI_DEFAULT
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
-from ._app_test_utils import install_fake_agents, stage_provider_api_key, wait_for_onboarding_screen
+from ._app_test_utils import (
+    install_fake_agents,
+    stage_provider_api_key,
+    wait_for_layout,
+    wait_for_onboarding_screen,
+)
 
 
 def _configured_app(
@@ -84,6 +89,32 @@ def _non_vision_openrouter_model() -> str:
     )
 
 
+async def _open_settings(pilot, app, category: str | None = None):
+    """Open Settings and wait until the screen and its children are mounted.
+
+    ``action_open_settings`` pushes the screen; its widgets mount on later layout
+    passes, so ``query_one`` immediately after a single pause raises ``NoMatches``
+    on a loaded runner (12 xdist workers saturate the CPU locally too).
+    """
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    if category is None:
+        app.action_open_settings()
+    else:
+        app.action_open_settings(category)
+    await wait_for_layout(
+        pilot,
+        lambda: (
+            isinstance(app.screen, SettingsScreen)
+            and bool(app.screen.query("#close_settings"))
+            and bool(app.screen.query("#settings_categories"))
+        ),
+    )
+    screen = app.screen
+    assert isinstance(screen, SettingsScreen)
+    return screen
+
+
 @pytest.mark.asyncio
 async def test_settings_screen_is_categorized_and_stages_credentials_atomically(
     tmp_path: Path,
@@ -93,15 +124,10 @@ async def test_settings_screen_is_categorized_and_stages_credentials_atomically(
     pytest.importorskip("textual")
     from textual.widgets import Button, Input, OptionList, Select
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
-
     app, settings_store = _configured_app(tmp_path, monkeypatch)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
         await pilot.pause()
         assert screen.dirty is False
         assert screen.query_one("#settings_categories", OptionList).option_count == 9
@@ -172,8 +198,6 @@ async def test_settings_screen_retains_active_model_and_effort(
     pytest.importorskip("textual")
     from textual.widgets import Select
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
-
     app, _ = _configured_app(
         tmp_path,
         monkeypatch,
@@ -183,10 +207,7 @@ async def test_settings_screen_retains_active_model_and_effort(
     )
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
         await _wait_for_select_values(
             pilot,
             screen,
@@ -222,15 +243,11 @@ async def test_settings_mistral_provider_changes_default_and_save_all_model_slot
     pytest.importorskip("textual")
     from textual.widgets import Select
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
     from kolega_code.config import ModelProvider
 
     app, settings_store = _configured_app(tmp_path, monkeypatch, extra_key_providers=("mistral",))
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
         await _wait_for_select_values(pilot, screen, {"provider_select": UI_DEFAULT_PROVIDER})
 
         screen.query_one("#provider_select", Select).value = "mistral"
@@ -324,13 +341,16 @@ async def test_settings_layout_uses_uniform_controls_and_quiet_actions(
         app.query_one("#events", TabbedContent).active = "settings_pane"
         await pilot.pause()
         open_settings = app.query_one("#open_settings", Button)
+        summary_section = app.query_one("#settings_summary_section", Vertical)
+        # Regions settle on a second layout pass; assert them through a poll.
+        await wait_for_layout(pilot, lambda: open_settings.region.width < summary_section.region.width)
         assert open_settings.has_class("quiet")
         assert open_settings.styles.background.a == 0
-        summary_section = app.query_one("#settings_summary_section", Vertical)
-        assert open_settings.region.width < summary_section.region.width
 
         app.action_open_settings()
-        await pilot.pause()
+        # The screen is pushed before its children mount, so poll on a child
+        # (non-raising query) rather than on the screen type alone.
+        await wait_for_layout(pilot, lambda: bool(app.screen.query("#provider_select")))
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
 
@@ -338,49 +358,60 @@ async def test_settings_layout_uses_uniform_controls_and_quiet_actions(
         provider = screen.query_one("#provider_select", Select)
         model = screen.query_one("#model_select", Select)
         effort = screen.query_one("#thinking_effort_select", Select)
-        assert provider.region.width == model.region.width == effort.region.width == 46
-        assert provider.region.x == model.region.x == effort.region.x
+        await wait_for_layout(
+            pilot,
+            lambda: (
+                provider.region.width == model.region.width == effort.region.width == 46
+                and provider.region.x == model.region.x == effort.region.x
+            ),
+        )
 
         # The Providers page shares the same control width.
         screen._show_category("providers")
-        await pilot.pause()
         api_key = screen.query_one("#provider_api_key_input")
-        assert api_key.region.width == 46
+        await wait_for_layout(pilot, lambda: api_key.region.width == 46)
         screen._show_category("model")
         await pilot.pause()
 
         # Quiet secondary vs one solid primary action in the footer band.
         close_button = screen.query_one("#close_settings", Button)
+        apply_button = screen.query_one("#save_settings", Button)
+        status = screen.query_one("#settings_status", Static)
+        hint = screen.query_one("#settings_screen_hint", Static)
+        body = screen.query_one("#settings_screen_body")
+        await wait_for_layout(
+            pilot,
+            lambda: (
+                status.region.y < apply_button.region.y + apply_button.region.height
+                and apply_button.region.y < status.region.y + status.region.height
+                and hint.region.y < body.region.y
+            ),
+        )
         assert close_button.has_class("quiet")
         assert close_button.styles.background.a == 0
-        apply_button = screen.query_one("#save_settings", Button)
         assert apply_button.has_class("solid-primary")
         assert apply_button.styles.background.a == 1
-        # The footer is a single band: status text sits beside the buttons,
-        # and the esc hint lives in the header.
-        status = screen.query_one("#settings_status", Static)
-        assert status.region.y < apply_button.region.y + apply_button.region.height
-        assert apply_button.region.y < status.region.y + status.region.height
-        hint = screen.query_one("#settings_screen_hint", Static)
-        assert hint.region.y < screen.query_one("#settings_screen_body").region.y
 
         # Agent-model rows align to the same right edge as the stacked controls.
         screen._show_category("agents")
-        await pilot.pause()
         role_select = screen.query_one("#agent_role_select", Select)
         row_model = screen.query_one("#am_model_planning", Select)
-        assert row_model.region.x + row_model.region.width == role_select.region.x + role_select.region.width
+        await wait_for_layout(
+            pilot,
+            lambda: row_model.region.x + row_model.region.width == role_select.region.x + role_select.region.width,
+        )
 
         screen._show_category("mcp")
-        await pilot.pause()
         server = screen.query_one("#mcp_server_select", Select)
         enabled = screen.query_one("#mcp_enabled_select", Select)
-        assert server.region.width == 46
-        assert enabled.region.width == 46
+        await wait_for_layout(pilot, lambda: server.region.width == enabled.region.width == 46)
 
         reload_button = screen.query_one("#mcp_refresh", Button)
         trust_button = screen.query_one("#mcp_trust_project", Button)
-        assert reload_button.region.x + reload_button.region.width < trust_button.region.x
+        await wait_for_layout(
+            pilot,
+            lambda: reload_button.region.x + reload_button.region.width < trust_button.region.x,
+        )
         delete_button = screen.query_one("#mcp_delete_server", Button)
         assert delete_button.has_class("danger")
         assert list(screen.query("#mcp_enable_server")) == []
@@ -531,16 +562,12 @@ async def test_settings_other_model_restores_a_saved_non_featured_openrouter_mod
     from textual.widgets import Input, Select
 
     from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     custom_model_id = _non_featured_openrouter_model()
     app, _ = _configured_app(tmp_path, monkeypatch, provider="openrouter", model=custom_model_id)
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
         await _wait_for_select_values(pilot, screen, {"model_select": CUSTOM_MODEL_SENTINEL})
 
         custom_input = screen.query_one("#model_custom_input", Input)
@@ -564,16 +591,12 @@ async def test_settings_other_model_picks_and_applies_a_typed_id(
     from textual.widgets import Input, Select
 
     from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     custom_model_id = _non_featured_openrouter_model()
     app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter")
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
         model_select = screen.query_one("#model_select", Select)
         model_select.value = CUSTOM_MODEL_SENTINEL
         await _wait_for_select_values(pilot, screen, {"model_select": CUSTOM_MODEL_SENTINEL})
@@ -601,15 +624,11 @@ async def test_settings_other_model_rejects_an_unknown_id(
     from textual.widgets import Input, Select, Static
 
     from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter")
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
         screen.query_one("#model_select", Select).value = CUSTOM_MODEL_SENTINEL
         await _wait_for_select_values(pilot, screen, {"model_select": CUSTOM_MODEL_SENTINEL})
         screen.query_one("#model_custom_input", Input).value = "vendor/not-real"
@@ -629,16 +648,12 @@ async def test_settings_other_model_requires_a_typed_id(
     from textual.widgets import Select, Static
 
     from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter")
     original_model = settings_store.load().active_model
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
         screen.query_one("#model_select", Select).value = CUSTOM_MODEL_SENTINEL
         await _wait_for_select_values(pilot, screen, {"model_select": CUSTOM_MODEL_SENTINEL})
         await app._save_settings_from_ui()
@@ -656,16 +671,12 @@ async def test_settings_other_model_is_cleared_by_a_provider_switch(
     from textual.widgets import Input, Select
 
     from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     custom_model_id = _non_featured_openrouter_model()
     app, _ = _configured_app(tmp_path, monkeypatch, provider="openrouter")
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
         screen.query_one("#model_select", Select).value = CUSTOM_MODEL_SENTINEL
         await _wait_for_select_values(pilot, screen, {"model_select": CUSTOM_MODEL_SENTINEL})
         custom_input = screen.query_one("#model_custom_input", Input)
@@ -686,17 +697,13 @@ async def test_agent_row_other_model_restores_a_saved_non_featured_override(
     from textual.widgets import Input
 
     from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     custom_model_id = _non_featured_openrouter_model()
     agent_models = {"planning": {"provider": "openrouter", "model": custom_model_id}}
     app, _ = _configured_app(tmp_path, monkeypatch, provider="openrouter", agent_models=agent_models)
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings("agents")
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app, "agents")
         await _wait_for_select_values(
             pilot,
             screen,
@@ -717,23 +724,19 @@ async def test_agent_row_other_model_picks_and_applies_a_typed_id(
     from textual.widgets import Input, Select
 
     from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     custom_model_id = _non_featured_openrouter_model()
     app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter")
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings("agents")
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app, "agents")
         screen.query_one("#am_provider_planning", Select).value = "openrouter"
         await _wait_for_select_values(pilot, screen, {"am_provider_planning": "openrouter"})
         screen.query_one("#am_model_planning", Select).value = CUSTOM_MODEL_SENTINEL
         await _wait_for_select_values(pilot, screen, {"am_model_planning": CUSTOM_MODEL_SENTINEL})
 
         row_input = screen.query_one("#am_custom_model_planning", Input)
-        assert row_input.display is True
+        await wait_for_layout(pilot, lambda: row_input.display is True)
         row_input.value = custom_model_id
         await pilot.pause()
         await app._save_settings_from_ui()
@@ -752,15 +755,11 @@ async def test_agent_row_other_model_rejects_an_unknown_id(
     from textual.widgets import Input, Select, Static
 
     from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter")
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings("agents")
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app, "agents")
         screen.query_one("#am_provider_planning", Select).value = "openrouter"
         await _wait_for_select_values(pilot, screen, {"am_provider_planning": "openrouter"})
         screen.query_one("#am_model_planning", Select).value = CUSTOM_MODEL_SENTINEL
@@ -782,15 +781,11 @@ async def test_agent_row_other_model_requires_a_typed_id(
     from textual.widgets import Select, Static
 
     from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter")
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings("agents")
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app, "agents")
         screen.query_one("#am_provider_planning", Select).value = "openrouter"
         await _wait_for_select_values(pilot, screen, {"am_provider_planning": "openrouter"})
         screen.query_one("#am_model_planning", Select).value = CUSTOM_MODEL_SENTINEL
@@ -811,22 +806,19 @@ async def test_agent_row_other_model_is_cleared_when_row_returns_to_inherit(
 
     from kolega_code.cli.provider_registry import INHERIT_SENTINEL
     from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     custom_model_id = _non_featured_openrouter_model()
     agent_models = {"planning": {"provider": "openrouter", "model": custom_model_id}}
     app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter", agent_models=agent_models)
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings("agents")
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app, "agents")
         await _wait_for_select_values(pilot, screen, {"am_model_planning": CUSTOM_MODEL_SENTINEL})
-        assert screen.query_one("#am_custom_model_planning", Input).display is True
+        custom_input = screen.query_one("#am_custom_model_planning", Input)
+        await wait_for_layout(pilot, lambda: custom_input.display is True)
 
         screen.query_one("#am_provider_planning", Select).value = INHERIT_SENTINEL
-        await pilot.pause()
+        await wait_for_layout(pilot, lambda: custom_input.display is False)
         await app._save_settings_from_ui()
 
         assert settings_store.load().get_agent_model("planning") is None
@@ -843,16 +835,12 @@ async def test_agent_row_other_model_keeps_the_browser_vision_gate(
     from textual.widgets import Input, Select, Static
 
     from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     non_vision = _non_vision_openrouter_model()
     app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter")
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings("agents")
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app, "agents")
         screen.query_one("#am_provider_browser", Select).value = "openrouter"
         await _wait_for_select_values(pilot, screen, {"am_provider_browser": "openrouter"})
         screen.query_one("#am_model_browser", Select).value = CUSTOM_MODEL_SENTINEL
@@ -876,7 +864,6 @@ async def test_agent_row_other_model_accepts_a_vision_capable_browser_id(
     from kolega_code.llm.specs import MODEL_SPECS, supports_vision
 
     from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     vision_id = next(
         model for provider, model in MODEL_SPECS if provider == "openrouter" and supports_vision("openrouter", model)
@@ -884,10 +871,7 @@ async def test_agent_row_other_model_accepts_a_vision_capable_browser_id(
     app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter")
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings("agents")
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app, "agents")
         screen.query_one("#am_provider_browser", Select).value = "openrouter"
         await _wait_for_select_values(pilot, screen, {"am_provider_browser": "openrouter"})
         screen.query_one("#am_model_browser", Select).value = CUSTOM_MODEL_SENTINEL
@@ -916,9 +900,7 @@ async def test_model_slot_rows_default_to_inherit_and_name_the_active_model(
     app, settings_store = _configured_app(tmp_path, monkeypatch)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
+        screen = await _open_settings(pilot, app)
         await _wait_for_select_values(pilot, screen, {"slot_provider_fast": INHERIT_SENTINEL})
 
         assert str(screen.query_one("#slot_provider_fast", Select).value) == INHERIT_SENTINEL
@@ -944,9 +926,7 @@ async def test_model_slot_row_pins_a_model_on_another_provider(
     app, settings_store = _configured_app(tmp_path, monkeypatch, extra_key_providers=("deepseek",))
 
     async with app.run_test(size=(80, 24)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
+        screen = await _open_settings(pilot, app)
         screen.query_one("#slot_provider_fast", Select).value = "deepseek"
         await _wait_for_select_values(pilot, screen, {"slot_provider_fast": "deepseek"})
         screen.query_one("#slot_model_fast", Select).value = "deepseek-flash"
@@ -987,9 +967,7 @@ async def test_model_slot_row_returning_to_inherit_clears_the_override(
     )
 
     async with app.run_test(size=(80, 24)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
+        screen = await _open_settings(pilot, app)
         # A saved slot is restored into its row.
         await _wait_for_select_values(
             pilot, screen, {"slot_provider_fast": "deepseek", "slot_model_fast": "deepseek-flash"}
@@ -1021,16 +999,14 @@ async def test_model_slot_row_other_model_applies_a_typed_id(
     app, settings_store = _configured_app(tmp_path, monkeypatch, extra_key_providers=("openrouter",))
 
     async with app.run_test(size=(80, 24)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
+        screen = await _open_settings(pilot, app)
         screen.query_one("#slot_provider_fast", Select).value = "openrouter"
         await _wait_for_select_values(pilot, screen, {"slot_provider_fast": "openrouter"})
         screen.query_one("#slot_model_fast", Select).value = CUSTOM_MODEL_SENTINEL
         await _wait_for_select_values(pilot, screen, {"slot_model_fast": CUSTOM_MODEL_SENTINEL})
 
         custom_input = screen.query_one("#slot_custom_model_fast", Input)
-        assert custom_input.display is True
+        await wait_for_layout(pilot, lambda: custom_input.display is True)
         custom_input.value = custom_model_id
         await pilot.pause()
         await app._save_settings_from_ui()
@@ -1056,9 +1032,7 @@ async def test_model_slot_row_rejects_an_unknown_typed_id(
     app, settings_store = _configured_app(tmp_path, monkeypatch, extra_key_providers=("openrouter",))
 
     async with app.run_test(size=(80, 24)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
+        screen = await _open_settings(pilot, app)
         screen.query_one("#slot_provider_fast", Select).value = "openrouter"
         await _wait_for_select_values(pilot, screen, {"slot_provider_fast": "openrouter"})
         screen.query_one("#slot_model_fast", Select).value = CUSTOM_MODEL_SENTINEL
@@ -1085,9 +1059,7 @@ async def test_model_slot_row_without_an_api_key_blocks_apply(
     app, settings_store = _configured_app(tmp_path, monkeypatch)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
+        screen = await _open_settings(pilot, app)
         screen.query_one("#slot_provider_fast", Select).value = "google"
         await _wait_for_select_values(pilot, screen, {"slot_provider_fast": "google"})
 
@@ -1106,15 +1078,10 @@ async def test_providers_page_stages_keys_for_several_providers_at_once(
     """The case that was impossible before: keys for providers you are not using."""
     pytest.importorskip("textual")
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
-
     app, settings_store = _configured_app(tmp_path, monkeypatch)
 
     async with app.run_test(size=(100, 40)) as pilot:
-        app.action_open_settings("providers")
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app, "providers")
 
         await stage_provider_api_key(screen, pilot, "deepseek", "deepseek-key")
         await stage_provider_api_key(screen, pilot, "google", "google-key")
@@ -1140,15 +1107,10 @@ async def test_staged_key_survives_moving_the_selection_away_and_back(
     pytest.importorskip("textual")
     from textual.widgets import Input, OptionList
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
-
     app, _ = _configured_app(tmp_path, monkeypatch)
 
     async with app.run_test(size=(100, 40)) as pilot:
-        app.action_open_settings("providers")
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app, "providers")
         provider_list = screen.query_one("#provider_list", OptionList)
 
         await stage_provider_api_key(screen, pilot, "deepseek", "deepseek-key")
@@ -1172,16 +1134,11 @@ async def test_provider_rows_report_credential_status(
     pytest.importorskip("textual")
     from textual.widgets import OptionList
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
-
     monkeypatch.setenv("GOOGLE_API_KEY", "from-the-environment")
     app, _ = _configured_app(tmp_path, monkeypatch)
 
     async with app.run_test(size=(100, 40)) as pilot:
-        app.action_open_settings("providers")
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app, "providers")
         provider_list = screen.query_one("#provider_list", OptionList)
 
         def row(provider: str) -> str:
@@ -1207,7 +1164,6 @@ async def test_test_connection_probes_the_highlighted_provider(
     pytest.importorskip("textual")
     from textual.widgets import OptionList, Static
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
     from kolega_code.config import ModelProvider
 
     app, _ = _configured_app(tmp_path, monkeypatch, extra_key_providers=("deepseek",))
@@ -1222,10 +1178,7 @@ async def test_test_connection_probes_the_highlighted_provider(
     monkeypatch.setattr("kolega_code.cli.tui.settings_panel.test_model_connection", fake_probe)
 
     async with app.run_test(size=(100, 40)) as pilot:
-        app.action_open_settings("providers")
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app, "providers")
         provider_list = screen.query_one("#provider_list", OptionList)
         provider_list.highlighted = provider_list.get_option_index("provider_row_deepseek")
         await pilot.pause()
@@ -1248,15 +1201,10 @@ async def test_chatgpt_provider_row_offers_sign_in_instead_of_a_key_field(
     pytest.importorskip("textual")
     from textual.widgets import OptionList
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
-
     app, _ = _configured_app(tmp_path, monkeypatch)
 
     async with app.run_test(size=(100, 40)) as pilot:
-        app.action_open_settings("providers")
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app, "providers")
         provider_list = screen.query_one("#provider_list", OptionList)
 
         assert screen.query_one("#provider_api_key_input").display is True
@@ -1292,15 +1240,11 @@ async def test_settings_adds_endpoint_and_apply_persists_it(
     from textual.widgets import Input, Select
 
     from kolega_code.cli.provider_registry import ui_provider_options, ui_thinking_effort_options
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     app, settings_store = _configured_app(tmp_path, monkeypatch)
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
 
         _fill_endpoint_form(screen, endpoint_id="lmstudio")
         screen.query_one("#ep_thinking_mode_select", Select).value = "anthropic_budget"
@@ -1334,8 +1278,6 @@ async def test_settings_endpoint_edit_and_delete_round_trip(
     pytest.importorskip("textual")
     from textual.widgets import Input
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
-
     app, settings_store = _configured_app(
         tmp_path,
         monkeypatch,
@@ -1343,10 +1285,7 @@ async def test_settings_endpoint_edit_and_delete_round_trip(
     )
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
 
         # Editing an existing endpoint: id input is locked, base URL updates.
         assert screen.query_one("#ep_id_input", Input).disabled is True
@@ -1357,9 +1296,7 @@ async def test_settings_endpoint_edit_and_delete_round_trip(
         assert settings_store.load().custom_endpoints["lmstudio"]["base_url"] == "http://localhost:4321/v1"
 
         # Delete round trip: staging then apply.
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
+        screen = await _open_settings(pilot, app)
         app._handle_endpoint_settings_button("ep_delete")
         await pilot.pause()
         await app._save_settings_from_ui()
@@ -1372,15 +1309,11 @@ async def test_settings_endpoint_staging_without_apply_leaves_file_untouched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
 ) -> None:
     pytest.importorskip("textual")
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     app, settings_store = _configured_app(tmp_path, monkeypatch)
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
 
         _fill_endpoint_form(screen, endpoint_id="lmstudio")
         app._handle_endpoint_settings_button("ep_save")
@@ -1398,15 +1331,10 @@ async def test_settings_endpoint_validation_rejects_bad_input(
     pytest.importorskip("textual")
     from textual.widgets import Static
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
-
     app, settings_store = _configured_app(tmp_path, monkeypatch)
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
 
         _fill_endpoint_form(screen, endpoint_id="Bad Slug!", base_url="localhost:1234")
         app._handle_endpoint_settings_button("ep_save")
@@ -1423,8 +1351,6 @@ async def test_settings_deleting_active_endpoint_blocks_apply(
     pytest.importorskip("textual")
     from textual.widgets import Static
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
-
     app, settings_store = _configured_app(
         tmp_path,
         monkeypatch,
@@ -1434,10 +1360,7 @@ async def test_settings_deleting_active_endpoint_blocks_apply(
     )
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
 
         app._handle_endpoint_settings_button("ep_delete")
         await pilot.pause()
@@ -1458,7 +1381,6 @@ async def test_settings_custom_provider_model_uses_other_entry(
     from textual.widgets import Input, Select
 
     from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     app, settings_store = _configured_app(
         tmp_path,
@@ -1469,10 +1391,7 @@ async def test_settings_custom_provider_model_uses_other_entry(
     )
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
 
         # The active custom model is restored through the free-text "Other…" entry.
         assert str(screen.query_one("#model_select", Select).value) == CUSTOM_MODEL_SENTINEL
@@ -1494,7 +1413,6 @@ async def test_settings_env_defined_endpoints_in_pickers_but_not_the_page(
 
     from kolega_code.cli.provider_registry import ui_provider_options
     from kolega_code.cli.tui.settings_panel import ENDPOINT_NEW_VALUE
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     env_json = '{"envlocal": {"api_style": "openai_chat", "base_url": "http://localhost:9999/v1"}}'
     app, _ = _configured_app(tmp_path, monkeypatch, env={"KOLEGA_CODE_CUSTOM_ENDPOINTS": env_json})
@@ -1502,10 +1420,7 @@ async def test_settings_env_defined_endpoints_in_pickers_but_not_the_page(
     assert "custom:envlocal" in {value for _, value in ui_provider_options()}
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
         endpoint_select = screen.query_one("#endpoint_select", Select)
         option_values = {value for _label, value in endpoint_select._options}  # type: ignore[attr-defined]
         assert option_values == {ENDPOINT_NEW_VALUE}
@@ -1518,15 +1433,10 @@ async def test_settings_endpoint_temperature_round_trip(
     pytest.importorskip("textual")
     from textual.widgets import Input
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
-
     app, settings_store = _configured_app(tmp_path, monkeypatch)
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
 
         _fill_endpoint_form(screen, endpoint_id="lmstudio")
         screen.query_one("#ep_temperature_input", Input).value = "0.4"
@@ -1540,10 +1450,7 @@ async def test_settings_endpoint_temperature_round_trip(
     second_dir.mkdir()
     app2, _ = _configured_app(second_dir, monkeypatch)
     async with app2.run_test(size=(140, 40)) as pilot:
-        app2.action_open_settings()
-        await pilot.pause()
-        screen2 = app2.screen
-        assert isinstance(screen2, SettingsScreen)
+        screen2 = await _open_settings(pilot, app2)
         _fill_endpoint_form(screen2, endpoint_id="ap", style="anthropic")
         screen2.query_one("#ep_temperature_input", Input).value = "1.5"
         app2._handle_endpoint_settings_button("ep_save")
@@ -1561,7 +1468,6 @@ async def test_settings_provider_switch_seeds_custom_endpoint_default_model(
     from textual.widgets import Input, Select
 
     from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
 
     app, _ = _configured_app(
         tmp_path,
@@ -1578,10 +1484,7 @@ async def test_settings_provider_switch_seeds_custom_endpoint_default_model(
     )
 
     async with app.run_test(size=(140, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
 
         screen.query_one("#provider_select", Select).value = "custom:lmstudio"
         await _wait_for_select_values(
@@ -1600,15 +1503,10 @@ async def test_gateway_settings_page_round_trips(
     pytest.importorskip("textual")
     from textual.widgets import Input, Select
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
-
     app, settings_store = _configured_app(tmp_path, monkeypatch)
 
     async with app.run_test(size=(80, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
         screen._show_category("gateway")
         await pilot.pause()
 
@@ -1636,15 +1534,10 @@ async def test_tools_page_stt_settings_round_trip(
     pytest.importorskip("textual")
     from textual.widgets import Input, Select
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
-
     app, settings_store = _configured_app(tmp_path, monkeypatch)
 
     async with app.run_test(size=(80, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
         screen._show_category("tools")
         await pilot.pause()
 
@@ -1671,8 +1564,6 @@ async def test_gateway_settings_page_removes_the_token(
     pytest.importorskip("textual")
     from textual.widgets import Button
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
-
     app, settings_store = _configured_app(tmp_path, monkeypatch)
     settings = settings_store.load()
     settings.telegram_bot_token = "123:fake-bot-token-for-tests-only"
@@ -1680,10 +1571,7 @@ async def test_gateway_settings_page_removes_the_token(
     app.settings = settings_store.load()
 
     async with app.run_test(size=(80, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
         screen._show_category("gateway")
         await pilot.pause()
         assert "Token saved." in str(screen.query_one("#gateway_token_status").render())
@@ -1703,15 +1591,10 @@ async def test_gateway_settings_page_rejects_a_bad_token(
     pytest.importorskip("textual")
     from textual.widgets import Input
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
-
     app, settings_store = _configured_app(tmp_path, monkeypatch)
 
     async with app.run_test(size=(80, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
         screen._show_category("gateway")
         await pilot.pause()
         screen.query_one("#gateway_token_input", Input).value = "not-a-botfather-token"
@@ -1730,8 +1613,6 @@ async def test_gateway_invalid_access_does_not_mutate_settings_or_replacement_to
     pytest.importorskip("textual")
     from textual.widgets import Input
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
-
     app, settings_store = _configured_app(tmp_path, monkeypatch)
     settings = settings_store.load()
     settings.telegram_bot_token = "123:fake-original-token"
@@ -1740,10 +1621,7 @@ async def test_gateway_invalid_access_does_not_mutate_settings_or_replacement_to
     app.settings = settings_store.load()
 
     async with app.run_test(size=(100, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
         screen._show_category("gateway")
         await pilot.pause()
         before_file = settings_store.path.read_bytes()
@@ -1765,7 +1643,6 @@ async def test_gateway_clearing_configured_ids_preserves_paired_approvals(
     pytest.importorskip("textual")
     from textual.widgets import Input
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
     from kolega_code.gateway.access import GatewayAccessControl
     from kolega_code.gateway.adapters.base import InboundMessage
 
@@ -1785,10 +1662,7 @@ async def test_gateway_clearing_configured_ids_preserves_paired_approvals(
     before_approvals = approval_path.read_bytes()
 
     async with app.run_test(size=(100, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
         screen._show_category("gateway")
         await pilot.pause()
         notices = " ".join(str(widget.render()) for widget in screen.query("#settings_gateway_access Static"))
@@ -1821,16 +1695,12 @@ async def test_mcp_settings_page_oauth_controls_and_saving(
     pytest.importorskip("textual")
     from textual.widgets import Input, Select
 
-    from kolega_code.cli.tui.settings_screen import SettingsScreen
     from kolega_code.mcp.config import load_mcp_config
 
     app, settings_store = _configured_app(tmp_path, monkeypatch)
 
     async with app.run_test(size=(100, 40)) as pilot:
-        app.action_open_settings()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, SettingsScreen)
+        screen = await _open_settings(pilot, app)
         screen._show_category("mcp")
         await pilot.pause()
 

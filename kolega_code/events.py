@@ -420,15 +420,20 @@ class AgentEventEmitter:
             )
         )
 
-    async def llm_status(self, status: str, message: str) -> None:
-        """Send an llm_status_update event (e.g. provider overload notices)."""
+    async def llm_status(self, status: str, message: str, **extra: Any) -> None:
+        """Send an llm_status_update event (e.g. provider overload notices).
+
+        ``extra`` fields ride along in the payload for consumers that need the
+        structure rather than the sentence: retry attempt/cap, a stall heartbeat's
+        seconds-since-data, and so on. The text stays the user-facing contract.
+        """
         sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
 
         await self.emit(
             AgentEvent(
                 sender=self.sender,
                 event_type=KnownEventType.LLM_STATUS_UPDATE,
-                content={"status": status, "message": message},
+                content={"status": status, "message": message, **extra},
                 is_streaming=False,
                 sub_agent_info=sub_agent_info,
             )

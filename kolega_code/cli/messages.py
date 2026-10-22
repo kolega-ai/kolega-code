@@ -57,6 +57,12 @@ FINISHED = "Finished."
 STOPPED_BY_USER = "Stopped by user."
 STOPPED_WITH_ERROR = "Stopped due to an error: {error}"
 CANCEL_REQUESTED = "Cancellation requested."
+#: The worker did not honor the cancel (it is parked in a wait that cannot be
+#: interrupted), so the UI detached it instead of waiting forever.
+STOP_FORCED = "Stopped. The turn did not exit; it was detached and may still finish its pending write."
+#: The post-turn history save missed its deadline (journal I/O stalled); the turn
+#: still finalizes so the plan/next step is reachable.
+TURN_SAVE_TIMEOUT = "Session save is slow (journal I/O); continuing without it. History is already in the journal."
 WAITING_FOR_ANSWER = "Waiting for your answer…"
 WAITING_FOR_PERMISSION = "Waiting for permission…"
 QUEUED_MESSAGE = "Queued. It will be delivered to the agent at the next tool boundary, or when this turn finishes."

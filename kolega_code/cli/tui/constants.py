@@ -13,6 +13,18 @@ MODEL_OPTION_ID_PREFIX = "model_option_"
 EFFORT_OPTION_ID_PREFIX = "effort_option_"
 THEME_OPTION_ID_PREFIX = "theme_option_"
 
+#: How long a stop request waits for the turn worker to unwind before the UI
+#: detaches it. Normal cancels settle in milliseconds; this only fires when the
+#: worker is parked in a wait that swallows cancellation (a journal write on a
+#: worker thread, whose finalizer loops with ``asyncio.shield``), which otherwise
+#: leaves the dashboard on "Stopping…" forever.
+STOP_FORCE_AFTER_SECONDS = 5.0
+
+#: How long the post-turn history save may take before the turn finalizes without
+#: it. Generous (a large history dump is normal), but finite: a journal write
+#: stalled behind the session lock must not hide the turn's result (the plan card).
+TURN_SAVE_TIMEOUT_SECONDS = 30.0
+
 TAB_BASE_LABELS = {
     "logs_pane": "Logs",
     "terminal_pane": "Terminal",

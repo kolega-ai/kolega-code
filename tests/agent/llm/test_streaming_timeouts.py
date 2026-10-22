@@ -21,7 +21,7 @@ from kolega_code.llm.providers.anthropic import AnthropicProvider
 from kolega_code.llm.providers.openai import OpenAIProvider
 from kolega_code.llm.providers.models import GenerationParams
 from kolega_code.llm.ratelimit import RateLimiter
-from kolega_code.llm.timeouts import STREAM_READ_TIMEOUT, streaming_timeout
+from kolega_code.llm.timeouts import STREAM_IDLE_TIMEOUT, STREAM_READ_TIMEOUT, streaming_timeout
 
 
 class _RateLimiter(RateLimiter):
@@ -40,9 +40,12 @@ def _messages() -> MessageHistory:
 def test_streaming_timeout_value():
     timeout = streaming_timeout()
     assert isinstance(timeout, httpx.Timeout)
-    assert timeout.read == STREAM_READ_TIMEOUT == 300.0
-    # Far below the 600s SDK default that caused the hang.
+    # The agent loop's stall guard owns the steady-state budget; the transport
+    # timeout must outlast it so the guard fires first with an actionable error.
+    assert STREAM_IDLE_TIMEOUT == 300.0
     assert timeout.read is not None
+    assert timeout.read == STREAM_READ_TIMEOUT > STREAM_IDLE_TIMEOUT
+    # Still far below the 600s SDK default that caused the original hang.
     assert timeout.read < 600.0
 
 
@@ -58,7 +61,7 @@ async def test_anthropic_stream_passes_timeout():
 
     _, kwargs = provider.async_client.messages.stream.call_args
     assert "timeout" in kwargs
-    assert kwargs["timeout"].read == 300.0
+    assert kwargs["timeout"].read == STREAM_READ_TIMEOUT
 
 
 @pytest.mark.asyncio
@@ -73,7 +76,7 @@ async def test_openai_stream_passes_timeout():
 
     _, kwargs = provider.async_client.chat.completions.create.call_args
     assert "timeout" in kwargs
-    assert kwargs["timeout"].read == 300.0
+    assert kwargs["timeout"].read == STREAM_READ_TIMEOUT
 
 
 def test_anthropic_timeout_error_maps_to_llm_timeout():

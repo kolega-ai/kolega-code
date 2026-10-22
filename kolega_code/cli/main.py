@@ -9,11 +9,13 @@ import faulthandler
 import importlib.util
 import json
 import logging
+import os
 import sys
+import threading
 import uuid
 import webbrowser
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from kolega_code.agent import CoderAgent
 from kolega_code.config import EditProtocol
@@ -1156,6 +1158,43 @@ def _print_quit_resume_hint(session_id: str) -> None:
     _print_styled(messages.SESSION_RESUME_HINT.format(session_id=session_id), style="success")
 
 
+#: How long interpreter shutdown may take before the process exits regardless.
+#: Shutdown waits for the default executor's threads; a journal write wedged on a
+#: file lock never returns and would hold the terminal forever.
+EXIT_WATCHDOG_SECONDS = 15.0
+
+
+def _arm_exit_watchdog(
+    seconds: float = EXIT_WATCHDOG_SECONDS, *, force_exit: Callable[[int], None] = os._exit
+) -> threading.Event:
+    """Force process exit if interpreter shutdown cannot finish.
+
+    Teardown has already run by the time this is armed, so the only thing left is
+    waiting on worker threads that a stuck write may never release.
+
+    Returns a cancel event, and the caller **must** set it when control returns
+    normally: ``_run_tui`` is also called in-process (tests, embedded hosts), and a
+    watchdog that outlives the call would kill that process some seconds later.
+    When shutdown is genuinely wedged the call never returns, which is exactly when
+    the watchdog must fire.
+    """
+    cancel = threading.Event()
+
+    def _force() -> None:
+        if cancel.wait(seconds):
+            return  # disarmed: the process got past shutdown on its own
+        try:
+            sys.stderr.write("\nShutdown is taking too long (a worker thread is stuck); exiting.\n")
+            sys.stderr.flush()
+            sys.stdout.flush()
+        except Exception:  # noqa: BLE001 - exiting anyway
+            pass
+        force_exit(0)
+
+    threading.Thread(target=_force, name="kolega-exit-watchdog", daemon=True).start()
+    return cancel
+
+
 def _run_tui(args: argparse.Namespace) -> int:
     if importlib.util.find_spec("textual") is None:
         print("Textual is not installed. Reinstall the CLI with: uv tool install --force kolega-code", file=sys.stderr)
@@ -1293,6 +1332,11 @@ def _run_tui(args: argparse.Namespace) -> int:
             if cleanup_error is not None:
                 raise cleanup_error
 
+        #: Set when the app loop finishes and the exit watchdog is armed. A normal
+        #: return from ``asyncio.run`` (including the in-process calls tests and
+        #: embedded hosts make) must disarm it; only a wedged shutdown leaves it set.
+        armed_watchdogs: list[threading.Event] = []
+
         async def _run_app_loop() -> None:
             next_project_path = initial_project_path
             next_session: SessionRecord | None = None
@@ -1324,6 +1368,10 @@ def _run_tui(args: argparse.Namespace) -> int:
                 # session, so the terminal now shows how to resume exactly this one.
                 if clean_quit and current_session_id:
                     _print_quit_resume_hint(current_session_id)
+                # Teardown is done; guard interpreter shutdown, which waits for the
+                # default executor's threads and can hang on a wedged journal write.
+                # Disarmed below if `asyncio.run` returns.
+                armed_watchdogs.append(_arm_exit_watchdog())
                 break
 
         try:
@@ -1358,6 +1406,11 @@ def _run_tui(args: argparse.Namespace) -> int:
             raise
         return 0
     finally:
+        # Reaching here means the process is going to keep running (or exit
+        # promptly): a watchdog left armed would eventually kill an in-process
+        # caller such as the test suite or an embedded host.
+        for cancel in armed_watchdogs:
+            cancel.set()
         store.release_session_locks()
 
 

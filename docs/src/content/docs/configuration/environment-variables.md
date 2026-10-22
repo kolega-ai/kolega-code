@@ -162,6 +162,23 @@ with vision support.
 | `KOLEGA_CODE_SUBAGENTS` | Sub-agent dispatch (`dispatch_agent`) master switch: `on` or `off` (default `on`). Useful for headless or CI runs; the `--subagents` flag takes precedence |
 | `KOLEGA_CODE_SKILLS` | [Agent Skills](../../skills/) master switch: `on` or `off` (default `on`). When `off`, skills are not discovered, the `skill` tool is not exposed, and `/skills` reports that Agent Skills are disabled; the `--skills` flag takes precedence |
 
+## Streaming & retries
+
+A streaming response is bounded by an **idle budget**, not by a single socket read:
+if nothing arrives, Kolega Code reports how long the stream has been silent, then
+fails with an actionable error (endpoint, attempts, elapsed) instead of appearing
+frozen. These knobs are for links where the defaults are too patient:
+
+| Variable | Purpose |
+| --- | --- |
+| `KOLEGA_STREAM_FIRST_CHUNK_TIMEOUT` | Seconds to wait for the **first** event before treating the endpoint as unreachable (default `90`) |
+| `KOLEGA_STREAM_IDLE_TIMEOUT` | Seconds of silence **between** events once output has started (default `300`) |
+| `KOLEGA_STREAM_IDLE_HEARTBEAT` | Seconds between "no data for Ns" status updates while the stream is silent (default `15`) |
+| `KOLEGA_LLM_RETRY_BUDGET` | Total seconds one turn may spend retrying transient failures (default `360`). A stall that produced no output at all is retried only once |
+
+Each retry is written to the transcript ("Connection issue — …, retrying (1/3) in 8s"),
+not just the status line, so a flapping connection stays visible after the fact.
+
 ## Gateway
 
 The [messaging gateway](../../cli/gateway/) (`kolega-code gateway`) is

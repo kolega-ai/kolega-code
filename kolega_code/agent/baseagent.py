@@ -40,8 +40,15 @@ from kolega_code.llm.exceptions import (
     LLMError,
     LLMInternalServerError,
     LLMRateLimitError,
+    LLMStreamStalled,
     llm_error_message,
     map_to_llm_error,
+)
+from kolega_code.llm.timeouts import (
+    llm_retry_budget_seconds,
+    stream_first_chunk_timeout,
+    stream_idle_heartbeat_seconds,
+    stream_idle_timeout,
 )
 from kolega_code.llm.instrumented_client import get_output_tokens
 from kolega_code.llm.ledger import HISTORY_ORIGIN, LlmCallOrigin, helper_origin, llm_call_origin
@@ -462,6 +469,16 @@ class BaseAgent(LogMixin):
         # Counts consecutive transient LLM failures (rate-limit / overload) so the turn loop
         # backs off and eventually gives up instead of retrying forever; reset on any good turn.
         self._consecutive_llm_retries = 0
+        # Stream-stall policy. A stall with zero output means the endpoint never
+        # answered; retrying that more than once just buys another full deadline.
+        # The wall-clock budget bounds the *total* time a turn may spend retrying,
+        # because attempt counts alone let 4 x 5 minutes of silence through.
+        self._zero_output_stalls = 0
+        self._llm_retry_budget_started: Optional[float] = None
+        self._stream_first_chunk_timeout = stream_first_chunk_timeout()
+        self._stream_idle_timeout = stream_idle_timeout()
+        self._stream_heartbeat_seconds = stream_idle_heartbeat_seconds()
+        self._llm_retry_budget_seconds = llm_retry_budget_seconds()
         # Host-configured compression threshold (fraction of the context window) shadows
         # the class default when the config carries one; every read below and in
         # _send_context_update goes through the instance attribute.
@@ -2070,6 +2087,154 @@ class BaseAgent(LogMixin):
         except Exception:
             return None
 
+    @staticmethod
+    def _format_wait(seconds: float) -> str:
+        total = max(0, int(seconds))
+        minutes, remainder = divmod(total, 60)
+        return f"{minutes}m {remainder:02d}s" if minutes else f"{remainder}s"
+
+    def _stream_stall_error(
+        self, *, stage: str, bytes_received: int, waited_s: float, limit_s: float
+    ) -> LLMStreamStalled:
+        endpoint = self.llm.provider.base_url
+        if bytes_received <= 0:
+            message = (
+                f"No response from {endpoint} for {self._format_wait(waited_s)}: "
+                f"the connection accepted the request but delivered no data."
+            )
+        else:
+            message = (
+                f"The response from {endpoint} stalled for {self._format_wait(waited_s)} "
+                f"after {bytes_received} character(s)."
+            )
+        return LLMStreamStalled(
+            message,
+            provider=self.primary_model_config.provider.value,
+            stage=stage,
+            waited_s=waited_s,
+            timeout_s=limit_s,
+            bytes_received=bytes_received,
+            partial_output=bytes_received > 0,
+        )
+
+    async def _iter_stream_with_stall_guard(self, stream: Any) -> AsyncGenerator[Any, None]:
+        """Yield provider events, failing deterministically when the stream goes silent.
+
+        The transport read timeout bounds one socket read and says nothing to the
+        user, so it cannot distinguish "the endpoint never answered" (a connectivity
+        problem) from "a long gap mid-answer" (a slow model). This guard applies a
+        stage-specific deadline per event, reports a heartbeat while it waits so the
+        UI can show a countdown instead of a frozen label, and raises
+        :class:`LLMStreamStalled` with the facts the retry policy needs.
+
+        The pending read is wrapped in ``asyncio.shield`` between heartbeat slices:
+        cancelling it to sample the clock would tear down the provider's stream.
+        """
+        received = 0
+        bytes_received = 0
+        last_data = time.monotonic()
+        next_heartbeat = self._stream_heartbeat_seconds
+        iterator = stream.__aiter__()
+        pending: Optional[asyncio.Future[Any]] = asyncio.ensure_future(iterator.__anext__())
+        try:
+            while True:
+                limit = self._stream_first_chunk_timeout if received == 0 else self._stream_idle_timeout
+                waited = time.monotonic() - last_data
+                if waited >= limit:
+                    stage = "first_chunk" if received == 0 else "stream"
+                    raise self._stream_stall_error(
+                        stage=stage, bytes_received=bytes_received, waited_s=waited, limit_s=limit
+                    )
+                assert pending is not None
+                slice_s = max(0.001, min(self._stream_heartbeat_seconds, limit - waited))
+                try:
+                    event = await asyncio.wait_for(asyncio.shield(pending), timeout=slice_s)
+                except asyncio.TimeoutError:
+                    waited = time.monotonic() - last_data
+                    if waited >= limit:
+                        stage = "first_chunk" if received == 0 else "stream"
+                        raise self._stream_stall_error(
+                            stage=stage,
+                            bytes_received=bytes_received,
+                            waited_s=waited,
+                            limit_s=limit,
+                        )
+                    if waited >= next_heartbeat:
+                        next_heartbeat = waited + self._stream_heartbeat_seconds
+                        await self._emit_stream_wait_status(received, waited, limit)
+                    continue
+                received += 1
+                bytes_received += self._stream_event_chars(event)
+                last_data = time.monotonic()
+                next_heartbeat = self._stream_heartbeat_seconds
+                yield event
+                pending = asyncio.ensure_future(iterator.__anext__())
+        except StopAsyncIteration:
+            return
+        finally:
+            if pending is not None and not pending.done():
+                # Cancel the in-flight read and let it unwind here rather than leaving a
+                # task holding the provider connection after the turn moved on.
+                pending.cancel()
+                with contextlib.suppress(BaseException):
+                    await pending
+
+    @staticmethod
+    def _stream_event_chars(event: Any) -> int:
+        return len(getattr(event, "text", "") or "") + len(getattr(event, "thinking", "") or "")
+
+    async def _emit_stream_wait_status(self, received: int, waited_s: float, limit_s: float) -> None:
+        """Report a silent stream while it is still inside its deadline.
+
+        A heartbeat (not an error) so the user sees a countdown rather than a frozen
+        "Reading model response…" for minutes.
+        """
+        model = self.primary_model_config.model
+        lead = "Waiting for the first response" if received == 0 else "Waiting for the rest of the response"
+        try:
+            await self.emitter.llm_status(
+                "info",
+                f"{lead} — no data from {model} for {self._format_wait(waited_s)} "
+                f"(gives up at {self._format_wait(limit_s)})",
+                stall=True,
+                seconds_since_data=round(waited_s, 1),
+                timeout_s=limit_s,
+                stage="first_chunk" if received == 0 else "stream",
+            )
+        except Exception:
+            # A status heartbeat must never break the turn it is describing.
+            pass
+
+    def _retry_status_message(self, error: Exception, *, attempt: int, cap: int, delay: float) -> str:
+        """User-facing retry notice: what failed, how far along the budget is, and why."""
+        endpoint = self.llm.provider.base_url
+        if isinstance(error, LLMStreamStalled):
+            if error.zero_output:
+                detail = f"no data from {endpoint} after {self._format_wait(error.waited_s)}"
+            else:
+                detail = (
+                    f"stream from {endpoint} stalled for {self._format_wait(error.waited_s)} "
+                    f"after {error.bytes_received} character(s)"
+                )
+        else:
+            detail = str(error) or type(error).__name__
+        return f"Connection issue — {detail}. Retrying ({attempt}/{cap}) in {delay:.0f}s…"
+
+    def _retry_exhausted_message(self, error: Exception, *, attempts: int, budget_used_s: float) -> str:
+        """Terminal message: name the endpoint, attempts, elapsed time, and what to check."""
+        if isinstance(error, LLMStreamStalled):
+            endpoint = self.llm.provider.base_url
+            kind = "No data at all" if error.zero_output else "Repeated stalls"
+            return (
+                f"{kind} from {endpoint}: {attempts} attempt(s) over {self._format_wait(budget_used_s)} "
+                f"(last silence {self._format_wait(error.waited_s)}). "
+                "Check the network, VPN, proxy, or firewall for this endpoint."
+            )
+        return llm_error_message(
+            error if isinstance(error, LLMError) else LLMError(str(error)),
+            model=self.primary_model_config.model,
+        )
+
     async def handle_llm_error(self, error: Exception) -> None:
         """Centralized handling for LLM errors raised in the turn loop.
 
@@ -2109,10 +2274,27 @@ class BaseAgent(LogMixin):
         if isinstance(error, (LLMRateLimitError, LLMInternalServerError, LLMConnectionError)):
             cap = self.primary_model_config.rate_limits.loop_max_retries
             self._consecutive_llm_retries += 1
-            if self._consecutive_llm_retries > cap:
+
+            # A stall with no output at all means the endpoint never answered. One retry
+            # covers a genuine blip; a second full deadline against the same dead
+            # connection is just twenty more minutes of silence for the user.
+            stall = error if isinstance(error, LLMStreamStalled) else None
+            if stall is not None and stall.zero_output:
+                self._zero_output_stalls += 1
+            zero_output_exhausted = stall is not None and stall.zero_output and self._zero_output_stalls > 1
+
+            now = time.monotonic()
+            if self._llm_retry_budget_started is None:
+                self._llm_retry_budget_started = now
+            budget_used = now - self._llm_retry_budget_started
+            over_budget = budget_used >= self._llm_retry_budget_seconds
+
+            if self._consecutive_llm_retries > cap or over_budget or zero_output_exhausted:
                 await self.emitter.llm_status(
                     "error",
-                    llm_error_message(error, model=self.primary_model_config.model),
+                    self._retry_exhausted_message(
+                        error, attempts=self._consecutive_llm_retries, budget_used_s=budget_used
+                    ),
                 )
                 raise error
             if retry_after is not None:
@@ -2127,9 +2309,18 @@ class BaseAgent(LogMixin):
             )
             # Surface the retry in the UI so a stalled stream (which now fails fast on the
             # per-request timeout instead of hanging) reads as "retrying", not a freeze.
+            # The structured fields let the TUI put the attempt count in the transcript
+            # instead of only flashing it in the status strip.
             await self.emitter.llm_status(
                 "info",
-                f"Connection issue — retrying ({self._consecutive_llm_retries}/{cap}) in {delay:.0f}s…",
+                self._retry_status_message(error, attempt=self._consecutive_llm_retries, cap=cap, delay=delay),
+                retry=True,
+                attempt=self._consecutive_llm_retries,
+                cap=cap,
+                retry_in_s=round(delay, 1),
+                stalled=stall is not None,
+                partial_output=bool(stall is not None and stall.partial_output),
+                budget_left_s=round(max(0.0, self._llm_retry_budget_seconds - budget_used), 1),
             )
             await asyncio.sleep(delay)
             await self.log_info("Resuming after backoff.", sender=self.agent_name)
@@ -2893,7 +3084,11 @@ class BaseAgent(LogMixin):
                         ),
                     )
                     async with stream_cm as stream:
-                        async for event in stream:
+                        # A silent stream is bounded by the stall guard rather than by the
+                        # transport read timeout: it knows whether anything ever arrived,
+                        # reports a countdown while waiting, and fails with an actionable
+                        # error instead of a bare socket timeout.
+                        async for event in self._iter_stream_with_stall_guard(stream):
                             if event.type == "text":
                                 if thinking_started or current_thinking:
                                     yield {
@@ -3037,6 +3232,8 @@ class BaseAgent(LogMixin):
                 # A clean stream resets the transient-failure budget, so the cap measures
                 # only consecutive failures, not lifetime failures across the turn.
                 self._consecutive_llm_retries = 0
+                self._zero_output_stalls = 0
+                self._llm_retry_budget_started = None
                 # Likewise, a response with a tool call or visible text resets the
                 # silent-turn budget: the cap measures only consecutive silence.
                 if not self._is_silent_turn(assistant_message):
