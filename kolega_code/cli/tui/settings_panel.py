@@ -1058,7 +1058,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         screen.call_after_refresh(screen._refresh_apply_label)
 
     def _handle_endpoint_settings_button(self, button_id: str) -> None:
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._set_endpoint_status("Stop the active turn before changing endpoints.", "warning")
             return
         if button_id == "ep_save":
@@ -1808,7 +1808,9 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         return {str(key): str(item) for key, item in parsed.items() if item is not None}
 
     async def _handle_mcp_settings_button(self, button_id: str) -> bool:
-        if button_id != "mcp_refresh" and (self._turn_active or self.agent_worker is not None):
+        if button_id != "mcp_refresh" and (
+            self._turn_active or self.agent_worker is not None or self._agent_execution_draining()
+        ):
             self._set_mcp_status("Stop the active turn before changing MCP servers.", "warning")
             return True
         if button_id == "mcp_refresh":
@@ -1850,7 +1852,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         return MCP_NEW_SERVER_VALUE if value is Select.NULL else str(value)
 
     async def _save_mcp_server_from_ui(self, *, rebuild: bool = True) -> bool:
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._set_mcp_status("Stop the active turn before changing MCP servers.", "warning")
             return False
         selected = self._selected_mcp_server_id()
@@ -1888,6 +1890,9 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         return True
 
     async def _delete_mcp_server_from_ui(self) -> None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
+            self._set_mcp_status("Stop the active turn before changing MCP servers.", "warning")
+            return
         selected = self._selected_mcp_server_id()
         if selected == MCP_NEW_SERVER_VALUE:
             self._set_mcp_status("Select a user MCP server to delete.", "warning")
@@ -1915,6 +1920,9 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         self._notify_user(f"Deleted MCP server '{selected}'.")
 
     async def _verify_mcp_server_from_ui(self, *, just_saved: bool = False) -> None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
+            self._set_mcp_status("Stop the active turn before changing MCP servers.", "warning")
+            return
         screen = getattr(self, "_settings_screen", None)
         if screen is not None and screen.mcp_dirty:
             self._set_mcp_status(
@@ -1944,6 +1952,9 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             # Do not echo arbitrary transport exceptions: they may contain credentials.
             result = MCPVerificationResult(selected, False, "Verification could not complete. Try again.")
         self._update_mcp_status_text()
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
+            self._set_mcp_status("Stop the active turn before changing MCP servers.", "warning")
+            return
         await self._ensure_agent_from_settings(rebuild=True)
         if result.ok:
             self._set_mcp_feedback("Saved and verified." if just_saved else "Saved configuration verified.")
@@ -1958,6 +1969,9 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._notify_user(f"MCP verification failed for '{selected}': {result.message}", severity="warning")
 
     def _clear_mcp_tokens_from_ui(self) -> None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
+            self._set_mcp_status("Stop the active turn before changing MCP servers.", "warning")
+            return
         selected = self._selected_mcp_server_id()
         if selected == MCP_NEW_SERVER_VALUE:
             self._set_mcp_status("Select an MCP server before clearing tokens.", "warning")
@@ -2408,7 +2422,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         return candidate, provider, model, effort
 
     async def _save_settings_from_ui(self) -> None:
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._set_settings_status("Stop the active turn before applying settings.", "warning")
             return
         browser_message, browser_tone, browser_blocks_save = self._browser_model_status()
@@ -2504,7 +2518,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
 
     async def _apply_settings_candidate(self, candidate: CliSettings, *, rebuild: bool = True) -> tuple[bool, str]:
         """Validate, persist, and activate a settings candidate without partial writes."""
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             return False, "Stop the active turn before applying settings."
         try:
             build_agent_config(
@@ -2532,7 +2546,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         screen = getattr(self, "_settings_screen", None)
         if screen is None:
             return
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._set_settings_status("Stop the active turn before changing credentials.", "warning")
             return
         provider = self._selected_credential_provider()
@@ -2551,7 +2565,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         screen._refresh_apply_label()
 
     async def _settings_login_chatgpt(self) -> None:
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._set_settings_status("Stop the active turn before signing in.", "warning")
             return
         screen = getattr(self, "_settings_screen", None)
@@ -2583,7 +2597,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         screen = getattr(self, "_settings_screen", None)
         if screen is None:
             return
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._set_settings_status("Stop the active turn before signing out.", "warning")
             return
         removed = screen.pending_oauth_tokens.pop(chatgpt_constants.PROVIDER_KEY, None)
@@ -2622,7 +2636,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
 
     async def _test_settings_connection(self) -> None:
         """Probe the highlighted provider's credential, independent of model config."""
-        if self._turn_active or self.agent_worker is not None:
+        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
             self._set_settings_status("Stop the active turn before testing a connection.", "warning")
             return
         status = self._settings_query_one("#provider_credential_status", Static)

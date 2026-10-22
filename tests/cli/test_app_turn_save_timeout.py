@@ -1,14 +1,13 @@
 """A stalled journal write must not hide a finished turn's result.
 
-Regression for session ``snappy-sloth-4970``: ``write_plan`` was captured, the agent
-turn completed, and then the turn worker parked on its journal/session writes. The
-plan card was created *after* those writes, so it never appeared, and the dashboard
-showed a finished-looking turn for half an hour.
+Exercise blocked writes without attributing the reported freeze to storage:
+plan capture must not depend on a metadata projection finishing promptly.
 """
 
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from pathlib import Path
 
@@ -98,3 +97,81 @@ async def test_turn_finishes_when_the_post_turn_save_stalls(tmp_path: Path, monk
         assert app._turn_final_state is tui_state.TurnState.IDLE
         assert app.conversation_entries[-1].kind == "plan"
         await wait_for_turn_idle(app, pilot)
+
+
+@pytest.mark.asyncio
+async def test_timed_out_save_keeps_ownership_until_its_thread_finishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    app._turn_save_timeout_seconds = 0.05
+    entered = threading.Event()
+    release = threading.Event()
+    original_save = app.store.save
+
+    def delayed_save(record) -> None:
+        if record.title == "Old title":
+            entered.set()
+            assert release.wait(10)
+        original_save(record)
+
+    async with app.run_test() as pilot:
+        monkeypatch.setattr(app.store, "save", delayed_save)
+        app.session.title = "Old title"
+        first = asyncio.create_task(app._save_session_with_deadline(app._save_session_async()))
+        later = None
+        try:
+            await _wait_for(pilot, entered.is_set)
+            assert await first is False
+            assert app._persistence_lock.locked(), "a live writer must retain persistence ownership"
+
+            app.session.title = "New title"
+            later = asyncio.create_task(app._save_session_async())
+            await pilot.pause(0.02)
+            assert not later.done(), "a newer save must not overtake the timed-out writer"
+        finally:
+            release.set()
+            await first
+            if later is not None:
+                await asyncio.wait_for(later, 3)
+
+        assert app.store.load(app.session.session_id).title == "New title"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_history_save_keeps_ownership_until_its_thread_finishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    entered = threading.Event()
+    release = threading.Event()
+    original_save = app.store.save
+
+    def delayed_save(record) -> None:
+        if record.title == "Old title":
+            entered.set()
+            assert release.wait(10)
+        original_save(record)
+
+    async with app.run_test() as pilot:
+        monkeypatch.setattr(app.store, "save", delayed_save)
+        app.session.title = "Old title"
+        first = asyncio.create_task(app._save_session_history_async())
+        later = None
+        try:
+            await _wait_for(pilot, entered.is_set)
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            assert app._persistence_lock.locked()
+
+            app.session.title = "New title"
+            later = asyncio.create_task(app._save_session_async())
+            await pilot.pause(0.02)
+            assert not later.done()
+        finally:
+            release.set()
+            if later is not None:
+                await asyncio.wait_for(later, 3)
+
+        assert app.store.load(app.session.session_id).title == "New title"

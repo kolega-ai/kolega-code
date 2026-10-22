@@ -148,6 +148,12 @@ class KolegaAppBase(App):
         _startup_pending: bool
         agent: BaseAgent | None
         agent_worker: Worker | None
+        _agent_execution_task: asyncio.Task | None
+        _draining_agent_tasks: set[asyncio.Task]
+
+        def _agent_execution_draining(self) -> bool: ...
+        def _track_agent_execution(self) -> None: ...
+
         conversation_entries: list[tui_state.ConversationEntry]
         _stream_entries: dict[str, tui_state.ConversationEntry]
         _tool_entries: dict[str, tui_state.ConversationEntry]
@@ -157,6 +163,7 @@ class KolegaAppBase(App):
         _sub_agent_seq: int
         _session_file_changes: list[tui_state.SessionFileChange]
         _pending_workspace_switch: tui_state.PendingWorkspaceSwitch | None
+        _workspace_switch_task: asyncio.Task | None
         _background_jobs: BackgroundAgentManager | None
         _background_retirement: tuple[BackgroundAgentManager, BaseAgent | None, bool] | None
         _background_paused: bool
@@ -220,6 +227,8 @@ class KolegaAppBase(App):
         _vision_warning_shown: bool
         _permission_lock: asyncio.Lock
         _persistence_lock: asyncio.Lock
+        _pending_session_saves: set[asyncio.Task[None]]
+        _shutdown_worker_waiters: set[asyncio.Task]
         _pending_model_selection: tui_state.PendingModelSelection | None
         _pending_effort_selection: tui_state.PendingEffortSelection | None
         _pending_theme_selection: tui_state.PendingThemeSelection | None

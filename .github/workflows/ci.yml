@@ -84,6 +84,25 @@ jobs:
         if: needs.changes.outputs.coverage-badge-only != 'true'
         run: uv sync --extra dev --frozen
 
+      # run_test() omits Textual's Python 3.12+ eager factory. These tests
+      # exercise run_async() and must run on every supported Python version.
+      - name: Guard completion and Stop lifecycle regressions
+        if: needs.changes.outputs.coverage-badge-only != 'true'
+        timeout-minutes: 5
+        env:
+          CI: "1"
+        run: |
+          uv run --frozen pytest -q --import-mode=importlib \
+            tests/cli/test_app_eager_turn_ownership.py \
+            tests/cli/test_app_stop_drain.py \
+            tests/cli/test_app_stop_drain_commands.py \
+            tests/cli/test_app_cancel_escalation.py \
+            tests/cli/test_app_turn_save_timeout.py \
+            tests/cli/test_app_worktree_switch.py \
+            tests/cli/test_app_diagnostics.py \
+            tests/cli/test_main_exit_watchdog.py \
+            tests/agent/llm/test_offline_stream_lifecycle_deadlines.py
+
       - name: Get Playwright version
         if: needs.changes.outputs.coverage-badge-only != 'true'
         id: playwright-version

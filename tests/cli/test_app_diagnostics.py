@@ -49,6 +49,22 @@ async def test_event_tee_persists_structured_llm_error(tmp_path: Path, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_journal_stall_callback_persists_the_failure_kind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    async with app.run_test():
+        app._record_journal_stall({"kind": "timeout", "event_type": "turn_ended", "elapsed_s": 30.0, "timeout_s": 30.0})
+        assert app._diag is not None
+        rows = _read(app._diag.path)
+
+    stalls = [row for row in rows if row["kind"] == "journal_stall"]
+    assert len(stalls) == 1
+    assert stalls[0]["failure_kind"] == "timeout"
+    assert stalls[0]["event_type"] == "turn_ended"
+
+
+@pytest.mark.asyncio
 async def test_diagnostics_and_bug_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
     app = _build_mention_test_app(tmp_path, monkeypatch)

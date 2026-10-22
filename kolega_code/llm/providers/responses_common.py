@@ -507,13 +507,13 @@ class ResponsesStreamWrapper:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
-        aclose = getattr(self._stream, "aclose", None)
-        if aclose is not None:
+        close = getattr(self._stream, "aclose", None) or getattr(self._stream, "close", None)
+        self._closed = True
+        if close is not None:
             try:
-                await aclose()
+                await close()
             except Exception:  # pragma: no cover - best effort
                 pass
-        self._closed = True
         return False
 
     def __aiter__(self) -> "ResponsesStreamWrapper":
@@ -731,7 +731,9 @@ class ResponsesStreamWrapper:
                     "input_kind": "freeform" if "custom_tool" in event_type else "json",
                 },
             )
-            record["arguments"] += getattr(event, "delta", "") or ""
+            delta = getattr(event, "delta", "") or ""
+            record["arguments"] += delta
+            return MessageChunk(type="tool_use_delta", tool_call_delta={"input_delta": delta})
         elif event_type in ("response.function_call_arguments.done", "response.custom_tool_call_input.done"):
             call_id = getattr(event, "item_id", None) or getattr(event, "call_id", "")
             record = self._function_calls.setdefault(

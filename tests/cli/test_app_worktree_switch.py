@@ -1,9 +1,10 @@
 import asyncio
 import subprocess
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar, cast
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -648,6 +649,320 @@ async def test_persist_failure_leaves_workspace_unchanged(tmp_path: Path, monkey
         assert store.load(app.session.session_id).active_project_path is None
         assert _workspace_events(store, app.session.session_id) == []
         assert app.agent is first_agent
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detach", [False, True])
+async def test_cancelled_workspace_commit_retains_the_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detach: bool
+) -> None:
+    app, main, linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        first_agent = app.agent
+
+        async def switch():
+            if detach:
+                app._track_agent_execution()
+            return await _approve_switch(app, str(linked))
+
+        async with app._persistence_lock:
+            if detach:
+                app.agent_worker = app.run_worker(switch(), name="kolega-turn", group="turns")
+                task = None
+            else:
+                task = asyncio.create_task(switch())
+            for _ in range(100):
+                if app.session.active_project_path == str(linked) and app._pending_session_saves:
+                    break
+                await pilot.pause(0.01)
+            assert app.session.active_project_path == str(linked)
+            assert app._pending_session_saves
+            if detach:
+                task = app._agent_execution_task
+            assert task is not None
+            task.cancel()
+            await asyncio.sleep(0)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done(), "cancellation must not abandon a workspace transaction"
+            if detach:
+                app._begin_turn_progress("Switching workspace")
+                app._force_settle_stop()
+                assert app._agent_execution_draining()
+                app._queue_user_message("queued after stop")
+                assert not app._maybe_start_queued_message()
+            assert app.active_project_path == main
+            assert app.agent is first_agent
+
+        if detach:
+            await task
+        else:
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        if detach:
+            for _ in range(100):
+                if (
+                    app.active_project_path == linked
+                    and not app._queued_messages
+                    and not app._turn_active
+                    and app.agent_worker is None
+                ):
+                    break
+                await pilot.pause(0.01)
+            assert not app._agent_execution_draining()
+            assert first_agent.messages == []
+            assert app.agent.messages == ["queued after stop"]
+        else:
+            assert app._pending_workspace_switch is not None
+            assert app._pending_workspace_switch.new_root == linked
+            assert app.active_project_path == main
+            await app._apply_pending_workspace_switch()
+
+        assert app._pending_workspace_switch is None
+        assert app.active_project_path == linked
+        assert app.agent is not first_agent
+        assert store.load(app.session.session_id).active_project_path == str(linked)
+        assert len(_workspace_events(store, app.session.session_id)) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("eager", [False, True], ids=["lazy", "eager"])
+@pytest.mark.parametrize(
+    ("phase", "action"),
+    [
+        ("recording", "mutate"),
+        ("recording", "shutdown"),
+        ("recording", "stop"),
+        ("recording", "stop-twice"),
+        ("retirement", "stop-twice"),
+    ],
+)
+async def test_drained_workspace_recovery_retains_execution_ownership(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, eager: bool, phase: str, action: str
+) -> None:
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    factory = getattr(asyncio, "eager_task_factory", None)
+    if eager and factory is None:
+        pytest.skip("Eager tasks require Python 3.12+")
+    app, _main, linked, store, agent_cls = _build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        first_agent = app.agent
+        await _approve_switch(app, str(linked))
+        original_settings = deepcopy(app.settings)
+        original_config = app.config
+        app.settings_store.save(app.settings)
+        stored_settings = app.settings_store.path.read_bytes()
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        method = "_prime_recording_offset" if phase == "recording" else "_retire_background_jobs"
+        original = getattr(app, method)
+
+        async def gated(*args, **kwargs):
+            entered.set()
+            await release.wait()
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(app, method, gated)
+        notify = Mock()
+        monkeypatch.setattr(app, "_notify_user", notify)
+        reset = AsyncMock()
+        monkeypatch.setattr(app, "_reset_current_thread", reset)
+        loop = asyncio.get_running_loop()
+        original_factory = loop.get_task_factory()
+        loop.set_task_factory(factory if eager else None)
+        shutdown = None
+        recovery = None
+        try:
+            finished = asyncio.create_task(asyncio.sleep(0))
+            await finished
+            app._agent_execution_task = finished
+            app._draining_agent_tasks.add(finished)
+            app._agent_execution_finished(finished)
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            recovery = app._agent_execution_task
+            assert app.agent_worker is not None, "workspace recovery must retain the active worker slot"
+            assert recovery is not None and not recovery.done()
+            assert not app._agent_execution_draining(), "recovery must be allowed to rebuild its own agent"
+            app._queue_user_message("queued after recovery")
+            assert not app._maybe_start_queued_message()
+
+            if action == "mutate":
+                await app._switch_model("anthropic", "claude-sonnet-5")
+                notify.assert_called_with(cli_messages.BLOCK_STOP_BEFORE_MODEL_SWITCH, severity="warning")
+                candidate = deepcopy(app.settings)
+                candidate.active_model = "claude-sonnet-5"
+                assert await app._apply_settings_candidate(candidate) == (
+                    False,
+                    "Stop the active turn before applying settings.",
+                )
+                composer = app.query_one("#composer", ChatComposer)
+                composer.load_text("/clear")
+                await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+                notify.assert_called_with(cli_messages.BLOCK_STOP_BEFORE_RESET, severity="warning")
+                reset.assert_not_awaited()
+            elif action == "shutdown":
+                waiting = asyncio.Event()
+                original_wait = app._wait_for_agent_shutdown
+
+                async def wait_for_shutdown():
+                    waiting.set()
+                    return await original_wait()
+
+                monkeypatch.setattr(app, "_wait_for_agent_shutdown", wait_for_shutdown)
+                shutdown = asyncio.create_task(app.action_quit())
+                await asyncio.wait_for(waiting.wait(), timeout=2)
+                await asyncio.sleep(0)
+                assert not shutdown.done(), "quit must await the owned recovery before tearing down its agent"
+                assert not recovery.done()
+            else:
+                app.action_cancel_generation()
+                assert app._stop_pending
+                if action == "stop-twice":
+                    app.action_cancel_generation()
+                    assert not app._stop_pending
+                    assert app._agent_execution_draining()
+                    assert not app._maybe_start_queued_message()
+                    with pytest.raises(RuntimeError, match="previous turn"):
+                        await app._build_agent(app.config, rebuild=True)
+                    assert app.agent is first_agent
+
+            assert app.agent is first_agent
+            assert len(agent_cls.instances) == 1
+            assert app.settings == original_settings
+            assert app.settings_store.path.read_bytes() == stored_settings
+            assert app.config is original_config
+        finally:
+            release.set()
+            try:
+                if shutdown is not None:
+                    await asyncio.wait_for(shutdown, timeout=5)
+                elif recovery is not None:
+                    await asyncio.wait_for(asyncio.shield(recovery), timeout=5)
+            finally:
+                loop.set_task_factory(original_factory)
+
+        if action == "mutate":
+            for _ in range(100):
+                if not app._queued_messages and not app._turn_active and app.agent_worker is None:
+                    break
+                await pilot.pause(0.01)
+            assert app.agent.messages == ["queued after recovery"]
+        else:
+            assert agent_cls.instances[-1].messages == []
+        assert not app._stop_pending
+        assert app._stop_watchdog is None
+        assert app.agent_worker is None
+        assert not app._agent_execution_draining()
+        assert app._pending_workspace_switch is None
+        assert app.active_project_path == linked
+        assert len(agent_cls.instances) == 2
+        assert first_agent.cleanup_calls == 1
+        assert not app._agent_cleanup_failed
+        assert store.load(app.session.session_id).active_project_path == str(linked)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("eager", [False, True], ids=["lazy", "eager"])
+@pytest.mark.parametrize("action", ["stop", "stop-twice", "shutdown"])
+async def test_workspace_recovery_survives_cancellation_before_worker_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, eager: bool, action: str
+) -> None:
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    factory = getattr(asyncio, "eager_task_factory", None)
+    if eager and factory is None:
+        pytest.skip("Eager tasks require Python 3.12+")
+    app, _main, linked, store, agent_cls = _build_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        first_agent = app.agent
+        await _approve_switch(app, str(linked))
+        loop = asyncio.get_running_loop()
+        original_factory = loop.get_task_factory()
+        loop.set_task_factory(factory if eager else None)
+        shutdown = None
+        try:
+            finished = asyncio.create_task(asyncio.sleep(0))
+            await finished
+            app._agent_execution_task = finished
+            app._draining_agent_tasks.add(finished)
+            app._agent_execution_finished(finished)
+            assert app.agent_worker is not None
+            if action == "shutdown":
+                shutdown = asyncio.create_task(app.action_quit())
+            else:
+                app.action_cancel_generation()
+                if action == "stop-twice":
+                    app.action_cancel_generation()
+            if shutdown is not None:
+                await asyncio.wait_for(shutdown, timeout=5)
+            else:
+                for _ in range(100):
+                    if app._pending_workspace_switch is None and app.agent_worker is None:
+                        break
+                    await pilot.pause(0.01)
+                assert app._pending_workspace_switch is None, "Stop before entry must not strand a committed switch"
+                assert app.agent_worker is None
+                assert not app._stop_pending
+                assert app._stop_watchdog is None
+                composer = app.query_one("#composer", ChatComposer)
+                composer.load_text("after immediate Stop")
+                await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+                for _ in range(100):
+                    if app.agent_worker is None and not app._queued_messages and not app._turn_active:
+                        break
+                    await pilot.pause(0.01)
+                assert app.agent.messages == ["after immediate Stop"]
+            assert app.active_project_path == linked
+            assert app._pending_workspace_switch is None
+            assert not app._agent_execution_draining()
+            assert first_agent.cleanup_calls == 1
+            assert not app._agent_cleanup_failed
+            assert len(agent_cls.instances) == 2
+            assert store.load(app.session.session_id).active_project_path == str(linked)
+        finally:
+            loop.set_task_factory(original_factory)
+
+
+@pytest.mark.asyncio
+async def test_shutdown_does_not_launch_workspace_recovery_after_drain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, _main, linked, store, agent_cls = _build_app(tmp_path, monkeypatch)
+    async with app.run_test():
+        await _approve_switch(app, str(linked))
+        release = asyncio.Event()
+        task = asyncio.create_task(release.wait())
+        app._agent_execution_task = task
+        app._draining_agent_tasks.add(task)
+        task.add_done_callback(app._agent_execution_finished)
+        app._queue_user_message("must not run while quitting")
+        run_worker = Mock(wraps=app.run_worker)
+        monkeypatch.setattr(app, "run_worker", run_worker)
+        waiting = asyncio.Event()
+        original_wait = app._wait_for_agent_shutdown
+
+        async def wait_for_shutdown():
+            waiting.set()
+            return await original_wait()
+
+        monkeypatch.setattr(app, "_wait_for_agent_shutdown", wait_for_shutdown)
+        shutdown = asyncio.create_task(app.action_quit())
+        try:
+            await asyncio.wait_for(waiting.wait(), timeout=2)
+            assert not app._maybe_start_queued_message()
+        finally:
+            release.set()
+            await asyncio.wait_for(shutdown, timeout=5)
+        assert not any(
+            call.kwargs.get("name") == "kolega-drained-workspace-switch" for call in run_worker.call_args_list
+        )
+        assert len(agent_cls.instances) == 1
+        assert agent_cls.instances[0].messages == []
+        assert store.load(app.session.session_id).active_project_path == str(linked)
 
 
 @pytest.mark.asyncio

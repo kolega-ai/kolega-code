@@ -1,11 +1,8 @@
 """Esc/Ctrl-C must always return the TUI to a usable state.
 
-Regression for session ``snappy-sloth-4970``: the turn worker parked in a wait that
-swallows ``CancelledError`` (the agent's turn-finalization loops wait on journal
-writes inside ``asyncio.shield`` and ignore every cancel until the write returns).
-``Worker.cancel()`` then only sets ``Task.cancelling()`` — the worker never
-finishes, so the dashboard sat on "Stopping…" with a live turn timer for half an
-hour and every further Esc/Ctrl-C press re-entered the same dead branch.
+Exercise cancellation-resistant finalization independently of the observed
+stale-worker ownership race: ``Worker.cancel()`` alone cannot settle a task
+which suppresses ``CancelledError`` while waiting for durable writes.
 """
 
 from __future__ import annotations
@@ -35,16 +32,21 @@ class _UnstoppableStreamAgent(FakeCoderAgent):
         super().__init__(**kwargs)
         self.entered = asyncio.Event()
         self.release = asyncio.Event()
+        self.cancellations = 0
+        self.fail_after_release = False
 
     async def process_message_stream(self, message):
         yield {"type": "response", "content": "working", "complete": True, "uuid": "response-1"}
         self.entered.set()
-        try:
-            await asyncio.sleep(3600)
-        except asyncio.CancelledError:
-            # Swallow the cancel and keep waiting, like a journal write that will
-            # not return; the test releases it during teardown.
-            await self.release.wait()
+        while not self.release.is_set():
+            try:
+                await self.release.wait()
+            except asyncio.CancelledError:
+                self.cancellations += 1
+        yield {"type": "response", "content": "late response", "complete": True, "uuid": "late-response"}
+        yield {"type": "thinking", "content": "late thinking", "complete": True, "uuid": "late-thinking"}
+        if self.fail_after_release:
+            raise RuntimeError("late detached failure")
 
 
 async def _wait_for(pilot, predicate, timeout: float = 3.0) -> None:
@@ -75,23 +77,26 @@ async def test_escape_forces_stop_when_the_worker_ignores_cancellation(
 
     async with app.run_test() as pilot:
         agent = await _start_stuck_turn(app, pilot)
+        try:
+            app.action_cancel_generation()
+            # Inspect before the watchdog can fire on a loaded runner.
+            assert app._turn_status_text == messages.STOP_REQUESTED
+            assert app._turn_started_at is not None
 
-        app.action_cancel_generation()
-        # Painted synchronously by the action, before any timer callback can run.
-        # (A pause here raced the 50 ms watchdog on a loaded runner and observed the
-        # already-settled state.)
-        assert app._turn_status_text == messages.STOP_REQUESTED
-        assert app._turn_started_at is not None
-
-        # …and the worker cannot honour it, so the UI settles itself anyway.
-        await _wait_for(pilot, lambda: app.agent_worker is None)
+            await _wait_for(pilot, lambda: app.agent_worker is None)
+            assert app._turn_started_at is None
+            assert app._turn_final_state is tui_state.TurnState.STOPPED
+            assert app._turn_active is False
+            assert app.query_one("#composer").disabled is False
+            assert app._agent_execution_draining()
+            await _wait_for(pilot, lambda: agent.cancellations >= 2)
+        finally:
+            agent.release.set()
+            await _wait_for(pilot, lambda: not app._agent_execution_draining())
+        assert app._status_state.activity == messages.STOPPED_BY_USER
         assert app._turn_started_at is None
         assert app._turn_final_state is tui_state.TurnState.STOPPED
-        assert app._turn_active is False
-        assert app.query_one("#composer").disabled is False
-
-        agent.release.set()
-        await pilot.pause(0.05)
+        assert not any("late " in entry.content for entry in app.conversation_entries)
 
 
 @pytest.mark.asyncio
@@ -106,19 +111,20 @@ async def test_second_escape_settles_a_parked_worker_immediately(
 
     async with app.run_test() as pilot:
         agent = await _start_stuck_turn(app, pilot)
+        try:
+            app.action_cancel_generation()
+            await _wait_for(pilot, lambda: agent.cancellations == 1)
+            assert app.agent_worker is not None
 
-        app.action_cancel_generation()
-        await pilot.pause(0.02)
-        assert app.agent_worker is not None
-
-        app.action_cancel_generation()
-        await _wait_for(pilot, lambda: app.agent_worker is None, timeout=1.0)
-        assert app._turn_started_at is None
-        assert app._turn_final_state is tui_state.TurnState.STOPPED
-        assert app.query_one("#composer").disabled is False
-
-        agent.release.set()
-        await pilot.pause(0.05)
+            app.action_cancel_generation()
+            await _wait_for(pilot, lambda: app.agent_worker is None, timeout=1.0)
+            assert app._turn_started_at is None
+            assert app._turn_final_state is tui_state.TurnState.STOPPED
+            assert app.query_one("#composer").disabled is False
+            assert app._agent_execution_draining()
+        finally:
+            agent.release.set()
+            await _wait_for(pilot, lambda: not app._agent_execution_draining())
 
 
 @pytest.mark.asyncio
