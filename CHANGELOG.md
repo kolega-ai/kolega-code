@@ -6,6 +6,16 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.45.1 - 2026-10-23
+
+### Fixed
+
+- Healthy pauses in model responses now show "Waiting for response…" instead
+  of incorrectly reporting a connection issue. The waiting notice clears when
+  activity resumes without overwriting newer activity such as "Thinking…".
+- Retry notices distinguish actual response timeouts from other transient
+  failures, with detailed errors retained in diagnostics.
+
 ## 0.45.0 - 2026-10-22
 
 ### Added
