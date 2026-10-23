@@ -89,6 +89,7 @@ async def test_fireworks_generate_maps_openai_provider_response_usage(capsys):
     assert create.await_args.kwargs["reasoning_effort"] == "high"
     assert response.usage_metadata == {
         "provider": "fireworks",
+        "reasoning_field": "reasoning_content",
         "prompt_tokens": 321,
         "completion_tokens": 54,
         "total_tokens": 375,

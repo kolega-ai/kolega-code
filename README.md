@@ -185,6 +185,7 @@ Supported model providers:
 - Z.AI / GLM Coding Plan
 - Kimi Coding Plan
 - Ollama Cloud
+- Cloudflare Workers AI
 - local Llama
 
 With a paid **ChatGPT** plan (Plus, Pro, or Business), `/login chatgpt` runs

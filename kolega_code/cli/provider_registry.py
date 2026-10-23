@@ -45,6 +45,7 @@ PROVIDER_LABELS: dict[ModelProvider, str] = {
     ModelProvider.TOGETHER: "Together AI",
     ModelProvider.DASHSCOPE: "DashScope / Qwen",
     ModelProvider.OLLAMA_CLOUD: "Ollama Cloud",
+    ModelProvider.CLOUDFLARE_WORKERS_AI: "Cloudflare Workers AI",
     ModelProvider.OPENROUTER: "OpenRouter",
     ModelProvider.THINKING_MACHINES: "Thinking Machines",
     ModelProvider.TINKER: "Tinker",
@@ -196,6 +197,20 @@ MODEL_LABELS: dict[str, str] = {
     "qwen3-coder-next": "Qwen3 Coder Next",
     "qwen3-coder:480b": "Qwen3 Coder 480B",
     "qwen3.5:397b": "Qwen3.5 397B",
+    # Cloudflare Workers AI
+    "@cf/zai-org/glm-5.3": "GLM-5.3",
+    "@cf/zai-org/glm-5.3-flash": "GLM-5.3 Flash",
+    "@cf/moonshotai/kimi-k2.7-code": "Kimi K2.7 Code",
+    "@cf/deepseek-ai/deepseek-v4.1-flash-1017": "DeepSeek V4.1 Flash",
+    "@cf/deepseek-ai/deepseek-v4-pro-0813": "DeepSeek V4 Pro",
+    "@cf/zai-org/glm-5.2": "GLM-5.2",
+    "@cf/moonshotai/kimi-k2.6": "Kimi K2.6",
+    "@cf/qwen/qwen3.8-27b": "Qwen 3.8 27B",
+    "@cf/google/gemma-4-26b-a4b-it": "Gemma 4 26B A4B",
+    "@cf/nvidia/nemotron-3-120b-a12b": "Nemotron 3 120B A12B",
+    "@cf/openai/gpt-oss-120b": "GPT-OSS 120B",
+    "@cf/openai/gpt-oss-20b": "GPT-OSS 20B",
+    "@cf/zai-org/glm-4.7-flash": "GLM-4.7 Flash",
     # Thinking Machines
     "thinkingmachines/Inkling": "Inkling",
     "thinkingmachines/Inkling-Small": "Inkling Small",
@@ -219,6 +234,7 @@ PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     ModelProvider.TOGETHER: "moonshotai/Kimi-K2.7-Code",
     ModelProvider.DASHSCOPE: "qwen3-coder-plus",
     ModelProvider.OLLAMA_CLOUD: "gpt-oss:20b",
+    ModelProvider.CLOUDFLARE_WORKERS_AI: "@cf/zai-org/glm-5.3",
     # Hardcoded on purpose: regenerating the OpenRouter catalog reorders it by
     # live usage, and that must never silently change what new users get.
     ModelProvider.OPENROUTER: "moonshotai/kimi-k3",
@@ -265,6 +281,8 @@ def _api_key_env(provider: ModelProvider) -> str:
         return ""
     if provider == ModelProvider.OLLAMA_CLOUD:
         return "OLLAMA_API_KEY"
+    if provider == ModelProvider.CLOUDFLARE_WORKERS_AI:
+        return "CLOUDFLARE_API_TOKEN"
     if provider == ModelProvider.THINKING_MACHINES:
         # Thinking Machines documents TINKER_API_KEY, not THINKING_MACHINES_API_KEY.
         return "TINKER_API_KEY"

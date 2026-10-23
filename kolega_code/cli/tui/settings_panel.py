@@ -34,6 +34,7 @@ from kolega_code.gateway.stt import (
     stt_provider_names,
 )
 from kolega_code.gateway.access_settings import AccessSettingsError, parse_allowed_users, validate_access_settings
+from kolega_code.llm import cloudflare_workers_ai
 from kolega_code.llm.specs.custom_endpoints import (
     API_STYLES,
     CUSTOM_PROVIDER_PREFIX,
@@ -66,6 +67,7 @@ from ..config import (
     key_status,
     load_cli_env,
     probe_token_manager,
+    provider_connection_kwargs,
     resolved_api_key,
 )
 from ..model_connection import test_model_connection
@@ -671,7 +673,37 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             draft.api_keys.pop(removed_provider, None)
         for staged_provider, staged_key in screen.pending_api_keys.items():
             draft.set_api_key(staged_provider, staged_key)
+        draft.cloudflare_account_id = self._typed_cloudflare_account_id()
         return draft
+
+    def _typed_cloudflare_account_id(self) -> Optional[str]:
+        """The Account ID field's raw text (blank -> None); the saved value when the page is not mounted."""
+        try:
+            typed = self._settings_query_one("#provider_account_id_input", Input).value.strip()
+        except NoMatches:
+            return self.settings.cloudflare_account_id
+        return typed or None
+
+    def _cloudflare_account_id_error(self) -> Optional[str]:
+        try:
+            cloudflare_workers_ai.normalize_account_id(self._typed_cloudflare_account_id())
+        except ValueError as exc:
+            return str(exc)
+        return None
+
+    def _populate_cloudflare_account_input(self) -> None:
+        try:
+            account_input = self._settings_query_one("#provider_account_id_input", Input)
+        except NoMatches:
+            return
+        account_input.value = self.settings.cloudflare_account_id or ""
+
+    def _refresh_provider_account_status(self) -> None:
+        screen = getattr(self, "_settings_screen", None)
+        provider = getattr(screen, "credential_provider", None)
+        if provider:
+            self._update_provider_credential_controls(provider)
+        self._refresh_provider_row_labels()
 
     def _selected_credential_provider(self) -> Optional[str]:
         """The provider whose credential the Providers page is editing."""
@@ -697,6 +729,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             provider_list = self._settings_query_one("#provider_list", OptionList)
         except NoMatches:
             return
+        self._populate_cloudflare_account_input()
         draft = self._draft_credential_settings()
         rows = ui_provider_options()
         provider_list.clear_options()
@@ -778,6 +811,12 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         """Swap the editor between API-key, ChatGPT sign-in, and custom-endpoint shape."""
         oauth = provider == chatgpt_constants.PROVIDER_KEY
         custom = provider.startswith(CUSTOM_PROVIDER_PREFIX)
+        cloudflare = provider == cloudflare_workers_ai.PROVIDER
+        for widget_id in ("provider_account_id_label", "provider_account_id_input", "provider_account_id_hint"):
+            try:
+                self._settings_query_one(f"#{widget_id}").display = cloudflare
+            except NoMatches:
+                pass
         for widget_id in ("provider_chatgpt_login", "provider_chatgpt_logout"):
             try:
                 self._settings_query_one(f"#{widget_id}").display = oauth
@@ -2401,6 +2440,10 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             # Removals first, so re-typing a key for a provider you just cleared wins.
             for staged_provider, staged_key in screen.pending_api_keys.items():
                 candidate.set_api_key(staged_provider, staged_key)
+        if self._cloudflare_account_id_error() is None:
+            candidate.cloudflare_account_id = cloudflare_workers_ai.normalize_account_id(
+                self._typed_cloudflare_account_id()
+            )
         self.settings = candidate
         try:
             candidate.active_provider = provider
@@ -2465,6 +2508,8 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                 error = self._custom_model_error(row_provider, row.model_id, row.custom_id)
                 if error is not None:
                     break
+        if error is None:
+            error = self._cloudflare_account_id_error()
         if error is not None:
             self._set_settings_status(error, "error")
             self._notify_user(error, severity="error")
@@ -2484,6 +2529,8 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._settings_query_one("#provider_api_key_input", Input).value = ""
         except NoMatches:
             pass
+        # Show the normalized value before the clean baseline is captured.
+        self._populate_cloudflare_account_input()
         try:
             self._settings_query_one("#web_search_api_key_input", Input).value = ""
         except NoMatches:
@@ -2652,11 +2699,20 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             return
         base_url = None
         api_style = None
+        default_headers = None
         if provider.startswith(CUSTOM_PROVIDER_PREFIX):
             endpoint_id = provider[len(CUSTOM_PROVIDER_PREFIX) :]
             entry = self._merged_endpoints_for_probe().get(endpoint_id) or {}
             base_url = entry.get("base_url")
             api_style = entry.get("api_style")
+        else:
+            try:
+                connection = provider_connection_kwargs(provider, self.project_path, draft)
+            except ValueError as exc:
+                status.update(str(exc))
+                return
+            base_url = connection.get("base_url")
+            default_headers = connection.get("default_headers")
         button.disabled = True
         status.update(messages.PROVIDER_TEST_RUNNING.format(provider=provider, model=model))
         result = await test_model_connection(
@@ -2667,6 +2723,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             usage_ledger=getattr(self, "_usage_ledger", None),
             base_url=base_url,
             api_style=api_style,
+            default_headers=default_headers,
         )
         status.update(result.message)
         button.disabled = False
@@ -2854,5 +2911,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             return "Run /login chatgpt to sign in with your ChatGPT subscription"
         if self.settings.has_api_key(provider):
             return "Stored API key will be kept if blank"
+        if provider == cloudflare_workers_ai.PROVIDER:
+            return messages.CLOUDFLARE_API_TOKEN_PLACEHOLDER
         model = get_ui_model(provider, (ui_model_options(provider) or [("", "")])[0][1])
         return f"{model.provider_label} API key" if model else "API key"

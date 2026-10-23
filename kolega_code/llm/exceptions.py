@@ -185,6 +185,7 @@ def _provider_display_name(provider: str | None) -> str:
         ModelProvider.DEEPSEEK.value: "DeepSeek",
         ModelProvider.LLAMA.value: "Llama",
         ModelProvider.OLLAMA_CLOUD.value: "Ollama Cloud",
+        ModelProvider.CLOUDFLARE_WORKERS_AI.value: "Cloudflare Workers AI",
         ModelProvider.OPENROUTER.value: "OpenRouter",
         ModelProvider.PERPLEXITY_AGENT.value: "Perplexity",
     }
@@ -199,6 +200,13 @@ def billing_error_message(error: LLMBillingError, model: str | None = None) -> s
     provider_name = _provider_display_name(provider)
     model_label = f"/{model}" if model else ""
     provider_model = f"{provider_name}{model_label}"
+
+    if provider == ModelProvider.CLOUDFLARE_WORKERS_AI.value:
+        return (
+            f"{provider_model} could not run this request: the Cloudflare account has used its daily free "
+            "Workers AI allocation, or this model requires the Workers Paid plan. Upgrade the account to "
+            "Workers Paid or switch to another provider/model in Settings or with /model."
+        )
 
     return (
         f"{provider_model} could not run this request because {provider_name} reported insufficient balance. "
@@ -310,6 +318,45 @@ def _anthropic_body_error_message(error: Exception) -> str:
     return str(error_info.get("message") or "").strip()
 
 
+_CLOUDFLARE_BILLING_CODES = frozenset({3036, 5035})
+_CLOUDFLARE_BILLING_PHRASES = ("daily free allocation", "requires a workers paid plan")
+_CLOUDFLARE_CONTEXT_PHRASES = (
+    "maximum context length",
+    "context length",
+    "context window",
+    "too many input tokens",
+    "prompt is too long",
+)
+
+
+def _cloudflare_error_codes(error: Exception) -> set[int]:
+    """Workers AI's numeric codes from its ``{"errors": [{"code": ...}]}`` envelope."""
+    body = getattr(error, "body", None)
+    entries = body.get("errors") if isinstance(body, dict) else None
+    if not isinstance(entries, list):
+        return set()
+    codes: set[int] = set()
+    for entry in entries:
+        code = entry.get("code") if isinstance(entry, dict) else None
+        if isinstance(code, int) and not isinstance(code, bool):
+            codes.add(code)
+        elif isinstance(code, str) and code.isdigit():
+            codes.add(int(code))
+    return codes
+
+
+def _map_cloudflare_openai_error(error: "OpenAIError", provider: str) -> Optional[LLMError]:
+    status_code = getattr(error, "status_code", None)
+    text = str(error).lower()
+    if _cloudflare_error_codes(error) & _CLOUDFLARE_BILLING_CODES or any(
+        phrase in text for phrase in _CLOUDFLARE_BILLING_PHRASES
+    ):
+        return LLMBillingError(message=f"OpenAI APIError: {str(error)}", provider=provider)
+    if status_code == 413 or (status_code == 400 and any(phrase in text for phrase in _CLOUDFLARE_CONTEXT_PHRASES)):
+        return LLMContextWindowExceededError(message=f"OpenAI APIError: {str(error)}", provider=provider)
+    return None
+
+
 def map_openai_errors(error: "OpenAIError", provider: str | None = None) -> LLMError:
     from openai import (
         APIConnectionError as OpenAIAPIConnectionError,
@@ -318,6 +365,10 @@ def map_openai_errors(error: "OpenAIError", provider: str | None = None) -> LLME
 
     # Compatible providers ride the OpenAI SDK; keep their real provider label.
     provider = provider or ModelProvider.OPENAI.value
+    if provider == ModelProvider.CLOUDFLARE_WORKERS_AI.value:
+        cloudflare_error = _map_cloudflare_openai_error(error, provider)
+        if cloudflare_error is not None:
+            return cloudflare_error
     status_code = getattr(error, "status_code", None)
     if status_code is not None:
         if status_code == 400:

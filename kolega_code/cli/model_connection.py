@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from kolega_code.config import ModelProvider, RateLimitConfig
 from kolega_code.llm.client import LLMClient
@@ -49,6 +49,7 @@ async def test_model_connection(
     usage_ledger: Any = None,
     base_url: Optional[str] = None,
     api_style: Optional[str] = None,
+    default_headers: Optional[Mapping[str, str]] = None,
 ) -> ModelConnectionResult:
     """Send a tiny no-tool prompt through one provider/model pair.
 
@@ -78,6 +79,8 @@ async def test_model_connection(
             factory_kwargs["base_url"] = base_url
         if api_style:
             factory_kwargs["api_style"] = api_style
+        if default_headers:
+            factory_kwargs["default_headers"] = dict(default_headers)
         client = client_factory(**factory_kwargs)
         messages = MessageHistory([Message(role="user", content=[TextBlock(text="Reply with OK.")])])
         await asyncio.wait_for(

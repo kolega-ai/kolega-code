@@ -41,6 +41,7 @@ def agent(tmp_path):
     config.agent_models = {}
     config.web_search_mode = "auto"
     config.model_config_for_agent.return_value = config.long_context_config
+    config.llm_client_kwargs.return_value = {}
     return CoderAgent(
         project_path=str(tmp_path),
         workspace_id="test_workspace",

@@ -297,6 +297,13 @@ PROVIDER_KEY_NOT_STORED = (
 )
 PROVIDER_KEY_REMOVAL_STAGED = "The locally stored API key will be removed when you Apply."
 PROVIDER_TEST_RUNNING = "Testing {provider}/{model}…"
+CLOUDFLARE_ACCOUNT_ID_PLACEHOLDER = "32-character Cloudflare account ID"
+CLOUDFLARE_ACCOUNT_ID_HINT = (
+    "Find the account ID in the Cloudflare dashboard under Workers AI → Use REST API. "
+    "CLOUDFLARE_ACCOUNT_ID overrides this value."
+)
+CLOUDFLARE_API_TOKEN_PLACEHOLDER = "Cloudflare API token (Workers AI Read)"
+CLOUDFLARE_ACCOUNT_ID_REQUIRED = "Enter your Cloudflare account ID or set CLOUDFLARE_ACCOUNT_ID."
 MODEL_SLOT_INHERITED = "Using {provider}/{model} (inherited from the active model)."
 MODEL_SLOT_PINNED = "Using {provider}/{model}."
 MODEL_SLOT_HINT = (

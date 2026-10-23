@@ -54,6 +54,7 @@ OPENAI_USAGE_PROVIDERS = frozenset(
         "dashscope",
         "deepseek",
         "ollama_cloud",
+        "cloudflare_workers_ai",
         "openrouter",
         "perplexity_agent",
         "mistral",

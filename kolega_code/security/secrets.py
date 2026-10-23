@@ -34,6 +34,7 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str], str | None], ...] = (
     ("aws-access-key", re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"), None),
     ("slack-token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"), None),
     ("npm-token", re.compile(r"\bnpm_[A-Za-z0-9]{20,}"), None),
+    ("cloudflare-token", re.compile(r"\bcf(?:ut|at|k)_[A-Za-z0-9]{40,}"), None),
     (
         "authorization",
         re.compile(r"(?i)authorization\s*:\s*(?:bearer|basic)\s+(?P<value>\S+)"),

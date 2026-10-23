@@ -90,6 +90,9 @@ def _require_key(provider_value: str) -> str:
     api_key = os.getenv(env_name)
     if not api_key:
         pytest.skip(f"{env_name} not set")
+    # Workers AI URLs are account-scoped; LLMClient reads the ID from the environment.
+    if provider_value == ModelProvider.CLOUDFLARE_WORKERS_AI.value and not os.getenv("CLOUDFLARE_ACCOUNT_ID"):
+        pytest.skip("CLOUDFLARE_ACCOUNT_ID not set")
     return api_key
 
 

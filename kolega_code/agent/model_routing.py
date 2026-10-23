@@ -56,6 +56,8 @@ def provider_is_configured(config: AgentConfig, provider: ModelProvider) -> bool
         return True
     if provider == ModelProvider.OPENAI_CHATGPT:
         return config.openai_chatgpt_tokens is not None
+    if provider == ModelProvider.CLOUDFLARE_WORKERS_AI:
+        return bool(config.get_api_key(provider)) and bool(config.cloudflare_account_id)
     return bool(config.get_api_key(provider))
 
 

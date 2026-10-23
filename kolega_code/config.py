@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Literal, Optional, cast
 from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 from kolega_code.auth.tokens import OAuthTokens
+from kolega_code.llm import cloudflare_workers_ai
 from kolega_code.llm.specs.custom_endpoints import (
     CUSTOM_PROVIDER_PREFIX,
     DEFAULT_CONTEXT_LENGTH,
@@ -37,6 +38,7 @@ class ModelProvider(str, Enum):
     ZAI = "zai"
     KIMI_CODING = "kimi_coding"
     OLLAMA_CLOUD = "ollama_cloud"
+    CLOUDFLARE_WORKERS_AI = "cloudflare_workers_ai"
     OPENROUTER = "openrouter"  # Gateway in front of many vendors' models
     THINKING_MACHINES = "thinking_machines"  # Thinking Machines Lab (Tinker API)
     TINKER = "tinker"  # Native Tinker SamplingClient (agentic-RL trajectory source)
@@ -219,6 +221,15 @@ class AgentConfig(BaseModel):
     zai_api_key: Optional[str] = Field(default=None, description="API key for Z.AI (GLM Coding Plan)")
     kimi_coding_api_key: Optional[str] = Field(default=None, description="API key for Kimi Coding Plan")
     ollama_cloud_api_key: Optional[str] = Field(default=None, description="API key for Ollama Cloud")
+    cloudflare_api_token: Optional[str] = Field(
+        default=None, description="Cloudflare API token with Workers AI Read permission"
+    )
+    cloudflare_account_id: Optional[str] = Field(
+        default=None, description="Cloudflare account ID that scopes Workers AI requests"
+    )
+    cloudflare_ai_gateway_id: Optional[str] = Field(
+        default=None, description="Optional Cloudflare AI Gateway that Workers AI requests route through"
+    )
     openrouter_api_key: Optional[str] = Field(default=None, description="API key for OpenRouter")
     thinking_machines_api_key: Optional[str] = Field(default=None, description="API key for Thinking Machines (Tinker)")
     perplexity_api_key: Optional[str] = Field(
@@ -386,6 +397,25 @@ class AgentConfig(BaseModel):
             return None
         return self.custom_endpoints.get(endpoint_id)
 
+    def llm_client_kwargs(self, model_config: ModelConfig) -> Dict[str, Any]:
+        """Connection kwargs (``base_url``/``api_style``/``default_headers``) for an LLMClient on this route."""
+        endpoint = self.custom_endpoint_for(model_config)
+        if endpoint is not None:
+            return {"base_url": endpoint.base_url, "api_style": endpoint.api_style}
+        if model_config.provider == ModelProvider.CLOUDFLARE_WORKERS_AI:
+            return cloudflare_workers_ai.connection_kwargs(self.cloudflare_account_id, self.cloudflare_ai_gateway_id)
+        return {}
+
+    @field_validator("cloudflare_account_id", mode="before")
+    @classmethod
+    def _normalize_cloudflare_account_id(cls, value: Any) -> Optional[str]:
+        return cloudflare_workers_ai.normalize_account_id(value)
+
+    @field_validator("cloudflare_ai_gateway_id", mode="before")
+    @classmethod
+    def _normalize_cloudflare_ai_gateway_id(cls, value: Any) -> Optional[str]:
+        return cloudflare_workers_ai.normalize_gateway_id(value)
+
     def resolve_edit_protocol(self, model_config: Optional[ModelConfig] = None) -> EditProtocol:
         """Resolve the model-facing edit protocol for one effective model."""
 
@@ -432,6 +462,7 @@ class AgentConfig(BaseModel):
             ModelProvider.ZAI: self.zai_api_key,
             ModelProvider.KIMI_CODING: self.kimi_coding_api_key,
             ModelProvider.OLLAMA_CLOUD: self.ollama_cloud_api_key,
+            ModelProvider.CLOUDFLARE_WORKERS_AI: self.cloudflare_api_token,
             ModelProvider.OPENROUTER: self.openrouter_api_key,
             ModelProvider.THINKING_MACHINES: self.thinking_machines_api_key,
             # The native Tinker provider shares the same TINKER_API_KEY credential.
@@ -464,6 +495,11 @@ class AgentConfig(BaseModel):
                 continue
             if self.get_api_key(provider) is None:
                 raise ValueError(f"Missing API key for {config_name} provider '{provider.value}'")
+            if provider == ModelProvider.CLOUDFLARE_WORKERS_AI and not self.cloudflare_account_id:
+                raise ValueError(
+                    f"Missing Cloudflare account ID for {config_name} provider '{provider.value}'; "
+                    f"set {cloudflare_workers_ai.ACCOUNT_ID_ENV}."
+                )
 
         return self
 

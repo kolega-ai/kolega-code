@@ -160,6 +160,9 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
 # not per mode: Fireworks and Ollama Cloud share mode "openai_reasoning_effort"
 # but use different field names.
 _REASONING_REPLAY_FIELDS: Dict[str, str] = {
+    # Workers AI's field varies by model (Kimi K2.6+ emit ``reasoning``, older
+    # models ``reasoning_content``), so echo whichever one the server emitted.
+    "cloudflare_workers_ai": "auto",
     "fireworks": "reasoning_content",
     "ollama_cloud": "reasoning",
     # OpenRouter emits reasoning as delta.reasoning and requires it echoed back on

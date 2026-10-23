@@ -20,7 +20,9 @@ from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence
 
 from kolega_code.config import ModelProvider
+from kolega_code.llm.cloudflare_workers_ai import normalize_account_id
 from kolega_code.llm.specs import MODEL_SPECS, is_featured_model
+from kolega_code.llm.specs import cloudflare_workers_ai_catalog as cloudflare_workers_ai
 from kolega_code.llm.specs import mistral_catalog as mistral
 from kolega_code.llm.specs import ollama_cloud_catalog as ollama_cloud
 from kolega_code.llm.specs import openrouter_catalog as openrouter
@@ -37,13 +39,16 @@ from .settings import SettingsStore, SettingsStoreError
 # and save_cache(). The Perplexity entry is a duck-typed catalog object rather
 # than a module — same contract. An entry that publishes ``API_KEY_ENV`` is
 # authenticated: ``models refresh`` resolves that credential and passes it to
-# ``fetch_models(api_key=...)``; every other source is fetched anonymously.
+# ``fetch_models(api_key=...)``; every other source is fetched anonymously. An
+# entry that also publishes ``ACCOUNT_ID_ENV`` is account-scoped and receives
+# ``account_id=...`` too.
 OVERLAY_SOURCES = {
     mistral.PROVIDER: mistral,
     ollama_cloud.PROVIDER: ollama_cloud,
     openrouter.PROVIDER: openrouter,
     tinker.PROVIDER: tinker,
     perplexity.AGENT_PROVIDER: perplexity.AGENT_CATALOG,
+    cloudflare_workers_ai.PROVIDER: cloudflare_workers_ai,
 }
 
 # Capture the release snapshot before startup applies any runtime caches.
@@ -83,6 +88,20 @@ def _overlay_api_key(provider: str, env_name: str) -> Optional[str]:
     return (stored or "").strip() or None
 
 
+def _overlay_account_id(env_name: str, setting_name: str) -> Optional[str]:
+    """Resolve an account-scoped overlay's account ID: environment first, then Settings."""
+    value = (os.environ.get(env_name) or "").strip()
+    if not value:
+        try:
+            value = str(getattr(SettingsStore().load(), setting_name, None) or "").strip()
+        except (SettingsStoreError, OSError):
+            return None
+    try:
+        return normalize_account_id(value)
+    except ValueError:
+        return None
+
+
 def _overlay_fetch_kwargs(provider: str, module: Any) -> tuple[Optional[dict[str, Any]], Optional[str]]:
     """Return ``(fetch kwargs, error message)`` for one overlay source."""
     env_name = getattr(module, "API_KEY_ENV", None)
@@ -91,7 +110,16 @@ def _overlay_fetch_kwargs(provider: str, module: Any) -> tuple[Optional[dict[str
     api_key = _overlay_api_key(provider, str(env_name))
     if not api_key:
         return None, f"Refreshing the {provider} catalog needs {env_name} (or a key saved in Settings)."
-    return {"api_key": api_key}, None
+    kwargs: dict[str, Any] = {"api_key": api_key}
+    account_env = getattr(module, "ACCOUNT_ID_ENV", None)
+    if account_env:
+        account_id = _overlay_account_id(str(account_env), str(getattr(module, "ACCOUNT_ID_SETTING", "")))
+        if not account_id:
+            return None, (
+                f"Refreshing the {provider} catalog needs {account_env} (or an account ID saved in Settings)."
+            )
+        kwargs["account_id"] = account_id
+    return kwargs, None
 
 
 def _catalog_env_names(catalog: str) -> tuple[str, str]:
