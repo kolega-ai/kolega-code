@@ -299,15 +299,15 @@ jobs:
           # This is accepted risk, not a fix or a package-wide exemption.
           # Remove this exception when tinker-cookbook permits a fixed release.
           #
-          # Accepted risk (2026-10-22): virtualenv 21.7.13, seven 21.14.x advisories
+          # Accepted risk (2026-10-22; extended 2026-10-23): virtualenv 21.7.13, eight 21.14.x advisories
           # (activation-script injection, writes through linked directories, POSIX
           # console-launcher paths). Every fix needs virtualenv >= 21.14.9, which
           # requires packaging >= 26.3; langfuse 3.14.5 caps packaging < 26.0, and
           # leaving that cap means langfuse 4/5, which removed the v3
           # `Langfuse.start_span` API this code is written against. virtualenv is a
-          # dev-only pre-commit dependency that creates hash-named environments under
-          # ~/.cache/pre-commit, so the attacker-controlled name/path preconditions
-          # are not reachable in this project's usage. Remove this exception when
+          # dev-only pre-commit dependency. This exception requires fresh environments
+          # beneath a private, owner-controlled pre-commit cache; shared or
+          # attacker-prepared caches invalidate it. Remove this exception when
           # langfuse moves to v4 (allowing packaging 26.3) and pin virtualenv 21.14.9+.
           uv audit --locked --output-format json \
             --ignore PYSEC-2026-3552 --ignore GHSA-g6cj-pr64-35w5 --ignore CVE-2026-69247 \
@@ -322,6 +322,7 @@ jobs:
             --ignore GHSA-c978-59m8-c77v --ignore CVE-2026-113722 \
             --ignore GHSA-cw65-gx24-rc82 --ignore CVE-2026-113716 \
             --ignore GHSA-vxj4-q4g9-crj7 --ignore CVE-2026-113725 \
+            --ignore GHSA-558c-9hv2-4prj --ignore CVE-2026-113721 \
             > /tmp/uv-audit.json
           audit_status=$?
           set -e
