@@ -76,6 +76,8 @@ dependencies = [
     # Magika's cross-platform resolution selects onnxruntime 1.20.1, which has no CPython 3.14 wheels.
     "onnxruntime==1.27.0; python_version >= '3.14' and sys_platform != 'win32'",
     "openai==2.46.0",
+    # TraceState parsing: fixes CVE-2026-114603.
+    "opentelemetry-api==1.45.1",
     "packaging==25.0",
     "pathspec==1.1.1",
     "pillow==13.0.0",

@@ -16,6 +16,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 - Retry notices distinguish actual response timeouts from other transient
   failures, with detailed errors retained in diagnostics.
 
+### Security
+
+- Updated OpenTelemetry's API to 1.45.1, fixing excessive CPU use when parsing
+  malicious trace-state headers (CVE-2026-114603), and refreshed its companion
+  packages.
+
 ## 0.45.0 - 2026-10-22
 
 ### Added
