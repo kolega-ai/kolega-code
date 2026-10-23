@@ -164,22 +164,25 @@ with vision support.
 
 ## Streaming & retries
 
-A streaming response is bounded by an **idle budget**, not by a single socket read:
-if nothing arrives, Kolega Code reports that the connection has gone quiet (the
-status line says `Connection issue — waiting for a response…`) and then fails with
-a counted, actionable error instead of appearing frozen. The endpoint and the
-measured silence are logged rather than printed in the status line, which is a
-single narrow strip. These knobs are for links where the defaults are too patient:
+A streaming response is bounded by an **idle budget**, not by a single socket read.
+While waiting for stream events, the status line says `Waiting for response…`.
+This is informational: the model may still be working, and silence alone does not
+indicate a connection problem. The waiting label clears when events resume, even
+if they contain no visible text. Only an actual timeout or error triggers failure
+handling. Failure details stay in the diagnostics rather than the narrow status
+strip. These knobs adjust the waiting and retry budgets:
 
 | Variable | Purpose |
 | --- | --- |
-| `KOLEGA_STREAM_FIRST_CHUNK_TIMEOUT` | Seconds to wait for the **first** event before treating the endpoint as unreachable (default `90`) |
-| `KOLEGA_STREAM_IDLE_TIMEOUT` | Seconds of silence **between** events once output has started (default `300`) |
-| `KOLEGA_STREAM_IDLE_HEARTBEAT` | Seconds between "Connection issue — waiting for a response…" status updates while the stream is silent (default `15`) |
+| `KOLEGA_STREAM_FIRST_CHUNK_TIMEOUT` | Seconds allowed for request setup and the **first** stream event before timing out (default `90`) |
+| `KOLEGA_STREAM_IDLE_TIMEOUT` | Seconds of silence **between** stream events after the first arrives (default `300`) |
+| `KOLEGA_STREAM_IDLE_HEARTBEAT` | Seconds between "Waiting for response…" status updates while the stream is silent (default `15`) |
 | `KOLEGA_LLM_RETRY_BUDGET` | Total seconds one turn may spend retrying transient failures (default `360`). A stall that produced no output at all is retried only once |
 
-Each retry is written to the transcript ("Connection issue — retrying (1/3) in 8s"),
-not just the status line, so a flapping connection stays visible after the fact.
+Each retry is written to the transcript, not just the status line, so failures
+stay visible after the fact. Timeouts say `Response timed out — retrying (1/3) in 8s…`;
+other transient failures, including rate limits and provider overload, say
+`Retrying request (1/3) in 8s…`.
 
 ## Gateway
 

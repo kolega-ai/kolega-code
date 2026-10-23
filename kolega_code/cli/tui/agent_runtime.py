@@ -1628,6 +1628,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             if event.sub_agent_info:
                 self._note_sub_agent_status(event)
             else:
+                if event.content.get("resumed") and self._turn_status_text != "Waiting for response…":
+                    return
                 text = self._display_text_from_event(event)
                 if text:
                     if self.show_logs:
