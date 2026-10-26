@@ -42,6 +42,7 @@ from kolega_code.llm.models import (
     Message,
     MessageHistory,
     TextBlock,
+    ThinkingBlock,
     ToolCall,
     ToolDefinition,
     ToolParameter,
@@ -59,6 +60,10 @@ DEEPSEEK_FLASH = "@cf/deepseek-ai/deepseek-v4.1-flash-1017"
 KIMI_CODE = "@cf/moonshotai/kimi-k2.7-code"
 GPT_OSS_20B = "@cf/openai/gpt-oss-20b"
 GPT_OSS_120B = "@cf/openai/gpt-oss-120b"
+GLM_FLASH = "@cf/zai-org/glm-5.3-flash"
+GLM_52 = "@cf/zai-org/glm-5.2"
+DEEPSEEK_PRO = "@cf/deepseek-ai/deepseek-v4-pro-0813"
+KIMI_26 = "@cf/moonshotai/kimi-k2.6"
 QWEN = "@cf/qwen/qwen3.8-27b"
 GEMMA = "@cf/google/gemma-4-26b-a4b-it"
 # Billing covers Workers Paid-only models (5035) on free-plan accounts.
@@ -211,6 +216,22 @@ async def test_live_effort_changes_reasoning_depth(client_factory: Callable[[str
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("model", [DEEPSEEK_FLASH, DEEPSEEK_PRO, GLM_52, KIMI_26])
+async def test_live_effort_none_disables_reasoning(model: str, client_factory: Callable[[str], LLMClient]) -> None:
+    # reasoning_effort "none" alone keeps DeepSeek V4 Pro and GLM-5.2 reasoning; the
+    # cloudflare_reasoning_effort mode also sends chat_template_kwargs.enable_thinking=false.
+    message = await _generate(
+        client_factory(model),
+        messages=_history("A farmer has 17 sheep. All but 9 run away. How many remain? Answer briefly."),
+        model=model,
+        max_completion_tokens=4096,
+        thinking="none",
+    )
+    assert not any(isinstance(block, ThinkingBlock) for block in message.content)
+    assert "9" in message.get_text_content()
+
+
+@pytest.mark.asyncio
 async def test_live_explicit_cap_truncates_honestly(client_factory: Callable[[str], LLMClient]) -> None:
     message = await _generate(
         client_factory(GPT_OSS_20B),
@@ -258,7 +279,7 @@ async def test_live_tool_round_trip_answers_after_the_result(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", [QWEN, GEMMA, DEEPSEEK_FLASH])
+@pytest.mark.parametrize("model", [QWEN, GEMMA, DEEPSEEK_FLASH, GLM_FLASH, KIMI_CODE, KIMI_26])
 async def test_live_vision_reads_an_image(model: str, client_factory: Callable[[str], LLMClient]) -> None:
     content: list[ContentBlock] = [
         ImageBlock(image_type="base64", media_type="image/png", data=_red_png_b64()),
@@ -298,6 +319,19 @@ async def test_live_cached_token_field_parses(client_factory: Callable[[str], LL
 
     cached = second.usage_metadata.get("cache_read_input_tokens")
     assert cached is None or (isinstance(cached, int) and cached >= 0)
+
+
+@pytest.mark.asyncio
+async def test_live_prefix_cache_hits_on_a_paid_model(client_factory: Callable[[str], LLMClient]) -> None:
+    client = client_factory(KIMI_CODE)
+    system = Message("system", [TextBlock("Reference notes about tide pools and coastal ecology. " * 300)])
+    kwargs: dict[str, Any] = {"model": KIMI_CODE, "system": system, "max_completion_tokens": 1024}
+    await _generate(client, messages=_history("Reply OK."), **kwargs)
+    second = await _generate(client, messages=_history("Reply OK again."), **kwargs)
+
+    assert second.usage is not None
+    assert (second.usage.cache_read_input_tokens or 0) > 0
+    assert (second.usage.input_tokens or 0) >= (second.usage.cache_read_input_tokens or 0)
 
 
 def test_live_refresh_lists_every_curated_model() -> None:

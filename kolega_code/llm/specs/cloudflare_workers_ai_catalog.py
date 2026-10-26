@@ -37,7 +37,7 @@ PAGE_SIZE = 100
 MAX_PAGES = 20
 
 EFFORT_ORDER = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
-_THINKING_MODE = "openai_reasoning_effort"
+_THINKING_MODE = "cloudflare_reasoning_effort"
 _CODEX_PATCH_PREFIX = "@cf/openai/"
 
 

@@ -176,10 +176,18 @@ async def test_deepseek_clamp_applies_before_the_rename() -> None:
 
 @pytest.mark.asyncio
 async def test_reasoning_effort_is_a_flat_field() -> None:
+    kwargs = await _create_kwargs(_client(), model=DEEPSEEK, thinking="high")
+
+    assert kwargs["reasoning_effort"] == "high"
+    assert "extra_body" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_effort_none_disables_thinking_through_the_chat_template() -> None:
     kwargs = await _create_kwargs(_client(), model=DEEPSEEK, thinking="none")
 
     assert kwargs["reasoning_effort"] == "none"
-    assert "extra_body" not in kwargs
+    assert kwargs["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
 
 
 @pytest.mark.asyncio

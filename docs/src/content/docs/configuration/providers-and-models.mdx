@@ -255,7 +255,14 @@ DeepSeek models are refused, while GPT-OSS 120B/20B, Qwen 3.8 27B, Gemma 4 26B
 A4B, Nemotron 3 120B A12B, and GLM-4.7 Flash work. The free plan's daily neuron
 allocation also runs out quickly under an agent. Both conditions surface as a
 billing error rather than a retry loop. Requests carry an `x-session-affinity`
-header so Workers AI's prefix caching can reuse the conversation's prompt.
+header so Workers AI's prefix caching can reuse the conversation's prompt; cached
+tokens are billed at the discounted rate and shown in usage.
+
+Thinking effort follows each model's Workers AI controls. On GLM-5.3 and GLM-5.3
+Flash, `low` skips reasoning entirely (reasoning cannot be disabled outright).
+Where `none` is offered — DeepSeek V4.1 Flash and V4 Pro, GLM-5.2, and Kimi K2.6 —
+Kolega also sends the models' `enable_thinking: false` switch, because some of
+them keep reasoning on `reasoning_effort: none` alone.
 
 To route requests through an [AI Gateway](https://developers.cloudflare.com/ai-gateway/)
 for logging, caching, and analytics, set `CLOUDFLARE_AI_GATEWAY_ID` to the

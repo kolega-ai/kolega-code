@@ -120,6 +120,13 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
         # Fireworks additionally accepts "none" to disable reasoning.
         return {"reasoning_effort": normalized}
 
+    if spec.mode == "cloudflare_reasoning_effort":
+        # Workers AI accepts reasoning_effort "none" on DeepSeek V4 Pro and GLM-5.2
+        # yet keeps reasoning; the documented chat-template switch actually disables it.
+        if normalized == "none":
+            return {"reasoning_effort": "none", "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+        return {"reasoning_effort": normalized}
+
     if spec.mode == "openrouter_reasoning":
         # OpenRouter nests reasoning controls in its own request object, which the
         # OpenAI SDK doesn't model, so it travels via extra_body. Disabling has to
@@ -179,7 +186,7 @@ _REASONING_REPLAY_FIELDS: Dict[str, str] = {
 # Chat-Completions reasoning modes whose reasoning text is replayable via a flat
 # top-level field. Responses/Anthropic/Google modes carry reasoning differently
 # and are excluded.
-_REASONING_REPLAY_MODES = frozenset({"openai_reasoning_effort", "openrouter_reasoning"})
+_REASONING_REPLAY_MODES = frozenset({"openai_reasoning_effort", "cloudflare_reasoning_effort", "openrouter_reasoning"})
 
 
 def reasoning_replay_field(provider: str, model_name: str) -> Optional[str]:

@@ -16,7 +16,7 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
         "thinking_effort": ThinkingEffortSpec(
             options=("low", "high", "max"),
             default="max",
-            mode="openai_reasoning_effort",
+            mode="cloudflare_reasoning_effort",
         ),
     },
     ("cloudflare_workers_ai", "@cf/zai-org/glm-5.3-flash"): {
@@ -28,7 +28,7 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
         "thinking_effort": ThinkingEffortSpec(
             options=("low", "high", "max"),
             default="max",
-            mode="openai_reasoning_effort",
+            mode="cloudflare_reasoning_effort",
         ),
     },
     ("cloudflare_workers_ai", "@cf/moonshotai/kimi-k2.7-code"): {
@@ -47,7 +47,7 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "high", "max"),
             default="high",
-            mode="openai_reasoning_effort",
+            mode="cloudflare_reasoning_effort",
         ),
     },
     ("cloudflare_workers_ai", "@cf/deepseek-ai/deepseek-v4-pro-0813"): {
@@ -59,7 +59,7 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "high", "max"),
             default="high",
-            mode="openai_reasoning_effort",
+            mode="cloudflare_reasoning_effort",
         ),
     },
     ("cloudflare_workers_ai", "@cf/zai-org/glm-5.2"): {
@@ -71,7 +71,7 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "high", "max"),
             default="max",
-            mode="openai_reasoning_effort",
+            mode="cloudflare_reasoning_effort",
         ),
     },
     ("cloudflare_workers_ai", "@cf/moonshotai/kimi-k2.6"): {
@@ -83,7 +83,7 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "high"),
             default="high",
-            mode="openai_reasoning_effort",
+            mode="cloudflare_reasoning_effort",
         ),
     },
     ("cloudflare_workers_ai", "@cf/qwen/qwen3.8-27b"): {
@@ -95,7 +95,7 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
         "thinking_effort": ThinkingEffortSpec(
             options=("low", "medium", "xhigh"),
             default="xhigh",
-            mode="openai_reasoning_effort",
+            mode="cloudflare_reasoning_effort",
         ),
     },
     ("cloudflare_workers_ai", "@cf/google/gemma-4-26b-a4b-it"): {
@@ -125,7 +125,7 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
         "thinking_effort": ThinkingEffortSpec(
             options=("low", "medium", "high"),
             default="medium",
-            mode="openai_reasoning_effort",
+            mode="cloudflare_reasoning_effort",
         ),
     },
     ("cloudflare_workers_ai", "@cf/openai/gpt-oss-20b"): {
@@ -138,7 +138,7 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
         "thinking_effort": ThinkingEffortSpec(
             options=("low", "medium", "high"),
             default="medium",
-            mode="openai_reasoning_effort",
+            mode="cloudflare_reasoning_effort",
         ),
     },
     ("cloudflare_workers_ai", "@cf/zai-org/glm-4.7-flash"): {

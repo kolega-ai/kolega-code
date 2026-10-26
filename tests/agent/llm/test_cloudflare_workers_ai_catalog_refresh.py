@@ -92,7 +92,7 @@ def test_spec_fields_follow_the_metadata() -> None:
     assert spec["input_budget"] == "window_minus_output"
     assert spec["supports_vision"] is True
     assert spec["thinking_effort"] == ThinkingEffortSpec(
-        options=("none", "low", "max"), default="low", mode="openai_reasoning_effort"
+        options=("none", "low", "max"), default="low", mode="cloudflare_reasoning_effort"
     )
     assert "preferred_edit_protocol" not in spec
 
@@ -201,7 +201,9 @@ def test_cache_skips_invalid_entries(tmp_path: Path) -> None:
     good = catalog.spec_to_jsonable(
         _entries(_row("@cf/x/ok", context_window="131072", function_calling="true"))["@cf/x/ok"]
     )
-    bad_effort = dict(good, thinking_effort={"options": ["low"], "default": "max", "mode": "openai_reasoning_effort"})
+    bad_effort = dict(
+        good, thinking_effort={"options": ["low"], "default": "max", "mode": "cloudflare_reasoning_effort"}
+    )
     path.write_text(
         json.dumps(
             {

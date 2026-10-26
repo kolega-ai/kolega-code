@@ -98,7 +98,29 @@ def test_curated_entries_agree_with_published_metadata(model: str) -> None:
 
 def test_efforts_ride_the_flat_reasoning_effort_field() -> None:
     assert build_thinking_request_params(PROVIDER, "@cf/zai-org/glm-5.3", "low") == {"reasoning_effort": "low"}
-    assert build_thinking_request_params(PROVIDER, "@cf/moonshotai/kimi-k2.6", "none") == {"reasoning_effort": "none"}
+    assert build_thinking_request_params(PROVIDER, "@cf/zai-org/glm-5.2", "max") == {"reasoning_effort": "max"}
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+        "@cf/deepseek-ai/deepseek-v4-pro-0813",
+        "@cf/zai-org/glm-5.2",
+        "@cf/moonshotai/kimi-k2.6",
+    ],
+)
+def test_effort_none_also_flips_the_chat_template_switch(model: str) -> None:
+    # DeepSeek V4 Pro and GLM-5.2 keep reasoning on reasoning_effort "none" alone (probed 2026-10-26).
+    assert build_thinking_request_params(PROVIDER, model, "none") == {
+        "reasoning_effort": "none",
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+    }
+
+
+def test_always_on_models_never_offer_none() -> None:
+    for model in ("@cf/zai-org/glm-5.3", "@cf/zai-org/glm-5.3-flash", "@cf/moonshotai/kimi-k2.7-code"):
+        assert "none" not in thinking_effort_options(PROVIDER, model)
 
 
 def test_reasoning_replay_uses_the_server_emitted_field() -> None:
