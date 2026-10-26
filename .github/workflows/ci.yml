@@ -299,9 +299,12 @@ jobs:
           # This is accepted risk, not a fix or a package-wide exemption.
           # Remove this exception when tinker-cookbook permits a fixed release.
           #
-          # Accepted risk (2026-10-22; extended 2026-10-23): virtualenv 21.7.13, eight 21.14.x advisories
-          # (activation-script injection, writes through linked directories, POSIX
-          # console-launcher paths). Every fix needs virtualenv >= 21.14.9, which
+          # Accepted risk (2026-10-22; extended 2026-10-23 and 2026-10-26): virtualenv 21.14.5,
+          # fifteen 21.14.x advisories (activation-script injection and decoding, writes
+          # through linked directories, POSIX console-launcher paths, seed-wheel download
+          # verification and cache permissions, venv config readback). 21.14.5 is pinned
+          # because it is the newest release that accepts filelock 4 without packaging
+          # >= 26.3. Every fix needs virtualenv >= 21.14.9, which
           # requires packaging >= 26.3; langfuse 3.14.5 caps packaging < 26.0, and
           # leaving that cap means langfuse 4/5, which removed the v3
           # `Langfuse.start_span` API this code is written against. virtualenv is a
@@ -323,6 +326,13 @@ jobs:
             --ignore GHSA-cw65-gx24-rc82 --ignore CVE-2026-113716 \
             --ignore GHSA-vxj4-q4g9-crj7 --ignore CVE-2026-113725 \
             --ignore GHSA-558c-9hv2-4prj --ignore CVE-2026-113721 \
+            --ignore GHSA-394h-qwmc-48pf --ignore CVE-2026-113718 \
+            --ignore GHSA-494p-63j8-28p3 --ignore CVE-2026-113714 \
+            --ignore GHSA-6w3r-xr62-4xcp --ignore CVE-2026-113723 \
+            --ignore GHSA-cx28-75q4-x26q --ignore CVE-2026-113717 \
+            --ignore GHSA-fc2g-4w5p-6whm --ignore CVE-2026-113720 \
+            --ignore GHSA-hhxq-47xx-j5xx --ignore CVE-2026-113719 \
+            --ignore GHSA-qmx5-4p3x-wvqf --ignore CVE-2026-113715 \
             > /tmp/uv-audit.json
           audit_status=$?
           set -e
