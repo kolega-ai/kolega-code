@@ -6,6 +6,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Security
+
+- Updated Brotli to 1.2.1, fixing an out-of-bounds write in the decoder
+  (CVE-2026-111497, GHSA-9v8h-qqgm-4m35) reachable through compressed HTTP
+  responses.
+- Updated filelock to 4.2.4 for three `SoftFileLock`/`ReadWriteLock`
+  advisories (Kolega Code uses neither class) and setuptools to 84.2.0
+  (GHSA-xmj3-9gf7-h52w). The dev-only virtualenv pin moves to 21.14.5 so
+  filelock 4 resolves; its remaining advisories stay an accepted risk until
+  langfuse allows the fixed release.
+
 ## 0.45.1 - 2026-10-23
 
 ### Fixed

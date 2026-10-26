@@ -57,7 +57,7 @@ dependencies = [
     "fastapi==0.139.2",
     "firecrawl-py==4.28.2",
     # Project memory needs a persistent Unix lock file; unlink-on-release can split cooperating waiters.
-    "filelock==3.24.2",
+    "filelock==4.2.4",
     "google-genai==2.12.1",
     "httpx==0.28.1",
     # Protocol-v1 URLs follow WHATWG-compatible non-transitional UTS-46 host normalization.
@@ -142,8 +142,9 @@ dev = [
     "pyright==1.1.411",
     "ruff==0.15.12",
     "twine==6.2.0",
-    # Pre-commit: fixes seed-wheel integrity and activation/config injection.
-    "virtualenv==21.7.13",
+    # Pre-commit: fixes seed-wheel integrity and activation/config injection. 21.14.5 is the
+    # newest release that accepts filelock 4 without requiring packaging>=26.3 (langfuse 3 caps it).
+    "virtualenv==21.14.5",
 ]
 
 [project.scripts]
@@ -201,6 +202,11 @@ exclude-newer = "1 week"
 # certifi 2026.10.18 (released 2026-10-18) is the first release that removes the
 # compromised emSign roots (GHSA-6q48-6c7w-9gw2 / PYSEC-2026-4320) and also sits
 # inside the quarantine; admit the current 2026.10.19 bundle for the same reason.
+# brotli 1.2.1 / brotlicffi 1.2.1.0 (released 2026-10-22) are the only releases
+# fixing GHSA-9v8h-qqgm-4m35 (PYSEC-2026-4322/-4323) and sit inside the
+# quarantine; setuptools 84.1.0 (released 2026-10-19) is the first release fixing
+# GHSA-xmj3-9gf7-h52w and, with 84.2.0, lands just inside it. Admit each without
+# widening the window.
 
 [tool.uv.exclude-newer-package]
 cryptography = "2026-08-01T00:00:00Z"
@@ -209,6 +215,9 @@ tinker = "2026-08-09T00:00:00Z"
 tinker-cookbook = "2026-08-12T00:00:00Z"
 pillow = "2026-10-17T00:00:00Z"
 certifi = "2026-10-21T00:00:00Z"
+brotli = "2026-10-23T00:00:00Z"
+brotlicffi = "2026-10-23T00:00:00Z"
+setuptools = "2026-10-20T00:00:00Z"
 
 [tool.pyright]
 include = ["kolega_code", "benchmarks", "tests"]
