@@ -318,15 +318,23 @@ def _anthropic_body_error_message(error: Exception) -> str:
     return str(error_info.get("message") or "").strip()
 
 
+# Workers AI envelope codes; the probed bodies live in test_cloudflare_workers_ai_requests.py.
 _CLOUDFLARE_BILLING_CODES = frozenset({3036, 5035})
-_CLOUDFLARE_BILLING_PHRASES = ("daily free allocation", "requires a workers paid plan")
+_CLOUDFLARE_BILLING_PHRASES = (
+    "daily free allocation",
+    "requires a workers paid plan",
+    "not available on the workers free plan",
+)
+_CLOUDFLARE_CONTEXT_CODES = frozenset({5021})
 _CLOUDFLARE_CONTEXT_PHRASES = (
     "maximum context length",
+    "context window limit",
     "context length",
     "context window",
     "too many input tokens",
     "prompt is too long",
 )
+_CLOUDFLARE_NOT_FOUND_CODES = frozenset({5007})
 
 
 def _cloudflare_error_codes(error: Exception) -> set[int]:
@@ -348,12 +356,18 @@ def _cloudflare_error_codes(error: Exception) -> set[int]:
 def _map_cloudflare_openai_error(error: "OpenAIError", provider: str) -> Optional[LLMError]:
     status_code = getattr(error, "status_code", None)
     text = str(error).lower()
-    if _cloudflare_error_codes(error) & _CLOUDFLARE_BILLING_CODES or any(
-        phrase in text for phrase in _CLOUDFLARE_BILLING_PHRASES
+    codes = _cloudflare_error_codes(error)
+    message = f"OpenAI APIError: {str(error)}"
+    if codes & _CLOUDFLARE_BILLING_CODES or any(phrase in text for phrase in _CLOUDFLARE_BILLING_PHRASES):
+        return LLMBillingError(message=message, provider=provider)
+    if (
+        codes & _CLOUDFLARE_CONTEXT_CODES
+        or status_code == 413
+        or (status_code == 400 and any(phrase in text for phrase in _CLOUDFLARE_CONTEXT_PHRASES))
     ):
-        return LLMBillingError(message=f"OpenAI APIError: {str(error)}", provider=provider)
-    if status_code == 413 or (status_code == 400 and any(phrase in text for phrase in _CLOUDFLARE_CONTEXT_PHRASES)):
-        return LLMContextWindowExceededError(message=f"OpenAI APIError: {str(error)}", provider=provider)
+        return LLMContextWindowExceededError(message=message, provider=provider)
+    if codes & _CLOUDFLARE_NOT_FOUND_CODES:
+        return LLMNotFoundError(message=message, provider=provider)
     return None
 
 

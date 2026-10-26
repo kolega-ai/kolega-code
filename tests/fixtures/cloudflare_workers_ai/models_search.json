@@ -3,58 +3,7 @@
  "messages": [],
  "result": [
   {
-   "created_at": "2023-09-25 19:21:11.898",
-   "deprecated": false,
-   "id": "429b9e8b-d99e-44de-91ad-706cf8183658",
-   "name": "@cf/baai/bge-base-en-v1.5",
-   "properties": [
-    {
-     "property_id": "async_queue",
-     "value": "true"
-    },
-    {
-     "property_id": "context_window",
-     "value": "153600"
-    },
-    {
-     "property_id": "max_input_tokens",
-     "value": "512"
-    },
-    {
-     "property_id": "output_dimensions",
-     "value": "768"
-    }
-   ],
-   "task": {
-    "name": "Text Embeddings"
-   }
-  },
-  {
-   "created_at": "2023-11-07 15:43:58.042",
-   "deprecated": false,
-   "id": "01bc2fb0-4bca-4598-b985-d2584a3f46c0",
-   "name": "@cf/baai/bge-large-en-v1.5",
-   "properties": [
-    {
-     "property_id": "async_queue",
-     "value": "true"
-    },
-    {
-     "property_id": "max_input_tokens",
-     "value": "512"
-    },
-    {
-     "property_id": "output_dimensions",
-     "value": "1024"
-    }
-   ],
-   "task": {
-    "name": "Text Embeddings"
-   }
-  },
-  {
    "created_at": "2024-04-01 22:14:40.529",
-   "deprecated": false,
    "id": "c58c317b-0c15-4bda-abb6-93e275f282d9",
    "name": "@cf/mistral/mistral-7b-instruct-v0.2-lora",
    "properties": [
@@ -73,7 +22,6 @@
   },
   {
    "created_at": "2024-04-02 00:17:18.579",
-   "deprecated": false,
    "id": "7ed8d8e8-6040-4680-843a-aef402d6b013",
    "name": "@cf/meta-llama/llama-2-7b-chat-hf-lora",
    "properties": [
@@ -96,7 +44,6 @@
   },
   {
    "created_at": "2024-04-02 00:19:34.669",
-   "deprecated": false,
    "id": "e8e8abe4-a372-4c13-815f-4688ba655c8e",
    "name": "@cf/google/gemma-2b-it-lora",
    "properties": [
@@ -119,7 +66,6 @@
   },
   {
    "created_at": "2024-04-02 00:20:19.633",
-   "deprecated": false,
    "id": "337170b7-bd2f-4631-9a57-688b579cf6d3",
    "name": "@cf/google/gemma-7b-it-lora",
    "properties": [
@@ -142,7 +88,6 @@
   },
   {
    "created_at": "2024-07-25 17:28:43.328",
-   "deprecated": false,
    "id": "9b9c87c6-d4b7-494c-b177-87feab5904db",
    "name": "@cf/meta/llama-3.1-8b-instruct-fp8",
    "properties": [
@@ -157,7 +102,6 @@
   },
   {
    "created_at": "2024-09-25 05:36:04.547",
-   "deprecated": false,
    "id": "2cbc033b-ded8-4e02-bbb2-47cf05d5cfe5",
    "name": "@cf/meta/llama-3.2-11b-vision-instruct",
    "properties": [
@@ -180,7 +124,6 @@
   },
   {
    "created_at": "2024-09-25 20:05:43.986",
-   "deprecated": false,
    "id": "d9dc8363-66f4-4bb0-8641-464ee7bfc131",
    "name": "@cf/meta/llama-3.2-3b-instruct",
    "properties": [
@@ -199,7 +142,6 @@
   },
   {
    "created_at": "2024-09-25 21:36:32.050",
-   "deprecated": false,
    "id": "906a57fd-b018-4d6c-a43e-a296d4cc5839",
    "name": "@cf/meta/llama-3.2-1b-instruct",
    "properties": [
@@ -214,7 +156,6 @@
   },
   {
    "created_at": "2024-12-06 17:09:18.338",
-   "deprecated": false,
    "id": "7a143886-c9bb-4a1c-be95-377b1973bc3b",
    "name": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
    "properties": [
@@ -237,7 +178,6 @@
   },
   {
    "created_at": "2025-01-22 19:48:55.776",
-   "deprecated": false,
    "id": "ad01ab83-baf8-4e7b-8fed-a0a219d4eb45",
    "name": "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
    "properties": [
@@ -256,7 +196,6 @@
   },
   {
    "created_at": "2025-01-22 23:26:23.495",
-   "deprecated": false,
    "id": "cc80437b-9a8d-4f1a-9c77-9aaf0d226922",
    "name": "@cf/meta/llama-guard-3-8b",
    "properties": [
@@ -275,7 +214,6 @@
   },
   {
    "created_at": "2025-02-27 00:31:43.829",
-   "deprecated": false,
    "id": "51b71d5b-8bc0-4489-a107-95e542b69914",
    "name": "@cf/qwen/qwen2.5-coder-32b-instruct",
    "properties": [
@@ -294,7 +232,6 @@
   },
   {
    "created_at": "2025-03-05 21:52:40.974",
-   "deprecated": false,
    "id": "02c16efa-29f5-4304-8e6c-3d188889f875",
    "name": "@cf/qwen/qwq-32b",
    "properties": [
@@ -317,7 +254,6 @@
   },
   {
    "created_at": "2025-03-18 03:28:37.890",
-   "deprecated": false,
    "id": "31690291-ebdc-4f98-bcfc-a44844e215b7",
    "name": "@cf/mistralai/mistral-small-3.1-24b-instruct",
    "properties": [
@@ -328,6 +264,10 @@
     {
      "property_id": "function_calling",
      "value": "true"
+    },
+    {
+     "property_id": "vision",
+     "value": "true"
     }
    ],
    "task": {
@@ -336,7 +276,6 @@
   },
   {
    "created_at": "2025-04-05 20:25:56.137",
-   "deprecated": false,
    "id": "06455e78-19f7-487b-93cd-c05a3dd07813",
    "name": "@cf/meta/llama-4-scout-17b-16e-instruct",
    "properties": [
@@ -363,7 +302,6 @@
   },
   {
    "created_at": "2025-04-30 21:36:10.009",
-   "deprecated": false,
    "id": "4090e54c-eee4-4221-b410-10c1c0f92f17",
    "name": "@cf/qwen/qwen3-30b-a3b-fp8",
    "properties": [
@@ -390,7 +328,6 @@
   },
   {
    "created_at": "2025-08-05 10:27:29.131",
-   "deprecated": false,
    "id": "f9f2250b-1048-4a52-9910-d0bf976616a1",
    "name": "@cf/openai/gpt-oss-120b",
    "properties": [
@@ -417,9 +354,9 @@
       "default_enabled": true,
       "mandatory": true,
       "supported_efforts": [
-       "low",
+       "high",
        "medium",
-       "high"
+       "low"
       ]
      }
     }
@@ -430,7 +367,6 @@
   },
   {
    "created_at": "2025-08-05 10:49:53.265",
-   "deprecated": false,
    "id": "188a4e1e-253e-46d0-9616-0bf8c149763f",
    "name": "@cf/openai/gpt-oss-20b",
    "properties": [
@@ -457,9 +393,9 @@
       "default_enabled": true,
       "mandatory": true,
       "supported_efforts": [
-       "low",
+       "high",
        "medium",
-       "high"
+       "low"
       ]
      }
     }
@@ -470,7 +406,6 @@
   },
   {
    "created_at": "2025-09-23 19:27:30.468",
-   "deprecated": false,
    "id": "41ca173f-72d5-4420-8915-49e835d2676e",
    "name": "@cf/aisingapore/gemma-sea-lion-v4-27b-it",
    "properties": [
@@ -485,7 +420,6 @@
   },
   {
    "created_at": "2025-10-07 18:46:29.436",
-   "deprecated": false,
    "id": "7952d0cc-cb00-4e10-be02-667565c2ee0f",
    "name": "@cf/ibm-granite/granite-4.0-h-micro",
    "properties": [
@@ -504,7 +438,6 @@
   },
   {
    "created_at": "2026-01-28 16:04:39.346",
-   "deprecated": false,
    "id": "86b3e51a-4b05-43fa-a403-0f27821919d2",
    "name": "@cf/zai-org/glm-4.7-flash",
    "properties": [
@@ -534,7 +467,6 @@
   },
   {
    "created_at": "2026-02-24 23:22:47.215",
-   "deprecated": false,
    "id": "43dbadb4-2b0a-47e9-8479-34a49b971f1e",
    "name": "@cf/nvidia/nemotron-3-120b-a12b",
    "properties": [
@@ -557,7 +489,6 @@
   },
   {
    "created_at": "2026-04-02 15:05:22.642",
-   "deprecated": false,
    "id": "328adb49-4a7d-43e3-a2d5-802ae8100fe7",
    "name": "@cf/google/gemma-4-26b-a4b-it",
    "properties": [
@@ -595,7 +526,6 @@
   },
   {
    "created_at": "2026-04-20 01:40:35.001",
-   "deprecated": false,
    "id": "8a5d00bd-de28-4a28-b37a-ce46d01ebaeb",
    "name": "@cf/moonshotai/kimi-k2.6",
    "properties": [
@@ -648,7 +578,6 @@
   },
   {
    "created_at": "2026-06-12 11:45:20.582",
-   "deprecated": false,
    "id": "c29c7295-ff20-4b9b-bdcc-25136c19b21d",
    "name": "@cf/moonshotai/kimi-k2.7-code",
    "properties": [
@@ -686,7 +615,6 @@
   },
   {
    "created_at": "2026-06-15 09:51:05.921",
-   "deprecated": false,
    "id": "4edc7dfe-de78-4156-890c-85b79227694e",
    "name": "@cf/zai-org/glm-5.2",
    "properties": [
@@ -733,7 +661,6 @@
   },
   {
    "created_at": "2026-07-31 14:10:43.440",
-   "deprecated": false,
    "id": "7276b330-b4ae-4662-81d1-3a8bea8368f8",
    "name": "@cf/deepseek-ai/deepseek-v4-flash-0731",
    "properties": [
@@ -784,7 +711,6 @@
   },
   {
    "created_at": "2026-08-13 17:15:08.489",
-   "deprecated": false,
    "id": "2d50837b-2dc7-4994-a690-a38e25c16d74",
    "name": "@cf/deepseek-ai/deepseek-v4-pro-0813",
    "properties": [
@@ -831,7 +757,6 @@
   },
   {
    "created_at": "2026-08-14 12:07:32.346",
-   "deprecated": false,
    "id": "c05fea67-c5a9-49ca-a7ab-446a0d62cb7a",
    "name": "@cf/zai-org/glm-5.3",
    "properties": [
@@ -878,7 +803,6 @@
   },
   {
    "created_at": "2026-08-17 07:13:11.641",
-   "deprecated": false,
    "id": "22338608-b54d-4f04-884e-ab06f3dbbf3e",
    "name": "@cf/qwen/qwen3.8-27b",
    "properties": [
@@ -908,9 +832,9 @@
        "null": "xhigh"
       },
       "supported_efforts": [
-       "low",
+       "xhigh",
        "medium",
-       "xhigh"
+       "low"
       ],
       "supports_max_tokens": false
      }
@@ -926,7 +850,6 @@
   },
   {
    "created_at": "2026-08-26 14:21:42.917",
-   "deprecated": false,
    "id": "95666467-f984-4211-b48a-7c246dd4adb7",
    "name": "@cf/zai-org/glm-5.3-flash",
    "properties": [
@@ -977,7 +900,6 @@
   },
   {
    "created_at": "2026-09-29 09:25:44.258",
-   "deprecated": false,
    "id": "059de3ad-d350-4cb6-8b31-e4f34847d10a",
    "name": "@cf/cloudflare/clef-flash",
    "properties": [
@@ -996,7 +918,6 @@
   },
   {
    "created_at": "2026-09-29 14:05:24.552",
-   "deprecated": false,
    "id": "87f39d62-116c-4b26-b2cd-562a9ba01f2f",
    "name": "@cf/cloudflare/clef",
    "properties": [
@@ -1015,7 +936,6 @@
   },
   {
    "created_at": "2026-09-30 14:09:31.518",
-   "deprecated": null,
    "id": "bf419b23-844f-4a2c-8111-89dbd63152eb",
    "name": "@cf/utter-project/eurollm-9b-it",
    "properties": [
@@ -1034,7 +954,6 @@
   },
   {
    "created_at": "2026-09-30 14:20:40.668",
-   "deprecated": null,
    "id": "56482a5b-020e-488d-9c56-11a3ed40719c",
    "name": "@cf/swiss-ai/apertus-v1.5-8b",
    "properties": [
@@ -1056,14 +975,13 @@
    }
   },
   {
-   "created_at": "2026-10-09 00:00:00.000",
-   "deprecated": false,
+   "created_at": "2026-10-09 01:37:45.295",
    "id": "543fea3d-dcff-4c3b-af79-b83f601aa1cb",
    "name": "@cf/cloudflare/clef-omni",
    "properties": [
     {
      "property_id": "context_window",
-     "value": "64000"
+     "value": "65536"
     },
     {
      "property_id": "vision",
@@ -1076,7 +994,6 @@
   },
   {
    "created_at": "2026-10-13 09:36:59.162",
-   "deprecated": false,
    "id": "2b2b6dfb-2cd0-433f-802c-533d40508d9b",
    "name": "@cf/daily-co/phonellm-mini-alpha-2",
    "properties": [
@@ -1095,7 +1012,6 @@
   },
   {
    "created_at": "2026-10-14 05:34:04.680",
-   "deprecated": false,
    "id": "6b0b79c1-25e6-4498-bb62-5161df39f0ef",
    "name": "@cf/cloudflare/clairic",
    "properties": [
@@ -1114,7 +1030,6 @@
   },
   {
    "created_at": "2026-10-17 03:51:20.275",
-   "deprecated": false,
    "id": "215ee9cf-aaa0-48bd-a084-00da8da2fbeb",
    "name": "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
    "properties": [
@@ -1129,6 +1044,14 @@
     {
      "property_id": "function_calling",
      "value": "true"
+    },
+    {
+     "property_id": "hugging_face_id",
+     "value": "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+    },
+    {
+     "property_id": "openrouter_slug",
+     "value": "deepseek/deepseek-v4.1-flash-1017"
     },
     {
      "property_id": "reasoning",
@@ -1163,7 +1086,63 @@
    "task": {
     "name": "Text Generation"
    }
+  },
+  {
+   "created_at": "2023-09-25 19:21:11.898",
+   "deprecated": false,
+   "id": "429b9e8b-d99e-44de-91ad-706cf8183658",
+   "name": "@cf/baai/bge-base-en-v1.5",
+   "properties": [
+    {
+     "property_id": "async_queue",
+     "value": "true"
+    },
+    {
+     "property_id": "context_window",
+     "value": "153600"
+    },
+    {
+     "property_id": "max_input_tokens",
+     "value": "512"
+    },
+    {
+     "property_id": "output_dimensions",
+     "value": "768"
+    }
+   ],
+   "task": {
+    "name": "Text Embeddings"
+   }
+  },
+  {
+   "created_at": "2023-11-07 15:43:58.042",
+   "deprecated": false,
+   "id": "01bc2fb0-4bca-4598-b985-d2584a3f46c0",
+   "name": "@cf/baai/bge-large-en-v1.5",
+   "properties": [
+    {
+     "property_id": "async_queue",
+     "value": "true"
+    },
+    {
+     "property_id": "max_input_tokens",
+     "value": "512"
+    },
+    {
+     "property_id": "output_dimensions",
+     "value": "1024"
+    }
+   ],
+   "task": {
+    "name": "Text Embeddings"
+   }
   }
  ],
+ "result_info": {
+  "count": 39,
+  "page": 1,
+  "per_page": 100,
+  "total_count": 326
+ },
  "success": true
 }

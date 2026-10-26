@@ -249,8 +249,11 @@ kolega-code models refresh --provider cloudflare_workers_ai
 The refresh uses the same token and account ID and only adds tool-capable
 models; it never overrides bundled entries.
 
-Many larger models require the **Workers Paid** plan, and the free plan's daily
-neuron allocation runs out quickly under an agent. Both conditions surface as a
+Many larger models require the **Workers Paid** plan: on the free plan, GLM-5.3
+(the default), GLM-5.3 Flash, GLM-5.2, Kimi K2.7 Code and K2.6, and both
+DeepSeek models are refused, while GPT-OSS 120B/20B, Qwen 3.8 27B, Gemma 4 26B
+A4B, Nemotron 3 120B A12B, and GLM-4.7 Flash work. The free plan's daily neuron
+allocation also runs out quickly under an agent. Both conditions surface as a
 billing error rather than a retry loop. Requests carry an `x-session-affinity`
 header so Workers AI's prefix caching can reuse the conversation's prompt.
 

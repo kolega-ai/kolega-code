@@ -106,6 +106,33 @@ def test_reasoning_replay_uses_the_server_emitted_field() -> None:
     assert reasoning_replay_field(PROVIDER, "@cf/moonshotai/kimi-k2.7-code") == "auto"
 
 
+def test_gemma_4_drops_prior_reasoning_from_requests() -> None:
+    from kolega_code.agent.conversation import adapt_history_for_provider
+    from kolega_code.llm.models import ContentBlock, Message, TextBlock, ThinkingBlock, ToolCall
+
+    gemma = "@cf/google/gemma-4-26b-a4b-it"
+    content: list[ContentBlock] = [
+        ThinkingBlock(thinking="plan the call"),
+        ToolCall(id="call_1", name="add_small_ints", input={"a": 19, "b": 23}),
+    ]
+    turn = Message(role="assistant", content=content)
+    turn.usage_metadata["provider"] = PROVIDER
+
+    assert reasoning_replay_field(PROVIDER, gemma) is None
+    adapted = adapt_history_for_provider(
+        [Message(role="user", content=[TextBlock(text="add")]), turn],
+        target_provider=PROVIDER,
+        target_model=gemma,
+        supports_vision=True,
+    )
+    assert not any(isinstance(block, ThinkingBlock) for block in adapted[1].content)
+    assert any(isinstance(block, ToolCall) for block in adapted[1].content)
+    kept = adapt_history_for_provider(
+        [turn], target_provider=PROVIDER, target_model="@cf/qwen/qwen3.8-27b", supports_vision=True
+    )
+    assert any(isinstance(block, ThinkingBlock) for block in kept[0].content)
+
+
 def test_gpt_oss_prefers_codex_apply_patch_and_others_use_the_default() -> None:
     assert preferred_edit_protocol(PROVIDER, "@cf/openai/gpt-oss-120b") == "codex_apply_patch"
     assert preferred_edit_protocol(PROVIDER, "@cf/openai/gpt-oss-20b") == "codex_apply_patch"

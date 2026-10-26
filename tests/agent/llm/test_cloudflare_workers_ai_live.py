@@ -25,9 +25,17 @@ import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
 
+from kolega_code.agent.conversation import adapt_history_for_provider
 from kolega_code.llm import cloudflare_workers_ai
 from kolega_code.llm.client import LLMClient
-from kolega_code.llm.exceptions import LLMBillingError, LLMPermissionDeniedError, LLMRateLimitError
+from kolega_code.llm.exceptions import (
+    LLMBillingError,
+    LLMContextWindowExceededError,
+    LLMNotFoundError,
+    LLMPermissionDeniedError,
+    LLMRateLimitError,
+    map_to_llm_error,
+)
 from kolega_code.llm.models import (
     ContentBlock,
     ImageBlock,
@@ -40,7 +48,7 @@ from kolega_code.llm.models import (
     ToolResult,
 )
 from kolega_code.llm.providers.openai import OpenAIProvider
-from kolega_code.llm.specs import MODEL_SPECS
+from kolega_code.llm.specs import MODEL_SPECS, supports_vision
 from kolega_code.llm.specs import cloudflare_workers_ai_catalog
 
 pytestmark = [pytest.mark.integration, pytest.mark.live_api]
@@ -50,6 +58,10 @@ GLM = "@cf/zai-org/glm-5.3"
 DEEPSEEK_FLASH = "@cf/deepseek-ai/deepseek-v4.1-flash-1017"
 KIMI_CODE = "@cf/moonshotai/kimi-k2.7-code"
 GPT_OSS_20B = "@cf/openai/gpt-oss-20b"
+GPT_OSS_120B = "@cf/openai/gpt-oss-120b"
+QWEN = "@cf/qwen/qwen3.8-27b"
+GEMMA = "@cf/google/gemma-4-26b-a4b-it"
+# Billing covers Workers Paid-only models (5035) on free-plan accounts.
 _UNAVAILABLE = (LLMRateLimitError, LLMBillingError, LLMPermissionDeniedError)
 
 
@@ -125,15 +137,21 @@ async def _stream(client: LLMClient, **kwargs: Any) -> Message:
             async for _ in stream:
                 pass
             message = await stream.get_final_message()
-    except _UNAVAILABLE as exc:  # pragma: no cover - account-dependent
-        pytest.skip(f"Workers AI unavailable for this account: {type(exc).__name__}: {exc}")
+    except Exception as exc:
+        # Stream-setup errors reach callers unmapped; the agent loop maps them the same way.
+        mapped = map_to_llm_error(exc, PROVIDER)
+        if isinstance(mapped, _UNAVAILABLE):  # pragma: no cover - account-dependent
+            pytest.skip(f"Workers AI unavailable for this account: {type(mapped).__name__}: {mapped}")
+        raise
     _usage(message)
     return message
 
 
-def _reasoning_tokens(message: Message) -> int:
-    value = message.usage_metadata.get("reasoning_output_tokens")
-    return value if isinstance(value, int) else 0
+def _effort(model: str, preferred: str = "low") -> Any:
+    spec = MODEL_SPECS[(PROVIDER, model)].get("thinking_effort")
+    if spec is None:
+        return None
+    return preferred if preferred in spec.options else spec.default
 
 
 def _calc_tool() -> ToolDefinition:
@@ -148,13 +166,14 @@ def _calc_tool() -> ToolDefinition:
 
 
 @pytest.mark.asyncio
-async def test_live_default_model_generates_with_openai_usage(client_factory: Callable[[str], LLMClient]) -> None:
+@pytest.mark.parametrize("model", [GLM, QWEN])
+async def test_live_generate_reports_openai_usage(model: str, client_factory: Callable[[str], LLMClient]) -> None:
     message = await _generate(
-        client_factory(GLM),
+        client_factory(model),
         messages=_history("Reply with exactly: OK"),
-        model=GLM,
+        model=model,
         max_completion_tokens=2048,
-        thinking="low",
+        thinking=_effort(model),
     )
     assert "OK" in message.get_text_content()
 
@@ -173,19 +192,22 @@ async def test_live_stream_reports_usage_and_a_clean_stop(client_factory: Callab
 
 
 @pytest.mark.asyncio
-async def test_live_effort_none_disables_reasoning(client_factory: Callable[[str], LLMClient]) -> None:
-    client = client_factory(DEEPSEEK_FLASH)
-    prompt = "A farmer has 17 sheep. All but 9 run away. How many remain? Think step by step, then answer."
+async def test_live_effort_changes_reasoning_depth(client_factory: Callable[[str], LLMClient]) -> None:
+    # Workers AI reports no completion_tokens_details.reasoning_tokens (probed
+    # 2026-10-26), so depth is judged by completion tokens, which include reasoning.
+    client = client_factory(GPT_OSS_20B)
+    prompt = "A farmer has 17 sheep. All but 9 run away. How many remain? Think step by step, then answer briefly."
 
-    off = await _generate(
-        client, messages=_history(prompt), model=DEEPSEEK_FLASH, max_completion_tokens=4096, thinking="none"
+    low = await _generate(
+        client, messages=_history(prompt), model=GPT_OSS_20B, max_completion_tokens=4096, thinking="low"
     )
-    on = await _generate(
-        client, messages=_history(prompt), model=DEEPSEEK_FLASH, max_completion_tokens=4096, thinking="high"
+    high = await _generate(
+        client, messages=_history(prompt), model=GPT_OSS_20B, max_completion_tokens=4096, thinking="high"
     )
 
-    assert _reasoning_tokens(off) == 0
-    assert _reasoning_tokens(on) > 0
+    assert low.usage is not None and high.usage is not None
+    assert (high.usage.output_tokens or 0) > (low.usage.output_tokens or 0)
+    assert "9" in high.get_text_content()
 
 
 @pytest.mark.asyncio
@@ -201,12 +223,16 @@ async def test_live_explicit_cap_truncates_honestly(client_factory: Callable[[st
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", [GLM, KIMI_CODE])
-async def test_live_tool_round_trip_replays_reasoning(model: str, client_factory: Callable[[str], LLMClient]) -> None:
+@pytest.mark.parametrize("model", [GLM, KIMI_CODE, GPT_OSS_120B, QWEN, GEMMA])
+async def test_live_tool_round_trip_answers_after_the_result(
+    model: str, client_factory: Callable[[str], LLMClient]
+) -> None:
+    # The second turn goes through the agent's history adapter, so models that opt
+    # out of reasoning replay (Gemma 4) see exactly what a real session sends.
     client = client_factory(model)
     tools = [_calc_tool()]
     history = _history("Use the add_small_ints tool to add 19 and 23, then state the result.")
-    effort = "low" if MODEL_SPECS[(PROVIDER, model)].get("thinking_effort") else None
+    effort = _effort(model)
 
     first = await _stream(
         client, messages=history, model=model, tools=tools, max_completion_tokens=4096, thinking=effort
@@ -216,7 +242,14 @@ async def test_live_tool_round_trip_replays_reasoning(model: str, client_factory
     assert calls and calls[0].name == "add_small_ints"
 
     result: list[ContentBlock] = [ToolResult(tool_use_id=calls[0].id, content="42", name=calls[0].name, is_error=False)]
-    history = MessageHistory([*history, first, Message("user", result)])
+    history = MessageHistory(
+        adapt_history_for_provider(
+            [*history, first, Message("user", result)],
+            target_provider=PROVIDER,
+            target_model=model,
+            supports_vision=supports_vision(PROVIDER, model),
+        )
+    )
     second = await _stream(
         client, messages=history, model=model, tools=tools, max_completion_tokens=4096, thinking=effort
     )
@@ -225,19 +258,34 @@ async def test_live_tool_round_trip_replays_reasoning(model: str, client_factory
 
 
 @pytest.mark.asyncio
-async def test_live_vision_reads_an_image(client_factory: Callable[[str], LLMClient]) -> None:
+@pytest.mark.parametrize("model", [QWEN, GEMMA, DEEPSEEK_FLASH])
+async def test_live_vision_reads_an_image(model: str, client_factory: Callable[[str], LLMClient]) -> None:
     content: list[ContentBlock] = [
         ImageBlock(image_type="base64", media_type="image/png", data=_red_png_b64()),
         TextBlock("What single colour fills this image? Answer with one word."),
     ]
     message = await _generate(
-        client_factory(DEEPSEEK_FLASH),
+        client_factory(model),
         messages=MessageHistory([Message("user", content)]),
-        model=DEEPSEEK_FLASH,
-        max_completion_tokens=1024,
-        thinking="none",
+        model=model,
+        max_completion_tokens=2048,
+        thinking=_effort(model, "none"),
     )
     assert "red" in message.get_text_content().lower()
+
+
+@pytest.mark.asyncio
+async def test_live_window_overflow_maps_to_context_window_exceeded(client_factory: Callable[[str], LLMClient]) -> None:
+    client = client_factory(GPT_OSS_20B)
+    with pytest.raises(LLMContextWindowExceededError):
+        await client.generate(messages=_history("word " * 140000), model=GPT_OSS_20B, max_completion_tokens=16)
+
+
+@pytest.mark.asyncio
+async def test_live_unknown_model_maps_to_not_found(client_factory: Callable[[str], LLMClient]) -> None:
+    client = client_factory(GPT_OSS_20B)
+    with pytest.raises(LLMNotFoundError):
+        await client.generate(messages=_history("hi"), model="@cf/kolega/no-such-model", max_completion_tokens=8)
 
 
 @pytest.mark.asyncio

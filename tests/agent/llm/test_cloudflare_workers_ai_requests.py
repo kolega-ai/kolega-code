@@ -15,12 +15,15 @@ from kolega_code.config import ModelProvider
 from kolega_code.llm import cloudflare_workers_ai
 from kolega_code.llm.client import LLMClient
 from kolega_code.llm.exceptions import (
+    LLMAuthenticationError,
     LLMBillingError,
     LLMContextWindowExceededError,
     LLMError,
     LLMInvalidRequestError,
+    LLMNotFoundError,
     LLMRateLimitError,
     billing_error_message,
+    llm_error_message,
     map_to_llm_error,
 )
 from kolega_code.llm.models import ContentBlock, Message, MessageHistory, TextBlock, ThinkingBlock, ToolCall
@@ -279,6 +282,43 @@ async def test_stream_captures_finish_reason_and_usage_on_the_final_chunk() -> N
     assert any(isinstance(block, ToolCall) for block in message.content)
 
 
+@pytest.mark.asyncio
+async def test_stream_matches_the_probed_workers_ai_chunk_sequence() -> None:
+    """Every chunk carries a per-chunk usage delta; the last chunk carries the totals.
+
+    ``finish_reason`` arrives on the final two chunks (probed against gpt-oss-20b
+    and qwen3.8-27b, 2026-10-26).
+    """
+
+    def delta_usage(prompt: int, completion: int) -> dict[str, Any]:
+        return {
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": prompt + completion,
+            "prompt_tokens_details": {"cached_tokens": 0},
+            "neurons": 0.1,
+        }
+
+    async def chunks() -> AsyncIterator[ChatCompletionChunk]:
+        yield _chunk({"role": "assistant", "content": ""}, usage=delta_usage(87, 0))
+        yield _chunk({"reasoning_content": "Count"}, usage=delta_usage(0, 3))
+        yield _chunk({"content": "1\n2\n"}, usage=delta_usage(0, 4))
+        yield _chunk({}, finish_reason="length", usage=delta_usage(0, 0))
+        yield _chunk({}, finish_reason="length", usage=delta_usage(87, 96))
+
+    wrapper = OpenAIStreamWrapper(chunks(), requested_include_usage=True, provider_name=PROVIDER, model=GLM)
+    async with wrapper:
+        async for _ in wrapper:
+            pass
+    message = await wrapper.get_final_message()
+
+    assert message.stop_reason == "max_tokens"
+    assert message.usage_metadata["prompt_tokens"] == 87
+    assert message.usage_metadata["completion_tokens"] == 96
+    assert message.usage_metadata["reasoning_field"] == "reasoning_content"
+    assert message.usage is not None and message.usage.input_tokens == 87 and message.usage.output_tokens == 96
+
+
 # --- error mapping ---------------------------------------------------------
 
 
@@ -307,10 +347,21 @@ def test_daily_free_allocation_is_a_billing_error_not_a_retryable_429() -> None:
     assert "Workers Paid" in billing_error_message(mapped, model=GLM)
 
 
-def test_workers_paid_requirement_is_a_billing_error() -> None:
-    error = _status_error(403, _cf_body(5035, "This model requires a Workers Paid plan."))
+def test_free_plan_model_403_5035_is_a_billing_error() -> None:
+    error = _status_error(
+        403,
+        _cf_body(
+            5035,
+            "AiError: Model @cf/zai-org/glm-5.3 is not available on the Workers Free plan: Model "
+            "@cf/zai-org/glm-5.3 is not available on the Workers Free plan. Upgrade to access this model: "
+            "https://dash.cloudflare.com/?to=/:account/workers/plans (00000000-0000-0000-0000-000000000000)",
+        ),
+    )
 
-    assert isinstance(map_to_llm_error(error, provider=PROVIDER), LLMBillingError)
+    mapped = map_to_llm_error(error, provider=PROVIDER)
+
+    assert isinstance(mapped, LLMBillingError)
+    assert "Workers Paid" in llm_error_message(mapped, model=GLM)
 
 
 def test_capacity_exhaustion_stays_a_retryable_rate_limit() -> None:
@@ -319,22 +370,59 @@ def test_capacity_exhaustion_stays_a_retryable_rate_limit() -> None:
     assert isinstance(map_to_llm_error(error, provider=PROVIDER), LLMRateLimitError)
 
 
-def test_request_too_large_maps_to_context_window_exceeded() -> None:
-    error = _status_error(413, _cf_body(3006, "Request is too large"))
-
-    assert isinstance(map_to_llm_error(error, provider=PROVIDER), LLMContextWindowExceededError)
-
-
-def test_context_overflow_400_maps_to_context_window_exceeded() -> None:
+def test_input_plus_output_over_the_window_413_5021_is_context_window_exceeded() -> None:
     error = _status_error(
-        400,
+        413,
         _cf_body(
             5021,
-            "This model's maximum context length is 131072 tokens. However, you requested 140000 tokens.",
+            "AiError: Ai: The estimated number of input and maximum output tokens (175033) exceeded this model "
+            "context window limit (128000). (00000000-0000-0000-0000-000000000000)",
         ),
     )
 
     assert isinstance(map_to_llm_error(error, provider=PROVIDER), LLMContextWindowExceededError)
+
+
+def test_vllm_style_400_8007_maximum_context_length_is_context_window_exceeded() -> None:
+    error = _status_error(
+        400,
+        _cf_body(
+            8007,
+            'AiError: AiError: {"error":{"message":"This model\'s maximum context length is 256000 tokens. '
+            "However, you requested 256000 output tokens and your prompt contains 92 characters (more than 0 "
+            "characters, which is the upper bound for 0 input tokens). Please reduce the length of the input "
+            'prompt or the number of requested output tokens. (parameter=input_text, value=92)",'
+            '"type":"BadRequestError","param":"input_text","code":400}} (00000000-0000-0000-0000-000000000000)',
+        ),
+    )
+
+    assert isinstance(map_to_llm_error(error, provider=PROVIDER), LLMContextWindowExceededError)
+
+
+def test_unknown_model_400_5007_is_not_found() -> None:
+    error = _status_error(
+        400,
+        _cf_body(
+            5007, "AiError: No such model: No such model @cf/nope/nope or task (00000000-0000-0000-0000-000000000000)"
+        ),
+    )
+
+    assert isinstance(map_to_llm_error(error, provider=PROVIDER), LLMNotFoundError)
+
+
+def test_bad_token_401_10000_is_an_authentication_error() -> None:
+    error = _status_error(401, _cf_body(10000, "Authentication error"))
+
+    assert isinstance(map_to_llm_error(error, provider=PROVIDER), LLMAuthenticationError)
+
+
+def test_unconfigured_gateway_400_2001_surfaces_the_detail() -> None:
+    error = _status_error(400, _cf_body(2001, "Please configure AI Gateway in the Cloudflare dashboard"))
+
+    mapped = map_to_llm_error(error, provider=PROVIDER)
+
+    assert isinstance(mapped, LLMInvalidRequestError)
+    assert "configure AI Gateway" in llm_error_message(mapped, model=GLM)
 
 
 def test_cloudflare_rules_do_not_leak_to_other_openai_compatible_providers() -> None:

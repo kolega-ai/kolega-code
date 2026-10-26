@@ -104,6 +104,9 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
+        # Replayed reasoning makes it answer inside reasoning_content with empty content
+        # after a tool result (probed 2026-10-26: 3/5 replayed vs 5/5 dropped).
+        "drop_prior_reasoning": True,
     },
     ("cloudflare_workers_ai", "@cf/nvidia/nemotron-3-120b-a12b"): {
         "context_length": 256000,
