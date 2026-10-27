@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.46.0 - 2026-10-27
+
 ### Added
 
 - **Kimi K3.1 Pro support.** Moonshot's October 2026 K3.1 release is selectable
@@ -26,6 +28,16 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   `CLOUDFLARE_AI_GATEWAY_ID` optionally routes requests through an AI Gateway.
   Exhausted free allocations and Workers Paid-only models report a billing
   error instead of retrying.
+
+### Changed
+
+- Refreshed the OpenRouter, Ollama Cloud, and Tinker model catalogs from their
+  live endpoints (2026-10-27 snapshots) with newly available models, removal of
+  retired entries, updated limits and capabilities, and a refreshed OpenRouter
+  featured ordering. OpenRouter also stopped advertising `temperature` for the
+  Anthropic family, matching their adaptive thinking behavior. The Perplexity
+  Agent catalog is unchanged because its live endpoint could not be read.
+- Updated the documentation site's undici dependency to 8.12.3.
 
 ### Security
 
