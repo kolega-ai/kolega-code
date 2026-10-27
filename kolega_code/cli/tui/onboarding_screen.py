@@ -13,7 +13,8 @@ from textual.widgets import Button, Input, Label, Select, Static
 
 from kolega_code.auth import constants as chatgpt_constants
 from kolega_code.auth.chatgpt_oauth import run_login_flow
-from kolega_code.cli.config import build_agent_config, key_status
+from kolega_code.cli import messages
+from kolega_code.cli.config import build_agent_config, key_status, resolved_cloudflare_account_id
 from kolega_code.cli.model_connection import test_model_connection
 from kolega_code.cli.provider_registry import (
     UI_DEFAULT_PROVIDER,
@@ -24,6 +25,7 @@ from kolega_code.cli.provider_registry import (
     ui_thinking_effort_options,
 )
 from kolega_code.config import ModelProvider
+from kolega_code.llm import cloudflare_workers_ai
 from kolega_code.llm.specs import CUSTOM_PROVIDER_PREFIX
 
 if TYPE_CHECKING:
@@ -102,6 +104,14 @@ class OnboardingScreen(ModalScreen[None]):
                         )
                         yield Label("API key")
                         yield Input(password=True, id="onboarding_api_key")
+                        with Vertical(id="onboarding_account_id_panel"):
+                            yield Label("Account ID")
+                            yield Input(
+                                self.draft.cloudflare_account_id or "",
+                                id="onboarding_account_id",
+                                placeholder=messages.CLOUDFLARE_ACCOUNT_ID_PLACEHOLDER,
+                            )
+                            yield Static(messages.CLOUDFLARE_ACCOUNT_ID_HINT, classes="onboarding-hint")
                         yield Static("", id="onboarding_key_status", classes="onboarding-hint")
                 with Vertical(id="onboarding_step_model", classes="onboarding-step"):
                     yield Static("Choose the model used by default for this session and future sessions.")
@@ -206,7 +216,7 @@ class OnboardingScreen(ModalScreen[None]):
             self._reset_test_status()
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id == "onboarding_api_key":
+        if event.input.id in ("onboarding_api_key", "onboarding_account_id"):
             self._reset_test_status()
 
     def _update_api_key_status(self) -> None:
@@ -214,6 +224,7 @@ class OnboardingScreen(ModalScreen[None]):
             provider = str(self.query_one("#onboarding_provider", Select).value)
         except Exception:
             return
+        self.query_one("#onboarding_account_id_panel").display = provider == cloudflare_workers_ai.PROVIDER
         status = key_status(provider, self.owner.project_path, self.draft)
         widget = self.query_one("#onboarding_key_status", Static)
         widget.update(f"Credential status: {status}")
@@ -274,7 +285,23 @@ class OnboardingScreen(ModalScreen[None]):
         if key_status(provider, self.owner.project_path, self.draft) == "missing":
             self._set_status("Enter an API key or configure the provider's environment variable.")
             return False
+        if provider == cloudflare_workers_ai.PROVIDER and not self._collect_cloudflare_account_id():
+            return False
         self.draft.active_provider = provider
+        return True
+
+    def _collect_cloudflare_account_id(self) -> bool:
+        typed = self.query_one("#onboarding_account_id", Input).value
+        try:
+            account_id = cloudflare_workers_ai.normalize_account_id(typed)
+        except ValueError as exc:
+            self._set_status(str(exc))
+            return False
+        if account_id:
+            self.draft.cloudflare_account_id = account_id
+        if resolved_cloudflare_account_id(self.owner.project_path, self.draft) is None:
+            self._set_status(messages.CLOUDFLARE_ACCOUNT_ID_REQUIRED)
+            return False
         return True
 
     def _populate_models(self) -> None:
@@ -369,6 +396,7 @@ class OnboardingScreen(ModalScreen[None]):
             token_manager=config.get_chatgpt_token_manager(),
             rate_limits=model_config.rate_limits,
             usage_ledger=getattr(self.owner, "_usage_ledger", None),
+            **config.llm_client_kwargs(model_config),
         )
         status.update(result.message)
         button.disabled = False

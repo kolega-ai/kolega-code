@@ -74,6 +74,7 @@ def agent_config():
     config.browser_use_headless = True
     config.agent_models = {}
     config.model_config_for_agent.return_value = config.long_context_config
+    config.llm_client_kwargs.return_value = {}
     return config
 
 

@@ -20,6 +20,7 @@ from kolega_code.config import (
     ModelProvider,
     RateLimitConfig,
 )
+from kolega_code.llm import cloudflare_workers_ai
 from kolega_code.llm.specs import MODEL_SPECS, get_model_specs, model_is_known, normalize_thinking_effort
 from kolega_code.llm.specs.custom_endpoints import (
     API_STYLES,
@@ -72,6 +73,7 @@ API_KEY_ENV = {
     ModelProvider.ZAI: "ZAI_API_KEY",
     ModelProvider.KIMI_CODING: "KIMI_CODING_API_KEY",
     ModelProvider.OLLAMA_CLOUD: "OLLAMA_API_KEY",
+    ModelProvider.CLOUDFLARE_WORKERS_AI: cloudflare_workers_ai.API_TOKEN_ENV,
     ModelProvider.OPENROUTER: "OPENROUTER_API_KEY",
     ModelProvider.THINKING_MACHINES: "TINKER_API_KEY",
     # Native Tinker sampling authenticates with the same key.
@@ -397,6 +399,45 @@ def _api_key_for_provider(
     if settings:
         return settings.get_api_key(provider.value)
     return None
+
+
+CLOUDFLARE_MISSING_ACCOUNT_MESSAGE = (
+    f"Missing Cloudflare account ID: set {cloudflare_workers_ai.ACCOUNT_ID_ENV} or enter it in Settings → Providers."
+)
+
+
+def _cloudflare_account_id_source(env: Mapping[str, str], settings: Optional[CliSettings]) -> tuple[Optional[str], str]:
+    """The raw account ID and where it came from: the environment wins over Settings."""
+    from_env = (env.get(cloudflare_workers_ai.ACCOUNT_ID_ENV) or "").strip()
+    if from_env:
+        return from_env, cloudflare_workers_ai.ACCOUNT_ID_ENV
+    return (settings.cloudflare_account_id if settings else None), "the account ID saved in Settings"
+
+
+def _cloudflare_route_settings(
+    env: Mapping[str, str], settings: Optional[CliSettings], *, required: bool
+) -> tuple[Optional[str], Optional[str]]:
+    """Resolve ``(account_id, gateway_id)``.
+
+    Invalid values are fatal only when a Cloudflare route is in use; otherwise they
+    are dropped so a stale value cannot lock the user out of other providers.
+    """
+    raw_account, account_source = _cloudflare_account_id_source(env, settings)
+    try:
+        account_id = cloudflare_workers_ai.normalize_account_id(raw_account)
+    except ValueError as exc:
+        if required:
+            raise CliConfigError(f"Invalid Cloudflare account ID from {account_source}: {exc}") from exc
+        account_id = None
+    if required and account_id is None:
+        raise CliConfigError(CLOUDFLARE_MISSING_ACCOUNT_MESSAGE)
+    try:
+        gateway_id = cloudflare_workers_ai.normalize_gateway_id(env.get(cloudflare_workers_ai.GATEWAY_ID_ENV))
+    except ValueError as exc:
+        if required:
+            raise CliConfigError(f"Invalid {cloudflare_workers_ai.GATEWAY_ID_ENV}: {exc}") from exc
+        gateway_id = None
+    return account_id, gateway_id
 
 
 def _resolve_chatgpt_tokens(settings: Optional[CliSettings]) -> Optional[OAuthTokens]:
@@ -952,6 +993,10 @@ def build_agent_config(
     if missing_keys:
         raise CliConfigError(f"Missing required API key environment variable(s): {', '.join(missing_keys)}")
 
+    cloudflare_account_id, cloudflare_ai_gateway_id = _cloudflare_route_settings(
+        loaded_env, settings, required=ModelProvider.CLOUDFLARE_WORKERS_AI in required_providers
+    )
+
     chatgpt_tokens = _resolve_chatgpt_tokens(settings)
     if ModelProvider.OPENAI_CHATGPT in required_providers and chatgpt_tokens is None:
         raise CliConfigError("Not signed in to ChatGPT. Run /login chatgpt to sign in with your ChatGPT subscription.")
@@ -981,6 +1026,9 @@ def build_agent_config(
             zai_api_key=_api_key_for_provider(ModelProvider.ZAI, loaded_env, settings),
             kimi_coding_api_key=_api_key_for_provider(ModelProvider.KIMI_CODING, loaded_env, settings),
             ollama_cloud_api_key=_api_key_for_provider(ModelProvider.OLLAMA_CLOUD, loaded_env, settings),
+            cloudflare_api_token=_api_key_for_provider(ModelProvider.CLOUDFLARE_WORKERS_AI, loaded_env, settings),
+            cloudflare_account_id=cloudflare_account_id,
+            cloudflare_ai_gateway_id=cloudflare_ai_gateway_id,
             openrouter_api_key=_api_key_for_provider(ModelProvider.OPENROUTER, loaded_env, settings),
             thinking_machines_api_key=_api_key_for_provider(ModelProvider.THINKING_MACHINES, loaded_env, settings),
             perplexity_api_key=_api_key_for_provider(ModelProvider.PERPLEXITY_AGENT, loaded_env, settings),
@@ -1068,10 +1116,19 @@ def key_status(provider: str, project_path: Path, settings: Optional[CliSettings
     env = load_cli_env(project_path)
     env_name = API_KEY_ENV.get(provider_value)
     if env_name and env.get(env_name):
-        return f"present via {env_name}"
-    if settings and settings.get_api_key(provider_value.value):
-        return "present in local settings"
-    return "missing"
+        status = f"present via {env_name}"
+    elif settings and settings.get_api_key(provider_value.value):
+        status = "present in local settings"
+    else:
+        return "missing"
+    if provider_value == ModelProvider.CLOUDFLARE_WORKERS_AI:
+        raw_account, _ = _cloudflare_account_id_source(env, settings)
+        try:
+            if cloudflare_workers_ai.normalize_account_id(raw_account) is None:
+                status += "; account ID missing"
+        except ValueError:
+            status += "; account ID invalid"
+    return status
 
 
 def resolved_api_key(provider: str, project_path: Path, settings: Optional[CliSettings] = None) -> Optional[str]:
@@ -1080,6 +1137,33 @@ def resolved_api_key(provider: str, project_path: Path, settings: Optional[CliSe
     The value counterpart to ``key_status``, which reports the same precedence in words.
     """
     return _api_key_for_provider(_provider(provider), load_cli_env(project_path), settings)
+
+
+def resolved_cloudflare_account_id(project_path: Path, settings: Optional[CliSettings] = None) -> Optional[str]:
+    """The valid Cloudflare account ID a route would use (environment, then Settings), or ``None``."""
+    raw_account, _ = _cloudflare_account_id_source(load_cli_env(project_path), settings)
+    try:
+        return cloudflare_workers_ai.normalize_account_id(raw_account)
+    except ValueError:
+        return None
+
+
+def provider_connection_kwargs(
+    provider: str, project_path: Path, settings: Optional[CliSettings] = None
+) -> dict[str, Any]:
+    """Connection kwargs for probing a built-in provider's credential from a Settings draft.
+
+    Raises ``ValueError`` with user-facing copy when a Cloudflare account ID is
+    missing or invalid; returns ``{}`` for providers with a fixed endpoint.
+    """
+    if _provider(provider) != ModelProvider.CLOUDFLARE_WORKERS_AI:
+        return {}
+    env = load_cli_env(project_path)
+    raw_account, _ = _cloudflare_account_id_source(env, settings)
+    return cloudflare_workers_ai.connection_kwargs(
+        cloudflare_workers_ai.normalize_account_id(raw_account),
+        cloudflare_workers_ai.normalize_gateway_id(env.get(cloudflare_workers_ai.GATEWAY_ID_ENV)),
+    )
 
 
 def probe_token_manager(settings: Optional[CliSettings]) -> Optional[ChatGPTTokenManager]:

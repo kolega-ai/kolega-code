@@ -61,6 +61,7 @@ class InstrumentedLLMClient(LLMClient):
         max_output_tokens: Optional[int] = None,
         base_url: Optional[str] = None,
         api_style: Optional[str] = None,
+        default_headers: Optional[Mapping[str, str]] = None,
     ):
         super().__init__(
             provider,
@@ -76,6 +77,7 @@ class InstrumentedLLMClient(LLMClient):
             max_output_tokens=max_output_tokens,
             base_url=base_url,
             api_style=api_style,
+            default_headers=default_headers,
         )
         self.langfuse = langfuse_client
         self.workspace_id = workspace_id
@@ -303,7 +305,14 @@ class InstrumentedLLMClient(LLMClient):
                         "cache_read_input_tokens": usage_details.get("cache_read_input_tokens", 0),
                         "cache_creation_input_tokens": usage_details.get("cache_write_input_tokens", 0),
                     }
-                elif provider in ["openai", "openai_chatgpt", "fireworks", "deepseek", "mistral"]:
+                elif provider in [
+                    "openai",
+                    "openai_chatgpt",
+                    "fireworks",
+                    "deepseek",
+                    "mistral",
+                    "cloudflare_workers_ai",
+                ]:
                     normalized_usage = {
                         "input": usage_details.get("prompt_tokens", 0),
                         "output": usage_details.get("completion_tokens", 0),
@@ -576,7 +585,7 @@ class MinimalLangfuseStreamWrapper:
                 "cache_read_input_tokens": usage_metadata.get("cache_read_input_tokens", 0),
                 "cache_creation_input_tokens": usage_metadata.get("cache_write_input_tokens", 0),
             }
-        elif provider in ["openai", "openai_chatgpt", "fireworks", "deepseek", "mistral"]:
+        elif provider in ["openai", "openai_chatgpt", "fireworks", "deepseek", "mistral", "cloudflare_workers_ai"]:
             return {
                 "input": usage_metadata.get("prompt_tokens", 0),
                 "output": usage_metadata.get("completion_tokens", 0),

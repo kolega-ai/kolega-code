@@ -38,6 +38,7 @@ Anthropic-compatible):
 | Thinking Machines | `thinking_machines` | `TINKER_API_KEY` |
 | Tinker | `tinker` | `TINKER_API_KEY` |
 | Ollama Cloud | `ollama_cloud` | `OLLAMA_API_KEY` |
+| Cloudflare Workers AI | `cloudflare_workers_ai` | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
 | Perplexity Agent API | `perplexity_agent` | `PERPLEXITY_API_KEY` |
 | Llama (local) | `llama` | _none — local model_ |
@@ -215,6 +216,57 @@ The runtime cache is additive: it adds IDs missing from the bundled release but
 never removes bundled IDs or overwrites their reviewed metadata. Startup never
 contacts Ollama. Retired bundled IDs disappear only when a new release snapshot
 is generated from Ollama's current catalog.
+</Aside>
+
+<Aside type="tip">
+**Cloudflare Workers AI.** The `cloudflare_workers_ai` provider uses Workers AI's
+OpenAI-compatible Chat Completions endpoint, which is scoped to your account:
+`https://api.cloudflare.com/client/v4/accounts/<account_id>/ai/v1`. It needs two
+values:
+
+- an **API token** with the *Workers AI Read* permission, in
+  `CLOUDFLARE_API_TOKEN` or saved under Settings → Providers. Use an API token
+  (`cfut_…`/`cfat_…`), not the Global API Key.
+- your **account ID**, in `CLOUDFLARE_ACCOUNT_ID` or the *Account ID* field that
+  appears under Settings → Providers (and in onboarding) when Cloudflare is
+  selected. Find it in the Cloudflare dashboard under Workers AI → *Use REST
+  API*. The environment variable wins over the saved value.
+
+The bundled catalog lists tool-calling models with at least a 128K window,
+led by **`@cf/zai-org/glm-5.3`** (the default, 1M context). It also includes
+GLM-5.3 Flash, GLM-5.2, GLM-4.7 Flash, Kimi K2.7 Code and K2.6, DeepSeek V4.1
+Flash and V4 Pro, Qwen 3.8 27B, Gemma 4 26B A4B, Nemotron 3 120B A12B, and
+GPT-OSS 120B/20B. Windows, vision support, and effort ladders follow
+Cloudflare's model metadata. Workers AI publishes no output ceilings, so Kolega
+reserves an explicit output budget inside each window and always sends it:
+without one, Workers AI stops after 256 tokens. To discover models published
+since the bundled release, run:
+
+```bash
+kolega-code models refresh --provider cloudflare_workers_ai
+```
+
+The refresh uses the same token and account ID and only adds tool-capable
+models; it never overrides bundled entries.
+
+Many larger models require the **Workers Paid** plan: on the free plan, GLM-5.3
+(the default), GLM-5.3 Flash, GLM-5.2, Kimi K2.7 Code and K2.6, and both
+DeepSeek models are refused, while GPT-OSS 120B/20B, Qwen 3.8 27B, Gemma 4 26B
+A4B, Nemotron 3 120B A12B, and GLM-4.7 Flash work. The free plan's daily neuron
+allocation also runs out quickly under an agent. Both conditions surface as a
+billing error rather than a retry loop. Requests carry an `x-session-affinity`
+header so Workers AI's prefix caching can reuse the conversation's prompt; cached
+tokens are billed at the discounted rate and shown in usage.
+
+Thinking effort follows each model's Workers AI controls. On GLM-5.3 and GLM-5.3
+Flash, `low` skips reasoning entirely (reasoning cannot be disabled outright).
+Where `none` is offered — DeepSeek V4.1 Flash and V4 Pro, GLM-5.2, and Kimi K2.6 —
+Kolega also sends the models' `enable_thinking: false` switch, because some of
+them keep reasoning on `reasoning_effort: none` alone.
+
+To route requests through an [AI Gateway](https://developers.cloudflare.com/ai-gateway/)
+for logging, caching, and analytics, set `CLOUDFLARE_AI_GATEWAY_ID` to the
+gateway's ID; Kolega adds the `cf-aig-gateway-id` header to every request.
 </Aside>
 
 <Aside type="tip">
@@ -556,6 +608,12 @@ models in the TUI.
 | Fireworks `kimi-k3` | `max` | `max` |
 | Ollama Cloud thinking models | `none`, `low`, `medium`, `high`, `max` | `medium` |
 | Ollama Cloud `gpt-oss:*` | `low`, `medium`, `high` | `medium` |
+| Cloudflare `@cf/zai-org/glm-5.3`, `glm-5.3-flash` | `low`, `high`, `max` | `max` |
+| Cloudflare `@cf/zai-org/glm-5.2` | `none`, `high`, `max` | `max` |
+| Cloudflare `@cf/deepseek-ai/deepseek-v4.1-flash-1017`, `deepseek-v4-pro-0813` | `none`, `low`, `high`, `max` | `high` |
+| Cloudflare `@cf/moonshotai/kimi-k2.6` | `none`, `high` | `high` |
+| Cloudflare `@cf/qwen/qwen3.8-27b` | `low`, `medium`, `xhigh` | `xhigh` |
+| Cloudflare `@cf/openai/gpt-oss-*` | `low`, `medium`, `high` | `medium` |
 | Google `gemini-3.8-flash` | `low`, `medium`, `high` | `medium` |
 | Google `gemini-3.7-flash` | `low`, `medium`, `high` | `medium` |
 | Google `gemini-3.6-flash` | `minimal`, `low`, `medium`, `high` | `medium` |

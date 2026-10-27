@@ -33,8 +33,10 @@ tools, and provider-specific parameters in a standardized way.
 
 import dataclasses
 import inspect
-from typing import TYPE_CHECKING, Any, AsyncContextManager, Coroutine, Dict, List, Optional, Union
+import os
+from typing import TYPE_CHECKING, Any, AsyncContextManager, Coroutine, Dict, List, Mapping, Optional, Union
 
+from . import cloudflare_workers_ai
 from .exceptions import LLMContextWindowExceededError, map_to_llm_error
 from .ledger import LedgerStreamAdapter, UsageLedger, describe_error
 from .models import Message, MessageHistory, ToolDefinition
@@ -51,6 +53,23 @@ if TYPE_CHECKING:
     from .providers.mistral import MistralProvider
     from .providers.openai import OpenAIProvider
     from .providers.tinker import TinkerProvider
+
+
+# Built-in providers served by the Chat Completions OpenAIProvider. Only these
+# (and custom openai_chat endpoints) accept caller-supplied default headers.
+_CHAT_COMPLETIONS_PROVIDERS = frozenset(
+    {
+        "together",
+        "groq",
+        "fireworks",
+        "llama",
+        "xai",
+        "dashscope",
+        "ollama_cloud",
+        "openrouter",
+        cloudflare_workers_ai.PROVIDER,
+    }
+)
 
 
 class LLMClient:
@@ -85,6 +104,7 @@ class LLMClient:
         max_output_tokens: Optional[int] = None,
         base_url: Optional[str] = None,
         api_style: Optional[str] = None,
+        default_headers: Optional[Mapping[str, str]] = None,
     ):
         if (context_window_tokens is None) != (max_output_tokens is None):
             raise ValueError("context_window_tokens and max_output_tokens must be supplied together")
@@ -112,6 +132,7 @@ class LLMClient:
             tokens_per_minute=tokens_per_minute,
             base_url=base_url,
             api_style=api_style,
+            default_headers=default_headers,
         )
 
     @staticmethod
@@ -142,16 +163,7 @@ class LLMClient:
             from .providers.perplexity_responses import PerplexityResponsesProvider
 
             return PerplexityResponsesProvider
-        if p in (
-            "together",
-            "groq",
-            "fireworks",
-            "llama",
-            "xai",
-            "dashscope",
-            "ollama_cloud",
-            "openrouter",
-        ):
+        if p in _CHAT_COMPLETIONS_PROVIDERS:
             from .providers.openai import OpenAIProvider
 
             return OpenAIProvider
@@ -177,6 +189,7 @@ class LLMClient:
         tokens_per_minute: Optional[int] = None,
         base_url: Optional[str] = None,
         api_style: Optional[str] = None,
+        default_headers: Optional[Mapping[str, str]] = None,
     ) -> "Union[AnthropicProvider, OpenAIProvider, GoogleProvider, MistralProvider, TinkerProvider]":
         """Initialize the appropriate LLM provider based on the provider name.
 
@@ -193,11 +206,15 @@ class LLMClient:
             LLMError: If an unsupported provider name is specified or initialization fails
         """
         try:
+            headers = dict(default_headers or {})
             # Custom endpoints: the provider value is "custom:<id>" and the wire
             # dialect comes from api_style, resolved by the config layer.
             if provider.lower().startswith("custom:"):
                 if not base_url or not api_style:
                     raise ValueError(f"Custom endpoint provider {provider} requires base_url and api_style.")
+                if headers and api_style != "openai_chat":
+                    raise ValueError(f"default_headers are only supported for Chat Completions providers ({provider}).")
+                header_kwargs: Dict[str, Any] = {"default_headers": headers} if headers else {}
                 if api_style == "openai_chat":
                     from .providers.openai import OpenAIProvider as CustomProviderClass
                 elif api_style == "openai_responses":
@@ -215,7 +232,11 @@ class LLMClient:
                     tokens_per_minute=tokens_per_minute,
                     base_url=base_url,
                     provider_name=provider.lower(),
+                    **header_kwargs,
                 )
+
+            if headers and provider.lower() not in _CHAT_COMPLETIONS_PROVIDERS:
+                raise ValueError(f"default_headers are only supported for Chat Completions providers ({provider}).")
 
             # ChatGPT-subscription OAuth provider: distinct base URL + Responses API,
             # authenticated by a refreshing token manager rather than an api key.
@@ -265,16 +286,26 @@ class LLMClient:
             if not provider_class:
                 raise ValueError(f"Unsupported provider: {provider}")
 
-            base_url = base_urls.get(provider.lower())
+            if provider.lower() == cloudflare_workers_ai.PROVIDER:
+                # Account-scoped URL. The env fallback exists for bare library/test
+                # construction only; configured clients always pass base_url.
+                if base_url is None:
+                    env_kwargs = cloudflare_workers_ai.env_connection_kwargs(os.environ)
+                    base_url = env_kwargs["base_url"]
+                    headers = {**env_kwargs.get("default_headers", {}), **headers}
+            else:
+                base_url = base_urls.get(provider.lower())
 
             # Every provider class except GoogleProvider takes a provider_name (the
             # Anthropic/OpenAI/OpenAIResponses families share a class across several
             # provider keys and need it to disambiguate behavior).
-            provider_kwargs = {}
+            provider_kwargs: Dict[str, Any] = {}
             if provider.lower() != "google":
                 provider_kwargs["provider_name"] = provider.lower()
             if provider.lower() == "tinker":
                 provider_kwargs["trace_sink"] = self._trace_sink
+            if headers:
+                provider_kwargs["default_headers"] = headers
 
             return provider_class(
                 api_key=self._api_key,

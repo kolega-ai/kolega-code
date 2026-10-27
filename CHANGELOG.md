@@ -6,6 +6,20 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- **Cloudflare Workers AI support.** Select `cloudflare_workers_ai` with a
+  Workers AI API token (`CLOUDFLARE_API_TOKEN` or Settings) and your account ID
+  (`CLOUDFLARE_ACCOUNT_ID`, or the new Account ID field on Settings → Providers
+  and in onboarding). The curated catalog covers tool-calling models with at
+  least a 128K window, led by GLM-5.3 (the default) plus GLM-5.3 Flash,
+  Kimi K2.7 Code, DeepSeek V4.1 Flash, GPT-OSS, and more, with Cloudflare's
+  per-model reasoning-effort ladders. `kolega-code models refresh --provider
+  cloudflare_workers_ai` discovers newer models from your account.
+  `CLOUDFLARE_AI_GATEWAY_ID` optionally routes requests through an AI Gateway.
+  Exhausted free allocations and Workers Paid-only models report a billing
+  error instead of retrying.
+
 ### Security
 
 - Updated Brotli to 1.2.1, fixing an out-of-bounds write in the decoder

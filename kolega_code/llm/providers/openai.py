@@ -1,4 +1,4 @@
-from typing import Any, AsyncContextManager, Dict, List, Optional
+from typing import Any, AsyncContextManager, Dict, List, Mapping, Optional
 from weakref import WeakKeyDictionary
 import asyncio
 import json
@@ -10,6 +10,7 @@ import uuid
 
 from openai import AsyncOpenAI
 
+from .. import cloudflare_workers_ai
 from ..models import (
     ImageBlock,
     Message,
@@ -47,6 +48,10 @@ _encoding = None
 # The OpenRouter gateway needs request/response handling the direct OpenAI-compatible
 # providers do not (see _apply_openrouter_request_rules and _capture_usage_details).
 OPENROUTER_PROVIDER = "openrouter"
+
+# Workers AI silently caps a request without an explicit output limit at 256
+# tokens, so uncatalogued models still get a usable cap.
+CLOUDFLARE_FALLBACK_MAX_TOKENS = 8192
 
 
 def _get_encoding():
@@ -275,6 +280,7 @@ class OpenAIProvider(BaseLLMProvider):
         tokens_per_minute: Optional[int] = None,
         base_url: Optional[str] = None,
         provider_name: str = "openai",
+        default_headers: Optional[Mapping[str, str]] = None,
     ):
         super().__init__(api_key, max_retries, requests_per_minute, tokens_per_minute, base_url)
         # OpenAI-compatible providers (xai, together, fireworks, dashscope, ...) reuse this
@@ -301,6 +307,11 @@ class OpenAIProvider(BaseLLMProvider):
                 "X-OpenRouter-Categories": "programming",
                 "x-session-id": self._session_id,
             }
+        elif self.provider_name == cloudflare_workers_ai.PROVIDER:
+            # Routes a conversation to one model instance so prefix caching hits.
+            client_kwargs["default_headers"] = {cloudflare_workers_ai.SESSION_AFFINITY_HEADER: self._session_id}
+        if default_headers:
+            client_kwargs["default_headers"] = {**client_kwargs.get("default_headers", {}), **default_headers}
         # Forward max_retries so the SDK's built-in exponential backoff + jitter (which
         # honors retry-after and retries 429/5xx + connection errors) is actually used.
         self.async_client = AsyncOpenAI(**client_kwargs)
@@ -394,6 +405,20 @@ class OpenAIProvider(BaseLLMProvider):
         # the post-omission state and re-adds the honest cap for DeepSeek models.
         if is_deepseek_model(model):
             self._apply_deepseek_request_rules(generation_params)
+
+        # Last, so it renames whatever cap the earlier rules settled on.
+        if self.provider_name == cloudflare_workers_ai.PROVIDER:
+            self._apply_cloudflare_request_rules(generation_params)
+
+    def _apply_cloudflare_request_rules(self, generation_params: Dict[str, Any]) -> None:
+        """Always send an explicit cap, under Workers AI's non-deprecated ``max_completion_tokens`` name."""
+        cap = generation_params.pop("max_tokens", None)
+        if cap is None:
+            cap = generation_params.get("max_completion_tokens")
+        if cap is None:
+            specs = MODEL_SPECS.get((self.provider_name, str(generation_params.get("model") or "")))
+            cap = specs["max_completion_tokens"] if specs else CLOUDFLARE_FALLBACK_MAX_TOKENS
+        generation_params["max_completion_tokens"] = cap
 
     def _apply_deepseek_request_rules(self, generation_params: Dict[str, Any]) -> None:
         """Always send a clamped output cap on DeepSeek-model requests.
@@ -781,11 +806,16 @@ class OpenAIProvider(BaseLLMProvider):
 
         # Extract message and add usage data. finish_reason lives on the choice,
         # not the message — pass it through or stop_reason is silently None.
+        response_message = response.choices[0].message
         message = Message.from_openai(
-            response.choices[0].message,
+            response_message,
             finish_reason=getattr(response.choices[0], "finish_reason", None),
         )
         message.usage_metadata["provider"] = self.provider_name
+        if getattr(response_message, "reasoning_content", None):
+            message.usage_metadata["reasoning_field"] = "reasoning_content"
+        elif getattr(response_message, "reasoning", None):
+            message.usage_metadata["reasoning_field"] = "reasoning"
 
         # Add usage data from the response
         if hasattr(response, "usage") and response.usage:

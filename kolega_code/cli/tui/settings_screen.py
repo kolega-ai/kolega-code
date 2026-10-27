@@ -242,6 +242,20 @@ class SettingsScreen(ModalScreen[None]):
                 credential.border_title = "Credential"
                 yield Label("API key", id="provider_api_key_label")
                 yield Input(password=True, id="provider_api_key_input")
+                # Cloudflare-only: shown by _update_provider_credential_controls.
+                account_label = Label("Account ID", id="provider_account_id_label")
+                account_label.display = False
+                yield account_label
+                account_input = Input(
+                    id="provider_account_id_input", placeholder=messages.CLOUDFLARE_ACCOUNT_ID_PLACEHOLDER
+                )
+                account_input.display = False
+                yield account_input
+                account_hint = Static(
+                    messages.CLOUDFLARE_ACCOUNT_ID_HINT, id="provider_account_id_hint", classes="settings-hint"
+                )
+                account_hint.display = False
+                yield account_hint
                 yield Button(
                     "Remove Stored Key",
                     id="provider_remove_api_key",
@@ -845,6 +859,9 @@ class SettingsScreen(ModalScreen[None]):
         if event.input.id == "provider_api_key_input":
             self._reset_connection_status()
             self.owner._commit_visible_api_key()
+        elif event.input.id == "provider_account_id_input":
+            self._reset_connection_status()
+            self.owner._refresh_provider_account_status()
         self.call_after_refresh(self._refresh_apply_label)
 
     def _mcp_snapshot(self) -> tuple[tuple[str, Any], ...]:

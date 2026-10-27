@@ -658,7 +658,8 @@ OnboardingScreen {
 
 .onboarding-step,
 #onboarding_chatgpt_panel,
-#onboarding_api_panel {
+#onboarding_api_panel,
+#onboarding_account_id_panel {
     height: auto;
 }
 

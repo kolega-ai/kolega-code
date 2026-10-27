@@ -53,6 +53,7 @@ provider or model.
 | `ZAI_API_KEY` | Z.AI (GLM Coding Plan) |
 | `KIMI_CODING_API_KEY` | Kimi Coding Plan |
 | `OLLAMA_API_KEY` | Ollama Cloud |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare Workers AI (also needs `CLOUDFLARE_ACCOUNT_ID`) |
 | `OPENROUTER_API_KEY` | OpenRouter |
 | `TINKER_API_KEY` | Thinking Machines — both the `thinking_machines` (Anthropic-compatible) and `tinker` (native SDK) providers |
 | `PERPLEXITY_API_KEY` | Perplexity Agent API |
@@ -92,6 +93,20 @@ requires `MISTRAL_API_KEY` or a key saved in Settings.
 | --- | --- |
 | `KOLEGA_CODE_OLLAMA_CLOUD_CATALOG` | Read the refreshed model cache from this path instead of the state directory. |
 | `KOLEGA_CODE_DISABLE_OLLAMA_CLOUD_CATALOG` | Ignore any refreshed cache and use only the catalog bundled with this release. |
+
+### Cloudflare Workers AI
+
+| Variable | Purpose |
+| --- | --- |
+| `CLOUDFLARE_ACCOUNT_ID` | The 32-character account ID that scopes Workers AI requests. Overrides the Account ID saved under Settings → Providers. Required whenever a Cloudflare model is in use. |
+| `CLOUDFLARE_AI_GATEWAY_ID` | Optional. Route Workers AI requests through this [AI Gateway](https://developers.cloudflare.com/ai-gateway/) (sent as the `cf-aig-gateway-id` header). |
+| `KOLEGA_CODE_CLOUDFLARE_WORKERS_AI_CATALOG` | Read the refreshed model cache from this path instead of the state directory. |
+| `KOLEGA_CODE_DISABLE_CLOUDFLARE_WORKERS_AI_CATALOG` | Ignore any refreshed cache and use only the catalog bundled with this release. |
+
+`CLOUDFLARE_API_TOKEN` must be an API token with the *Workers AI Read* permission;
+the Global API Key does not work. `kolega-code models refresh --provider
+cloudflare_workers_ai` needs both the token and the account ID (from the
+environment or Settings).
 
 ### OpenRouter tuning
 
