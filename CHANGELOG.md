@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.47.0 - 2026-10-27
+
 ### Added
 
 - **GPT-6.1 Terra support.** OpenAI's mid-tier GPT-6.1 model (`gpt-6.1-terra`)
