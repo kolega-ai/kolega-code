@@ -60,6 +60,14 @@ Luna are the cheaper/faster members and accept the full `none`, `low`, `medium`,
 128K output reservation on the API provider and the same conservative 400,000-token
 budget on the ChatGPT provider.
 
+**GPT-6.1 Terra** (`gpt-6.1-terra`) is the mid-tier member of the GPT-6.1
+generation and is available on both providers. It keeps Astra's 1,050,000-token
+window and 128K output reservation on the API provider, supports image input and
+hosted web search, and accepts `none`, `low`, `medium`, `high`, `xhigh`, and `max`
+reasoning efforts (`medium` by default) — only `minimal` is rejected. The ChatGPT
+provider uses the same conservative 400,000-token budget as the rest of the GPT-6
+family.
+
 **Gemini 4 Argon** (`gemini-4-argon`) is available on the `google` provider.
 [Google released Argon on October 13, 2026](https://ai.google.dev/gemini-api/docs/changelog).
 It supports image input, function calling, and `low`, `medium`, and `high`
