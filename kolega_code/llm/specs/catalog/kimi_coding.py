@@ -70,4 +70,36 @@ KIMI_CODING_SPECS = {
             mode="moonshot_toggle",
         ),
     },
+    # K3.1 Pro (2026-10 release). Available on Plus and above, but the 1M window
+    # is gated to Pro and above, so the catalog keeps the 256K floor that holds
+    # on every K3.1-eligible tier. Thinking cannot be disabled; the effort ladder
+    # is low/high/max and sampling parameters are fixed at 1.0.
+    ("kimi_coding", "k3.1-pro"): {
+        "context_length": 262144,
+        "max_completion_tokens": 131072,
+        "input_budget": "separate_output_limit",
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("low", "high", "max"),
+            default="max",
+            mode="kimi_coding_effort",
+        ),
+    },
+    # Highspeed is Pro-and-above only, so every plan that can reach it has the
+    # full 1M window. Same controls, ~2-3x the speed at ~2x quota usage.
+    ("kimi_coding", "k3.1-pro-highspeed"): {
+        "context_length": 1048576,
+        "max_completion_tokens": 131072,
+        "input_budget": "separate_output_limit",
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("low", "high", "max"),
+            default="max",
+            mode="kimi_coding_effort",
+        ),
+    },
 }

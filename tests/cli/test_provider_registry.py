@@ -76,6 +76,23 @@ def test_kimi_k3_is_first_and_default_for_moonshot():
     assert (UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL) == ("moonshot", "kimi-k3")
 
 
+def test_moonshot_exposes_kimi_k31_pro():
+    options = dict(ui_model_options(ModelProvider.MOONSHOT.value))
+
+    assert options["Kimi K3.1 Pro"] == "kimi-k3.1-pro"
+    assert options["Kimi K3.1 Pro (High-Speed)"] == "kimi-k3.1-pro-highspeed"
+    assert ui_thinking_effort_options("moonshot", "kimi-k3.1-pro") == [
+        ("Low", "low"),
+        ("High", "high"),
+        ("Max", "max"),
+    ]
+    assert ui_thinking_effort_options("moonshot", "kimi-k3.1-pro-highspeed") == [
+        ("Low", "low"),
+        ("High", "high"),
+        ("Max", "max"),
+    ]
+
+
 def test_opus_5_is_selectable_and_default_for_anthropic() -> None:
     options = ui_model_options(ModelProvider.ANTHROPIC.value)
 
@@ -112,9 +129,16 @@ def test_kimi_coding_exposes_plan_specific_k3_models():
         ("Kimi K3-256K", "k3-256k"),
         ("Kimi for Coding", "kimi-for-coding"),
         ("Kimi for Coding (HighSpeed)", "kimi-for-coding-highspeed"),
+        ("Kimi K3.1 Pro (256K)", "k3.1-pro"),
+        ("Kimi K3.1 Pro (HighSpeed)", "k3.1-pro-highspeed"),
     ]
     assert default_model_for_provider(ModelProvider.KIMI_CODING) == "kimi-for-coding"
     assert ui_thinking_effort_options("kimi_coding", "k3") == [("Max", "max")]
+    assert ui_thinking_effort_options("kimi_coding", "k3.1-pro") == [
+        ("Low", "low"),
+        ("High", "high"),
+        ("Max", "max"),
+    ]
 
 
 def test_zai_exposes_glm_models_and_defaults_to_glm_53() -> None:

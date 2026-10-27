@@ -192,6 +192,20 @@ def test_kimi_k3_model_specs():
     assert specs["thinking_effort"].mode == "moonshot_reasoning_effort"
 
 
+def test_kimi_k31_pro_model_specs():
+    for model in ("kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"):
+        specs = get_model_specs("moonshot", model)
+
+        assert specs["context_length"] == 1048576
+        assert specs["max_completion_tokens"] == 131072
+        assert specs["default_temperature"] == 1.0
+        assert specs["supports_temperature"] is False
+        assert specs["supports_vision"] is True
+        assert specs["thinking_effort"].options == ("low", "high", "max")
+        assert specs["thinking_effort"].default == "max"
+        assert specs["thinking_effort"].mode == "moonshot_reasoning_effort"
+
+
 def test_kimi_k27_code_model_specs():
     specs = get_model_specs("moonshot", "kimi-k2.7-code")
 
@@ -228,6 +242,29 @@ def test_kimi_coding_k3_model_specs(model, context_length):
     assert specs["supports_temperature"] is False
     assert specs["supports_vision"] is True
     assert specs["thinking_effort"].options == ("max",)
+    assert specs["thinking_effort"].default == "max"
+    assert specs["thinking_effort"].mode == "kimi_coding_effort"
+
+
+@pytest.mark.parametrize(
+    "model,context_length",
+    [
+        # k3.1-pro is reachable on Plus, but its 1M window is gated to Pro and
+        # above, so the catalog keeps the 256K floor.
+        ("k3.1-pro", 262144),
+        # Highspeed itself requires Pro and above, so it always gets the 1M window.
+        ("k3.1-pro-highspeed", 1048576),
+    ],
+)
+def test_kimi_coding_k31_pro_model_specs(model, context_length):
+    specs = get_model_specs("kimi_coding", model)
+
+    assert specs["context_length"] == context_length
+    assert specs["max_completion_tokens"] == 131072
+    assert specs["default_temperature"] == 1.0
+    assert specs["supports_temperature"] is False
+    assert specs["supports_vision"] is True
+    assert specs["thinking_effort"].options == ("low", "high", "max")
     assert specs["thinking_effort"].default == "max"
     assert specs["thinking_effort"].mode == "kimi_coding_effort"
 

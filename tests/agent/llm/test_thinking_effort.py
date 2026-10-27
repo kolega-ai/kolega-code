@@ -23,6 +23,10 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert default_thinking_effort("anthropic", "claude-sonnet-5-5") == "high"
     assert thinking_effort_options("moonshot", "kimi-k3") == ("max",)
     assert default_thinking_effort("moonshot", "kimi-k3") == "max"
+    assert thinking_effort_options("moonshot", "kimi-k3.1-pro") == ("low", "high", "max")
+    assert default_thinking_effort("moonshot", "kimi-k3.1-pro") == "max"
+    assert thinking_effort_options("moonshot", "kimi-k3.1-pro-highspeed") == ("low", "high", "max")
+    assert default_thinking_effort("moonshot", "kimi-k3.1-pro-highspeed") == "max"
     assert thinking_effort_options("moonshot", "kimi-k2.7-code") == ("auto",)
     assert default_thinking_effort("moonshot", "kimi-k2.7-code") == "auto"
     assert thinking_effort_options("moonshot", "kimi-k2.6") == ("auto", "none")
@@ -55,6 +59,10 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert default_thinking_effort("kimi_coding", "k3") == "max"
     assert thinking_effort_options("kimi_coding", "k3-256k") == ("max",)
     assert default_thinking_effort("kimi_coding", "k3-256k") == "max"
+    assert thinking_effort_options("kimi_coding", "k3.1-pro") == ("low", "high", "max")
+    assert default_thinking_effort("kimi_coding", "k3.1-pro") == "max"
+    assert thinking_effort_options("kimi_coding", "k3.1-pro-highspeed") == ("low", "high", "max")
+    assert default_thinking_effort("kimi_coding", "k3.1-pro-highspeed") == "max"
     assert thinking_effort_options("kimi_coding", "kimi-for-coding-highspeed") == ("auto", "none")
     assert default_thinking_effort("kimi_coding", "kimi-for-coding-highspeed") == "auto"
     assert thinking_effort_options("fireworks", "accounts/fireworks/models/glm-5p2") == (
@@ -182,6 +190,41 @@ def test_moonshot_kimi_k3_omits_fixed_temperature() -> None:
     params["model"] = "kimi-k3"
 
     assert "temperature" not in provider._sanitize_generation_params(params)
+
+
+@pytest.mark.parametrize("model", ["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"])
+def test_moonshot_kimi_k31_pro_reasoning_effort_serialization(model: str) -> None:
+    provider = AnthropicProvider(api_key="test-key", provider_name="moonshot")
+
+    params = {"model": model}
+    provider._apply_thinking_params(params, GenerationParams(thinking="low"))
+
+    assert params == {
+        "model": model,
+        "extra_body": {"reasoning_effort": "low"},
+    }
+
+
+@pytest.mark.parametrize("model", ["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"])
+def test_moonshot_kimi_k31_pro_omits_fixed_temperature(model: str) -> None:
+    provider = AnthropicProvider(api_key="test-key", provider_name="moonshot")
+    params = provider._prepare_generation_params(GenerationParams(temperature=1.0))
+    params["model"] = model
+
+    assert "temperature" not in provider._sanitize_generation_params(params)
+
+
+@pytest.mark.parametrize("model", ["k3.1-pro", "k3.1-pro-highspeed"])
+def test_kimi_coding_k31_pro_reasoning_effort_serialization(model: str) -> None:
+    provider = AnthropicProvider(api_key="test-key", provider_name="kimi_coding")
+
+    params = {"model": model}
+    provider._apply_thinking_params(params, GenerationParams(thinking="high"))
+
+    assert params == {
+        "model": model,
+        "output_config": {"effort": "high"},
+    }
 
 
 def test_kimi_coding_thinking_toggle_serialization() -> None:
