@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.47.1 - 2026-10-27
+
 ### Changed
 
 - GPT-6.1 Terra sessions on the ChatGPT-subscription provider now use the
