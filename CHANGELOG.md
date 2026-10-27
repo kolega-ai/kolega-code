@@ -6,6 +6,15 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- **GPT-6.1 Terra support.** OpenAI's mid-tier GPT-6.1 model (`gpt-6.1-terra`)
+  is selectable on both the `openai` and `openai_chatgpt` providers. It keeps the
+  generation's 1,050,000-token window with 128K output reserved on the API
+  provider, supports image input and hosted web search, and exposes a
+  `none`/`low`/`medium`/`high`/`xhigh`/`max` reasoning-effort ladder (`medium`
+  by default); only `minimal` is unavailable.
+
 ## 0.46.0 - 2026-10-27
 
 ### Added

@@ -169,6 +169,24 @@ OPENAI_SPECS = {
             mode="openai_responses_reasoning",
         ),
     },
+    # GPT-6.1 Terra (2026-10-27) is the mid-tier member of the GPT-6.1
+    # generation: Astra's window and output ceiling, `none` reasoning supported
+    # (`minimal` is rejected — live probe 2026-10-27), and no temperature.
+    ("openai", "gpt-6.1-terra"): {
+        "context_length": 1050000,
+        "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "supports_hosted_web_search": True,
+        "preferred_edit_protocol": "codex_apply_patch",
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "xhigh", "max"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
     # Note: gpt-5.3-codex-spark is intentionally NOT on the API-key `openai`
     # provider — it's a Codex model that 404s on Chat Completions and is only
     # reachable through the ChatGPT-subscription backend (openai_chatgpt) below.

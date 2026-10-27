@@ -126,6 +126,30 @@ def test_gpt61_sol_rejects_unsupported_efforts(provider: str, effort: str) -> No
         build_thinking_request_params(provider, "gpt-6.1-sol", effort)
 
 
+@pytest.mark.parametrize("provider,context_length", [("openai", 1050000), ("openai_chatgpt", 400000)])
+def test_gpt61_terra_model_specs(provider: str, context_length: int) -> None:
+    specs = get_model_specs(provider, "gpt-6.1-terra")
+
+    assert specs["context_length"] == context_length
+    assert specs["max_completion_tokens"] == 128000
+    assert specs["default_temperature"] == 1.0
+    assert specs["supports_temperature"] is False
+    assert specs["supports_vision"] is True
+    assert specs["supports_hosted_web_search"] is True
+    assert specs["preferred_edit_protocol"] == "codex_apply_patch"
+    # Terra keeps the `none` rung that GPT-6.1 Sol lacks; only `minimal` is
+    # rejected (probed against the Responses API 2026-10-27).
+    assert specs["thinking_effort"].options == ("none", "low", "medium", "high", "xhigh", "max")
+    assert specs["thinking_effort"].default == "medium"
+    assert specs["thinking_effort"].mode == "openai_responses_reasoning"
+
+
+@pytest.mark.parametrize("provider", ["openai", "openai_chatgpt"])
+def test_gpt61_terra_rejects_minimal_effort(provider: str) -> None:
+    with pytest.raises(ValueError, match="Unsupported thinking effort"):
+        build_thinking_request_params(provider, "gpt-6.1-terra", "minimal")
+
+
 @pytest.mark.parametrize("provider", ["openai", "openai_chatgpt"])
 def test_gpt54_mini_thinking_efforts(provider):
     specs = get_model_specs(provider, "gpt-5.4-mini")
