@@ -64,9 +64,10 @@ budget on the ChatGPT provider.
 generation and is available on both providers. It keeps Astra's 1,050,000-token
 window and 128K output reservation on the API provider, supports image input and
 hosted web search, and accepts `none`, `low`, `medium`, `high`, `xhigh`, and `max`
-reasoning efforts (`medium` by default) — only `minimal` is rejected. The ChatGPT
-provider uses the same conservative 400,000-token budget as the rest of the GPT-6
-family.
+reasoning efforts (`medium` by default) — only `minimal` is rejected. On the
+ChatGPT provider the Codex backend advertises a 500,000-token window for Terra,
+which leaves 372,000 input tokens after the 128K output reservation; the rest of
+the GPT-6 subscription models keep the conservative 400,000-token budget.
 
 **Gemini 4 Argon** (`gemini-4-argon`) is available on the `google` provider.
 [Google released Argon on October 13, 2026](https://ai.google.dev/gemini-api/docs/changelog).

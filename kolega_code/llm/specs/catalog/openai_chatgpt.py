@@ -186,11 +186,12 @@ OPENAI_CHATGPT_SPECS = {
             mode="openai_responses_reasoning",
         ),
     },
-    # GPT-6.1 Terra mirrors the API spec (including the `none` rung that GPT-6.1
-    # Sol lacks) but keeps the conservative subscription budget used by the rest
-    # of the GPT-6 family until the Codex backend's window is verified.
+    # GPT-6.1 Terra mirrors the API spec, including the `none` rung that GPT-6.1
+    # Sol lacks. The Codex backend advertises a 500,000-token window for it and
+    # accepted a 520,009-token input (probed 2026-10-27), so this entry uses the
+    # real window instead of the family's conservative 400,000.
     ("openai_chatgpt", "gpt-6.1-terra"): {
-        "context_length": 400000,
+        "context_length": 500000,
         "max_completion_tokens": 128000,
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,

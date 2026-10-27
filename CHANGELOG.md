@@ -6,6 +6,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Changed
+
+- GPT-6.1 Terra sessions on the ChatGPT-subscription provider now use the
+  backend's advertised 500,000-token window (372,000 input tokens after the 128K
+  output reservation) instead of the GPT-6 family's conservative 400,000-token
+  budget, so compression runs later on long sessions.
+
 ## 0.47.0 - 2026-10-27
 
 ### Added
