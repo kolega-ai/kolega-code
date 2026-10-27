@@ -8,6 +8,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Added
 
+- **Kimi K3.1 Pro support.** Moonshot's October 2026 K3.1 release is selectable
+  on both Kimi providers: `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed` on
+  `moonshot`, and `k3.1-pro` / `k3.1-pro-highspeed` on the Kimi Coding Plan.
+  All four always think and expose a `low`/`high`/`max` reasoning-effort ladder;
+  the 1M window is catalogued directly where every eligible plan has it. The
+  Coding Plan's `k3.1-pro` keeps a 256K budget because its 1M window is gated to
+  Pro-and-above plans.
 - **Cloudflare Workers AI support.** Select `cloudflare_workers_ai` with a
   Workers AI API token (`CLOUDFLARE_API_TOKEN` or Settings) and your account ID
   (`CLOUDFLARE_ACCOUNT_ID`, or the new Account ID field on Settings → Providers

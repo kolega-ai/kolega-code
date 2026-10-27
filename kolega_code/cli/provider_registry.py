@@ -64,6 +64,8 @@ MODEL_LABELS: dict[str, str] = {
     "meta-llama/llama-4-maverick-17b-128e-instruct": "Llama 4 Maverick 17B",
     # Moonshot
     "kimi-k3": "Kimi K3",
+    "kimi-k3.1-pro": "Kimi K3.1 Pro",
+    "kimi-k3.1-pro-highspeed": "Kimi K3.1 Pro (High-Speed)",
     "kimi-k2.7-code": "Kimi K2.7 Code",
     "kimi-k2.7-code-highspeed": "Kimi K2.7 Code (High-Speed)",
     "kimi-k2.6": "Kimi K2.6",
@@ -80,6 +82,8 @@ MODEL_LABELS: dict[str, str] = {
     # Kimi Coding Plan
     "k3": "Kimi K3 (256K)",
     "k3-256k": "Kimi K3-256K",
+    "k3.1-pro": "Kimi K3.1 Pro (256K)",
+    "k3.1-pro-highspeed": "Kimi K3.1 Pro (HighSpeed)",
     "kimi-for-coding": "Kimi for Coding",
     "kimi-for-coding-highspeed": "Kimi for Coding (HighSpeed)",
     # DeepSeek
