@@ -613,7 +613,9 @@ async def test_textual_app_saves_deepseek_settings_and_builds_agent(
 
 
 @pytest.mark.asyncio
-async def test_save_settings_logs_on_success_without_toast(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_save_settings_logs_on_success_without_toast(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
     pytest.importorskip("textual")
 
     from textual.widgets import Input
