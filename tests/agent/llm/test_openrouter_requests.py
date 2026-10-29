@@ -15,7 +15,7 @@ from kolega_code.llm.providers.openai import OpenAIProvider, OpenAIStreamWrapper
 
 REASONING_MODEL = "z-ai/glm-5.2"
 NO_TEMPERATURE_MODEL = "openai/gpt-5.6-sol"
-TEMPERATURE_MODEL = "anthropic/claude-opus-5"
+TEMPERATURE_MODEL = "openai/gpt-4.1"
 
 
 class _Recorder:

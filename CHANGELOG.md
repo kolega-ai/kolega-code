@@ -6,8 +6,37 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.47.1 - 2026-10-27
+
+### Changed
+
+- GPT-6.1 Terra sessions on the ChatGPT-subscription provider now use the
+  backend's advertised 500,000-token window (372,000 input tokens after the 128K
+  output reservation) instead of the GPT-6 family's conservative 400,000-token
+  budget, so compression runs later on long sessions.
+
+## 0.47.0 - 2026-10-27
+
 ### Added
 
+- **GPT-6.1 Terra support.** OpenAI's mid-tier GPT-6.1 model (`gpt-6.1-terra`)
+  is selectable on both the `openai` and `openai_chatgpt` providers. It keeps the
+  generation's 1,050,000-token window with 128K output reserved on the API
+  provider, supports image input and hosted web search, and exposes a
+  `none`/`low`/`medium`/`high`/`xhigh`/`max` reasoning-effort ladder (`medium`
+  by default); only `minimal` is unavailable.
+
+## 0.46.0 - 2026-10-27
+
+### Added
+
+- **Kimi K3.1 Pro support.** Moonshot's October 2026 K3.1 release is selectable
+  on both Kimi providers: `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed` on
+  `moonshot`, and `k3.1-pro` / `k3.1-pro-highspeed` on the Kimi Coding Plan.
+  All four always think and expose a `low`/`high`/`max` reasoning-effort ladder;
+  the 1M window is catalogued directly where every eligible plan has it. The
+  Coding Plan's `k3.1-pro` keeps a 256K budget because its 1M window is gated to
+  Pro-and-above plans.
 - **Cloudflare Workers AI support.** Select `cloudflare_workers_ai` with a
   Workers AI API token (`CLOUDFLARE_API_TOKEN` or Settings) and your account ID
   (`CLOUDFLARE_ACCOUNT_ID`, or the new Account ID field on Settings → Providers
@@ -19,6 +48,16 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   `CLOUDFLARE_AI_GATEWAY_ID` optionally routes requests through an AI Gateway.
   Exhausted free allocations and Workers Paid-only models report a billing
   error instead of retrying.
+
+### Changed
+
+- Refreshed the OpenRouter, Ollama Cloud, and Tinker model catalogs from their
+  live endpoints (2026-10-27 snapshots) with newly available models, removal of
+  retired entries, updated limits and capabilities, and a refreshed OpenRouter
+  featured ordering. OpenRouter also stopped advertising `temperature` for the
+  Anthropic family, matching their adaptive thinking behavior. The Perplexity
+  Agent catalog is unchanged because its live endpoint could not be read.
+- Updated the documentation site's undici dependency to 8.12.3.
 
 ### Security
 

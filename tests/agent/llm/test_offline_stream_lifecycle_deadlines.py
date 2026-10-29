@@ -413,12 +413,14 @@ async def test_expired_retry_budget_cannot_send_warmed_sdk_request(guarded: Base
 @pytest.mark.asyncio
 async def test_late_setup_result_cannot_escape_retry_deadline(guarded: BaseAgent) -> None:
     guarded._llm_retry_budget_seconds = 0.01
-    guarded._llm_retry_budget_started = time.monotonic()
     stream = MagicMock()
     stream.__aenter__ = AsyncMock(return_value=stream)
     stream.__aexit__ = AsyncMock(return_value=False)
 
     async def setup() -> Any:
+        # Armed here, not before _drain: the guard's entry budget check raises the
+        # same LLMTimeout, and any stall before setup starts would skip this path.
+        guarded._llm_retry_budget_started = time.monotonic()
         time.sleep(0.03)
         return stream
 

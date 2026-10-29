@@ -56,4 +56,34 @@ MOONSHOT_SPECS = {
             mode="moonshot_toggle",
         ),
     },
+    # K3.1 Pro (2026-10 release): post-trained K3 with a 1M window. Thinking is
+    # always on and exposes the low/high/max ladder (default max); temperature is
+    # fixed at 1.0, and sampling params must not be sent.
+    ("moonshot", "kimi-k3.1-pro"): {
+        "context_length": 1048576,
+        "max_completion_tokens": 131072,
+        "input_budget": "separate_output_limit",
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("low", "high", "max"),
+            default="max",
+            mode="moonshot_reasoning_effort",
+        ),
+    },
+    # Same model at ~2-3x output speed, with identical limits and controls.
+    ("moonshot", "kimi-k3.1-pro-highspeed"): {
+        "context_length": 1048576,
+        "max_completion_tokens": 131072,
+        "input_budget": "separate_output_limit",
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("low", "high", "max"),
+            default="max",
+            mode="moonshot_reasoning_effort",
+        ),
+    },
 }

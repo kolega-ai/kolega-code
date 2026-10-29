@@ -186,4 +186,23 @@ OPENAI_CHATGPT_SPECS = {
             mode="openai_responses_reasoning",
         ),
     },
+    # GPT-6.1 Terra mirrors the API spec, including the `none` rung that GPT-6.1
+    # Sol lacks. The Codex backend advertises a 500,000-token window for it and
+    # accepted a 520,009-token input (probed 2026-10-27), so this entry uses the
+    # real window instead of the family's conservative 400,000.
+    ("openai_chatgpt", "gpt-6.1-terra"): {
+        "context_length": 500000,
+        "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "supports_hosted_web_search": True,
+        "preferred_edit_protocol": "codex_apply_patch",
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "xhigh", "max"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
 }
