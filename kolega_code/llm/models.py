@@ -1303,24 +1303,6 @@ def _openai_tool_result_image_followup(tool_result: "ToolResult") -> Optional[Di
     return {"role": "user", "content": content}
 
 
-def _openai_messages_for_tool_results(tool_results: List["ToolResult"]) -> List[Dict[str, Any]]:
-    """Serialize tool results preserving OpenAI's required tool-message ordering.
-
-    All text-only ``role=tool`` messages are emitted first, followed by user image
-    messages for any image-bearing tool results. This keeps all required tool
-    responses contiguous immediately after the assistant tool-call message.
-    """
-    messages: List[Dict[str, Any]] = []
-    followups: List[Dict[str, Any]] = []
-    for tool_result in tool_results:
-        messages.append(_openai_tool_result_message(tool_result))
-        followup = _openai_tool_result_image_followup(tool_result)
-        if followup is not None:
-            followups.append(followup)
-    messages.extend(followups)
-    return messages
-
-
 class MessageChunk:
     """Unified representation of a message chunk during streaming"""
 

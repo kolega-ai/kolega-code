@@ -261,10 +261,3 @@ def _detect_config_signals(
             filename_hits[lang_id] = filenames
 
     return config_hits, filename_hits
-
-
-def _relative(root: Path, path: Path) -> str:
-    try:
-        return str(path.relative_to(root))
-    except ValueError:
-        return str(path)
