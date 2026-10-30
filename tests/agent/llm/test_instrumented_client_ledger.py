@@ -19,8 +19,8 @@ def _mock_langfuse():
     langfuse = MagicMock()
     generation = MagicMock()
     trace = MagicMock()
-    trace.start_generation = MagicMock(return_value=generation)
-    langfuse.start_span = MagicMock(return_value=trace)
+    trace.start_observation = MagicMock(return_value=generation)
+    langfuse.start_observation = MagicMock(return_value=trace)
     return langfuse
 
 

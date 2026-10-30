@@ -3,6 +3,7 @@
 Tests for the InstrumentedLLMClient class.
 """
 
+import contextlib
 import os
 from typing import Any, Optional
 import pytest
@@ -50,7 +51,7 @@ class TestInstrumentedLLMClient:
 
     @pytest.fixture
     def mock_langfuse(self):
-        """Create mock Langfuse client with generation tracking (v3 API)."""
+        """Create mock Langfuse client with generation tracking (v4 API)."""
         langfuse = MagicMock()
 
         # Create a mock generation that tracks calls
@@ -60,15 +61,29 @@ class TestInstrumentedLLMClient:
 
         # Create a mock trace/span that returns the generation
         trace = MagicMock()
-        trace.update_trace = MagicMock()
         trace.update = MagicMock()
         trace.end = MagicMock()
-        trace.start_generation = MagicMock(return_value=generation)
+        trace.start_observation = MagicMock(return_value=generation)
 
-        # Make langfuse.start_span() return the trace
-        langfuse.start_span = MagicMock(return_value=trace)
+        # Make langfuse.start_observation() return the trace
+        langfuse.start_observation = MagicMock(return_value=trace)
 
         return langfuse, generation
+
+    @pytest.fixture
+    def trace_attributes(self, monkeypatch):
+        """Capture the trace-level attributes handed to langfuse.propagate_attributes()."""
+        calls: list[dict[str, Any]] = []
+
+        @contextlib.contextmanager
+        def _capture(**kwargs):
+            calls.append(kwargs)
+            yield
+
+        import langfuse
+
+        monkeypatch.setattr(langfuse, "propagate_attributes", _capture)
+        return calls
 
     @pytest.fixture
     def instrumented_client(self, mock_langfuse):
@@ -231,10 +246,10 @@ class TestInstrumentedLLMClient:
         assert usage == {}
 
     @pytest.mark.asyncio
-    async def test_generate_with_langfuse(self, instrumented_client, mock_langfuse):
+    async def test_generate_with_langfuse(self, instrumented_client, mock_langfuse, trace_attributes):
         """Test generate method with Langfuse tracing."""
         langfuse, generation = mock_langfuse
-        trace = langfuse.start_span.return_value
+        trace = langfuse.start_observation.return_value
 
         # Mock the parent generate method
         mock_response = Mock()
@@ -254,23 +269,23 @@ class TestInstrumentedLLMClient:
             )
 
             # Verify Langfuse trace was called correctly
-            langfuse.start_span.assert_called_once()
-            span_args = langfuse.start_span.call_args
-
+            langfuse.start_observation.assert_called_once()
+            span_args = langfuse.start_observation.call_args
             assert span_args.kwargs["name"] == "test-agent-llm-call"
+            assert span_args.kwargs["as_type"] == "span"
 
-            # Verify trace attributes were updated
-            trace.update_trace.assert_called_once()
-            trace_update_args = trace.update_trace.call_args
-            assert trace_update_args.kwargs["user_id"] == "user-789"  # Now uses actual user_id
-            assert trace_update_args.kwargs["session_id"] == "workspace-123/thread-456"
-            assert "test" in trace_update_args.kwargs["tags"]
-            assert "user:user-789" in trace_update_args.kwargs["tags"]
+            # Verify trace attributes were applied to the span's context
+            assert len(trace_attributes) == 1
+            assert trace_attributes[0]["user_id"] == "user-789"  # Now uses actual user_id
+            assert trace_attributes[0]["session_id"] == "workspace-123/thread-456"
+            assert "test" in trace_attributes[0]["tags"]
+            assert "user:user-789" in trace_attributes[0]["tags"]
 
             # Verify generation was called on the trace
-            trace.start_generation.assert_called_once()
-            gen_args = trace.start_generation.call_args
+            trace.start_observation.assert_called_once()
+            gen_args = trace.start_observation.call_args
             assert gen_args.kwargs["name"] == "test-agent-llm-generation"
+            assert gen_args.kwargs["as_type"] == "generation"
             assert gen_args.kwargs["model"] == "claude-3-opus"
             assert gen_args.kwargs["model_parameters"]["temperature"] == 0.5
 
@@ -285,13 +300,13 @@ class TestInstrumentedLLMClient:
             trace.end.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_generate_with_user_tracking(self):
+    async def test_generate_with_user_tracking(self, trace_attributes):
         """Test generate method with user tracking information."""
         mock_langfuse = MagicMock()
         generation = MagicMock()
         trace = MagicMock()
-        trace.start_generation = MagicMock(return_value=generation)
-        mock_langfuse.start_span = MagicMock(return_value=trace)
+        trace.start_observation = MagicMock(return_value=generation)
+        mock_langfuse.start_observation = MagicMock(return_value=trace)
 
         # Create client with user information
         client = InstrumentedLLMClient(
@@ -322,14 +337,13 @@ class TestInstrumentedLLMClient:
             await client.generate(messages=messages, model="claude-3-opus", temperature=0.5, max_completion_tokens=100)
 
             # Verify trace attributes include user information
-            trace.update_trace.assert_called_once()
-            trace_update_args = trace.update_trace.call_args
-            assert trace_update_args.kwargs["user_id"] == "user-789"  # Uses actual user_id, not workspace
-            assert trace_update_args.kwargs["session_id"] == "workspace-123/thread-456"  # No email in session name
-            assert "user:user-789" in trace_update_args.kwargs["tags"]
+            assert len(trace_attributes) == 1
+            assert trace_attributes[0]["user_id"] == "user-789"  # Uses actual user_id, not workspace
+            assert trace_attributes[0]["session_id"] == "workspace-123/thread-456"  # No email in session name
+            assert "user:user-789" in trace_attributes[0]["tags"]
 
             # Verify metadata includes user information
-            span_args = mock_langfuse.start_span.call_args
+            span_args = mock_langfuse.start_observation.call_args
             metadata = span_args.kwargs["metadata"]
             assert metadata["user_id"] == "user-789"
             assert metadata["user_email"] == "test@example.com"
@@ -355,7 +369,7 @@ class TestInstrumentedLLMClient:
     async def test_error_handling(self, instrumented_client, mock_langfuse):
         """Test error handling in generate method."""
         langfuse, generation = mock_langfuse
-        trace = langfuse.start_span.return_value
+        trace = langfuse.start_observation.return_value
 
         error_msg = "API Error"
         with patch("kolega_code.llm.client.LLMClient.generate", AsyncMock(side_effect=Exception(error_msg))):
@@ -378,10 +392,10 @@ class TestInstrumentedLLMClient:
             trace.end.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_stream_with_langfuse(self, instrumented_client, mock_langfuse):
+    async def test_stream_with_langfuse(self, instrumented_client, mock_langfuse, trace_attributes):
         """Test stream method with Langfuse tracing."""
         langfuse, generation = mock_langfuse
-        trace = langfuse.start_span.return_value
+        trace = langfuse.start_observation.return_value
 
         # Mock stream context manager
         mock_stream = AsyncMock()
@@ -398,20 +412,82 @@ class TestInstrumentedLLMClient:
             result = await result_coro
 
             # Verify Langfuse trace was called
-            langfuse.start_span.assert_called_once()
-            span_args = langfuse.start_span.call_args
+            langfuse.start_observation.assert_called_once()
+            span_args = langfuse.start_observation.call_args
             assert span_args.kwargs["name"] == "test-agent-llm-stream"
 
-            # Verify trace attributes were updated
-            trace.update_trace.assert_called_once()
-            trace_update_args = trace.update_trace.call_args
-            assert "streaming" in trace_update_args.kwargs["tags"]
+            # Verify trace attributes were applied to the span's context
+            assert len(trace_attributes) == 1
+            assert "streaming" in trace_attributes[0]["tags"]
 
             # Verify generation was called on the trace
-            trace.start_generation.assert_called_once()
-            gen_args = trace.start_generation.call_args
+            trace.start_observation.assert_called_once()
+            gen_args = trace.start_observation.call_args
             assert gen_args.kwargs["name"] == "test-agent-llm-stream-generation"
             assert gen_args.kwargs["model"] == "claude-3-opus"
 
             # Should return an instrumented wrapper
             assert isinstance(result, MinimalLangfuseStreamWrapper)
+
+
+@pytest.mark.asyncio
+async def test_real_langfuse_sdk_emits_trace_attributes():
+    """Drive the real Langfuse v4 SDK and read the spans it produces.
+
+    The mocked tests above only prove our calls; this one proves the calls are
+    valid against the installed SDK and that trace-level attributes reach the
+    root span. Uses its own TracerProvider so a globally registered provider
+    cannot swallow the exported spans.
+    """
+    from langfuse import Langfuse
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    # The host is never contacted: span_exporter moves the SDK's own processor
+    # onto the in-memory exporter, and tracer_provider keeps these spans off any
+    # globally registered provider. Both processors may export a span; the
+    # assertions below read them by name.
+    langfuse = Langfuse(
+        public_key="pk-lf-test",
+        secret_key="sk-lf-test",
+        host="http://127.0.0.1:9",
+        tracing_enabled=True,
+        tracer_provider=provider,
+        span_exporter=exporter,
+    )
+    client = InstrumentedLLMClient(
+        provider="anthropic",
+        api_key="test-key",
+        langfuse_client=langfuse,
+        workspace_id="workspace-123",
+        thread_id="thread-456",
+        agent_type="coder",
+        environment="production",
+        user_id="user-789",
+    )
+
+    mock_response = Mock()
+    mock_response.to_dict = Mock(return_value={"content": "ok"})
+    mock_response.usage_metadata = {"provider": "anthropic", "input_tokens": 10, "output_tokens": 5}
+    messages = MessageHistory([Message(role="user", content=[TextBlock(text="Hello")])])
+
+    with patch("kolega_code.llm.client.LLMClient.generate", AsyncMock(return_value=mock_response)):
+        await client.generate(messages=messages, model="claude-3-opus", temperature=0.5, max_completion_tokens=100)
+
+    spans = {span.name: dict(span.attributes or {}) for span in exporter.get_finished_spans()}
+    span_attrs = spans["coder-llm-call"]
+    generation_attrs = spans["coder-llm-generation"]
+
+    assert span_attrs["langfuse.observation.type"] == "span"
+    assert span_attrs["user.id"] == "user-789"
+    assert span_attrs["session.id"] == "workspace-123/thread-456"
+    assert span_attrs["langfuse.environment"] == "production"
+    assert "provider:anthropic" in str(span_attrs["langfuse.trace.tags"])
+    assert generation_attrs["langfuse.observation.type"] == "generation"
+    assert generation_attrs["langfuse.observation.model.name"] == "claude-3-opus"
+    assert '"output": 5' in str(generation_attrs["langfuse.observation.usage_details"])
+    assert generation_attrs["langfuse.observation.level"] == "DEFAULT"

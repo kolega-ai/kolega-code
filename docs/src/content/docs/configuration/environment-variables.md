@@ -306,6 +306,9 @@ Browserless applies the account's default session duration.
 
 Optional [Langfuse](https://langfuse.com/) tracing of LLM usage.
 
+Kolega Code uses the Langfuse Python SDK v4. Langfuse Cloud always supports it;
+a self-hosted Langfuse server must run a release that supports the v4 SDK.
+
 | Variable | Purpose |
 | --- | --- |
 | `LANGFUSE_HOST` | Langfuse host URL |

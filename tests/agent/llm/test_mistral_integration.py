@@ -268,8 +268,8 @@ def _mock_langfuse() -> MagicMock:
     langfuse = MagicMock()
     generation = MagicMock()
     trace = MagicMock()
-    trace.start_generation = MagicMock(return_value=generation)
-    langfuse.start_span = MagicMock(return_value=trace)
+    trace.start_observation = MagicMock(return_value=generation)
+    langfuse.start_observation = MagicMock(return_value=trace)
     return langfuse
 
 
@@ -300,7 +300,7 @@ async def test_instrumented_mistral_counters_and_usage_recorder(mistral_http: Mi
     assert recorded[0]["input_tokens"] == 41
     assert recorded[0]["output_tokens"] == 7
     assert recorded[0]["metadata"]["raw_usage"] == response.usage_metadata
-    generation = langfuse.start_span.return_value.start_generation.return_value
+    generation = langfuse.start_observation.return_value.start_observation.return_value
     assert generation.update.call_args.kwargs["usage_details"] == {
         "input": 41,
         "output": 7,
@@ -333,7 +333,7 @@ async def test_instrumented_mistral_stream_counters(mistral_http: MistralHttp) -
         await _close_transport(client)
     assert len(recorded) == 1
     assert (recorded[0]["input_tokens"], recorded[0]["output_tokens"]) == (41, 7)
-    generation = langfuse.start_span.return_value.start_generation.return_value
+    generation = langfuse.start_observation.return_value.start_observation.return_value
     assert generation.update.call_args.kwargs["usage_details"]["total"] == 48
 
 
