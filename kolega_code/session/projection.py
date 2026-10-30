@@ -18,6 +18,7 @@ between two independent folds. Use :func:`replay` to build state from scratch.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
@@ -28,6 +29,12 @@ from kolega_code.events import AgentEvent, ArtifactRef, KnownEventType
 TERMINAL_BUFFER_CHARS = 2_000_000
 #: Cap on retained log lines; logs are diagnostic, not the record of the session.
 LOG_BUFFER_LINES = 2_000
+#: Terminal chunks retained separately; joined lazily so appending one chunk does
+#: not recopy the whole buffer. Merged back into one chunk past this many parts.
+TERMINAL_MAX_PARTS = 1_024
+#: A partially consumed head chunk keeps its dropped prefix until it is released.
+#: Merge once this much is dropped so an oversized event cannot pin it in memory.
+TERMINAL_MAX_DROPPED_PREFIX = 512 * 1024
 
 
 class ProjectionError(RuntimeError):
@@ -131,7 +138,6 @@ class PresentationState:
     conversation: list[ConversationItem] = field(default_factory=list)
     sub_agents: dict[str, SubAgentActivity] = field(default_factory=dict)
     turns: list[TurnMarker] = field(default_factory=list)
-    terminal: str = ""
     terminal_truncated: bool = False
     logs: list[tuple[str, str]] = field(default_factory=list)
     edit_previews: list[dict] = field(default_factory=list)
@@ -156,6 +162,32 @@ class PresentationState:
     # -- Lookups kept alongside the lists so folding stays O(1) per event ----
     _streams: dict[str, int] = field(default_factory=dict, repr=False)
     _tools: dict[str, int] = field(default_factory=dict, repr=False)
+
+    # -- Terminal text is chunked while folding and joined on demand --------
+    _terminal_parts: deque[str] = field(default_factory=deque, repr=False, compare=False)
+    #: Characters already dropped from the front of ``_terminal_parts[0]``.
+    _terminal_offset: int = field(default=0, repr=False, compare=False)
+    _terminal_chars: int = field(default=0, repr=False, compare=False)
+    _terminal_text: Optional[str] = field(default=None, repr=False, compare=False)
+
+    @property
+    def terminal(self) -> str:
+        """Retained terminal text.
+
+        Folding appends one chunk per output event, so materializing the whole
+        buffer on every append made replay quadratic in the session length.
+        """
+        if self._terminal_text is None:
+            text = "".join(self._terminal_parts)
+            self._terminal_text = text[self._terminal_offset :] if self._terminal_offset else text
+        return self._terminal_text
+
+    @terminal.setter
+    def terminal(self, value: str) -> None:
+        self._terminal_parts = deque([value] if value else ())
+        self._terminal_offset = 0
+        self._terminal_chars = len(value)
+        self._terminal_text = value
 
     def to_dict(self) -> dict:
         """JSON-safe view for transport to a web client or player.
@@ -602,11 +634,44 @@ def _on_terminal_output(state: PresentationState, event: AgentEvent) -> None:
 def _append_terminal(state: PresentationState, text: str) -> None:
     if not text:
         return
-    combined = state.terminal + text
-    if len(combined) > TERMINAL_BUFFER_CHARS:
-        combined = combined[-TERMINAL_BUFFER_CHARS:]
+    parts = state._terminal_parts
+    parts.append(text)
+    state._terminal_chars += len(text)
+    state._terminal_text = None
+    if state._terminal_chars > TERMINAL_BUFFER_CHARS:
+        _drop_terminal_prefix(state, state._terminal_chars - TERMINAL_BUFFER_CHARS)
         state.terminal_truncated = True
-    state.terminal = combined
+    if len(parts) > TERMINAL_MAX_PARTS or state._terminal_offset > TERMINAL_MAX_DROPPED_PREFIX:
+        _compact_terminal(state)
+
+
+def _drop_terminal_prefix(state: PresentationState, excess: int) -> None:
+    """Drop ``excess`` characters from the front of the retained terminal text.
+
+    Advancing ``_terminal_offset`` instead of re-slicing keeps the head chunk
+    from being copied again for every event once the buffer is full.
+    """
+    parts = state._terminal_parts
+    while excess > 0:
+        available = len(parts[0]) - state._terminal_offset
+        if available <= excess:
+            parts.popleft()
+            state._terminal_offset = 0
+            state._terminal_chars -= available
+            excess -= available
+        else:
+            state._terminal_offset += excess
+            state._terminal_chars -= excess
+            return
+
+
+def _compact_terminal(state: PresentationState) -> None:
+    """Merge retained chunks so a stream of tiny deltas cannot grow the list."""
+    text = "".join(state._terminal_parts)
+    if state._terminal_offset:
+        text = text[state._terminal_offset :]
+    state._terminal_parts = deque([text] if text else ())
+    state._terminal_offset = 0
 
 
 def _on_log_message(state: PresentationState, event: AgentEvent) -> None:

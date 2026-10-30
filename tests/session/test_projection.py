@@ -430,6 +430,36 @@ def test_terminal_buffer_is_bounded_and_says_so() -> None:
     assert state.terminal_truncated is True
 
 
+def test_terminal_buffer_keeps_the_exact_tail_across_uneven_chunks() -> None:
+    """Chunking is an implementation detail: the retained text is still the tail."""
+    from kolega_code.session import projection
+
+    cap = projection.TERMINAL_BUFFER_CHARS
+    chunks = ["a" * (cap // 2), "b" * (cap // 2), "c" * 11, "d" * (cap // 4)]
+    state = replay(
+        [_event(KnownEventType.TERMINAL_OUTPUT, index + 1, output=chunk) for index, chunk in enumerate(chunks)]
+    )
+    assert state.terminal == "".join(chunks)[-cap:]
+    assert state.terminal_truncated is True
+
+
+def test_terminal_buffer_compacts_a_stream_of_small_chunks() -> None:
+    """Many tiny deltas must not grow the retained chunk list without bound."""
+    from kolega_code.session import projection
+
+    count = projection.TERMINAL_MAX_PARTS * 3
+    state = replay([_event(KnownEventType.TERMINAL_OUTPUT, index + 1, output="ab") for index in range(count)])
+    assert state.terminal == "ab" * count
+    assert len(state._terminal_parts) <= projection.TERMINAL_MAX_PARTS
+
+
+def test_terminal_assignment_replaces_the_buffer_before_more_output() -> None:
+    state = PresentationState()
+    state.terminal = "already here"
+    fold(state, _event(KnownEventType.TERMINAL_OUTPUT, 1, output=" now"))
+    assert state.terminal == "already here now"
+
+
 def test_state_is_json_serializable() -> None:
     events = _session_events()
     events[5].artifacts = [
