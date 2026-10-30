@@ -513,8 +513,8 @@ class SettingsScreen(ModalScreen[None]):
             with Vertical(classes="settings-section", id="settings_stt") as stt_section:
                 stt_section.border_title = "Voice transcription"
                 yield Static(
-                    "Transcribe gateway voice notes with a remote provider: Groq's hosted "
-                    "whisper-large-v3-turbo, which reuses the Groq API key from the Providers page.",
+                    "Transcribe voice audio with a remote provider. Groq and OpenAI reuse "
+                    "their API keys from the Providers page.",
                     classes="settings-hint",
                 )
                 yield Label("Speech-to-text")
@@ -532,7 +532,7 @@ class SettingsScreen(ModalScreen[None]):
                     value=DEFAULT_STT_PROVIDER,
                 )
                 yield Label("Model")
-                yield Input(id="stt_model_input", placeholder="whisper-large-v3-turbo")
+                yield Input(id="stt_model_input", placeholder="Leave blank for provider default")
                 yield Static("", id="stt_key_status", classes="settings-hint")
             with Vertical(classes="settings-section", id="settings_lsp") as lsp_section:
                 lsp_section.border_title = "Language Servers (LSP)"

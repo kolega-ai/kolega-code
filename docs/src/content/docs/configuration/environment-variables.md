@@ -223,9 +223,9 @@ so only what you change needs to be stored:
 | `gateway.session_idle_ttl_seconds` | `3600` | Idle session eviction (`null` disables). |
 | `gateway.edit_throttle_seconds` | `1` | Minimum interval between edit-in-place streaming updates. |
 | `gateway.telegram_proxy` | — | Optional HTTP proxy for the Telegram connection. |
-| `stt_enabled` (top level) | `false` | Transcribe gateway voice notes (Tools → Voice transcription). |
-| `stt_provider` (top level) | `groq` | Remote speech-to-text provider (`groq` hosted `whisper-large-v3-turbo`, reusing the Groq API key). |
-| `stt_model` (top level) | provider default | Provider-specific model override (`whisper-large-v3-turbo` by default). |
+| `stt_enabled` (top level) | `false` | Transcribe voice audio remotely (Tools → Voice transcription). |
+| `stt_provider` (top level) | `groq` | Remote speech-to-text provider: `groq` or `openai`. The selected provider reuses its API key from the Providers page or environment. |
+| `stt_model` (top level) | provider default | Provider-specific model override (`whisper-large-v3-turbo` for Groq; `gpt-transcribe` for OpenAI). |
 
 All admitted users are **trusted operators** of the local agent, not sandboxed
 guests. Admitted group participants share their chat's session and control
