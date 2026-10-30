@@ -45,7 +45,7 @@ class ProjectionError(RuntimeError):
 class ConversationItem:
     """One block in the transcript."""
 
-    #: "user" | "assistant" | "thinking" | "tool" | "system" | "status"
+    #: "user" | "peer_message" | "assistant" | "thinking" | "tool" | "system" | "status"
     kind: str
     text: str = ""
     complete: bool = True
@@ -132,6 +132,17 @@ class ContextStatus:
 
 
 @dataclass
+class _PeerMessageRecord:
+    """Private correlation state for one peer-message lifecycle."""
+
+    index: int
+    sender_id: str
+    sender: str
+    body: str
+    delivered: bool = False
+
+
+@dataclass
 class PresentationState:
     """Everything a frontend needs to draw a session at one point in time."""
 
@@ -162,6 +173,8 @@ class PresentationState:
     # -- Lookups kept alongside the lists so folding stays O(1) per event ----
     _streams: dict[str, int] = field(default_factory=dict, repr=False)
     _tools: dict[str, int] = field(default_factory=dict, repr=False)
+    _peer_messages: dict[str, _PeerMessageRecord] = field(default_factory=dict, repr=False)
+    _pending_peer_turns: list[str] = field(default_factory=list, repr=False)
 
     # -- Terminal text is chunked while folding and joined on demand --------
     _terminal_parts: deque[str] = field(default_factory=deque, repr=False, compare=False)
@@ -386,6 +399,11 @@ def _text_of(event: AgentEvent, *keys: str) -> str:
         if isinstance(value, str) and value:
             return value
     return ""
+
+
+def _string_content(event: AgentEvent, key: str) -> str:
+    value = event.content.get(key)
+    return value if isinstance(value, str) else ""
 
 
 # ---------------------------------------------------------------------------
@@ -742,10 +760,18 @@ def _on_turn_started(state: PresentationState, event: AgentEvent) -> None:
     # the activity flag would report the session idle while the main agent is
     # still going. The task text still opens the sub-agent's own trajectory.
     if _sub_agent_key(event) is None:
+        peer_text = _consume_peer_turn(state, user_text)
         state.turns.append(
-            TurnMarker(turn_id=turn_id, user_text=user_text, started_seq=event.seq, started_ms=event.elapsed_ms)
+            TurnMarker(
+                turn_id=turn_id,
+                user_text=peer_text or user_text,
+                started_seq=event.seq,
+                started_ms=event.elapsed_ms,
+            )
         )
         state.activity = "generating"
+        if peer_text is not None:
+            return
     if user_text:
         _append(state, ConversationItem(kind="user", text=user_text), event)
 
@@ -820,6 +846,85 @@ def _on_system_message(state: PresentationState, event: AgentEvent) -> None:
         _append(state, ConversationItem(kind="system", text=text), event)
 
 
+def _on_peer_message(state: PresentationState, event: AgentEvent, status: str) -> None:
+    """Fold a peer message's arrival and queue acceptance into one item."""
+    message_id = _string_content(event, "message_id")
+    sender_id = _string_content(event, "sender_id")
+    sender_title = _string_content(event, "sender_title")
+    body = _text_of(event, "text")
+    record = state._peer_messages.get(message_id) if message_id else None
+    if record is not None:
+        was_delivered = record.delivered
+        if sender_id:
+            record.sender_id = sender_id
+        if sender_title:
+            record.sender = sender_title
+        elif sender_id and record.sender == "peer":
+            record.sender = sender_id
+        if body:
+            record.body = body
+        record.delivered = record.delivered or status == "delivered"
+        existing = state.conversation[record.index] if 0 <= record.index < len(state.conversation) else None
+        if existing is not None and existing.kind == "peer_message":
+            existing.text = _peer_display_text(record.sender, record.body)
+            existing.tool_name = record.sender
+            existing.status = "delivered" if record.delivered else "received"
+            if record.delivered and not was_delivered:
+                state._pending_peer_turns.append(message_id)
+            return
+
+    sender = sender_title or sender_id or "peer"
+    state.conversation.append(
+        ConversationItem(
+            kind="peer_message",
+            text=_peer_display_text(sender, body),
+            tool_name=sender,
+            tool_call_id=message_id or None,
+            status=status,
+            seq=event.seq,
+            elapsed_ms=event.elapsed_ms,
+        )
+    )
+    if not message_id:
+        return
+
+    record = _PeerMessageRecord(
+        index=len(state.conversation) - 1,
+        sender_id=sender_id,
+        sender=sender,
+        body=body,
+        delivered=status == "delivered",
+    )
+    state._peer_messages[message_id] = record
+    if record.delivered:
+        state._pending_peer_turns.append(message_id)
+
+
+def _peer_display_text(sender: str, body: str) -> str:
+    return f"← {sender}\n{body}" if body else f"← {sender}"
+
+
+def _consume_peer_turn(state: PresentationState, user_text: str) -> Optional[str]:
+    """Match the model-facing peer wrapper and keep it out of the transcript."""
+    for index, message_id in enumerate(state._pending_peer_turns):
+        record = state._peer_messages.get(message_id)
+        if record is None or not record.sender_id or not record.body:
+            continue
+        prefix = f"[Peer message from session '{record.sender}' (id {record.sender_id[:8]})]"
+        if user_text.startswith(prefix) and user_text.endswith(f"\n\n{record.body}"):
+            del state._pending_peer_turns[index]
+            return _peer_display_text(record.sender, record.body)
+    return None
+
+
+def _on_peer_message_received(state: PresentationState, event: AgentEvent) -> None:
+    _on_peer_message(state, event, "received")
+
+
+def _on_peer_message_delivered(state: PresentationState, event: AgentEvent) -> None:
+    _on_peer_message(state, event, "delivered")
+
+
 def _ignore(state: PresentationState, event: AgentEvent) -> None:
     """Diagnostics-only events: recorded for debugging, never rendered."""
     return None
@@ -848,6 +953,8 @@ _HANDLERS = {
     KnownEventType.CONTROL_REQUESTED: _on_control_requested,
     KnownEventType.CONTROL_RESOLVED: _on_control_resolved,
     KnownEventType.SYSTEM_MESSAGE: _on_system_message,
+    KnownEventType.PEER_MESSAGE_RECEIVED: _on_peer_message_received,
+    KnownEventType.PEER_MESSAGE_DELIVERED: _on_peer_message_delivered,
     KnownEventType.MEMORY_SUGGESTIONS: _ignore,
     KnownEventType.CREDIT_ALERT: _on_status_update,
     # Diagnostics timeline only; the TUI does not render these either.
