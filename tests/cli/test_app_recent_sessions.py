@@ -64,10 +64,22 @@ def _saved(store: SessionStore, project: Path, title: str = "Previous work") -> 
     return record
 
 
-def _row(app: KolegaCodeApp, session_id: str) -> RecentSessionRow:
-    return next(
-        row for row in app.query(RecentSessionRow) if row._item is not None and row._item.session_id == session_id
-    )
+async def _wait_for_row(pilot: Pilot, app: KolegaCodeApp, session_id: str) -> RecentSessionRow:
+    """Return a recent-session row once the startup card has mounted it.
+
+    ``_startup_recent_sessions()`` is populated by a worker before the mount pass
+    that renders the rows, so querying straight after that wait can race the
+    rebuild and find no row at all.
+    """
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        rows = [
+            row for row in app.query(RecentSessionRow) if row._item is not None and row._item.session_id == session_id
+        ]
+        if rows:
+            return rows[0]
+    raise AssertionError("recent-session row did not mount")
 
 
 @pytest.mark.asyncio
@@ -163,7 +175,7 @@ async def test_locked_click_preserves_current_ui_and_retry_resumes_after_unlock(
         async with app.run_test(size=(120, 45)) as pilot:
             app._set_sidebar_visible(False)
             await _wait(pilot, lambda: bool(app._startup_recent_sessions()))
-            row = _row(app, previous.session_id)
+            row = await _wait_for_row(pilot, app, previous.session_id)
             await _wait(pilot, lambda: row.region.height == 1)
             original_region = row.region
             assert await pilot.click(row)
@@ -207,7 +219,7 @@ async def test_draft_confirmation_cancel_preserves_draft_and_releases_target(
         await _wait(pilot, lambda: bool(app._startup_recent_sessions()))
         composer = app.query_one(ChatComposer)
         composer.load_text("do not discard this")
-        row = _row(app, previous.session_id)
+        row = await _wait_for_row(pilot, app, previous.session_id)
         await _wait(pilot, lambda: row.region.height == 1)
         assert await pilot.click(row)
         await _wait(pilot, lambda: isinstance(app.screen, ConfirmSettingsActionScreen))
@@ -246,7 +258,7 @@ async def test_attachment_only_confirmation_cancel_preserves_attachment(
         await _wait(pilot, lambda: bool(app._startup_recent_sessions()))
         app._pending_image_attachments.append(attachment)
         assert not app.query_one(ChatComposer).text
-        row = _row(app, previous.session_id)
+        row = await _wait_for_row(pilot, app, previous.session_id)
         await _wait(pilot, lambda: row.region.height == 1)
         assert await pilot.click(row)
         await _wait(pilot, lambda: isinstance(app.screen, ConfirmSettingsActionScreen))
@@ -386,7 +398,7 @@ async def test_cancelled_claim_waits_for_disk_thread_and_releases_reservation(
     try:
         async with app.run_test(size=(120, 45)) as pilot:
             await _wait(pilot, lambda: bool(app._startup_recent_sessions()))
-            row = _row(app, previous.session_id)
+            row = await _wait_for_row(pilot, app, previous.session_id)
             await _wait(pilot, lambda: row.region.height == 1)
             assert await pilot.click(row)
             await _wait(pilot, started.is_set)
@@ -426,7 +438,7 @@ async def test_unavailable_target_does_not_close_the_current_ui(
             app.store.path_for(previous.session_id).write_text(json.dumps(metadata))
         else:
             app.store.events_path_for(previous.session_id).write_text("not valid json\n")
-        row = _row(app, previous.session_id)
+        row = await _wait_for_row(pilot, app, previous.session_id)
         await _wait(pilot, lambda: row.region.height == 1)
         assert await pilot.click(row)
         await _wait(pilot, lambda: bool(notices) and not app._resume_in_progress)
@@ -456,7 +468,7 @@ async def test_saved_workspace_confirmation_cancel_leaves_session_unchanged(
     monkeypatch.setattr("kolega_code.worktrees.resolve_worktree", resolve)
     async with app.run_test(size=(120, 45)) as pilot:
         await _wait(pilot, lambda: bool(app._startup_recent_sessions()))
-        row = _row(app, previous.session_id)
+        row = await _wait_for_row(pilot, app, previous.session_id)
         await _wait(pilot, lambda: row.region.height == 1)
         assert await pilot.click(row)
         await _wait(pilot, lambda: isinstance(app.screen, ConfirmSettingsActionScreen))
@@ -476,7 +488,7 @@ async def test_keyboard_resume_and_confirmed_draft_discard(tmp_path: Path, monke
     async with app.run_test(size=(120, 45)) as pilot:
         app._set_sidebar_visible(False)
         await _wait(pilot, lambda: bool(app._startup_recent_sessions()))
-        row = _row(app, previous.session_id)
+        row = await _wait_for_row(pilot, app, previous.session_id)
         composer = app.query_one(ChatComposer)
         composer.load_text("unsent draft")
         composer.focus()
@@ -525,7 +537,7 @@ def test_real_cli_click_relaunches_and_restores_conversation_and_controls(
             self._set_sidebar_visible(False)
             if len(instances) == 1:
                 await _wait(pilot, lambda: bool(self._startup_recent_sessions()))
-                row = _row(self, previous.session_id)
+                row = await _wait_for_row(pilot, self, previous.session_id)
                 await _wait(pilot, lambda: row.region.height == 1)
                 assert await pilot.click(row)
                 await _wait(pilot, lambda: self._quit_cleanly and not self._resume_in_progress)
