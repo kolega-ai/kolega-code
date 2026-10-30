@@ -201,6 +201,8 @@ class SettingsScreen(ModalScreen[None]):
         # than the highlighted row: it is updated before the Input is rewritten, so the
         # Changed event that rewrite posts can never be filed against the wrong provider.
         self.credential_provider: Optional[str] = None
+        # A deferred apply-label refresh is already queued for this batch of Changed events.
+        self._apply_label_pending = False
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="settings_screen_header"):
@@ -853,7 +855,7 @@ class SettingsScreen(ModalScreen[None]):
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "agent_role_select":
             self._show_agent_role(str(event.value))
-        self.call_after_refresh(self._refresh_apply_label)
+        self._queue_apply_label_refresh()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "provider_api_key_input":
@@ -862,7 +864,7 @@ class SettingsScreen(ModalScreen[None]):
         elif event.input.id == "provider_account_id_input":
             self._reset_connection_status()
             self.owner._refresh_provider_account_status()
-        self.call_after_refresh(self._refresh_apply_label)
+        self._queue_apply_label_refresh()
 
     def _mcp_snapshot(self) -> tuple[tuple[str, Any], ...]:
         return tuple(
@@ -976,7 +978,7 @@ class SettingsScreen(ModalScreen[None]):
         self.run_worker(run(), name="settings-mcp-action", group="settings-mcp-actions")
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
-        self.call_after_refresh(self._refresh_apply_label)
+        self._queue_apply_label_refresh()
 
     def _reset_connection_status(self) -> None:
         if self._initializing:
@@ -1030,14 +1032,32 @@ class SettingsScreen(ModalScreen[None]):
         self._original_theme = self.owner.settings.active_theme or theme.DEFAULT_THEME_NAME
         self._refresh_apply_label()
 
+    def _queue_apply_label_refresh(self) -> None:
+        """Queue one deferred label refresh for a burst of Changed events.
+
+        Populating the screen fires Changed for every Input/Select/Switch, and each
+        refresh walks the whole widget tree. The queued callbacks all run before the
+        next refresh, so the last event is already reflected and the rest are wasted.
+        """
+        if self._apply_label_pending:
+            return
+        self._apply_label_pending = True
+
+        def refresh() -> None:
+            self._apply_label_pending = False
+            self._refresh_apply_label()
+
+        self.call_after_refresh(refresh)
+
     def _refresh_apply_label(self) -> None:
         if self._initializing:
             return
+        dirty = self.dirty
         try:
             button = self.query_one("#save_settings", Button)
             button.display = self.category != "mcp"
-            button.label = "Apply Changes" if self.dirty else "Applied"
-            button.disabled = not self.dirty or self.mcp_busy
+            button.label = "Apply Changes" if dirty else "Applied"
+            button.disabled = not dirty or self.mcp_busy
             self.query_one("#close_settings", Button).disabled = self.mcp_busy
         except Exception:
             pass
