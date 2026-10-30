@@ -1075,7 +1075,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             )
         else:
             self._set_endpoint_status(messages.ENDPOINT_APPLY_REQUIRED, "ok")
-        screen.call_after_refresh(screen._refresh_apply_label)
+        screen._queue_apply_label_refresh()
 
     def _delete_endpoint_from_ui(self) -> None:
         screen = getattr(self, "_settings_screen", None)
@@ -1094,7 +1094,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             )
         else:
             self._set_endpoint_status(messages.ENDPOINT_DELETED, "ok")
-        screen.call_after_refresh(screen._refresh_apply_label)
+        screen._queue_apply_label_refresh()
 
     def _handle_endpoint_settings_button(self, button_id: str) -> None:
         if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
