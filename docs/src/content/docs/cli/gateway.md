@@ -235,13 +235,18 @@ the gateway to load the correction.
 
 ## Voice transcription
 
-Voice notes transcribe remotely through Groq's hosted `whisper-large-v3-turbo`
-(the same provider/model Hermes uses), configured in the settings TUI under
-**Tools → Voice transcription**. `stt_enabled`, `stt_provider`, and `stt_model`
-live at the top level of `settings.json`; the provider reuses the Groq API key
-stored on the Providers page (or `GROQ_API_KEY` in the gateway's environment).
-Audio is uploaded to Groq's transcription endpoint for the request and never
-stored. Transcription is remote-only — there is no local whisper backend.
+Voice notes transcribe remotely through the provider selected in the settings
+TUI under **Tools → Voice transcription**:
+
+- `groq` uses hosted `whisper-large-v3-turbo` by default and reuses the Groq
+  API key stored on the Providers page (or `GROQ_API_KEY`).
+- `openai` uses `gpt-transcribe` by default and reuses the OpenAI API key
+  stored on the Providers page (or `OPENAI_API_KEY`).
+
+`stt_enabled`, `stt_provider`, and `stt_model` live at the top level of
+`settings.json`. Audio up to 25 MB is uploaded to the selected provider's
+transcription endpoint for the request and never stored by Kolega Code.
+Transcription is remote-only — there is no local Whisper backend.
 
 ## Notes
 

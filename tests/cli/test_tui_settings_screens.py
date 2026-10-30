@@ -1542,16 +1542,15 @@ async def test_tools_page_stt_settings_round_trip(
         await pilot.pause()
 
         screen.query_one("#stt_enabled_select", Select).value = "true"
-        # The single remote provider is preselected; blanking the model resets
-        # to the provider default on save.
         assert screen.query_one("#stt_provider_select", Select).value == "groq"
-        screen.query_one("#stt_model_input", Input).value = "whisper-large-v3"
+        screen.query_one("#stt_provider_select", Select).value = "openai"
+        screen.query_one("#stt_model_input", Input).value = "gpt-4o-mini-transcribe"
 
         await app._save_settings_from_ui()
         settings = settings_store.load()
         assert settings.stt_enabled is True
-        assert settings.stt_provider == "groq"
-        assert settings.stt_model == "whisper-large-v3"
+        assert settings.stt_provider == "openai"
+        assert settings.stt_model == "gpt-4o-mini-transcribe"
 
 
 @pytest.mark.asyncio
