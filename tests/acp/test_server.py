@@ -15,18 +15,21 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from acp.interfaces import Client
-from acp.schema import AgentMessageChunk, RequestPermissionResponse
+from acp.schema import AgentMessageChunk, ImageContentBlock, RequestPermissionResponse, TextContentBlock
 
 from kolega_code.acp.permissions import OPTION_ALLOW_ONCE
 from kolega_code.acp.server import AcpAgent
 from kolega_code.acp.session import AcpSession
 from kolega_code.cli.connection import CliConnectionManager
 from kolega_code.cli.session_store import SessionRecord
-from kolega_code.llm.models import Message, TextBlock
+from kolega_code.config import ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.llm.models import ImageBlock, Message, TextBlock
 from kolega_code.llm.providers.models import TokenCount
 from kolega_code.permissions import PermissionKind, PermissionRequest
 
 from tests.agent.compaction_helpers import build_agent
+
+PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
 
 class _FakeConn:
@@ -164,6 +167,8 @@ async def test_initialize_echoes_protocol_version_and_advertises_load() -> None:
     capabilities = response.agent_capabilities
     assert capabilities is not None
     assert capabilities.load_session is True
+    assert capabilities.prompt_capabilities is not None
+    assert capabilities.prompt_capabilities.image is True
     assert capabilities.session_capabilities is not None
     assert capabilities.session_capabilities.list is not None
     assert capabilities.session_capabilities.close is not None
@@ -182,6 +187,98 @@ async def test_prompt_streams_text_and_completes(tmp_path: Path) -> None:
     texts = [u.content.text for u in conn.updates if isinstance(u, AgentMessageChunk)]
     assert texts, "expected streamed agent text"
     assert "hello" in "".join(texts)
+
+
+@pytest.mark.asyncio
+async def test_prompt_passes_mixed_text_and_images_to_agent(tmp_path: Path) -> None:
+    llm = StreamingLLM()
+    session, _cm = _make_session(tmp_path, llm)
+    agent, _conn = _make_agent(session)
+    new_session = await agent.new_session(cwd=str(tmp_path))
+
+    response = await agent.prompt(
+        session_id=new_session.session_id,
+        prompt=cast(
+            Any,
+            [
+                TextContentBlock(type="text", text="Inspect this screenshot."),
+                ImageContentBlock(type="image", data=PNG_1X1, mime_type="image/png"),
+                TextContentBlock(type="text", text="Focus on the error banner."),
+            ],
+        ),
+    )
+
+    assert response.stop_reason == "end_turn"
+    stream_call = llm.stream.await_args
+    assert stream_call is not None
+    messages = stream_call.kwargs["messages"]
+    image_message = next(
+        message for message in messages if any(isinstance(block, ImageBlock) for block in message.content)
+    )
+    assert image_message.role == "user"
+    assert image_message.content[0].text == "Inspect this screenshot.\nFocus on the error banner."
+    image = next(block for block in image_message.content if isinstance(block, ImageBlock))
+    assert image.media_type == "image/png"
+    assert image.data == PNG_1X1
+
+
+@pytest.mark.asyncio
+async def test_prompt_accepts_image_without_text(tmp_path: Path) -> None:
+    llm = StreamingLLM()
+    session, _cm = _make_session(tmp_path, llm)
+    agent, _conn = _make_agent(session)
+    new_session = await agent.new_session(cwd=str(tmp_path))
+
+    response = await agent.prompt(
+        session_id=new_session.session_id,
+        prompt=cast(Any, [ImageContentBlock(type="image", data=PNG_1X1, mime_type="image/png")]),
+    )
+
+    assert response.stop_reason == "end_turn"
+    stream_call = llm.stream.await_args
+    assert stream_call is not None
+    messages = stream_call.kwargs["messages"]
+    image_message = next(
+        message for message in messages if any(isinstance(block, ImageBlock) for block in message.content)
+    )
+    assert image_message.content[0].text == ""
+    image = next(block for block in image_message.content if isinstance(block, ImageBlock))
+    assert image.media_type == "image/png"
+    assert image.data == PNG_1X1
+
+
+@pytest.mark.asyncio
+async def test_prompt_image_uses_agent_vision_gate(tmp_path: Path) -> None:
+    llm = StreamingLLM()
+    session, _cm = _make_session(tmp_path, llm)
+    session.agent.primary_model_config = ModelConfig(
+        provider=ModelProvider.DEEPSEEK,
+        model="deepseek-v4-pro",
+        rate_limits=RateLimitConfig(),
+    )
+    agent, conn = _make_agent(session)
+    new_session = await agent.new_session(cwd=str(tmp_path))
+
+    response = await agent.prompt(
+        session_id=new_session.session_id,
+        prompt=cast(
+            Any,
+            [
+                TextContentBlock(type="text", text="Inspect this screenshot."),
+                ImageContentBlock(
+                    type="image",
+                    data=PNG_1X1,
+                    mime_type="image/png",
+                ),
+            ],
+        ),
+    )
+
+    assert response.stop_reason == "end_turn"
+    llm.stream.assert_not_awaited()
+    texts = [update.content.text for update in conn.updates if isinstance(update, AgentMessageChunk)]
+    assert "does not support image input" in "".join(texts)
+    assert "deepseek-v4-pro" in "".join(texts)
 
 
 @pytest.mark.asyncio
