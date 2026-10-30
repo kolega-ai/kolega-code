@@ -292,11 +292,3 @@ class EvalEnvironmentManager:
                 ),
                 pip_install_cmd=[],
             )
-
-
-def resolve_state_dir_from_config(config: object) -> Path:
-    """State dir override from AgentConfig (Mock-safe), else the default."""
-    raw = getattr(config, "eval_env_path", None)
-    if isinstance(raw, str) and raw.strip():
-        return Path(raw).expanduser()
-    return default_state_dir()

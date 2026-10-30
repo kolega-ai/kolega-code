@@ -210,8 +210,3 @@ class ToolBridge:
         finally:
             if task is not None:
                 registration.tasks.discard(task)
-
-
-async def ensure_tool_bridge() -> ToolBridge:
-    """Module-level convenience matching ToolBridge.ensure()."""
-    return await ToolBridge.ensure()

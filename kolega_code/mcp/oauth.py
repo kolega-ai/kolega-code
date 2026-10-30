@@ -397,7 +397,3 @@ async def interactive_oauth_interaction(
             callback_handler=callback_handler,
             close=callback_server.close,
         )
-
-
-def oauth_secret_values(token_store: MCPOAuthTokenStore) -> list[str]:
-    return token_store.secret_values()

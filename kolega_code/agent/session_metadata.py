@@ -48,10 +48,6 @@ class SessionMetadata:
     description: str
 
 
-class SessionMetadataCancelledError(Exception):
-    """Raised when metadata generation is cancelled."""
-
-
 def _truncate_transcript(transcript: str) -> str:
     """Bound the transcript sent to the metadata generator."""
     total_budget = SESSION_METADATA_HEAD_CHARS + SESSION_METADATA_TAIL_CHARS
