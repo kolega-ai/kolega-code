@@ -7,6 +7,7 @@ Multi-agent terminal coding agent: Python 3.11+ package `kolega_code/` (hatchlin
 - `kolega_code/__init__.py` is the **supported public API** for host apps (KolegaPlatform, kolega-comply) and sandbox providers (kolega-code-e2b); deeper paths are internal. Don't remove or rename top-level re-exports.
 - `kolega_code/agent/` — agent core: `baseagent.py` (main loop), `tools.py` (dispatch), `tool_backend/` (one module per tool), specialized agents (`coder.py`, `planningagent.py`, etc.), `orchestration/` (Gigacode fan-out).
 - `kolega_code/cli/` — `main.py` (CLI), `app.py` + `tui/` (Textual TUI), sessions, settings, skills. Also: `llm/` (providers), `mcp/`, `sandbox/`, `services/`, `auth/`, `memory/`, `hooks/`.
+- `kolega_code/cli/tui/agent_runtime.py` gives each turn phase one owner: `_run_turn_stream` (body), `_settle_turn` (cancelled/failed turns), `_teardown_turn` (post-turn cleanup). Edit the shared finalizer rather than adding a per-handler copy: duplicated finalizers made the same stop/settle fix land up to three times (#798), after lifecycle fixes in #755, #760 and #766.
 - `tests/` mirrors the package layout. `benchmarks/edit_tools/fixtures/snapshots/` is excluded from Ruff, pre-commit, and Pyright — don't hand-edit those fixtures.
 - `docs/` is a separate Astro/Starlight site (`cd docs && npm ci && npm run build`).
 
@@ -32,6 +33,8 @@ Multi-agent terminal coding agent: Python 3.11+ package `kolega_code/` (hatchlin
 
 - pytest with `asyncio_mode = "strict"`; the wrapper adds `--import-mode=importlib` and deselects `slow` only. Markers: `slow`, `integration`, `live_api`, `e2e`.
 - Unit tests use the `isolated_cli_env` fixture (`tests/conftest.py`) so they don't see a developer's env; slow/integration tests read provider keys from repo-root `.env` (copy `.env.example`).
+- Tests that build an app or Settings and assert an exact status line must take `isolated_cli_env`: an exported `KOLEGA_CODE_PROVIDER`/`_MODEL` turns `Settings saved.` into the override warning (#788, #797). Assert argparse help on collapsed whitespace — it wraps to `COLUMNS`, and a contiguous-substring assertion fails at 100–120 columns (#788, #796). A result that changes with the developer's env or terminal width is a test bug: fix it instead of documenting it per PR (#787, #789, #798).
+- Don't assert a tight upper bound on elapsed wall-clock time (`elapsed < 0.3`), and don't leave a 1 s deadline where "it can never fire": a coverage-instrumented runner on a loaded box overruns both and reds a required check (#785, #799). Assert the observable outcome — the timeout raised, the stream closed — with headroom the test is not expected to reach.
 - Mark every module that calls a real provider `pytestmark = [pytest.mark.integration, pytest.mark.live_api]`. Plain `integration` live tests still run under `./run_tests.sh`, so on a machine with `.env` keys the default run reports quota/401/404 failures no PR introduced (#755, #758, #780, #783); keep new live modules out of that noise and treat the existing ones as environmental.
 - TUI tests: never wait with `pilot.pause()` or a sleep and then assert layout, geometry (`region`, scroll position) or a click target — poll with `wait_for_layout` from `tests/cli/_app_test_utils.py` instead of copying a local `_wait_for_layout`. `Pilot.click` returns `False` and clicks the screen origin when the widget has no region yet, so assert the click landed (`click_footer_key` in `tests/cli/test_shortcut_bar.py`). A red TUI test gets a root-cause fix, never a CI re-run, a longer sleep, or a looser assertion (#711, #752, #753, #755, #785).
 
@@ -44,9 +47,9 @@ Multi-agent terminal coding agent: Python 3.11+ package `kolega_code/` (hatchlin
 ## Commit & Pull Request Guidelines
 
 - Conventional Commits with a scope: `feat(cli): ...`, `fix(llm): ...`, `perf(cli): ...`, `test(cli): ...`, `chore: ...`.
-- Branches: kebab-case with a type prefix (`fix/tui-large-session-lag`, `chore/release-v0.21.1`).
+- Branches: kebab-case with a type prefix (`fix/tui-large-session-lag`, `chore/release-v0.21.1`). Branch from current `origin/main`, and check `git log origin/main -- <file>` before diagnosing a failure: #796 and #797 both started from bases predating #788 and re-diagnosed assertions #788 had already fixed, so #796 re-applies the same whitespace normalization.
 - PRs stay focused, with tests for behavior changes and docs for user-facing changes. CI (pre-commit, then the Python 3.11–3.14 test matrix) must pass.
-- Releases: bump the version in all three places — `pyproject.toml`, `kolega_code/__init__.py`, `kolega_code/agent/__init__.py` (release workflow fails if the `v*` tag doesn't match) — and update `CHANGELOG.md` in the same release PR. Tag only after merge; see `RELEASING.md`.
+- Releases: one PR bumps the version in `pyproject.toml`, `uv.lock` (its project entry) and both `kolega_code/__init__.py` / `kolega_code/agent/__init__.py`, and updates `CHANGELOG.md` — the five files every release PR since 2026-09-30 touches; a missing lock bump leaves `uv lock --check` failing. The release workflow fails if the `v*` tag doesn't match, so tag only after merge; see `RELEASING.md`.
 
 ## Security & Configuration Notes
 
