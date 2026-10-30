@@ -335,87 +335,85 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             preserve_inspector=preserve_inspector,
         )
         try:
-            if checkpoint_label is not None:
-                await self._record_turn_checkpoint(checkpoint_label)
-                if self.agent_worker is not owner:
-                    return False
-                self._update_progress(messages.WORKING, complete=False, state=tui_state.TurnState.GENERATING)
-            self._log_status(messages.GENERATING, "ok")
-            await self._consume_agent_stream(stream_factory())
-            if self.agent_worker is not owner:
-                return False
-            await self._finalize_turn_output(cancel_pending=False)
-            if self.agent_worker is not owner:
-                return False
-            self._finish_turn_progress(messages.FINISHED, tui_state.TurnState.IDLE)
-            # Bounded: a journal write wedged on the session lock used to park the
-            # turn here forever. The journal is canonical, so a skipped projection
-            # refresh is recoverable; an invisible plan is not.
-            await self._save_session_with_deadline(self._save_session_history_async())
-            if self.agent_worker is not owner:
-                return False
-            await self._capture_completed_plan()
-            if self.agent_worker is owner:
-                self._log_status(messages.FINISHED, "ok")
-                self._maybe_trigger_session_metadata()
+            await self._stream_turn_body(owner, stream_factory, checkpoint_label)
         except asyncio.CancelledError:
             cancelled_by_user = True
-            if self.agent_worker is owner:
-                self._background_paused = True
-            # When the app is quitting, action_quit already settled open
-            # prompts (control lease release) and saved the session, and the
-            # widget tree is being torn down — skip the cleanup that would
-            # repaint it.
-            if not self._exit and self.agent_worker is owner:
-                await self._finalize_turn_output(cancel_pending=True)
-                if self.agent_worker is owner:
-                    self._finish_turn_progress(messages.STOPPED_BY_USER, tui_state.TurnState.STOPPED)
-                    await self._save_session_history_async()
-                    if self.agent_worker is owner:
-                        self._log_status(messages.STOPPED_BY_USER, "warn")
+            await self._settle_turn(owner, messages.STOPPED_BY_USER, tui_state.TurnState.STOPPED, exiting=True)
         except LLMError as exc:
-            if self.agent_worker is owner:
-                self._background_paused = True
-                await self._finalize_turn_output(cancel_pending=True)
-                if self.agent_worker is owner:
-                    model = self.config.long_context_config.model if self.config is not None else None
-                    message_text = llm_error_message(exc, model=model)
-                    self._finish_turn_progress(message_text, tui_state.TurnState.ERROR)
-                    await self._save_session_history_async()
-                    if self.agent_worker is owner:
-                        self._log_status(message_text, "error")
+            model = self.config.long_context_config.model if self.config is not None else None
+            await self._settle_turn(owner, llm_error_message(exc, model=model), tui_state.TurnState.ERROR)
         except Exception as exc:
-            if self.agent_worker is owner:
-                self._background_paused = True
-                await self._finalize_turn_output(cancel_pending=True)
-                if self.agent_worker is owner:
-                    self._finish_turn_progress(messages.STOPPED_WITH_ERROR.format(error=exc), tui_state.TurnState.ERROR)
-                    await self._save_session_history_async()
-                    if self.agent_worker is owner:
-                        self._log_status(messages.STOPPED_WITH_ERROR.format(error=exc), "error")
+            await self._settle_turn(owner, messages.STOPPED_WITH_ERROR.format(error=exc), tui_state.TurnState.ERROR)
             raise
         finally:
-            # Teardown can yield while an exclusive replacement reserves the
-            # slot. Its progress, timer and composer state now belong to it.
-            if self.agent_worker is owner:
-                self._active_progress_entry = None
-                self._turn_active = False
-                # The worker honored (or outlived) the stop: no escalation is
-                # needed, and the watchdog must not fire during the next turn.
-                self._stop_pending = False
-                self._disarm_stop_watchdog()
-                if not self._exit:
-                    self._flush_terminal_output()
-                    self._flush_log_output()
-                    self._flush_conversation_render()
-                    if self._plan_decision_active:
-                        self._set_composer_status(messages.PLAN_READY_PLACEHOLDER)
-                    else:
-                        self._restore_composer_placeholder()
-                    self._set_chat_enabled(self.agent is not None and not self._plan_decision_active)
-                    if cancelled_by_user:
-                        self._schedule_primary_focus_restore()
+            self._teardown_turn(owner, cancelled_by_user=cancelled_by_user)
         return cancelled_by_user
+
+    async def _stream_turn_body(self, owner: object | None, stream_factory, checkpoint_label: str | None) -> None:
+        """Drive a turn to completion, stopping early once another worker owns the slot."""
+        if checkpoint_label is not None:
+            await self._record_turn_checkpoint(checkpoint_label)
+            if self.agent_worker is not owner:
+                return
+            self._update_progress(messages.WORKING, complete=False, state=tui_state.TurnState.GENERATING)
+        self._log_status(messages.GENERATING, "ok")
+        await self._consume_agent_stream(stream_factory())
+        if self.agent_worker is not owner:
+            return
+        await self._finalize_turn_output(cancel_pending=False)
+        if self.agent_worker is not owner:
+            return
+        self._finish_turn_progress(messages.FINISHED, tui_state.TurnState.IDLE)
+        # Bounded: a journal write wedged on the session lock used to park the
+        # turn here forever. The journal is canonical, so a skipped projection
+        # refresh is recoverable; an invisible plan is not.
+        await self._save_session_with_deadline(self._save_session_history_async())
+        if self.agent_worker is not owner:
+            return
+        await self._capture_completed_plan()
+        if self.agent_worker is not owner:
+            return
+        self._log_status(messages.FINISHED, "ok")
+        self._maybe_trigger_session_metadata()
+
+    async def _settle_turn(
+        self, owner: object | None, message: str, state: tui_state.TurnState, *, exiting: bool = False
+    ) -> None:
+        if self.agent_worker is not owner:
+            return
+        self._background_paused = True
+        # A quit already settled open prompts, saved the session and is tearing down the tree.
+        if exiting and self._exit:
+            return
+        await self._finalize_turn_output(cancel_pending=True)
+        if self.agent_worker is not owner:
+            return
+        self._finish_turn_progress(message, state)
+        await self._save_session_history_async()
+        if self.agent_worker is owner:
+            self._log_status(message, "warn" if state is tui_state.TurnState.STOPPED else "error")
+
+    def _teardown_turn(self, owner: object | None, *, cancelled_by_user: bool) -> None:
+        # Teardown can yield while an exclusive replacement reserves the slot.
+        if self.agent_worker is not owner:
+            return
+        self._active_progress_entry = None
+        self._turn_active = False
+        # The worker honored (or outlived) the stop, so no escalation is needed.
+        self._stop_pending = False
+        self._disarm_stop_watchdog()
+        if self._exit:
+            return
+        self._flush_terminal_output()
+        self._flush_log_output()
+        self._flush_conversation_render()
+        if self._plan_decision_active:
+            self._set_composer_status(messages.PLAN_READY_PLACEHOLDER)
+        else:
+            self._restore_composer_placeholder()
+        self._set_chat_enabled(self.agent is not None and not self._plan_decision_active)
+        if cancelled_by_user:
+            self._schedule_primary_focus_restore()
 
     def _maybe_trigger_session_metadata(self) -> None:
         """Trigger background session title and description generation if turn meets depth."""
