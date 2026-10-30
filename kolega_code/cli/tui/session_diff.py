@@ -350,6 +350,7 @@ class SessionDiffTrackerBase:
                 continue
             try:
                 self._abs_path(item.repo_path).unlink(missing_ok=True)
+                self._forget_cached_state(item.repo_path)
                 result.deleted.append(item.display_path)
             except OSError as exc:
                 result.errors.append((item.display_path, str(exc)))
@@ -361,6 +362,7 @@ class SessionDiffTrackerBase:
             try:
                 abs_path.parent.mkdir(parents=True, exist_ok=True)
                 abs_path.write_bytes(item.baseline.data)
+                self._forget_cached_state(item.repo_path)
                 result.restored.append(item.display_path)
             except OSError as exc:
                 result.errors.append((item.display_path, str(exc)))
@@ -400,6 +402,17 @@ class SessionDiffTrackerBase:
         except OSError:
             return None
         return (stat.st_mtime_ns, stat.st_size)
+
+    def _forget_cached_state(self, repo_path: str) -> None:
+        """Drop the stat-keyed caches for a path we just rewrote.
+
+        A restore writes bytes of the same length as the file it replaces, so on
+        a filesystem whose timestamp tick is coarser than the rewrite the new
+        stat signature can match the pre-restore one and the cached content
+        would shadow what is now on disk.
+        """
+        self._snapshot_cache.pop(repo_path, None)
+        self._diff_cache.pop(repo_path, None)
 
     def _snapshot_repo_path(self, repo_path: str) -> FileBaseline:
         abs_path = self._abs_path(repo_path)
