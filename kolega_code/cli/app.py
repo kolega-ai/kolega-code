@@ -1497,7 +1497,10 @@ class KolegaCodeApp(
             has_image = any(a.get("type") == "image" for a in attachments)
             if has_image:
                 self._add_vision_mismatch_system_message(context="attachment")
-                self._show_composer_hint(messages.MODEL_NON_VISION_IMAGE_BLOCKED, tone="warning")
+                self._show_composer_hint(
+                    self._format_vision_mismatch(messages.MODEL_NON_VISION_IMAGE_BLOCKED),
+                    tone="warning",
+                )
                 return
         # Safe to consume — clear the composer, pending attachments, and the
         # attach hint (which would otherwise linger during generation or queueing).

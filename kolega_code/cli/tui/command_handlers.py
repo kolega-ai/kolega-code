@@ -20,6 +20,7 @@ from kolega_code.agent.prompts import build_init_agents_prompt
 from kolega_code.agent.handoff import HandoffCancelledError, generate_handoff_document
 from kolega_code.auth import constants as chatgpt_constants
 from kolega_code.auth.chatgpt_oauth import run_login_flow
+from kolega_code.config import AGENT_ROLE_BY_NAME
 from kolega_code.llm.models import Message, TextBlock
 from kolega_code.memory import MemoryUnavailableError
 from kolega_code.permissions import normalize_permission_mode
@@ -36,6 +37,7 @@ from ..loop import (
     parse_loop_command,
 )
 from ..provider_registry import (
+    AGENT_ROLE_LABELS,
     UI_DEFAULT_PROVIDER,
     default_ui_thinking_effort,
     get_ui_model,
@@ -123,6 +125,26 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             return False
         return getattr(self.agent, "supports_vision", False)
 
+    def _format_vision_mismatch(self, template: str) -> str:
+        model_config = getattr(self.agent, "primary_model_config", None)
+        provider = getattr(model_config, "provider", None)
+        provider_name = getattr(provider, "value", provider)
+        model_name = getattr(model_config, "model", None)
+        if provider_name and model_name:
+            effective_model = f"{provider_name}/{model_name}"
+        else:
+            effective_model = model_name or "The current model"
+
+        agent_name = getattr(self.agent, "agent_name", None)
+        role = AGENT_ROLE_BY_NAME.get(agent_name or "")
+        config = self.config
+        if role is not None and config is not None and role.value in config.agent_models:
+            role_label = AGENT_ROLE_LABELS[role]
+            switch_guidance = f"open /settings and set Agent Models → {role_label} to a vision-capable model"
+        else:
+            switch_guidance = "use /model to switch to a vision-capable model"
+        return template.format(model=effective_model, switch_guidance=switch_guidance)
+
     def _add_vision_mismatch_system_message(self, *, context: str) -> None:
         """Add a persistent warning to the transcript when images meet a non-vision model.
 
@@ -134,15 +156,12 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         """
         if self._vision_warning_shown:
             return
-        model_config = getattr(self.agent, "primary_model_config", None)
-        model_name = getattr(model_config, "model", None) or "The current model"
         if context == "attachment":
-            message = (
-                f"⚠ {model_name} does not support vision. Use /detach to remove image "
-                f"attachments or /model to switch to a vision-capable model."
+            message = self._format_vision_mismatch(
+                "⚠ {model} does not support vision. Use /detach to remove image attachments or {switch_guidance}."
             )
         else:  # model_switch
-            message = messages.MODEL_NON_VISION_IMAGE_HISTORY
+            message = self._format_vision_mismatch(messages.MODEL_NON_VISION_IMAGE_HISTORY)
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=message, tone="warning"))
         self._vision_warning_shown = True
 
@@ -159,7 +178,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         names = ", ".join(a.get("path", "image") for a in self._pending_image_attachments)
         if not self._model_supports_vision():
             self._show_composer_hint(
-                f"Attached: {names}. {messages.MODEL_NON_VISION_IMAGE_ATTACHED}",
+                f"Attached: {names}. {self._format_vision_mismatch(messages.MODEL_NON_VISION_IMAGE_ATTACHED)}",
                 tone="warning",
             )
             self._add_vision_mismatch_system_message(context="attachment")
@@ -1036,7 +1055,10 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             if conversation is not None and conversation.has_image_blocks():
                 # Dual-channel: persistent transcript message + ephemeral composer hint.
                 self._add_vision_mismatch_system_message(context="model_switch")
-                self._show_composer_hint(messages.MODEL_NON_VISION_IMAGE_HISTORY, tone="warning")
+                self._show_composer_hint(
+                    self._format_vision_mismatch(messages.MODEL_NON_VISION_IMAGE_HISTORY),
+                    tone="warning",
+                )
         elif self.agent is not None and self._model_supports_vision():
             # Switching to a vision-capable model: clear any stale non-vision warning.
             self._clear_composer_hint()
