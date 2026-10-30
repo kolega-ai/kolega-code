@@ -129,18 +129,6 @@ def mcp_tool_name(server_id: str, tool_id: str) -> str:
     return f"{MCP_TOOL_PREFIX}{server_id}{MCP_TOOL_SEPARATOR}{tool_id}"
 
 
-def parse_mcp_tool_name(name: str) -> Optional[tuple[str, str]]:
-    if not name.startswith(MCP_TOOL_PREFIX):
-        return None
-    rest = name[len(MCP_TOOL_PREFIX) :]
-    if MCP_TOOL_SEPARATOR not in rest:
-        return None
-    server_id, tool_id = rest.split(MCP_TOOL_SEPARATOR, 1)
-    if not server_id or not tool_id:
-        return None
-    return server_id, tool_id
-
-
 # Providers reject tool names that don't match ^[a-zA-Z0-9_-]{1,N}$ — OpenAI and
 # Google cap N at 64, Anthropic at 128. Clamp to the strictest so one bad MCP
 # server can't 400 every provider.

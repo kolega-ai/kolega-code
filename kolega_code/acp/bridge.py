@@ -379,9 +379,3 @@ class AcpBridge:
                 content=[tool_content(text_block(self._terminal_text[tool_call_id]))],
             ),
         )
-
-    async def emit_stop_reason_note(self, session_id: str, reason: str) -> None:
-        """Surface a non-end_turn stop reason as a short agent message."""
-        if reason == "end_turn":
-            return
-        await self.send(session_id, update_agent_message(text_block(f"[stopped: {reason}]")))

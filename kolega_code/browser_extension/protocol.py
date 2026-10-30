@@ -48,7 +48,6 @@ _ENVELOPE_KEYS = frozenset(
 _DISCOVERY_REQUEST_KEYS = frozenset({"kind", "protocol_version", "request_id"})
 _DISCOVERY_RESPONSE_KEYS = frozenset({"kind", "protocol_version", "request_id", "runtimes"})
 _DISCOVERY_RUNTIME_KEYS = frozenset({"runtime_id", "session_id", "created_at_ms", "expires_at_ms"})
-_RUNTIMES_CHANGED_KEYS = frozenset({"kind", "protocol_version"})
 
 
 class MessageDirection(str, Enum):
@@ -615,14 +614,6 @@ def runtimes_changed_notification() -> dict[str, JSONValue]:
     exactly the behaviour this notification removes.
     """
     return {"kind": "runtimes_changed", "protocol_version": PROTOCOL_VERSION}
-
-
-def validate_runtimes_changed(value: object) -> dict[str, JSONValue]:
-    """Validate the exact host-to-extension runtime-change notification."""
-    message = _exact_mapping(value, _RUNTIMES_CHANGED_KEYS, "runtime change notification")
-    if message["kind"] != "runtimes_changed" or message["protocol_version"] != PROTOCOL_VERSION:
-        raise _invalid("invalid_discovery", "runtime change notification is invalid")
-    return cast(dict[str, JSONValue], message)
 
 
 def validate_discovery_response(value: object, *, expected_request_id: str) -> dict[str, JSONValue]:

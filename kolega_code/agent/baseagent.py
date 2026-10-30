@@ -949,9 +949,6 @@ class BaseAgent(LogMixin):
         """
         return self.conversation.is_valid_for_anthropic(messages)
 
-    def _is_protected_skill_content(self, message: Message) -> bool:
-        return self.conversation.is_protected(message)
-
     def _needs_tool_call_fix(self) -> bool:
         """Check if the last message has incomplete tool calls."""
         return self.conversation.needs_tool_call_fix()

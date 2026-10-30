@@ -34,17 +34,6 @@ async def _run_exec(*args: str) -> Tuple[bytes, bytes, int]:
     return stdout or b"", stderr or b"", int(proc.returncode or 0)
 
 
-async def _run_shell(cmd: str) -> Tuple[bytes, bytes, int]:
-    """Run a shell command, returning (stdout, stderr, returncode)."""
-    proc = await asyncio.create_subprocess_shell(
-        cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    return stdout or b"", stderr or b"", int(proc.returncode or 0)
-
-
 async def _read_macos_clipboard() -> Optional[Tuple[bytes, str]]:
     """macOS: use osascript to write clipboard PNG to a temp file."""
     tmp = Path(tempfile.gettempdir()) / f"kc_clip_{asyncio.get_event_loop().time()}.png"
