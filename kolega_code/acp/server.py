@@ -51,6 +51,7 @@ from acp.schema import (
     LoadSessionResponse,
     McpServerStdio,
     PermissionOption,
+    PromptCapabilities,
     ResourceContentBlock,
     SessionCapabilities,
     SessionCloseCapabilities,
@@ -136,6 +137,7 @@ class AcpAgent(Agent):
             protocol_version=protocol_version,
             agent_capabilities=AgentCapabilities(
                 load_session=True,
+                prompt_capabilities=PromptCapabilities(image=True),
                 session_capabilities=SessionCapabilities(
                     list=SessionListCapabilities(),
                     close=SessionCloseCapabilities(),
@@ -291,13 +293,13 @@ class AcpAgent(Agent):
             raise RequestError.resource_not_found(session_id)
         if not session.idle():
             raise RequestError.invalid_request({"message": "a turn is already running for this session"})
-        text = self._extract_text(prompt)
-        if not text:
-            raise RequestError.invalid_request({"message": "prompt contains no text"})
+        text, attachments = self._extract_prompt(prompt)
+        if not text and not attachments:
+            raise RequestError.invalid_request({"message": "prompt contains no text or images"})
         self._start_session_tasks(session)
         async with session.execution_lock:
             session.auto_continue_paused = False
-            stop_reason = await self._run_turn(session, text)
+            stop_reason = await self._run_turn(session, text, attachments)
             self._factory.persist(session)
         return PromptResponse(stop_reason=stop_reason)
 
@@ -642,7 +644,12 @@ class AcpAgent(Agent):
                     session.auto_continue_paused = True
                     logger.exception("acp background delivery failed (session=%s)", session.session_id)
 
-    async def _run_turn(self, session: AcpSession, text: str | None) -> StopReason:
+    async def _run_turn(
+        self,
+        session: AcpSession,
+        text: str | None,
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> StopReason:
         """Drive one agent turn, mapping its output to ACP updates.
 
         The event pump belongs to the session, not this request. It keeps
@@ -651,7 +658,7 @@ class AcpAgent(Agent):
         self._start_session_tasks(session)
         bridge = session.bridge
         bridge.begin_turn(session.agent, AcpDiffProvider.for_session(session))
-        session.turn_task = asyncio.create_task(self._drive_turn(session, bridge, text))
+        session.turn_task = asyncio.create_task(self._drive_turn(session, bridge, text, attachments))
         reason: StopReason = "cancelled"
         try:
             reason = await session.turn_task
@@ -756,10 +763,16 @@ class AcpAgent(Agent):
         session.record.history = []
         session.record.compaction = {}
 
-    async def _drive_turn(self, session: AcpSession, bridge: AcpBridge, text: str | None) -> StopReason:
+    async def _drive_turn(
+        self,
+        session: AcpSession,
+        bridge: AcpBridge,
+        text: str | None,
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> StopReason:
         try:
             stream = (
-                session.agent.process_message_stream(text)
+                session.agent.process_message_stream(text, attachments)
                 if text is not None
                 else session.agent.continue_from_history_stream()
             )
@@ -790,10 +803,22 @@ class AcpAgent(Agent):
                 logger.exception("acp residual event mapping failed (session=%s)", session.session_id)
 
     @staticmethod
-    def _extract_text(prompt: list[_PromptBlock]) -> str:
+    def _extract_prompt(prompt: list[_PromptBlock]) -> tuple[str, list[dict[str, Any]]]:
         parts: list[str] = []
+        attachments: list[dict[str, Any]] = []
         for block in prompt:
-            text = block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "")
-            if text:
+            if isinstance(block, dict):
+                block_type = block.get("type")
+                text = block.get("text", "")
+                data = block.get("data", "")
+                media_type = block.get("mimeType") or block.get("mime_type")
+            else:
+                block_type = getattr(block, "type", None)
+                text = getattr(block, "text", "")
+                data = getattr(block, "data", "")
+                media_type = getattr(block, "mime_type", None)
+            if block_type == "text" and text:
                 parts.append(str(text))
-        return "\n".join(parts)
+            elif block_type == "image" and isinstance(data, str) and isinstance(media_type, str):
+                attachments.append({"type": "image", "media_type": media_type, "data": data})
+        return "\n".join(parts), attachments
