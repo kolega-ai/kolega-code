@@ -81,7 +81,9 @@ def test_explicit_tui_help_shows_tui_arguments(capsys) -> None:
     assert "project_path" in output
     assert "--resume" in output
     assert "SESSION_ID" in output
-    assert "legacy thread IDs are also accepted" in output
+    # argparse wraps option help to the detected terminal width, so this phrase
+    # straddles a line break on wide terminals (xdist propagates COLUMNS).
+    assert "legacy thread IDs are also accepted" in " ".join(output.split())
     assert "--permission-mode" in output
 
 
