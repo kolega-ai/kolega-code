@@ -107,8 +107,10 @@ async def test_queued_stream_recovery_clears_only_the_waiting_label(
     monkeypatch.setattr(app, "_consume_events", defer_events)
     monkeypatch.setattr(app.connection_manager, "broadcast_event", broadcast_and_release)
     guard = object.__new__(BaseAgent)
-    guard._stream_first_chunk_timeout = 1.0
-    guard._stream_idle_timeout = 1.0
+    # The heartbeat drives the recovery; the stall deadlines must stay far enough
+    # away that a loaded CI cannot hit them before the released chunk arrives.
+    guard._stream_first_chunk_timeout = 30.0
+    guard._stream_idle_timeout = 30.0
     guard._stream_heartbeat_seconds = 0.01
     guard._llm_retry_budget_started = None
     guard.emitter = AgentEventEmitter(app.recording_connection_manager, "workspace", "thread", "coder")
