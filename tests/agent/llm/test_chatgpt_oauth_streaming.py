@@ -11,6 +11,7 @@ from kolega_code.auth import constants as chatgpt_constants
 from kolega_code.auth.tokens import ChatGPTTokenManager, OAuthTokens
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider
 from kolega_code.llm.client import LLMClient
+from kolega_code.llm.exceptions import LLMIncompleteResponseError
 from kolega_code.llm.models import (
     ImageBlock,
     Message,
@@ -317,6 +318,42 @@ async def test_responses_stream_wrapper_tool_call_from_output_item_done():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "events",
+    [
+        [
+            _ns(
+                type="response.output_item.added",
+                item=_ns(type="function_call", id="fc_1", call_id="call_1", name="exec_command"),
+            )
+        ],
+        [
+            _ns(
+                type="response.output_item.added",
+                item=_ns(type="function_call", id="fc_1", call_id="call_1", name="exec_command"),
+            ),
+            _ns(type="response.function_call_arguments.delta", item_id="fc_1", delta='{"command":'),
+        ],
+    ],
+    ids=["clean-eof-after-tool-start", "clean-eof-with-partial-arguments"],
+)
+async def test_responses_stream_wrapper_rejects_tool_calls_without_terminal_event(events):
+    wrapper = ResponsesStreamWrapper(_FakeStream(events), provider_name="deepseek")
+    chunks = []
+    async with wrapper as stream:
+        async for chunk in stream:
+            chunks.append(chunk)
+
+    with pytest.raises(LLMIncompleteResponseError) as caught:
+        await wrapper.get_final_message()
+
+    assert all(chunk.type != "tool_use_start" for chunk in chunks)
+    assert caught.value.provider == "deepseek"
+    assert caught.value.pending_tool_calls == 1
+    assert caught.value.partial_output is True
+
+
+@pytest.mark.asyncio
 async def test_provider_always_sends_non_empty_instructions(monkeypatch):
     # The backend 400s with "Instructions are required" on an empty instructions.
     provider = ChatGPTOAuthProvider(token_manager=ChatGPTTokenManager(_tokens()))
@@ -366,6 +403,38 @@ async def test_responses_incomplete_terminal_event_is_captured():
     message = await wrapper.get_final_message()
     assert message.stop_reason == "max_tokens"
     assert message.usage_metadata.get("completion_tokens") == 16 or message.usage_metadata.get("output_tokens") == 16
+
+
+@pytest.mark.asyncio
+async def test_responses_incomplete_terminal_suppresses_local_tool_calls():
+    incomplete = _ns(
+        output=[],
+        usage=_ns(input_tokens=5, output_tokens=16, total_tokens=21, input_tokens_details=None),
+        status="incomplete",
+        incomplete_details=_ns(reason="max_output_tokens"),
+    )
+    events = [
+        _ns(type="response.output_text.delta", delta="partial answer"),
+        _ns(
+            type="response.output_item.added",
+            item=_ns(type="function_call", id="fc_1", call_id="call_1", name="exec_command"),
+        ),
+        _ns(type="response.function_call_arguments.delta", item_id="fc_1", delta='{"command":"echo unfinished'),
+        _ns(type="response.incomplete", response=incomplete),
+    ]
+    wrapper = ResponsesStreamWrapper(_FakeStream(events))
+    chunks = []
+    async with wrapper as stream:
+        async for chunk in stream:
+            chunks.append(chunk)
+
+    message = await wrapper.get_final_message()
+
+    assert all(chunk.type != "tool_use_start" for chunk in chunks)
+    assert message.get_text_content() == "partial answer"
+    assert message.tool_calls == []
+    assert all(not isinstance(block, ToolCall) for block in message.content)
+    assert message.stop_reason == "max_tokens"
 
 
 @pytest.mark.asyncio

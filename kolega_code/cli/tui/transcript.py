@@ -312,6 +312,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                             else self._tool_result_preview(text),
                             tool_name=block.name,
                             tool_call_id=getattr(block, "execution_id", None),
+                            tool_error_kind=block.error_kind,
                             full_content=self._capped_tool_text(text),
                         )
                     )
@@ -323,6 +324,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                     entry.complete = True
                     entry.tool_name = block.name or entry.tool_name
                     entry.tool_call_id = getattr(block, "execution_id", None) or entry.tool_call_id
+                    entry.tool_error_kind = block.error_kind
                     entry.full_content = self._capped_tool_text(text)
                     if forget_tool_entry is not None:
                         forget_tool_entry(entry)
@@ -519,6 +521,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         tool_call_id = str(content.get("tool_call_id") or "")
         tool_subject = sanitize_tool_subject(content.get("tool_subject"))
         tool_display = sanitize_tool_display(content.get("tool_display"))
+        tool_error_kind = str(content.get("tool_error_kind") or "") or None
         text = str(content.get("text") or "")
         if tool_name == QUESTION_TOOL_NAME and message_type in {"tool_call", "tool_result"}:
             return
@@ -552,6 +555,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 tool_call_id=tool_call_id or None,
                 tool_subject=tool_subject,
                 tool_display=tool_display,
+                tool_error_kind=tool_error_kind,
                 full_content=full_content,
             )
             # A preview event can land before this entry exists; apply any stash now.
@@ -569,6 +573,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         entry.tool_call_id = tool_call_id or entry.tool_call_id
         entry.tool_subject = tool_subject or entry.tool_subject
         entry.tool_display = tool_display or entry.tool_display
+        entry.tool_error_kind = tool_error_kind
         if entry.tool_call_id:
             self._tool_entries[entry.tool_call_id] = entry
         self._invalidate_conversation(entry)
@@ -897,6 +902,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         tool_call_id = str(content.get("tool_call_id") or "").strip()
         tool_subject = sanitize_tool_subject(content.get("tool_subject"))
         tool_display = sanitize_tool_display(content.get("tool_display"))
+        tool_error_kind = str(content.get("tool_error_kind") or "") or None
         text = str(content.get("text") or "")
         if message_type == "tool_call":
             entry_content = text or f"Calling {tool_name}"
@@ -925,6 +931,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 tool_call_id=tool_call_id or None,
                 tool_subject=tool_subject,
                 tool_display=tool_display,
+                tool_error_kind=tool_error_kind,
                 full_content=full_content,
             )
             activity.steps.append(step)
@@ -938,6 +945,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         step.tool_name = tool_name
         step.tool_subject = tool_subject or step.tool_subject
         step.tool_display = tool_display or step.tool_display
+        step.tool_error_kind = tool_error_kind
         step.full_content = full_content or step.full_content
         self._attach_pending_sub_agent_edit_preview(activity, step)
 

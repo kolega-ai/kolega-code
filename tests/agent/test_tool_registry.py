@@ -4,7 +4,7 @@ import pytest
 
 from kolega_code.config import EditProtocol
 from kolega_code.llm.models import ToolDefinition
-from kolega_code.tools import Tool, ToolError, ToolPolicy, ToolRegistry
+from kolega_code.tools import Tool, ToolError, ToolInputError, ToolPolicy, ToolRegistry
 
 
 def make_tool(name: str, *, parallel_safe: bool = False, result: str = "ok") -> Tool:
@@ -112,8 +112,9 @@ class TestMalformedArgumentErrors:
             return code
 
         tool = self._tool(handler)
-        with pytest.raises(ToolError) as exc_info:
+        with pytest.raises(ToolInputError) as exc_info:
             await tool.call(language="py")  # required `code` omitted
+        assert isinstance(exc_info.value, ToolError)
         message = str(exc_info.value)
         assert "Invalid arguments for `eval`" in message
         assert "code" in message
@@ -125,7 +126,7 @@ class TestMalformedArgumentErrors:
             return code
 
         tool = self._tool(handler)
-        with pytest.raises(ToolError) as exc_info:
+        with pytest.raises(ToolInputError) as exc_info:
             await tool.call(code="x", bogus=1)
         message = str(exc_info.value)
         assert "unexpected keyword argument" in message
@@ -140,7 +141,7 @@ class TestMalformedArgumentErrors:
                 return content
 
         tool = self._tool(_SecretInternalCollection().claude_write, name="write")
-        with pytest.raises(ToolError) as exc_info:
+        with pytest.raises(ToolInputError) as exc_info:
             await tool.call(path="a.txt")  # required `content` omitted
         message = str(exc_info.value)
         assert "_SecretInternalCollection" not in message

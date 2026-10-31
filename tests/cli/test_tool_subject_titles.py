@@ -32,7 +32,14 @@ async def _wait_for_layout(pilot: Any, predicate: Callable[[], bool]) -> None:
     assert predicate(), "tool subject layout did not settle"
 
 
-def _tool_event(kind: str, call_id: str, *, subject: object = None, text: str = "") -> AgentEvent:
+def _tool_event(
+    kind: str,
+    call_id: str,
+    *,
+    subject: object = None,
+    text: str = "",
+    tool_error_kind: str | None = None,
+) -> AgentEvent:
     content: dict[str, object] = {
         "message_type": kind,
         "tool_description": "read",
@@ -41,6 +48,8 @@ def _tool_event(kind: str, call_id: str, *, subject: object = None, text: str = 
     }
     if subject is not None:
         content["tool_subject"] = subject
+    if tool_error_kind is not None:
+        content["tool_error_kind"] = tool_error_kind
     return AgentEvent(event_type="chat_message", sender="coder", content=content)
 
 
@@ -82,6 +91,18 @@ def test_subject_is_literal_and_existing_lsp_badge_is_preserved(subject: str) ->
     )
 
 
+def test_invalid_argument_error_uses_invalid_call_status() -> None:
+    entry = ConversationEntry(
+        kind="tool_error",
+        content="Invalid arguments for `exec_command`: missing command",
+        tool_name="exec_command",
+        tool_error_kind="invalid_arguments",
+    )
+    title = Text.from_markup(TranscriptRenderingMixin._tool_entry_title(entry, 120))
+    assert "invalid call" in title.plain
+    assert "failed" not in title.plain
+
+
 @pytest.mark.asyncio
 async def test_live_parallel_subjects_survive_streaming_results_and_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -117,6 +138,18 @@ async def test_live_parallel_subjects_survive_streaming_results_and_errors(
         assert app._tool_entries["late"].tool_subject == "src/late.py"
         app._render_event(_tool_event("tool_error", "orphan", text="result without a call"))
         assert app._tool_entries["orphan"].tool_subject == ""
+
+        app._render_event(
+            _tool_event(
+                "tool_error",
+                "invalid",
+                text="Invalid arguments for `exec_command`: missing command",
+                tool_error_kind="invalid_arguments",
+            )
+        )
+        assert app._tool_entries["invalid"].tool_error_kind == "invalid_arguments"
+        invalid_title = Text.from_markup(app._tool_entry_title(app._tool_entries["invalid"]))
+        assert "invalid call" in invalid_title.plain
 
 
 @pytest.mark.asyncio
@@ -274,6 +307,7 @@ async def test_restore_derives_safe_subjects_from_calls_and_hosted_actions(
                     name="apply_patch",
                     content="rejected",
                     is_error=True,
+                    error_kind="invalid_arguments",
                 ),
                 ToolResult(
                     tool_use_id="provider-a", execution_id="exec-a", name="read", content="FILE_BODY", is_error=False
@@ -306,6 +340,8 @@ async def test_restore_derives_safe_subjects_from_calls_and_hosted_actions(
         assert len(entries) == 5
         assert [entry.tool_subject for entry in entries[:2]] == ["src/a.py", "src/b.py"]
         assert [entry.kind for entry in entries[:2]] == ["tool_result", "tool_error"]
+        assert entries[1].tool_error_kind == "invalid_arguments"
+        assert "invalid call" in Text.from_markup(app._tool_entry_title(entries[1])).plain
         assert "FAKE_CONFIGURED_SUBJECT_KEY" not in entries[2].tool_subject
         assert entries[3].tool_subject == "Textual layouts, tool titles"
         assert entries[4].tool_subject == "https://example.test/docs"

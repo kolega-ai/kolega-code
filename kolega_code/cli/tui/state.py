@@ -53,8 +53,10 @@ def turn_state_color(state: TurnState) -> str:
     return getattr(Color, TURN_STATE_STYLES.get(state, "ACCENT"))
 
 
-def tool_state_presentation(kind: str) -> tuple[str, str]:
+def tool_state_presentation(kind: str, *, error_kind: Optional[str] = None) -> tuple[str, str]:
     """(state label, live role color) for a tool-entry kind."""
+    if kind == "tool_error" and error_kind == "invalid_arguments":
+        return "invalid call", Color.WARNING
     label, attr = TOOL_STATE_PRESENTATION.get(kind, ("running", "ACCENT"))
     return label, getattr(Color, attr)
 
@@ -76,6 +78,7 @@ class ConversationEntry:
     tool_call_id: Optional[str] = None
     tool_subject: str = ""  # bounded, sanitized input subject; never raw tool arguments
     tool_display: dict[str, list[str] | str] = field(default_factory=dict)  # safe paths / command, not raw args
+    tool_error_kind: Optional[str] = None
     tone: Optional[str] = None  # "warning" | "error" styling hint for progress entries
     full_content: str = ""  # untruncated tool output for expand-on-demand (capped)
     edit_preview: Optional[dict] = None  # UI-only structured diff/head preview for edit tools (not persisted)

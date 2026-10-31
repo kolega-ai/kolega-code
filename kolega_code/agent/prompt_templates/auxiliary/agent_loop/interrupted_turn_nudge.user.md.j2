@@ -1,0 +1,9 @@
+<system-reminder source="agent_loop">
+{% if attempt == 1 %}
+Your last response was interrupted by a transport failure after partial output was already delivered. Continue exactly from where that response stopped. Do not repeat the text already written, and do not reconstruct or execute any unfinished tool call from the interrupted response.
+{% elif attempt == 2 %}
+The response transport has been interrupted twice. Continue only the missing suffix from the last partial response, without repeating earlier text. Keep the continuation concise, and issue a tool call only if you can construct it completely in this new response.
+{% else %}
+The response transport has failed repeatedly. Finish the remaining answer as briefly as possible without repeating prior partial output. Any tool call must be newly emitted and complete; ignore unfinished tool syntax from earlier interrupted responses.
+{% endif %}
+</system-reminder>

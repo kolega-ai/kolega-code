@@ -119,6 +119,46 @@ async def test_execution_errors_keep_call_subject(
     assert result.is_error and result.content == str(failure)
 
 
+async def test_invalid_model_arguments_are_labeled_without_entering_handler(
+    agent: BaseAgent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    async def exec_command(command: str) -> str:
+        calls.append(command)
+        return "unexpected"
+
+    registry = ToolRegistry(
+        [
+            Tool(
+                name="exec_command",
+                definition=ToolDefinition(name="exec_command", description="", parameters=[]),
+                handler=exec_command,
+            )
+        ]
+    )
+    registry_call = AsyncMock(wraps=registry.call)
+    monkeypatch.setattr(registry, "call", registry_call)
+    monkeypatch.setattr(agent, "tool_collection", SimpleNamespace(registry=lambda: registry))
+    post_error_hook = AsyncMock(side_effect=lambda _name, _inputs, message: f"{message}\n\nhook context")
+    monkeypatch.setattr(agent, "_post_tool_error_hook", post_error_hook)
+    agent.permission_mode = PermissionMode.AUTO
+
+    result = await agent.execute_single_tool(_call("exec_command", {}))
+
+    assert result.is_error
+    assert result.error_kind == "invalid_arguments"
+    assert isinstance(result.content, str)
+    assert result.content.endswith("hook context")
+    assert calls == []
+    registry_call.assert_awaited_once()
+    post_error_hook.assert_awaited_once()
+    events = _events(agent)
+    assert [event.content["message_type"] for event in events] == ["tool_call", "tool_error"]
+    assert events[-1].content["tool_error_kind"] == "invalid_arguments"
+    assert events[-1].content["text"].endswith("hook context")
+
+
 async def test_unknown_tool_has_subject_without_extra_call(agent: BaseAgent, monkeypatch: pytest.MonkeyPatch) -> None:
     _install(agent, monkeypatch, "read")
     result = await agent.execute_single_tool(_call("not_installed", {"path": "src/missing.py"}))

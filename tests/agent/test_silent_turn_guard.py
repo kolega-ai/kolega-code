@@ -9,7 +9,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from kolega_code.agent.baseagent import BaseAgent
-from kolega_code.agent.prompts import SILENT_TURN_EXHAUSTED_NOTICE, build_silent_turn_nudge, build_truncated_turn_nudge
+from kolega_code.agent.prompts import (
+    SILENT_TURN_EXHAUSTED_NOTICE,
+    build_interrupted_turn_nudge,
+    build_silent_turn_nudge,
+    build_truncated_turn_nudge,
+)
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.llm.models import Message, TextBlock, ThinkingBlock, ToolCall, ToolResult
 
@@ -92,6 +97,9 @@ def test_agent_loop_nudges_are_source_tagged_reminders() -> None:
         build_truncated_turn_nudge(1),
         build_truncated_turn_nudge(2),
         build_truncated_turn_nudge(3),
+        build_interrupted_turn_nudge(1),
+        build_interrupted_turn_nudge(2),
+        build_interrupted_turn_nudge(3),
     ]
     for nudge in nudges:
         assert nudge.startswith('<system-reminder source="agent_loop">'), nudge

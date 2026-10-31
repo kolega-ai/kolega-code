@@ -120,7 +120,7 @@ def entry_command(entry: ConversationEntry) -> str:
 
 def tool_title(entry: ConversationEntry, width: int | None = None) -> tuple[Text, bool]:
     """Build a single-row title and say whether the command needs its own preview."""
-    state, color = tool_state_presentation(entry.kind)
+    state, color = tool_state_presentation(entry.kind, error_kind=entry.tool_error_kind)
     header = Text.from_markup(theme.role_header(Glyph.TOOL, escape(entry.tool_name or "tool"), color))
     separator = f" {theme.g(Glyph.BULLET_SEP)} "
     status = Text(separator + state, style="dim")

@@ -18,8 +18,10 @@ from kolega_code.agent import baseagent as agent_module
 from kolega_code.agent.baseagent import BaseAgent
 from kolega_code.llm.exceptions import LLMRateLimitError, LLMStreamStalled, LLMTimeout
 from kolega_code.llm.ledger import current_llm_call_origin
-from kolega_code.llm.models import Message, MessageChunk, TextBlock
+from kolega_code.llm.models import Message, MessageChunk, TextBlock, ToolDefinition
 from kolega_code.llm.providers.responses_common import ResponsesStreamWrapper
+from kolega_code.permissions import PermissionMode
+from kolega_code.tools import Tool, ToolRegistry
 
 from ..compaction_helpers import FakeLLM
 
@@ -59,6 +61,18 @@ class _Body(httpx.AsyncByteStream):
 
     async def aclose(self) -> None:
         self.closed.set()
+
+
+class _FiniteEventStream:
+    def __init__(self, events: list[Any]) -> None:
+        self._events = list(events)
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        async def generate() -> AsyncIterator[Any]:
+            for event in self._events:
+                yield event
+
+        return generate()
 
 
 def _client(handler: Any, *, max_retries: int = 0) -> AsyncOpenAI:
@@ -322,6 +336,256 @@ async def test_tool_done_does_not_double_count_argument_deltas(guarded: BaseAgen
 
 
 @pytest.mark.asyncio
+async def test_agent_retries_incomplete_responses_stream_without_dispatching_partial_tool(
+    guarded: BaseAgent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guarded.system_prompt = Message(role="system", content=[TextBlock(text="offline test")])
+    guarded.permission_mode = PermissionMode.AUTO
+    handler_calls: list[str] = []
+
+    async def exec_command(command: str) -> str:
+        handler_calls.append(command)
+        return "unexpected"
+
+    registry = ToolRegistry(
+        [
+            Tool(
+                name="exec_command",
+                definition=ToolDefinition(name="exec_command", description="", parameters=[]),
+                handler=exec_command,
+            )
+        ]
+    )
+    registry_call = AsyncMock(wraps=registry.call)
+    monkeypatch.setattr(registry, "call", registry_call)
+    guarded.tool_collection = cast(
+        Any,
+        SimpleNamespace(
+            get_tool_list=MagicMock(return_value=registry.definitions()),
+            registry=lambda: registry,
+        ),
+    )
+
+    first = ResponsesStreamWrapper(
+        _FiniteEventStream(
+            [
+                SimpleNamespace(
+                    type="response.output_item.added",
+                    item=SimpleNamespace(
+                        type="function_call",
+                        id="fc_1",
+                        call_id="call_1",
+                        name="exec_command",
+                    ),
+                ),
+                SimpleNamespace(
+                    type="response.function_call_arguments.delta",
+                    item_id="fc_1",
+                    delta='{"command":',
+                ),
+            ]
+        ),
+        provider_name="deepseek",
+    )
+    second = ResponsesStreamWrapper(
+        _FiniteEventStream(
+            [
+                SimpleNamespace(type="response.output_text.delta", delta="recovered"),
+                SimpleNamespace(
+                    type="response.completed",
+                    response=SimpleNamespace(
+                        output=[],
+                        usage=None,
+                        status="completed",
+                        incomplete_details=None,
+                    ),
+                ),
+            ]
+        ),
+        provider_name="deepseek",
+    )
+    llm = FakeLLM(token_script=[100])
+    llm.stream = AsyncMock(side_effect=[first, second])
+    guarded.llm = cast(Any, llm)
+    monkeypatch.setattr(agent_module.random, "uniform", lambda *_: 0)
+
+    chunks = [chunk async for chunk in guarded._agent_loop_stream()]
+
+    assert any(chunk.get("content") == "recovered" for chunk in chunks)
+    assert llm.stream.await_count == 2
+    assert guarded._consecutive_llm_retries == 0
+    registry_call.assert_not_awaited()
+    assert handler_calls == []
+    error_events = [
+        call.args[0]
+        for call in cast(AsyncMock, guarded.emitter.connection_manager.broadcast_event).await_args_list
+        if call.args[0].event_type == "llm_error"
+    ]
+    assert any(event.content["error_type"] == "LLMIncompleteResponseError" for event in error_events)
+
+
+@pytest.mark.asyncio
+async def test_agent_continues_after_visible_mixed_output_without_releasing_partial_tool(
+    guarded: BaseAgent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guarded.system_prompt = Message(role="system", content=[TextBlock(text="offline test")])
+    guarded.permission_mode = PermissionMode.AUTO
+    guarded.tool_collection = cast(
+        Any,
+        SimpleNamespace(
+            get_tool_list=MagicMock(return_value=[]),
+            registry=MagicMock(),
+        ),
+    )
+    partial_thinking = "t" * (guarded.STREAM_FLUSH_CHARS + 1)
+    partial_response = "x" * (guarded.STREAM_FLUSH_CHARS + 1)
+    first = ResponsesStreamWrapper(
+        _FiniteEventStream(
+            [
+                SimpleNamespace(type="response.reasoning_text.delta", delta=partial_thinking),
+                SimpleNamespace(type="response.output_text.delta", delta=partial_response),
+                SimpleNamespace(
+                    type="response.output_item.added",
+                    item=SimpleNamespace(
+                        type="function_call",
+                        id="fc_partial",
+                        call_id="call_partial",
+                        name="exec_command",
+                    ),
+                ),
+                SimpleNamespace(
+                    type="response.function_call_arguments.delta",
+                    item_id="fc_partial",
+                    delta='{"command":"echo unfinished',
+                ),
+            ]
+        ),
+        provider_name="deepseek",
+    )
+    second = ResponsesStreamWrapper(
+        _FiniteEventStream(
+            [
+                SimpleNamespace(type="response.output_text.delta", delta="recovered"),
+                SimpleNamespace(
+                    type="response.completed",
+                    response=SimpleNamespace(
+                        output=[],
+                        usage=None,
+                        status="completed",
+                        incomplete_details=None,
+                    ),
+                ),
+            ]
+        ),
+        provider_name="deepseek",
+    )
+    llm = FakeLLM(token_script=[100])
+    llm.stream = AsyncMock(side_effect=[first, second])
+    guarded.llm = cast(Any, llm)
+    monkeypatch.setattr(agent_module.random, "uniform", lambda *_: 0)
+
+    chunks = [chunk async for chunk in guarded._agent_loop_stream()]
+
+    response_chunk = next(chunk for chunk in chunks if chunk.get("content") == partial_response)
+    assert response_chunk["complete"] is False
+    assert any(
+        chunk.get("type") == "response"
+        and chunk.get("uuid") == response_chunk["uuid"]
+        and chunk.get("complete") is True
+        for chunk in chunks
+    )
+    assert any(chunk.get("content") == "recovered" for chunk in chunks)
+    assert llm.stream.await_count == 2
+    partial_message, continuation_nudge, recovered_message = guarded.history[-3:]
+    assert [partial_message.role, continuation_nudge.role, recovered_message.role] == [
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert partial_message.get_text_content() == partial_response
+    assert partial_message.stop_reason == "interrupted"
+    assert partial_message.tool_calls == []
+    assert partial_message.usage_metadata["stream_incomplete"] is True
+    assert "transport failure" in continuation_nudge.get_text_content()
+    assert recovered_message.get_text_content() == "recovered"
+    chat_events = [
+        call.args[0]
+        for call in cast(AsyncMock, guarded.emitter.connection_manager.broadcast_event).await_args_list
+        if call.args[0].event_type == "chat_message"
+    ]
+    assert all(event.content.get("message_type") != "tool_call" for event in chat_events)
+    status_calls = cast(AsyncMock, guarded.emitter.llm_status).await_args_list
+    assert any(call.kwargs.get("continuation") is True for call in status_calls)
+
+
+@pytest.mark.asyncio
+async def test_incomplete_responses_stream_does_not_announce_partial_write(
+    guarded: BaseAgent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guarded.system_prompt = Message(role="system", content=[TextBlock(text="offline test")])
+    guarded.permission_mode = PermissionMode.AUTO
+    guarded.tool_collection = cast(
+        Any,
+        SimpleNamespace(
+            get_tool_list=MagicMock(return_value=[]),
+            registry=MagicMock(),
+        ),
+    )
+    first = ResponsesStreamWrapper(
+        _FiniteEventStream(
+            [
+                SimpleNamespace(
+                    type="response.output_item.added",
+                    item=SimpleNamespace(
+                        type="function_call",
+                        id="fc_write",
+                        call_id="call_write",
+                        name="write",
+                    ),
+                ),
+                SimpleNamespace(
+                    type="response.function_call_arguments.delta",
+                    item_id="fc_write",
+                    delta='{"path":"partial.py","content":"unfinished',
+                ),
+            ]
+        ),
+        provider_name="deepseek",
+    )
+    second = ResponsesStreamWrapper(
+        _FiniteEventStream(
+            [
+                SimpleNamespace(type="response.output_text.delta", delta="recovered"),
+                SimpleNamespace(
+                    type="response.completed",
+                    response=SimpleNamespace(
+                        output=[],
+                        usage=None,
+                        status="completed",
+                        incomplete_details=None,
+                    ),
+                ),
+            ]
+        ),
+        provider_name="deepseek",
+    )
+    llm = FakeLLM(token_script=[100])
+    llm.stream = AsyncMock(side_effect=[first, second])
+    guarded.llm = cast(Any, llm)
+    monkeypatch.setattr(agent_module.random, "uniform", lambda *_: 0)
+
+    chunks = [chunk async for chunk in guarded._agent_loop_stream()]
+
+    assert any(chunk.get("content") == "recovered" for chunk in chunks)
+    chat_events = [
+        call.args[0]
+        for call in cast(AsyncMock, guarded.emitter.connection_manager.broadcast_event).await_args_list
+        if call.args[0].event_type == "chat_message"
+    ]
+    assert all(event.content.get("message_type") != "tool_call" for event in chat_events)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("phase", ["create", "enter", "read", "active"])
 async def test_remaining_retry_budget_bounds_subsequent_attempt(guarded: BaseAgent, phase: str) -> None:
     guarded._stream_first_chunk_timeout = 5
@@ -473,6 +737,11 @@ async def test_entry_error_is_not_masked_by_cleanup_failure(guarded: BaseAgent) 
 async def test_agent_loop_guards_real_sdk_setup_and_preserves_origin_and_retry_policy(
     guarded: BaseAgent, monkeypatch: pytest.MonkeyPatch, stall: bool
 ) -> None:
+    if not stall:
+        # Real SDK event-model initialization can exceed the fixture's tiny
+        # stall deadline even though the mocked transport responds immediately.
+        guarded._stream_first_chunk_timeout = 1.0
+        guarded._stream_idle_timeout = 1.0
     guarded.system_prompt = Message(role="system", content=[TextBlock(text="offline test")])
     guarded.tool_collection = MagicMock()
     guarded.tool_collection.get_tool_list = MagicMock(return_value=[])
@@ -480,7 +749,26 @@ async def test_agent_loop_guards_real_sdk_setup_and_preserves_origin_and_retry_p
     guarded.llm = cast(Any, llm)
     monkeypatch.setattr(agent_module.random, "uniform", lambda *_: 0)
     requests = []
-    body = _Body(({"type": "response.output_text.delta", "delta": "done"},))
+    body = _Body(
+        (
+            {"type": "response.output_text.delta", "delta": "done"},
+            {
+                "type": "response.completed",
+                "sequence_number": 2,
+                "response": {
+                    "id": "resp_mock",
+                    "created_at": 0,
+                    "model": "offline-test",
+                    "object": "response",
+                    "output": [],
+                    "parallel_tool_calls": False,
+                    "tool_choice": "auto",
+                    "tools": [],
+                    "status": "completed",
+                },
+            },
+        )
+    )
     body.release.set()
 
     async def handler(request: httpx.Request) -> httpx.Response:

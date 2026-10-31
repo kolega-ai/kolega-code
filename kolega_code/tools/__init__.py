@@ -9,7 +9,7 @@ ToolCollection (kolega_code.agent.tools) remains the host-facing way to
 assemble an agent's tools; internally it builds a ToolRegistry.
 """
 
-from .core import Tool, ToolError
+from .core import Tool, ToolError, ToolInputError
 from .definitions import (
     ASK_USER_CHOICE_INPUT_SCHEMA,
     ASK_USER_CHOICE_SHAPE_HINT,
@@ -21,6 +21,7 @@ __all__ = [
     "ASK_USER_CHOICE_SHAPE_HINT",
     "Tool",
     "ToolError",
+    "ToolInputError",
     "ToolPolicy",
     "ToolRegistry",
 ]
