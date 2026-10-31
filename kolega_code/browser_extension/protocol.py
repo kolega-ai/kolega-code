@@ -16,7 +16,6 @@ import idna
 
 PROTOCOL_VERSION = 1
 MAX_SAFE_INTEGER = (1 << 53) - 1
-MAX_IDENTIFIER_LENGTH = 128
 MAX_ERROR_MESSAGE_LENGTH = 240
 # Requests travel runtime -> extension and are bounded by their own parameter
 # schemas anyway, so they keep the conservative limit. Responses travel the other

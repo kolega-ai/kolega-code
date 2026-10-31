@@ -6,10 +6,9 @@ from pathlib import Path
 from typing import Optional
 
 from kolega_code.agent.tools import ToolExtension
-from kolega_code.llm.models import ToolDefinition
 
 from .config import LoadedMCPConfig, load_mcp_config
-from .service import MCPExposedTool, MCPService, exposed_tool_names_for, sanitize_mcp_tool_name
+from .service import MCPExposedTool, MCPService, exposed_tool_names_for
 
 
 def build_mcp_tool_extension(
@@ -69,18 +68,4 @@ def build_mcp_tool_extension(
         tool_schemas=schemas,
         cleanup=service.cleanup,
         propagate_to_sub_agents=False,
-    )
-
-
-def mcp_tool_definition(exposed_tool) -> ToolDefinition:
-    """Build a ToolDefinition for tests and callers that need explicit definitions.
-
-    Uses the sanitized wire name; ``build_mcp_tool_extension`` additionally
-    dedupes collisions per server.
-    """
-    return ToolDefinition(
-        name=sanitize_mcp_tool_name(exposed_tool.name),
-        description=exposed_tool.description,
-        parameters=[],
-        input_schema=exposed_tool.tool.input_schema,
     )

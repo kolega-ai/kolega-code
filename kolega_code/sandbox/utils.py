@@ -2,9 +2,8 @@
 
 import logging
 import shlex
-from typing import Awaitable, List, Optional, cast
-from .base import SandboxManager, ProjectManifest
-import yaml
+from typing import List, Optional
+from .base import SandboxManager
 
 logger = logging.getLogger(__name__)
 
@@ -148,74 +147,3 @@ async def get_git_diff_from_sandbox(
     except Exception as e:
         logger.error(f"Error getting git diff from sandbox {sandbox_id}: {e}")
         return ""
-
-
-async def run_project_tests_in_sandbox(
-    sandbox_manager: SandboxManager, sandbox_id: str, config: Optional[dict] = None
-) -> dict:
-    """
-    Run project tests in sandbox based on manifest configuration.
-
-    Args:
-        sandbox_manager: The sandbox manager instance
-        sandbox_id: ID of the sandbox
-        config: Optional project configuration
-
-    Returns:
-        Dictionary with test results
-    """
-    try:
-        terminal_manager = sandbox_manager.get_terminal_manager(sandbox_id)
-
-        # Try to read project manifest
-        manifest_path = f"{WORKSPACE_PATH}/.kolega-manifest.yaml"
-
-        try:
-            filesystem = sandbox_manager.get_filesystem(sandbox_id)
-            # NOTE: ``FileSystem.read_text`` is synchronous (returns ``str``); awaiting
-            # it is a latent bug (the ``TypeError`` is swallowed by the ``except`` below,
-            # so the manifest is never read and the fallback test commands are used).
-            # Preserve existing runtime behavior for now and silence the type checker
-            # with a cast rather than changing control flow.
-            manifest_content = await cast(Awaitable[str], filesystem.read_text(manifest_path))
-            manifest_data = yaml.safe_load(manifest_content)
-            manifest = ProjectManifest(**manifest_data)
-            test_commands = manifest.test_commands or []
-        except Exception:
-            # Fallback to common test commands if no manifest
-            test_commands = ["npm test", "pytest", "python -m pytest", "cargo test", "go test ./...", "mvn test"]
-
-        if not test_commands:
-            return {"success": False, "error": "No test commands found in project configuration"}
-
-        # Run test commands
-        results = []
-        for cmd in test_commands:
-            try:
-                logger.info(f"Running test command: {cmd}")
-                result = await terminal_manager.run_command(
-                    cmd,
-                    cwd=WORKSPACE_PATH,
-                    timeout=300,  # 5 minute timeout for tests
-                )
-
-                # Determine if command succeeded (this is a simple check)
-                success = "error" not in result.lower() and "failed" not in result.lower()
-
-                results.append({"command": cmd, "success": success, "output": result})
-
-                if success:
-                    # If one test command succeeds, we can stop
-                    break
-
-            except Exception as e:
-                results.append({"command": cmd, "success": False, "error": str(e)})
-
-        # Determine overall success
-        overall_success = any(r.get("success", False) for r in results)
-
-        return {"success": overall_success, "results": results}
-
-    except Exception as e:
-        logger.error(f"Error running tests in sandbox {sandbox_id}: {e}")
-        return {"success": False, "error": str(e)}

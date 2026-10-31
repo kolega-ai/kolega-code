@@ -31,7 +31,7 @@ from starlette.staticfiles import StaticFiles
 from kolega_code.cli import theme as cli_theme
 from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore, SessionStoreError as CliSessionStoreError
-from kolega_code.events import ArtifactPurpose, ArtifactRef
+from kolega_code.events import ArtifactPurpose
 from kolega_code.session.projection import replay
 from kolega_code.session.store import SessionStoreError
 
@@ -478,8 +478,3 @@ async def _head(config: ServerConfig, session_id: str):
         # A session directory that predates the event log, or one being written
         # right now, must not break a listing.
         return None
-
-
-def artifact_url(session_id: str, ref: ArtifactRef) -> str:
-    """Canonical read path for an artifact reference."""
-    return f"/api/sessions/{session_id}/artifacts/{ref.sha256}"
