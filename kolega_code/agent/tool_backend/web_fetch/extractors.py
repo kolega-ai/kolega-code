@@ -8,10 +8,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Protocol
 
-import trafilatura
 from bs4 import BeautifulSoup
-from markdownify import markdownify
-from readability import Document
+
+# trafilatura, readability and markdownify add ~215 ms of import work to every
+# `kolega-code` start. Only a fetch that extracts HTML needs them, so each
+# extractor imports its own library on first use (the interpreter caches it).
 
 DEFAULT_EXTRACTOR = "auto"
 HIGH_QUALITY_SCORE = 42.0
@@ -150,6 +151,8 @@ class TrafilaturaExtractor:
     label = "Trafilatura"
 
     def extract(self, html: str, url: str) -> str:
+        import trafilatura
+
         balanced = (
             trafilatura.extract(
                 html,
@@ -187,6 +190,9 @@ class ReadabilityExtractor:
     label = "Readability"
 
     def extract(self, html: str, url: str) -> str:
+        from markdownify import markdownify
+        from readability import Document
+
         article_html = Document(html, url=url).summary(html_partial=True)
         return _clean_markdown(markdownify(article_html, heading_style="ATX", bullets="-"))
 
@@ -196,6 +202,8 @@ class SemanticDomExtractor:
     label = "Semantic DOM"
 
     def extract(self, html: str, url: str) -> str:
+        from markdownify import markdownify
+
         soup = BeautifulSoup(html, "lxml")
         for tag in soup.select("script, style, noscript, template, svg, nav, header, footer, aside"):
             tag.decompose()
