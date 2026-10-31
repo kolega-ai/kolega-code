@@ -45,6 +45,11 @@ echo "Running tests with ${NUM_CPUS} parallel workers"
 PYTEST_BASE_ARGS=(-ra --durations=50 --import-mode=importlib -n "$NUM_CPUS")
 
 if [ "$RUN_COVERAGE" = true ]; then
+  # coverage.py's sysmon core (Python 3.12+) records the same lines as the C
+  # tracer with almost no runtime overhead. An explicit COVERAGE_CORE wins.
+  if [ -z "${COVERAGE_CORE:-}" ] && uv run python -c 'import sys; raise SystemExit(sys.version_info < (3, 12))'; then
+    export COVERAGE_CORE=sysmon
+  fi
   PYTEST_BASE_ARGS+=(--cov=kolega_code --cov-report=term-missing --cov-report=xml --cov-fail-under="$COVERAGE_FAIL_UNDER")
 fi
 
