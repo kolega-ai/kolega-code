@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -331,6 +332,32 @@ def test_ledger_checkpoint_scoping_and_restore(tmp_path: Path) -> None:
     tracker.apply_restore_plan(tracker.build_restore_plan(checkpoint_id=turn.checkpoint_id))
     assert (project / "a.txt").read_text(encoding="utf-8") == "v2\n"
 
+    since_start = _by_path(tracker.refresh())
+    preview = since_start["a.txt"].preview
+    assert preview is not None
+    lines = [row[1] for row in preview["lines"] if row[0] in {"add", "del"}]
+    assert lines == ["-v1", "+v2"]
+
+
+def test_restore_invalidates_stat_caches_when_timestamp_tick_repeats(tmp_path: Path) -> None:
+    project, service, tracker = _ledger_setup(tmp_path)
+    (project / "a.txt").write_text("v1\n", encoding="utf-8")
+
+    _mutate(service, project, "a.txt", "v2\n")
+    turn = tracker.capture_checkpoint("turn 2")
+    _mutate(service, project, "a.txt", "v3\n")
+
+    target = project / "a.txt"
+    stale_mtime = target.stat().st_mtime_ns
+    assert _by_path(tracker.refresh(checkpoint_id=turn.checkpoint_id))["a.txt"].preview is not None
+
+    tracker.apply_restore_plan(tracker.build_restore_plan(checkpoint_id=turn.checkpoint_id))
+    assert target.read_text(encoding="utf-8") == "v2\n"
+    # Restored bytes can land on the same (mtime, size) signature as the cached
+    # v3 state when the filesystem's timestamp tick is coarser than the rewrite.
+    os.utime(target, ns=(stale_mtime, stale_mtime))
+
+    assert tracker.refresh(checkpoint_id=turn.checkpoint_id) == []
     since_start = _by_path(tracker.refresh())
     preview = since_start["a.txt"].preview
     assert preview is not None

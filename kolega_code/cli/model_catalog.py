@@ -17,7 +17,7 @@ import datetime as dt
 import json
 import os
 from pathlib import Path
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from kolega_code.config import ModelProvider
 from kolega_code.llm.cloudflare_workers_ai import normalize_account_id
@@ -353,8 +353,3 @@ def run_models_refresh(args: Any, printer, error_printer) -> int:
         _, disable_env = _catalog_env_names(provider)
         printer(f"NOTE: {disable_env} is set, so the cache is ignored at startup.")
     return 0
-
-
-def known_openrouter_models() -> Iterable[str]:
-    """Every OpenRouter model id currently resolvable (bundled plus overlay)."""
-    return (model for (provider_value, model) in MODEL_SPECS if provider_value == openrouter.PROVIDER)

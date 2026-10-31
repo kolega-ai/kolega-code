@@ -17,6 +17,7 @@ import pytest
 
 from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
+from kolega_code.config import ModelConfig, ModelProvider
 
 
 from ._app_test_utils import FakeCoderAgent, build_test_config, install_fake_agents
@@ -42,11 +43,20 @@ class _FakeConversation:
 class _FakeAgent(FakeCoderAgent):
     """Minimal agent stand-in exposing vision capability + conversation probe."""
 
-    def __init__(self, *, supports_vision: bool, has_images: bool = False, model: str = "test-model"):
+    agent_name = "coder"
+
+    def __init__(
+        self,
+        *,
+        supports_vision: bool,
+        has_images: bool = False,
+        provider: str = "anthropic",
+        model: str = "test-model",
+    ):
         super().__init__()
         self.supports_vision = supports_vision
         self.conversation = _FakeConversation(has_images)
-        self.primary_model_config = type("Cfg", (), {"model": model})()
+        self.primary_model_config = type("Cfg", (), {"provider": provider, "model": model})()
 
 
 def _make_app(tmp_path, monkeypatch):
@@ -94,6 +104,44 @@ async def test_add_pending_image_non_vision_shows_warning_hint(tmp_path, monkeyp
         assert system, "expected a system message in the transcript"
         assert system[0].tone == "warning"
         assert "does not support vision" in system[0].content
+        assert "anthropic/test-model" in system[0].content
+        assert "use /model to switch to a vision-capable model" in system[0].content
+
+
+@pytest.mark.asyncio
+async def test_add_pending_image_role_override_points_to_agent_models(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch)
+    assert app.config is not None
+    app.config.agent_models["building"] = ModelConfig(
+        provider=ModelProvider.DEEPSEEK,
+        model="deepseek-v4-pro",
+    )
+    async with app.run_test():
+        monkeypatch.setattr(
+            app,
+            "agent",
+            _FakeAgent(
+                supports_vision=False,
+                provider="deepseek",
+                model="deepseek-v4-pro",
+            ),
+        )
+        hints: list[tuple] = []
+        app._show_composer_hint = lambda text, tone="warning": hints.append((text, tone))
+        entries: list = []
+        app._add_conversation_entry = lambda entry: entries.append(entry)
+
+        app.add_pending_image_attachment(_image_attachment("screenshot.png"))
+
+        assert hints
+        assert "deepseek/deepseek-v4-pro" in hints[0][0]
+        system = [entry for entry in entries if entry.kind == "system"]
+        assert len(system) == 1
+        warning = system[0].content
+        assert "deepseek/deepseek-v4-pro" in warning
+        assert "/settings" in warning
+        assert "Agent Models → Building (Coder)" in warning
+        assert "use /model" not in warning
 
 
 @pytest.mark.asyncio

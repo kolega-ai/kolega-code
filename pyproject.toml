@@ -213,7 +213,8 @@ exclude-newer = "1 week"
 # fixing GHSA-9v8h-qqgm-4m35 (PYSEC-2026-4322/-4323) and sit inside the
 # quarantine; setuptools 84.1.0 (released 2026-10-19) is the first release fixing
 # GHSA-xmj3-9gf7-h52w and, with 84.2.0, lands just inside it. Admit each without
-# widening the window.
+# widening the window. pyasn1 0.6.5 (released 2026-10-27) fixes four quadratic
+# decoding denial-of-service advisories and is admitted for the same reason.
 
 [tool.uv.exclude-newer-package]
 cryptography = "2026-08-01T00:00:00Z"
@@ -224,6 +225,7 @@ certifi = "2026-10-21T00:00:00Z"
 brotli = "2026-10-23T00:00:00Z"
 brotlicffi = "2026-10-23T00:00:00Z"
 setuptools = "2026-10-20T00:00:00Z"
+pyasn1 = "2026-10-28T00:00:00Z"
 
 [tool.pyright]
 include = ["kolega_code", "benchmarks", "tests"]

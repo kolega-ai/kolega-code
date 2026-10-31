@@ -129,6 +129,25 @@ def test_groq_stt_api_key_env_beats_the_stored_key(tmp_path: Path, monkeypatch: 
     assert config.stt_api_key == "gsk_env"
 
 
+def test_openai_stt_uses_the_stored_openai_api_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    state_dir = tmp_path / "state"
+    settings = CliSettings(
+        stt_enabled=True,
+        stt_provider="openai",
+        stt_model="gpt-4o-mini-transcribe",
+        api_keys={"openai": "sk_stored"},
+    )
+    SettingsStore(root=state_dir).save(settings)
+
+    config = load_gateway_config(state_dir=state_dir)
+
+    assert config.stt_enabled is True
+    assert config.stt_provider == "openai"
+    assert config.stt_model == "gpt-4o-mini-transcribe"
+    assert config.stt_api_key == "sk_stored"
+
+
 def test_unknown_stt_provider_falls_back_to_groq(tmp_path: Path) -> None:
     state_dir = save_settings(tmp_path, stt={"stt_provider": "not-a-provider"})
     config = load_gateway_config(state_dir=state_dir)

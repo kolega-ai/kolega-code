@@ -7,6 +7,7 @@ LLMClient layer instead of reusing provider implementation details.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from collections.abc import AsyncIterator
 from typing import Any, cast
@@ -269,7 +270,13 @@ def _mock_langfuse() -> MagicMock:
     generation = MagicMock()
     trace = MagicMock()
     trace.start_observation = MagicMock(return_value=generation)
-    langfuse.start_observation = MagicMock(return_value=trace)
+
+    @contextlib.contextmanager
+    def _start_as_current_observation(**_kwargs):
+        yield trace
+
+    langfuse.start_as_current_observation = MagicMock(side_effect=_start_as_current_observation)
+    langfuse._test_generation = generation
     return langfuse
 
 
@@ -300,7 +307,7 @@ async def test_instrumented_mistral_counters_and_usage_recorder(mistral_http: Mi
     assert recorded[0]["input_tokens"] == 41
     assert recorded[0]["output_tokens"] == 7
     assert recorded[0]["metadata"]["raw_usage"] == response.usage_metadata
-    generation = langfuse.start_observation.return_value.start_observation.return_value
+    generation = langfuse._test_generation
     assert generation.update.call_args.kwargs["usage_details"] == {
         "input": 41,
         "output": 7,
@@ -333,7 +340,7 @@ async def test_instrumented_mistral_stream_counters(mistral_http: MistralHttp) -
         await _close_transport(client)
     assert len(recorded) == 1
     assert (recorded[0]["input_tokens"], recorded[0]["output_tokens"]) == (41, 7)
-    generation = langfuse.start_observation.return_value.start_observation.return_value
+    generation = langfuse._test_generation
     assert generation.update.call_args.kwargs["usage_details"]["total"] == 48
 
 

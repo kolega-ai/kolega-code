@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from kolega_code.events import AgentEvent, ArtifactRef, KnownEventType
+from kolega_code.session.inbox import PeerMessage, peer_model_text
 from kolega_code.session.projection import replay
 
 ASSET_DIR = Path(__file__).resolve().parents[2] / "kolega_code" / "web" / "assets"
@@ -45,6 +46,12 @@ def _sub_agent(event: AgentEvent, **info) -> AgentEvent:
 
 def _fixture_events() -> list[AgentEvent]:
     """Exercise every handler, including the paths most likely to drift."""
+    peer_message = PeerMessage(
+        message_id="peer-1",
+        sender_session_id="session-alpha",
+        sender_title="alpha",
+        text="Please inspect the failing test.",
+    )
     artifact = ArtifactRef(
         sha256="b" * 64,
         bytes=42,
@@ -236,6 +243,38 @@ def _fixture_events() -> list[AgentEvent]:
             error="budget exhausted",
             text="",
         ),
+        _event(
+            KnownEventType.PEER_MESSAGE_RECEIVED,
+            43,
+            elapsed_ms=1080,
+            **peer_message.event_content(),
+        ),
+        _event(
+            KnownEventType.PEER_MESSAGE_DELIVERED,
+            44,
+            elapsed_ms=1082,
+            **peer_message.event_content(),
+        ),
+        _event(
+            KnownEventType.PEER_MESSAGE_RECEIVED,
+            45,
+            elapsed_ms=1084,
+            message_id="peer-1",
+        ),
+        _event(
+            KnownEventType.TURN_STARTED,
+            46,
+            elapsed_ms=1086,
+            turn_id="peer-turn",
+            user_text=peer_model_text(peer_message),
+        ),
+        _event(
+            KnownEventType.TURN_ENDED,
+            47,
+            elapsed_ms=1088,
+            turn_id="peer-turn",
+            status="completed",
+        ),
     ]
 
 
@@ -278,7 +317,7 @@ def test_folds_agree_at_every_prefix(tmp_path: Path) -> None:
     """Seeking must agree too, not just the final state."""
     events = _fixture_events()
     serialized = [event.model_dump(mode="json") for event in events]
-    for cut in (1, 5, 11, 18, 22, 30, 38, 41, len(events)):
+    for cut in (1, 5, 11, 18, 22, 30, 38, 41, 43, 44, 45, 46, len(events)):
         expected = replay(events[:cut]).to_dict()
         actual = _run_js_fold(serialized[:cut], tmp_path)
         assert actual == expected, f"folds diverged after {cut} events"

@@ -54,7 +54,7 @@ LOOPBACK = "127.0.0.1"
 LOCAL_NETWORK = "local-network"
 #: The name this request has always been exported under.
 ALL_INTERFACES = LOCAL_NETWORK
-#: The port both ``kolega-code serve`` and ``/share`` use unless told otherwise.
+#: The port ``/share`` uses unless told otherwise.
 #: Sharing through a tunnel means forwarding a port, and a forwarding rule is
 #: worth writing down only if the port is the same next time.
 DEFAULT_PORT = 8765

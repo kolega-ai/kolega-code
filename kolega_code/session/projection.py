@@ -18,6 +18,7 @@ between two independent folds. Use :func:`replay` to build state from scratch.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
@@ -28,6 +29,12 @@ from kolega_code.events import AgentEvent, ArtifactRef, KnownEventType
 TERMINAL_BUFFER_CHARS = 2_000_000
 #: Cap on retained log lines; logs are diagnostic, not the record of the session.
 LOG_BUFFER_LINES = 2_000
+#: Terminal chunks retained separately; joined lazily so appending one chunk does
+#: not recopy the whole buffer. Merged back into one chunk past this many parts.
+TERMINAL_MAX_PARTS = 1_024
+#: A partially consumed head chunk keeps its dropped prefix until it is released.
+#: Merge once this much is dropped so an oversized event cannot pin it in memory.
+TERMINAL_MAX_DROPPED_PREFIX = 512 * 1024
 
 
 class ProjectionError(RuntimeError):
@@ -38,7 +45,7 @@ class ProjectionError(RuntimeError):
 class ConversationItem:
     """One block in the transcript."""
 
-    #: "user" | "assistant" | "thinking" | "tool" | "system" | "status"
+    #: "user" | "peer_message" | "assistant" | "thinking" | "tool" | "system" | "status"
     kind: str
     text: str = ""
     complete: bool = True
@@ -125,13 +132,23 @@ class ContextStatus:
 
 
 @dataclass
+class _PeerMessageRecord:
+    """Private correlation state for one peer-message lifecycle."""
+
+    index: int
+    sender_id: str
+    sender: str
+    body: str
+    delivered: bool = False
+
+
+@dataclass
 class PresentationState:
     """Everything a frontend needs to draw a session at one point in time."""
 
     conversation: list[ConversationItem] = field(default_factory=list)
     sub_agents: dict[str, SubAgentActivity] = field(default_factory=dict)
     turns: list[TurnMarker] = field(default_factory=list)
-    terminal: str = ""
     terminal_truncated: bool = False
     logs: list[tuple[str, str]] = field(default_factory=list)
     edit_previews: list[dict] = field(default_factory=list)
@@ -156,6 +173,34 @@ class PresentationState:
     # -- Lookups kept alongside the lists so folding stays O(1) per event ----
     _streams: dict[str, int] = field(default_factory=dict, repr=False)
     _tools: dict[str, int] = field(default_factory=dict, repr=False)
+    _peer_messages: dict[str, _PeerMessageRecord] = field(default_factory=dict, repr=False)
+    _pending_peer_turns: list[str] = field(default_factory=list, repr=False)
+
+    # -- Terminal text is chunked while folding and joined on demand --------
+    _terminal_parts: deque[str] = field(default_factory=deque, repr=False, compare=False)
+    #: Characters already dropped from the front of ``_terminal_parts[0]``.
+    _terminal_offset: int = field(default=0, repr=False, compare=False)
+    _terminal_chars: int = field(default=0, repr=False, compare=False)
+    _terminal_text: Optional[str] = field(default=None, repr=False, compare=False)
+
+    @property
+    def terminal(self) -> str:
+        """Retained terminal text.
+
+        Folding appends one chunk per output event, so materializing the whole
+        buffer on every append made replay quadratic in the session length.
+        """
+        if self._terminal_text is None:
+            text = "".join(self._terminal_parts)
+            self._terminal_text = text[self._terminal_offset :] if self._terminal_offset else text
+        return self._terminal_text
+
+    @terminal.setter
+    def terminal(self, value: str) -> None:
+        self._terminal_parts = deque([value] if value else ())
+        self._terminal_offset = 0
+        self._terminal_chars = len(value)
+        self._terminal_text = value
 
     def to_dict(self) -> dict:
         """JSON-safe view for transport to a web client or player.
@@ -354,6 +399,11 @@ def _text_of(event: AgentEvent, *keys: str) -> str:
         if isinstance(value, str) and value:
             return value
     return ""
+
+
+def _string_content(event: AgentEvent, key: str) -> str:
+    value = event.content.get(key)
+    return value if isinstance(value, str) else ""
 
 
 # ---------------------------------------------------------------------------
@@ -602,11 +652,44 @@ def _on_terminal_output(state: PresentationState, event: AgentEvent) -> None:
 def _append_terminal(state: PresentationState, text: str) -> None:
     if not text:
         return
-    combined = state.terminal + text
-    if len(combined) > TERMINAL_BUFFER_CHARS:
-        combined = combined[-TERMINAL_BUFFER_CHARS:]
+    parts = state._terminal_parts
+    parts.append(text)
+    state._terminal_chars += len(text)
+    state._terminal_text = None
+    if state._terminal_chars > TERMINAL_BUFFER_CHARS:
+        _drop_terminal_prefix(state, state._terminal_chars - TERMINAL_BUFFER_CHARS)
         state.terminal_truncated = True
-    state.terminal = combined
+    if len(parts) > TERMINAL_MAX_PARTS or state._terminal_offset > TERMINAL_MAX_DROPPED_PREFIX:
+        _compact_terminal(state)
+
+
+def _drop_terminal_prefix(state: PresentationState, excess: int) -> None:
+    """Drop ``excess`` characters from the front of the retained terminal text.
+
+    Advancing ``_terminal_offset`` instead of re-slicing keeps the head chunk
+    from being copied again for every event once the buffer is full.
+    """
+    parts = state._terminal_parts
+    while excess > 0:
+        available = len(parts[0]) - state._terminal_offset
+        if available <= excess:
+            parts.popleft()
+            state._terminal_offset = 0
+            state._terminal_chars -= available
+            excess -= available
+        else:
+            state._terminal_offset += excess
+            state._terminal_chars -= excess
+            return
+
+
+def _compact_terminal(state: PresentationState) -> None:
+    """Merge retained chunks so a stream of tiny deltas cannot grow the list."""
+    text = "".join(state._terminal_parts)
+    if state._terminal_offset:
+        text = text[state._terminal_offset :]
+    state._terminal_parts = deque([text] if text else ())
+    state._terminal_offset = 0
 
 
 def _on_log_message(state: PresentationState, event: AgentEvent) -> None:
@@ -677,10 +760,18 @@ def _on_turn_started(state: PresentationState, event: AgentEvent) -> None:
     # the activity flag would report the session idle while the main agent is
     # still going. The task text still opens the sub-agent's own trajectory.
     if _sub_agent_key(event) is None:
+        peer_text = _consume_peer_turn(state, user_text)
         state.turns.append(
-            TurnMarker(turn_id=turn_id, user_text=user_text, started_seq=event.seq, started_ms=event.elapsed_ms)
+            TurnMarker(
+                turn_id=turn_id,
+                user_text=peer_text or user_text,
+                started_seq=event.seq,
+                started_ms=event.elapsed_ms,
+            )
         )
         state.activity = "generating"
+        if peer_text is not None:
+            return
     if user_text:
         _append(state, ConversationItem(kind="user", text=user_text), event)
 
@@ -755,6 +846,85 @@ def _on_system_message(state: PresentationState, event: AgentEvent) -> None:
         _append(state, ConversationItem(kind="system", text=text), event)
 
 
+def _on_peer_message(state: PresentationState, event: AgentEvent, status: str) -> None:
+    """Fold a peer message's arrival and queue acceptance into one item."""
+    message_id = _string_content(event, "message_id")
+    sender_id = _string_content(event, "sender_id")
+    sender_title = _string_content(event, "sender_title")
+    body = _text_of(event, "text")
+    record = state._peer_messages.get(message_id) if message_id else None
+    if record is not None:
+        was_delivered = record.delivered
+        if sender_id:
+            record.sender_id = sender_id
+        if sender_title:
+            record.sender = sender_title
+        elif sender_id and record.sender == "peer":
+            record.sender = sender_id
+        if body:
+            record.body = body
+        record.delivered = record.delivered or status == "delivered"
+        existing = state.conversation[record.index] if 0 <= record.index < len(state.conversation) else None
+        if existing is not None and existing.kind == "peer_message":
+            existing.text = _peer_display_text(record.sender, record.body)
+            existing.tool_name = record.sender
+            existing.status = "delivered" if record.delivered else "received"
+            if record.delivered and not was_delivered:
+                state._pending_peer_turns.append(message_id)
+            return
+
+    sender = sender_title or sender_id or "peer"
+    state.conversation.append(
+        ConversationItem(
+            kind="peer_message",
+            text=_peer_display_text(sender, body),
+            tool_name=sender,
+            tool_call_id=message_id or None,
+            status=status,
+            seq=event.seq,
+            elapsed_ms=event.elapsed_ms,
+        )
+    )
+    if not message_id:
+        return
+
+    record = _PeerMessageRecord(
+        index=len(state.conversation) - 1,
+        sender_id=sender_id,
+        sender=sender,
+        body=body,
+        delivered=status == "delivered",
+    )
+    state._peer_messages[message_id] = record
+    if record.delivered:
+        state._pending_peer_turns.append(message_id)
+
+
+def _peer_display_text(sender: str, body: str) -> str:
+    return f"← {sender}\n{body}" if body else f"← {sender}"
+
+
+def _consume_peer_turn(state: PresentationState, user_text: str) -> Optional[str]:
+    """Match the model-facing peer wrapper and keep it out of the transcript."""
+    for index, message_id in enumerate(state._pending_peer_turns):
+        record = state._peer_messages.get(message_id)
+        if record is None or not record.sender_id or not record.body:
+            continue
+        prefix = f"[Peer message from session '{record.sender}' (id {record.sender_id[:8]})]"
+        if user_text.startswith(prefix) and user_text.endswith(f"\n\n{record.body}"):
+            del state._pending_peer_turns[index]
+            return _peer_display_text(record.sender, record.body)
+    return None
+
+
+def _on_peer_message_received(state: PresentationState, event: AgentEvent) -> None:
+    _on_peer_message(state, event, "received")
+
+
+def _on_peer_message_delivered(state: PresentationState, event: AgentEvent) -> None:
+    _on_peer_message(state, event, "delivered")
+
+
 def _ignore(state: PresentationState, event: AgentEvent) -> None:
     """Diagnostics-only events: recorded for debugging, never rendered."""
     return None
@@ -783,6 +953,8 @@ _HANDLERS = {
     KnownEventType.CONTROL_REQUESTED: _on_control_requested,
     KnownEventType.CONTROL_RESOLVED: _on_control_resolved,
     KnownEventType.SYSTEM_MESSAGE: _on_system_message,
+    KnownEventType.PEER_MESSAGE_RECEIVED: _on_peer_message_received,
+    KnownEventType.PEER_MESSAGE_DELIVERED: _on_peer_message_delivered,
     KnownEventType.MEMORY_SUGGESTIONS: _ignore,
     KnownEventType.CREDIT_ALERT: _on_status_update,
     # Diagnostics timeline only; the TUI does not render these either.

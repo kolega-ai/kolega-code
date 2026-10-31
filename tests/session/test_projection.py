@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from kolega_code.events import AgentEvent, ArtifactRef, KnownEventType
+from kolega_code.session.inbox import PeerMessage, peer_model_text
 from kolega_code.session.projection import (
     ProjectionError,
     PresentationState,
@@ -389,6 +390,85 @@ def test_unknown_event_types_are_inert_but_reported() -> None:
     assert [item.text for item in state.conversation] == ["still works"]
 
 
+def test_peer_message_lifecycle_folds_into_one_attributed_item() -> None:
+    message = PeerMessage(
+        message_id="message-1",
+        sender_session_id="session-alpha",
+        sender_title="alpha",
+        text="Please inspect the failing test.",
+    )
+    state = PresentationState()
+    received = _event(
+        KnownEventType.PEER_MESSAGE_RECEIVED,
+        1,
+        elapsed_ms=10,
+        **message.event_content(),
+    )
+    received.sub_agent_info = {"dispatch_id": "wrong-scope", "agent_name": "general"}
+    delivered = _event(
+        KnownEventType.PEER_MESSAGE_DELIVERED,
+        2,
+        elapsed_ms=20,
+        **message.event_content(),
+    )
+
+    fold(state, received)
+
+    assert len(state.conversation) == 1
+    assert state.sub_agents == {}, "peer lifecycle is session-level even if stale metadata is attached"
+    item = state.conversation[0]
+    assert item.kind == "peer_message"
+    assert item.text == "← alpha\nPlease inspect the failing test."
+    assert item.tool_name == "alpha"
+    assert item.tool_call_id == "message-1"
+    assert item.status == "received"
+    assert item.seq == 1
+
+    fold(state, delivered)
+
+    assert state.conversation == [item], "delivery must settle the arrival item rather than duplicate the message"
+    assert item.status == "delivered"
+
+    fold(
+        state,
+        _event(
+            KnownEventType.TURN_STARTED,
+            3,
+            turn_id="peer-turn",
+            user_text=peer_model_text(message),
+        ),
+    )
+
+    assert state.conversation == [item], "the model-facing peer wrapper must not duplicate the lifecycle item"
+    assert state.turns[0].user_text == item.text
+
+    fold(state, _event(KnownEventType.PEER_MESSAGE_RECEIVED, 4, message_id="message-1"))
+
+    assert item.text == "← alpha\nPlease inspect the failing test."
+    assert item.status == "delivered", "late receipt must not regress a delivered lifecycle"
+    assert state._pending_peer_turns == [], "late lifecycle repeats must not queue a duplicate peer turn"
+    assert state.unknown_event_types == set()
+
+
+def test_peer_delivery_without_receipt_still_creates_a_delivered_item() -> None:
+    state = replay(
+        [
+            _event(
+                KnownEventType.PEER_MESSAGE_DELIVERED,
+                1,
+                message_id="message-1",
+                sender_id="session-alpha",
+                sender_title="alpha",
+                text="Queued before replay began.",
+            )
+        ]
+    )
+
+    (item,) = state.conversation
+    assert item.kind == "peer_message"
+    assert item.status == "delivered"
+
+
 def test_out_of_order_events_raise_rather_than_corrupt() -> None:
     state = PresentationState()
     fold(state, _event(KnownEventType.ASSISTANT_DELTA, 5, uuid="a", text="x", complete=True))
@@ -428,6 +508,36 @@ def test_terminal_buffer_is_bounded_and_says_so() -> None:
     state = replay(events)
     assert len(state.terminal) <= projection.TERMINAL_BUFFER_CHARS
     assert state.terminal_truncated is True
+
+
+def test_terminal_buffer_keeps_the_exact_tail_across_uneven_chunks() -> None:
+    """Chunking is an implementation detail: the retained text is still the tail."""
+    from kolega_code.session import projection
+
+    cap = projection.TERMINAL_BUFFER_CHARS
+    chunks = ["a" * (cap // 2), "b" * (cap // 2), "c" * 11, "d" * (cap // 4)]
+    state = replay(
+        [_event(KnownEventType.TERMINAL_OUTPUT, index + 1, output=chunk) for index, chunk in enumerate(chunks)]
+    )
+    assert state.terminal == "".join(chunks)[-cap:]
+    assert state.terminal_truncated is True
+
+
+def test_terminal_buffer_compacts_a_stream_of_small_chunks() -> None:
+    """Many tiny deltas must not grow the retained chunk list without bound."""
+    from kolega_code.session import projection
+
+    count = projection.TERMINAL_MAX_PARTS * 3
+    state = replay([_event(KnownEventType.TERMINAL_OUTPUT, index + 1, output="ab") for index in range(count)])
+    assert state.terminal == "ab" * count
+    assert len(state._terminal_parts) <= projection.TERMINAL_MAX_PARTS
+
+
+def test_terminal_assignment_replaces_the_buffer_before_more_output() -> None:
+    state = PresentationState()
+    state.terminal = "already here"
+    fold(state, _event(KnownEventType.TERMINAL_OUTPUT, 1, output=" now"))
+    assert state.terminal == "already here now"
 
 
 def test_state_is_json_serializable() -> None:

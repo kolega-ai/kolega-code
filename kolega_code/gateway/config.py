@@ -11,7 +11,6 @@ gateway builds agents with the standard ``build_agent_config`` chain.
 
 from __future__ import annotations
 
-import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,12 +21,9 @@ from kolega_code.cli.settings import CliSettings, SettingsStore, SettingsStoreEr
 from kolega_code.gateway.access_settings import AccessSettingsError, validate_access_settings
 from kolega_code.gateway.stt import (
     DEFAULT_STT_PROVIDER,
-    get_stt_provider_class,
-    stt_provider_names,
+    resolve_stt,
 )
 from kolega_code.permissions import PermissionMode, normalize_permission_mode
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_ADAPTER = "echo"
 #: Where gateway sessions work when nothing is configured. Never the
@@ -74,15 +70,14 @@ class GatewayConfig:
     session_idle_ttl_seconds: Optional[float] = DEFAULT_SESSION_IDLE_TTL_SECONDS
     edit_throttle_seconds: float = DEFAULT_EDIT_THROTTLE_SECONDS
     stt_enabled: bool = False
-    #: Pluggable remote speech-to-text provider (currently "groq" hosted
-    #: Whisper). Configured under Tools → Voice transcription, like the
-    #: web-search backend.
+    #: Pluggable remote speech-to-text provider. Configured under
+    #: Tools → Voice transcription, like the web-search backend.
     stt_provider: str = DEFAULT_STT_PROVIDER
     #: Provider-specific model override; None applies the provider's default
-    #: ("whisper-large-v3-turbo" for groq).
+    #: (for example, "whisper-large-v3-turbo" for Groq).
     stt_model: Optional[str] = None
     #: API key for the selected STT provider, resolved from the environment
-    #: or the stored provider keys. Only groq needs one today.
+    #: or the stored provider keys.
     stt_api_key: Optional[str] = None
     telegram_token: Optional[str] = None
     telegram_proxy: Optional[str] = None
@@ -123,27 +118,6 @@ def _resolve_project(param: Optional[Path], stored: dict[str, Any]) -> Path:
     return default_gateway_project()
 
 
-def _resolve_stt(settings: Optional[CliSettings]) -> tuple[bool, str, Optional[str], Optional[str]]:
-    """Resolve (enabled, provider, model, api_key) for voice transcription.
-
-    All three knobs are top-level settings (Tools → Voice transcription).
-    The API key follows the provider's ``key_env_var`` environment variable
-    first, then the stored provider key (``api_keys``).
-    """
-    stt_enabled = bool(settings.stt_enabled) if settings is not None else False
-    provider = (settings.stt_provider if settings is not None else None) or DEFAULT_STT_PROVIDER
-    if provider not in stt_provider_names():
-        logger.warning("gateway: unknown stt_provider %r; using %r", provider, DEFAULT_STT_PROVIDER)
-        provider = DEFAULT_STT_PROVIDER
-    model = settings.stt_model if settings is not None else None
-    provider_cls = get_stt_provider_class(provider)
-    env_name = provider_cls.key_env_var
-    api_key = (os.environ.get(env_name) if env_name else None) or (
-        settings.api_keys.get(provider) if settings is not None else None
-    )
-    return stt_enabled, provider, model, api_key
-
-
 def load_gateway_config(
     *,
     state_dir: Optional[Path] = None,
@@ -165,7 +139,7 @@ def load_gateway_config(
         ).value
     except ValueError:
         permission_mode = PermissionMode.ASK.value
-    stt_enabled, stt_provider, stt_model, stt_api_key = _resolve_stt(settings)
+    stt_enabled, stt_provider, stt_model, stt_api_key = resolve_stt(settings)
     return GatewayConfig(
         adapter=str(adapter),
         project_path=_resolve_project(project, stored),

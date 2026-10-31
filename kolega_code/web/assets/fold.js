@@ -54,6 +54,8 @@ export function emptyState() {
     unknownEventTypes: new Set(),
     streams: new Map(),
     tools: new Map(),
+    peerMessages: new Map(),
+    pendingPeerTurns: [],
   };
 }
 
@@ -63,6 +65,11 @@ function textOf(event, ...keys) {
     if (typeof value === "string" && value) return value;
   }
   return "";
+}
+
+function stringContent(event, key) {
+  const value = event.content ? event.content[key] : undefined;
+  return typeof value === "string" ? value : "";
 }
 
 /**
@@ -331,6 +338,71 @@ function onStatusUpdate(state, event) {
   if (text) state.status = text;
 }
 
+function onPeerMessage(state, event, status) {
+  const messageId = stringContent(event, "message_id");
+  const senderId = stringContent(event, "sender_id");
+  const senderTitle = stringContent(event, "sender_title");
+  const body = textOf(event, "text");
+  const record = messageId ? state.peerMessages.get(messageId) : undefined;
+  if (record) {
+    const wasDelivered = record.delivered;
+    if (senderId) record.senderId = senderId;
+    if (senderTitle) record.sender = senderTitle;
+    else if (senderId && record.sender === "peer") record.sender = senderId;
+    if (body) record.body = body;
+    record.delivered = record.delivered || status === "delivered";
+    const existing =
+      record.index >= 0 && record.index < state.conversation.length
+        ? state.conversation[record.index]
+        : null;
+    if (existing && existing.kind === "peer_message") {
+      existing.text = peerDisplayText(record.sender, record.body);
+      existing.toolName = record.sender;
+      existing.status = record.delivered ? "delivered" : "received";
+      if (record.delivered && !wasDelivered) state.pendingPeerTurns.push(messageId);
+      return;
+    }
+  }
+  const sender = senderTitle || senderId || "peer";
+  const item = newItem({
+    kind: "peer_message",
+    text: peerDisplayText(sender, body),
+    toolName: sender,
+    toolCallId: messageId || null,
+    status,
+  });
+  item.seq = event.seq === undefined ? null : event.seq;
+  item.elapsedMs = event.elapsed_ms || 0;
+  state.conversation.push(item);
+  if (!messageId) return;
+  state.peerMessages.set(messageId, {
+    index: state.conversation.length - 1,
+    senderId,
+    sender,
+    body,
+    delivered: status === "delivered",
+  });
+  if (status === "delivered") state.pendingPeerTurns.push(messageId);
+}
+
+function peerDisplayText(sender, body) {
+  return body ? `← ${sender}\n${body}` : `← ${sender}`;
+}
+
+function consumePeerTurn(state, userText) {
+  for (let index = 0; index < state.pendingPeerTurns.length; index += 1) {
+    const messageId = state.pendingPeerTurns[index];
+    const record = state.peerMessages.get(messageId);
+    if (!record || !record.senderId || !record.body) continue;
+    const prefix = `[Peer message from session '${record.sender}' (id ${record.senderId.slice(0, 8)})]`;
+    if (userText.startsWith(prefix) && userText.endsWith(`\n\n${record.body}`)) {
+      state.pendingPeerTurns.splice(index, 1);
+      return peerDisplayText(record.sender, record.body);
+    }
+  }
+  return null;
+}
+
 const HANDLERS = {
   assistant_delta: (state, event) => onAssistantDelta(state, event, "assistant"),
   thinking_delta: (state, event) => onAssistantDelta(state, event, "thinking"),
@@ -398,15 +470,17 @@ const HANDLERS = {
     // the activity flag would report the session idle while the main agent is
     // still going. The task text still opens the sub-agent's own trajectory.
     if (subAgentKey(event) === null) {
+      const peerText = consumePeerTurn(state, userText);
       state.turns.push({
         turn_id: turnId,
         status: "open",
-        user_text: userText,
+        user_text: peerText || userText,
         started_seq: event.seq === undefined ? null : event.seq,
         started_ms: event.elapsed_ms || 0,
         ended_ms: null,
       });
       state.activity = "generating";
+      if (peerText !== null) return;
     }
     if (userText) append(state, newItem({ kind: "user", text: userText }), event);
   },
@@ -476,6 +550,8 @@ const HANDLERS = {
     }
     if (!state.prompts.some((prompt) => prompt.reason === null)) state.activity = "generating";
   },
+  peer_message_received: (state, event) => onPeerMessage(state, event, "received"),
+  peer_message_delivered: (state, event) => onPeerMessage(state, event, "delivered"),
 };
 
 export function fold(state, event) {

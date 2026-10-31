@@ -21,13 +21,6 @@ _SEVERITY_EMOJI = {
     _SEVERITY_HINT: "\U0001f535",  # 🔵
 }
 
-_SEVERITY_LABEL = {
-    _SEVERITY_ERROR: "error",
-    _SEVERITY_WARNING: "warning",
-    _SEVERITY_INFO: "info",
-    _SEVERITY_HINT: "hint",
-}
-
 
 @dataclass
 class MissingServer:

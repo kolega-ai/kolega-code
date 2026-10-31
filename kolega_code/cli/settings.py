@@ -271,12 +271,10 @@ class CliSettings:
     # field — absent in older files -> empty mapping, no schema bump (same
     # convention as web_search_backend / active_theme).
     oauth_tokens: dict[str, dict] = field(default_factory=dict)
-    # Voice transcription for gateway voice notes. Pluggable provider
-    # Voice transcription for gateway voice notes. Remote-only providers
-    # (currently Groq's hosted Whisper), mirroring the web-search backend
-    # convention: absent in older files -> None -> defaults applied
-    # downstream in kolega_code.gateway.config ("groq", disabled). The
-    # provider reuses the stored groq API key from api_keys.
+    # Remote voice transcription. Pluggable providers mirror the web-search
+    # backend convention: absent in older files -> None -> defaults applied
+    # downstream in kolega_code.gateway.stt ("groq", disabled). Providers
+    # reuse their stored LLM API key from api_keys.
     stt_enabled: Optional[bool] = None
     stt_provider: Optional[str] = None
     stt_model: Optional[str] = None

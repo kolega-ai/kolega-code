@@ -118,10 +118,6 @@ class RunJournal:
         return self._transcript_md_path
 
     @property
-    def result_json_path(self) -> Path:
-        return self._result_json_path
-
-    @property
     def result_md_path(self) -> Path:
         return self._result_md_path
 
@@ -247,7 +243,3 @@ class RunJournal:
             entry = by_index[index]
             rows_by_key.setdefault(entry["key"], deque()).append(entry)
         return ResumeCache(rows_by_key)
-
-    def agent_transcript_path(self, agent_id: str) -> Path:
-        self.ensure_dirs()
-        return self.agents_dir / f"agent-{agent_id}.jsonl"

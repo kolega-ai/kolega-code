@@ -81,8 +81,12 @@ def mock_langfuse_client():
     trace.end = Mock()
     trace.start_observation = Mock(return_value=generation)
 
-    # Make langfuse.start_observation() return the trace
-    langfuse.start_observation = Mock(return_value=trace)
+    @contextlib.contextmanager
+    def _start_as_current_observation(**_kwargs):
+        yield trace
+
+    langfuse.start_as_current_observation = Mock(side_effect=_start_as_current_observation)
+    langfuse._test_trace = trace
 
     return langfuse
 
@@ -142,8 +146,8 @@ class TestInstrumentedClientWithRealAPIs:
         assert "4" in response.get_text_content()
 
         # Verify Langfuse was called (v4 API)
-        mock_langfuse_client.start_observation.assert_called_once()
-        trace = mock_langfuse_client.start_observation.return_value
+        mock_langfuse_client.start_as_current_observation.assert_called_once()
+        trace = mock_langfuse_client._test_trace
         trace.start_observation.assert_called_once()
 
         # Verify usage data was extracted
@@ -198,7 +202,8 @@ class TestInstrumentedClientWithRealAPIs:
         ]
 
         # Verify usage tracking
-        generation = mock_langfuse_client.start_observation.return_value.start_observation.return_value
+        trace = mock_langfuse_client._test_trace
+        generation = trace.start_observation.return_value
         update_call = generation.update.call_args
         usage = update_call.kwargs["usage_details"]
         assert usage["input"] > 0
@@ -236,7 +241,7 @@ class TestInstrumentedClientWithRealAPIs:
         assert response.get_text_content()
 
         # Verify Langfuse integration
-        assert mock_langfuse_client.start_observation.called
+        assert mock_langfuse_client.start_as_current_observation.called
 
     @pytest.mark.asyncio
     async def test_streaming_with_instrumentation(self, mock_langfuse_client, trace_attributes):
@@ -278,8 +283,8 @@ class TestInstrumentedClientWithRealAPIs:
         assert "4" in accumulated_text
 
         # Verify Langfuse was called
-        mock_langfuse_client.start_observation.assert_called_once()
-        trace = mock_langfuse_client.start_observation.return_value
+        mock_langfuse_client.start_as_current_observation.assert_called_once()
+        trace = mock_langfuse_client._test_trace
         trace.start_observation.assert_called_once()
 
         # Verify streaming tag
@@ -316,7 +321,7 @@ class TestInstrumentedClientWithRealAPIs:
             )
 
         # Verify error was logged to Langfuse
-        trace = mock_langfuse_client.start_observation.return_value
+        trace = mock_langfuse_client._test_trace
         generation = trace.start_observation.return_value
         generation.update.assert_called_once()
         generation.end.assert_called_once()
@@ -362,7 +367,7 @@ class TestInstrumentedClientWithRealAPIs:
         )
 
         # Cache usage is not guaranteed, but usage details should be captured for each call.
-        trace = mock_langfuse_client.start_observation.return_value
+        trace = mock_langfuse_client._test_trace
         generation = trace.start_observation.return_value
         assert generation.update.call_count >= 2, "Should have made at least 2 calls"
         usage_updates = [
@@ -493,7 +498,7 @@ class TestInstrumentedClientCompatibility:
                 print(f"✅ {provider} instrumentation working")
 
                 # Verify Langfuse was called
-                assert mock_langfuse_client.start_observation.called
+                assert mock_langfuse_client.start_as_current_observation.called
 
             except Exception as e:
                 pytest.fail(f"Failed to test {provider}: {str(e)}")
@@ -556,7 +561,7 @@ class TestInstrumentedClientCompatibility:
             assert "location" in tool_calls[0].input
 
         # Verify Langfuse tracked it
-        trace = mock_langfuse_client.start_observation.return_value
+        trace = mock_langfuse_client._test_trace
         generation = trace.start_observation.return_value
         generation.update.assert_called_once()
         generation.end.assert_called_once()

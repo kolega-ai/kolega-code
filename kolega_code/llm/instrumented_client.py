@@ -116,10 +116,10 @@ class InstrumentedLLMClient(LLMClient):
         return response.usage_metadata
 
     def _trace_attributes(self, tags: List[Optional[str]]) -> Any:
-        """Trace-level attributes for the span created inside the returned context.
+        """Trace-level attributes for the active Kolega span and its children.
 
         Langfuse v4 removed ``span.update_trace()``: user, session, tags and
-        environment are applied to the context the root span is created in.
+        environment are applied through the current observation context.
         """
         from langfuse import propagate_attributes
 
@@ -249,37 +249,39 @@ class InstrumentedLLMClient(LLMClient):
         # Create metadata for the generation
         metadata = self._create_generation_metadata(**kwargs)
 
-        # Create trace first, then the generation as its child
-        with self._trace_attributes(
-            [
-                self.environment,
-                f"workspace:{self.workspace_id}",
-                f"thread:{self.thread_id}",
-                f"agent:{self.agent_type}",
-                f"provider:{self.provider_name}",
-                f"user:{self.user_id}" if self.user_id else None,
-            ]
-        ):
-            trace = self.langfuse.start_observation(
-                name=f"{self.agent_type or 'agent'}-llm-call",
-                as_type="span",
-                input=input_data,
-                metadata=metadata,
-            )
+        model_parameters: Dict[str, Any] = {
+            "temperature": temperature,
+            "max_completion_tokens": max_completion_tokens,
+            "provider": self.provider_name,
+        }
 
-            model_parameters: Dict[str, Any] = {
-                "temperature": temperature,
-                "max_completion_tokens": max_completion_tokens,
-                "provider": self.provider_name,
-            }
-            generation = trace.start_observation(
-                name=f"{self.agent_type or 'agent'}-llm-generation",
-                as_type="generation",
-                model=model,
-                model_parameters=model_parameters,
-                input=input_data,
-                metadata=metadata,
-            )
+        # Make the Kolega span current before propagating attributes so an
+        # enclosing host observation is never relabelled with Kolega metadata.
+        with self.langfuse.start_as_current_observation(
+            name=f"{self.agent_type or 'agent'}-llm-call",
+            as_type="span",
+            input=input_data,
+            metadata=metadata,
+            end_on_exit=False,
+        ) as trace:
+            with self._trace_attributes(
+                [
+                    self.environment,
+                    f"workspace:{self.workspace_id}",
+                    f"thread:{self.thread_id}",
+                    f"agent:{self.agent_type}",
+                    f"provider:{self.provider_name}",
+                    f"user:{self.user_id}" if self.user_id else None,
+                ]
+            ):
+                generation = trace.start_observation(
+                    name=f"{self.agent_type or 'agent'}-llm-generation",
+                    as_type="generation",
+                    model=model,
+                    model_parameters=model_parameters,
+                    input=input_data,
+                    metadata=metadata,
+                )
 
         try:
             # Call parent generate method
@@ -412,39 +414,41 @@ class InstrumentedLLMClient(LLMClient):
             # Create metadata for the generation
             metadata = self._create_generation_metadata(**kwargs)
 
-            # Create trace first, then the generation as its child
-            with self._trace_attributes(
-                [
-                    self.environment,
-                    f"workspace:{self.workspace_id}",
-                    f"thread:{self.thread_id}",
-                    f"agent:{self.agent_type}",
-                    f"provider:{self.provider_name}",
-                    "streaming",
-                    f"user:{self.user_id}" if self.user_id else None,
-                ]
-            ):
-                trace = langfuse.start_observation(
-                    name=f"{self.agent_type or 'agent'}-llm-stream",
-                    as_type="span",
-                    input=input_data,
-                    metadata=metadata,
-                )
+            model_parameters: Dict[str, Any] = {
+                "temperature": temperature,
+                "max_completion_tokens": max_completion_tokens,
+                "streaming": True,
+                "provider": self.provider_name,
+            }
 
-                model_parameters: Dict[str, Any] = {
-                    "temperature": temperature,
-                    "max_completion_tokens": max_completion_tokens,
-                    "streaming": True,
-                    "provider": self.provider_name,
-                }
-                generation = trace.start_observation(
-                    name=f"{self.agent_type or 'agent'}-llm-stream-generation",
-                    as_type="generation",
-                    model=model,
-                    model_parameters=model_parameters,
-                    input=input_data,
-                    metadata=metadata,
-                )
+            # Keep attribute propagation scoped to the Kolega span, not any
+            # host observation that was current when stream creation began.
+            with langfuse.start_as_current_observation(
+                name=f"{self.agent_type or 'agent'}-llm-stream",
+                as_type="span",
+                input=input_data,
+                metadata=metadata,
+                end_on_exit=False,
+            ) as trace:
+                with self._trace_attributes(
+                    [
+                        self.environment,
+                        f"workspace:{self.workspace_id}",
+                        f"thread:{self.thread_id}",
+                        f"agent:{self.agent_type}",
+                        f"provider:{self.provider_name}",
+                        "streaming",
+                        f"user:{self.user_id}" if self.user_id else None,
+                    ]
+                ):
+                    generation = trace.start_observation(
+                        name=f"{self.agent_type or 'agent'}-llm-stream-generation",
+                        as_type="generation",
+                        model=model,
+                        model_parameters=model_parameters,
+                        input=input_data,
+                        metadata=metadata,
+                    )
 
             # Get stream from underlying client
             stream = LLMClient.stream(
