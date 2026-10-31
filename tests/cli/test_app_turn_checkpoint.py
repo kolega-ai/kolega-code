@@ -146,9 +146,9 @@ async def test_goal_nudge_turn_takes_no_checkpoint(tmp_path: Path, monkeypatch: 
         captures: list[str] = []
         monkeypatch.setattr(tracker, "capture_checkpoint", lambda label: captures.append(label))
 
-        cancelled = await app._run_turn_stream(lambda: agent.process_message_stream("nudge"))
+        result = await app._run_turn_stream(lambda: agent.process_message_stream("nudge"))
 
-        assert cancelled is False
+        assert result.outcome == "completed"
         assert captures == []
         # Progress still began and completed normally without a checkpoint.
         assert app._turn_final_text.startswith("Done in")

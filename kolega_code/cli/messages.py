@@ -354,6 +354,9 @@ GOAL_CLEARED = "Goal cleared."
 GOAL_MET = "Goal met: {condition}"
 GOAL_MAX_TURNS = "Goal not met after {turns} turn(s). Paused — refine the goal with /goal <condition> or /goal clear."
 GOAL_PAUSED = "Goal paused: {reason} Send a message to resume, or /goal clear to remove it."
+GOAL_PAUSED_AFTER_FAILED_TURN = (
+    "Goal paused after a failed turn: {error} Send a message to resume, or /goal clear to remove it."
+)
 GOAL_EVALUATING = "Evaluating goal…"
 GOAL_NOT_MET_CONTINUE = "Goal not yet met — continuing. {reason}"
 GOAL_RUN_TO_COMPLETION = "Running to completion (no pauses until the goal is met or capped)."

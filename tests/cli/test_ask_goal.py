@@ -5,6 +5,8 @@ import json
 
 from kolega_code.agent.goal import GoalVerdict
 from kolega_code.cli.goal import build_goal_task_prompt
+from kolega_code.cli.session_store import SessionStore
+from kolega_code.llm.exceptions import LLMError
 from ._app_test_utils import FakeCoderAgent
 
 
@@ -18,11 +20,13 @@ class GoalAskFakeAgent(FakeCoderAgent):
     evaluate_queue: list[GoalVerdict] = []
     default_met: bool = True
     default_reason: str = "done"
+    fail_on_stream_calls: set[int] = set()
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.prompt_extensions = list(kwargs.get("prompt_extensions", []))
         self.evaluate_calls = 0
+        self.stream_calls = 0
         GoalAskFakeAgent.instances.append(self)
 
     # -- goal contract --------------------------------------------------
@@ -52,6 +56,9 @@ class GoalAskFakeAgent(FakeCoderAgent):
         return []
 
     async def process_message_stream(self, message, attachments=None):
+        self.stream_calls += 1
+        if self.stream_calls in GoalAskFakeAgent.fail_on_stream_calls:
+            raise LLMError("provider rejected the request", provider="anthropic")
         self.messages.append(message)
         yield {"type": "response", "content": "working", "complete": True, "uuid": "resp-1"}
 
@@ -72,6 +79,7 @@ def _reset_fake(monkeypatch):
     GoalAskFakeAgent.evaluate_queue = []
     GoalAskFakeAgent.default_met = True
     GoalAskFakeAgent.default_reason = "done"
+    GoalAskFakeAgent.fail_on_stream_calls = set()
     monkeypatch.setattr(main_module, "CoderAgent", GoalAskFakeAgent)
 
 
@@ -172,6 +180,65 @@ def test_ask_goal_cap_returns_nonzero(tmp_path, capsys, monkeypatch, isolated_cl
     # 1 task prompt + 2 nudges (a nudge follows every not-met eval, including
     # the one that reaches the cap — the while check is at the top).
     assert len(agent.messages) == 3
+
+
+def test_ask_goal_failed_nudge_stops_without_another_verifier(tmp_path, capsys, monkeypatch, isolated_cli_env):
+    from kolega_code.cli import main as main_module
+    from kolega_code.llm.usage import normalize_usage
+
+    class LedgerFailedGoalAskFakeAgent(GoalAskFakeAgent):
+        def _record(self, tokens: int) -> None:
+            ledger = self.kwargs["usage_ledger"]
+            request_id = ledger.begin("openai", "gpt-5.4-mini")
+            ledger.record_response(
+                request_id,
+                normalize_usage({"prompt_tokens": tokens, "completion_tokens": 0}, "openai", "gpt-5.4-mini"),
+            )
+
+        async def process_message_stream(self, message, attachments=None):
+            self._record(100)
+            async for item in super().process_message_stream(message, attachments):
+                yield item
+
+        async def evaluate_goal_condition(self, condition):
+            self._record(7)
+            return await super().evaluate_goal_condition(condition)
+
+        async def cleanup(self):
+            await super().cleanup()
+            self._record(11)
+
+    _reset_fake(monkeypatch)
+    monkeypatch.setattr(main_module, "CoderAgent", LedgerFailedGoalAskFakeAgent)
+    project = _setup_project(tmp_path, monkeypatch)
+    GoalAskFakeAgent.evaluate_queue = [
+        GoalVerdict(met=False, reason="keep going"),
+        GoalVerdict(met=True, reason="must not be evaluated"),
+    ]
+    GoalAskFakeAgent.fail_on_stream_calls = {2}
+
+    exit_code = main_module.main(["ask", "--goal", "make tests pass", "--project", str(project), "--json", "--save"])
+
+    assert exit_code == 1
+    agent = GoalAskFakeAgent.instances[0]
+    assert agent.evaluate_calls == 1
+    assert agent.stream_calls == 2
+    assert agent.messages == [build_goal_task_prompt("make tests pass")]
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    goal_terminals = [line for line in lines if line.get("type") == "goal.completed"]
+    assert len(goal_terminals) == 1
+    assert goal_terminals[0]["payload"]["met"] is False
+    assert goal_terminals[0]["payload"]["paused"] is True
+    assert "provider rejected the request" in goal_terminals[0]["payload"]["error"]
+    assert lines[-1]["type"] == "run.failed"
+    saved = SessionStore().load(lines[0]["session_id"])
+    assert saved is not None
+    assert saved.goal["paused"] is True
+    assert saved.goal["met"] is False
+    assert "provider rejected the request" in saved.goal["status_note"]
+    # Includes usage recorded during generation cleanup after the failed turn.
+    assert saved.goal["tokens_spent"] == 218
 
 
 def test_ask_goal_json_emits_eval_and_result_lines(tmp_path, capsys, monkeypatch, isolated_cli_env):

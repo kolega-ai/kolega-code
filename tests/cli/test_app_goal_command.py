@@ -14,6 +14,7 @@ from kolega_code.cli import messages
 from kolega_code.cli.config import build_agent_config, config_summary
 from kolega_code.cli.goal import GOAL_CLEAR_ALIASES, GoalState, build_goal_task_prompt
 from kolega_code.cli.session_store import SessionStore
+from kolega_code.llm.exceptions import LLMError
 from kolega_code.tools import ToolError
 
 from ._app_test_utils import FakeCoderAgent, build_test_config, extension_by_name, install_fake_agents
@@ -43,9 +44,11 @@ class GoalFakeAgent(FakeCoderAgent):
         self._goal_evaluate_results: list[GoalVerdict] = []
         self._evaluate_calls: list[str] = []
         # Stream call counter (1-indexed); calls listed in ``_cancel_on_calls``
-        # raise asyncio.CancelledError instead of yielding.
+        # raise asyncio.CancelledError instead of yielding; ``_fail_on_calls``
+        # raises LLMError.
         self._stream_call_count = 0
         self._cancel_on_calls: set[int] = set()
+        self._fail_on_calls: set[int] = set()
         # Optional verifier gate: when set, evaluate_goal_condition signals
         # ``_verifier_started`` then blocks on ``_release_verifier`` so tests can
         # act *during* the verifier phase (e.g. submit a message or cancel).
@@ -87,6 +90,8 @@ class GoalFakeAgent(FakeCoderAgent):
         if self._stream_call_count in self._cancel_on_calls:
             # The turn is cancelled before any processing/output happens.
             raise asyncio.CancelledError()
+        if self._stream_call_count in self._fail_on_calls:
+            raise LLMError("provider rejected the request", provider="anthropic")
         self.messages.append(message)
         self.attachments.append(attachments)
         yield {"type": "response", "content": "working on it", "complete": True, "uuid": "resp-1"}
@@ -550,6 +555,42 @@ async def test_goal_cancel_pauses(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
         # A paused system entry exists.
         assert any(e.kind == "system" and "Goal paused" in e.content for e in app.conversation_entries)
+
+
+@pytest.mark.asyncio
+async def test_goal_failed_nudge_pauses_without_another_verifier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_goal_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await _wait_for(app, pilot, lambda: app.agent is not None)
+        agent = GoalFakeAgent.instances[-1]
+        agent._goal_evaluate_results = [
+            GoalVerdict(met=False, reason="keep going"),
+            GoalVerdict(met=True, reason="must not be evaluated"),
+        ]
+        agent._fail_on_calls = {2}
+
+        await _submit(app, pilot, "/goal make all tests pass")
+        await _wait_goal_terminal(app, pilot)
+
+        assert app._goal is not None
+        assert app._goal.paused is True
+        assert app._goal.met is False
+        assert len(agent._evaluate_calls) == 1
+        assert agent._stream_call_count == 2
+        assert agent.messages == [build_goal_task_prompt("make all tests pass")]
+        assert "provider rejected the request" in app._goal.status_note
+        persisted = app.store.load(app.session.session_id).goal
+        assert persisted["paused"] is True
+        assert persisted["status_note"] == app._goal.status_note
+        assert any(
+            entry.kind == "system"
+            and "Goal paused" in entry.content
+            and "provider rejected the request" in entry.content
+            for entry in app.conversation_entries
+        )
 
 
 @pytest.mark.asyncio
