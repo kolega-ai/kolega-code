@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from kolega_code.llm.client import LLMClient
+from kolega_code.llm.exceptions import LLMIncompleteResponseError
 from kolega_code.llm.models import Message, MessageHistory
 from kolega_code.llm.providers.google import GoogleStreamWrapper
 from kolega_code.llm.providers.anthropic import AnthropicStreamWrapper
@@ -220,13 +221,13 @@ async def test_responses_stream_wrapper_attaches_usage_with_reasoning():
 
 
 @pytest.mark.asyncio
-async def test_responses_stream_wrapper_without_completed_event_reports_unavailable():
+async def test_responses_stream_wrapper_without_terminal_event_is_retryable_failure():
     wrapper = ResponsesStreamWrapper(SimpleNamespace(), provider_name="openai_chatgpt", model="gpt-5.6-sol")
-    message = await wrapper.get_final_message()
-    assert message.usage is not None
-    assert message.usage.reported is False
-    assert message.usage.provider == "openai_chatgpt"
-    assert message.usage.unavailable_reason == REASON_NOT_REPORTED
+    with pytest.raises(LLMIncompleteResponseError) as caught:
+        await wrapper.get_final_message()
+    assert caught.value.provider == "openai_chatgpt"
+    assert caught.value.pending_tool_calls == 0
+    assert caught.value.partial_output is False
 
 
 def test_usage_from_response_does_not_capture_cache_writes():

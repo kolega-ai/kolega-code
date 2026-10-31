@@ -90,6 +90,11 @@ def build_truncated_turn_nudge(attempt: int) -> str:
     return render_prompt_template("auxiliary/agent_loop/truncated_turn_nudge.user.md.j2", attempt=attempt)
 
 
+def build_interrupted_turn_nudge(attempt: int) -> str:
+    """Continuation prompt injected when a transport ends after visible partial output."""
+    return render_prompt_template("auxiliary/agent_loop/interrupted_turn_nudge.user.md.j2", attempt=attempt)
+
+
 def build_implement_plan_prompt(
     plan: str,
     gigacode_enabled: bool = False,

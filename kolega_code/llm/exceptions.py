@@ -48,6 +48,8 @@ if TYPE_CHECKING:
     from google.genai.errors import APIError as GoogleAPIError
     from openai import OpenAIError
 
+    from .models import Message
+
 try:
     import aiohttp
 except ImportError:
@@ -111,6 +113,24 @@ class LLMConnectionError(LLMError):
 class LLMTimeout(LLMConnectionError):
     """Raised when a request to the LLM service times out (a stalled connection). A
     specific kind of LLMConnectionError, e.g. a streaming read exceeding its timeout."""
+
+
+class LLMIncompleteResponseError(LLMConnectionError):
+    """Raised when a streaming response ends without a terminal lifecycle event."""
+
+    def __init__(
+        self,
+        message: str,
+        provider: Optional[str] = None,
+        *,
+        pending_tool_calls: int = 0,
+        partial_output: bool = False,
+        partial_message: Optional["Message"] = None,
+    ) -> None:
+        super().__init__(message=message, provider=provider)
+        self.pending_tool_calls = pending_tool_calls
+        self.partial_output = partial_output
+        self.partial_message = partial_message
 
 
 class LLMStreamStalled(LLMTimeout):
@@ -395,11 +415,15 @@ def map_openai_errors(error: "OpenAIError", provider: str | None = None) -> LLME
             return LLMPermissionDeniedError(message=f"OpenAI APIError: {str(error)}", provider=provider)
         elif status_code == 404:
             return LLMNotFoundError(message=f"OpenAI APIError: {str(error)}", provider=provider)
+        elif status_code == 408:
+            return LLMTimeout(message=f"OpenAI APIError: {str(error)}", provider=provider)
+        elif status_code == 409:
+            return LLMInternalServerError(message=f"OpenAI APIError: {str(error)}", provider=provider)
         elif status_code == 422:
             return LLMUnprocessableEntityError(message=f"OpenAI APIError: {str(error)}", provider=provider)
         elif status_code == 429:
             return LLMRateLimitError(message=f"OpenAI APIError: {str(error)}", provider=provider)
-        elif status_code == 500:
+        elif isinstance(status_code, int) and 500 <= status_code <= 599:
             return LLMInternalServerError(message=f"OpenAI APIError: {str(error)}", provider=provider)
 
     # Transport failures (a stalled streaming read hitting the per-request timeout, a

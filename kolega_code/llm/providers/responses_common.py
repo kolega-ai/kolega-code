@@ -24,6 +24,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 
 from kolega_code.auth import constants as chatgpt_constants
 
+from ..exceptions import LLMIncompleteResponseError
 from ..timeouts import streaming_timeout
 from ..models import (
     ImageBlock,
@@ -461,8 +462,9 @@ class ResponsesStreamWrapper:
     """Adapts the Responses streaming events to the MessageChunk contract.
 
     Mirrors :class:`OpenAIStreamWrapper`: yields ``text``/``thinking`` chunks for
-    live display and a ``tool_use_start`` chunk when a function call begins, then
-    builds the authoritative final Message from the ``response.completed`` event.
+    live display and releases ``tool_use_start`` chunks only after a terminal
+    lifecycle event validates the function calls, then builds the authoritative
+    final Message from that response.
     """
 
     def __init__(
@@ -502,6 +504,9 @@ class ResponsesStreamWrapper:
         self._function_calls: Dict[str, Dict[str, str]] = {}
         self._tool_execution_ids = ToolExecutionIdRegistry()
         self._started_calls: set[str] = set()
+        self._deferred_tool_starts: List[MessageChunk] = []
+        self._ready_chunks: List[MessageChunk] = []
+        self._tool_calls_validated = False
 
     async def __aenter__(self) -> "ResponsesStreamWrapper":
         return self
@@ -522,6 +527,8 @@ class ResponsesStreamWrapper:
     async def __anext__(self) -> MessageChunk:
         if self._closed:
             raise StopAsyncIteration
+        if self._ready_chunks:
+            return self._ready_chunks.pop(0)
         iterator = self._iterator
         if iterator is None:
             iterator = self._stream.__aiter__()
@@ -716,9 +723,11 @@ class ResponsesStreamWrapper:
                 )
                 if item_id not in self._started_calls:
                     self._started_calls.add(item_id)
-                    return MessageChunk(
-                        type="tool_use_start",
-                        tool_call_delta={"id": call_id, "name": name, "input": ""},
+                    self._deferred_tool_starts.append(
+                        MessageChunk(
+                            type="tool_use_start",
+                            tool_call_delta={"id": call_id, "name": name, "input": ""},
+                        )
                     )
         elif event_type in ("response.function_call_arguments.delta", "response.custom_tool_call_input.delta"):
             call_id = getattr(event, "item_id", None) or getattr(event, "call_id", "")
@@ -823,7 +832,19 @@ class ResponsesStreamWrapper:
             # incomplete_details, and usage — so both must be captured, or a
             # truncation loses its usage and degrades to a clean end_turn.
             self._final_response = getattr(event, "response", None)
-            return self._thinking_chunk(self._finish_active_summary_part())
+            terminal_chunk = self._thinking_chunk(self._finish_active_summary_part())
+            self._tool_calls_validated = (
+                event_type == "response.completed"
+                and self._final_response is not None
+                and getattr(self._final_response, "status", None) != "incomplete"
+            )
+            if self._tool_calls_validated and self._deferred_tool_starts:
+                self._ready_chunks.extend(self._deferred_tool_starts)
+                self._deferred_tool_starts.clear()
+                self._ready_chunks.append(terminal_chunk)
+                return self._ready_chunks.pop(0)
+            self._deferred_tool_starts.clear()
+            return terminal_chunk
         elif event_type in ("response.failed", "error"):
             message = getattr(event, "message", None) or "Responses stream failed."
             raise RuntimeError(message)
@@ -834,18 +855,45 @@ class ResponsesStreamWrapper:
         # the ChatGPT/Codex backend sends response.completed with an empty output[]
         # (the text/tool calls arrive only as deltas), so parsing the final
         # response there would drop the whole answer.
+        if self._final_response is None:
+            pending_tool_calls = len(self._function_calls)
+            partial_output = bool(self._text or self._reasoning or self._prefix_records or pending_tool_calls)
+            partial_content = [TextBlock(text=self._text)] if self._text else []
+            prefix_blocks = self._collect_prefix_blocks()
+            partial_message = None
+            if partial_content or prefix_blocks:
+                partial_message = attach_normalized_usage(
+                    Message(
+                        role="assistant",
+                        content=prefix_blocks + partial_content,
+                        tool_calls=None,
+                        stop_reason="interrupted",
+                        usage_metadata={
+                            "provider": self._provider_name,
+                            "stream_incomplete": True,
+                        },
+                    ),
+                    self._provider_name,
+                    self._model,
+                )
+            raise LLMIncompleteResponseError(
+                "Responses stream ended without a response.completed or response.incomplete event.",
+                provider=self._provider_name,
+                pending_tool_calls=pending_tool_calls,
+                partial_output=partial_output,
+                partial_message=partial_message,
+            )
+
         content_blocks, tool_use_blocks = self._blocks_from_accumulators()
-        if self._final_response is not None:
-            usage_metadata = _usage_from_response(self._final_response)
-            if not content_blocks and not tool_use_blocks:
-                # Fallback for backends that only populate the final output (and
-                # not deltas) — e.g. a non-streaming-shaped response.
-                content_blocks, tool_use_blocks = _blocks_from_response(self._final_response, self._tool_execution_ids)
-            stop_reason = _stop_reason_from_response(self._final_response, bool(tool_use_blocks))
-        else:
-            usage_metadata = {}
-            stop_reason = "tool_use" if tool_use_blocks else "end_turn"
-            logger.warning("ResponsesStreamWrapper: no response.completed event; billing may be skipped")
+        usage_metadata = _usage_from_response(self._final_response)
+        if not content_blocks and not tool_use_blocks:
+            # Fallback for backends that only populate the final output (and
+            # not deltas) — e.g. a non-streaming-shaped response.
+            content_blocks, tool_use_blocks = _blocks_from_response(self._final_response, self._tool_execution_ids)
+        if not self._tool_calls_validated:
+            content_blocks = [block for block in content_blocks if not isinstance(block, ToolCall)]
+            tool_use_blocks = []
+        stop_reason = _stop_reason_from_response(self._final_response, bool(tool_use_blocks))
 
         # Stamp the real provider (matches every other provider) so history
         # adaptation treats this message as produced by this backend — otherwise

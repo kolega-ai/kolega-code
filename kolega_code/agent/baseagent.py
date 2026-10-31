@@ -38,6 +38,7 @@ from kolega_code.llm.exceptions import (
     LLMConnectionError,
     LLMContextWindowExceededError,
     LLMError,
+    LLMIncompleteResponseError,
     LLMInternalServerError,
     LLMRateLimitError,
     LLMStreamStalled,
@@ -84,7 +85,7 @@ from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
 from kolega_code.session.background import BackgroundAgentManager
 from .tools import ToolCollection, ToolExtension  # noqa: F401 - ToolCollection kept for downstream monkeypatching
-from kolega_code.tools import ToolError
+from kolega_code.tools import ToolError, ToolInputError
 from kolega_code.tool_subjects import build_tool_display, build_tool_subject, configured_tool_subject_secrets
 from .utils.commands import CommandProcessor
 
@@ -1654,6 +1655,31 @@ class BaseAgent(LogMixin):
                 is_error=False,
                 execution_id=tool_execution_id,
             )
+        except ToolInputError as ex:
+            error_message = str(ex)
+            await self.log_warning(f"Invalid tool call for {tool_name}: {error_message}", sender=self.agent_name)
+            error_message = await self._post_tool_error_hook(tool_name, inputs, error_message)
+
+            await self.send_chat_message(
+                message_type="tool_error",
+                content=error_message,
+                is_streaming=False,
+                tool_description=tool_name,
+                tool_call_id=tool_execution_id,
+                tool_subject=tool_subject,
+                tool_display=tool_display,
+                tool_error_kind="invalid_arguments",
+            )
+
+            return ToolResult(
+                tool_use_id=provider_tool_call_id,
+                content=error_message,
+                name=tool_use_block.name,
+                is_error=True,
+                execution_id=tool_execution_id,
+                input_kind=tool_use_block.input_kind,
+                error_kind="invalid_arguments",
+            )
         except ToolError as ex:
             # Expected tool failure: surface to the model without an
             # internal-error log.
@@ -2046,6 +2072,7 @@ class BaseAgent(LogMixin):
         *,
         tool_subject: Optional[str] = None,
         tool_display: Optional[dict[str, list[str] | str]] = None,
+        tool_error_kind: Optional[str] = None,
     ) -> None:
         """
         Send a message to the chat interface.
@@ -2056,7 +2083,7 @@ class BaseAgent(LogMixin):
             images: ``(media_type, base64_data)`` pairs a tool produced, so a
                 frontend can show the picture rather than a description of one
         """
-        if tool_subject or tool_display:
+        if tool_subject or tool_display or tool_error_kind:
             await self.emitter.chat(
                 message_type,
                 content,
@@ -2066,6 +2093,7 @@ class BaseAgent(LogMixin):
                 images=images,
                 tool_subject=tool_subject,
                 tool_display=tool_display,
+                tool_error_kind=tool_error_kind,
             )
             return
         await self.emitter.chat(
@@ -2329,7 +2357,7 @@ class BaseAgent(LogMixin):
             model=self.primary_model_config.model,
         )
 
-    async def handle_llm_error(self, error: Exception) -> None:
+    async def handle_llm_error(self, error: Exception, *, continuing_partial: bool = False) -> None:
         """Centralized handling for LLM errors raised in the turn loop.
 
         Transient failures (rate-limit, overload/5xx, connection drops) are retried with
@@ -2408,8 +2436,18 @@ class BaseAgent(LogMixin):
             # instead of only flashing it in the status strip.
             await self.emitter.llm_status(
                 "info",
-                self._retry_status_message(error, attempt=self._consecutive_llm_retries, cap=cap, delay=delay),
+                (
+                    f"Response interrupted — continuing ({self._consecutive_llm_retries}/{cap}) in {delay:.0f}s…"
+                    if continuing_partial
+                    else self._retry_status_message(
+                        error,
+                        attempt=self._consecutive_llm_retries,
+                        cap=cap,
+                        delay=delay,
+                    )
+                ),
                 retry=True,
+                continuation=continuing_partial,
                 attempt=self._consecutive_llm_retries,
                 cap=cap,
                 retry_in_s=round(delay, 1),
@@ -2431,15 +2469,12 @@ class BaseAgent(LogMixin):
             await self.log_info("Resuming after backoff.", sender=self.agent_name)
             # Don't re-raise - the turn loop re-issues the request.
 
-        elif isinstance(error, LLMError):
+        else:
             await self.emitter.llm_status(
                 "error",
                 llm_error_message(error, model=self.primary_model_config.model),
             )
             raise error
-        else:
-            # Non-LLM error - just re-raise
-            raise
 
     # ------------------------------------------------------------------
     # The agent loop
@@ -3077,6 +3112,28 @@ class BaseAgent(LogMixin):
         truncated_turn_nudges = 0
         iterations = 0
         while stop_reason not in ["end_turn", "max_tokens", "stop_sequence"]:
+            attempt_stream_segments: dict[tuple[str, str], bool] = {}
+            attempt_rendered_output = False
+
+            def _stream_chunk(
+                chunk_type: str,
+                content: str,
+                complete: bool,
+                stream_uuid: str,
+            ) -> Dict[str, Any]:
+                nonlocal attempt_rendered_output
+                key = (chunk_type, stream_uuid)
+                if content or key in attempt_stream_segments:
+                    attempt_stream_segments[key] = complete
+                if content:
+                    attempt_rendered_output = True
+                return {
+                    "type": chunk_type,
+                    "content": content,
+                    "complete": complete,
+                    "uuid": stream_uuid,
+                }
+
             # A tool may have swallowed this task's cancellation on the previous
             # iteration (see _pending_turn_cancellation). Its result is already
             # journaled; honor the cancel now instead of sending another request.
@@ -3200,12 +3257,7 @@ class BaseAgent(LogMixin):
                         async for event in self._iter_stream_with_stall_guard(stream, state=stream_state):
                             if event.type == "text":
                                 if thinking_started or current_thinking:
-                                    yield {
-                                        "type": "thinking",
-                                        "content": current_thinking,
-                                        "complete": True,
-                                        "uuid": thinking_uuid,
-                                    }
+                                    yield _stream_chunk("thinking", current_thinking, True, thinking_uuid)
                                     current_thinking = ""
                                     thinking_started = False
                                     thinking_uuid = str(uuid.uuid4())
@@ -3214,23 +3266,13 @@ class BaseAgent(LogMixin):
 
                                 # Send periodic updates as the response grows
                                 if len(current_response) >= self.STREAM_FLUSH_CHARS:
-                                    yield {
-                                        "type": "response",
-                                        "content": current_response,
-                                        "complete": False,
-                                        "uuid": response_uuid,
-                                    }
+                                    yield _stream_chunk("response", current_response, False, response_uuid)
                                     current_response = ""
                                     response_started = True
 
                             elif event.type == "thinking" and event.thinking:
                                 if response_started or current_response:
-                                    yield {
-                                        "type": "response",
-                                        "content": current_response,
-                                        "complete": True,
-                                        "uuid": response_uuid,
-                                    }
+                                    yield _stream_chunk("response", current_response, True, response_uuid)
                                     current_response = ""
                                     response_started = False
                                     response_uuid = str(uuid.uuid4())
@@ -3239,22 +3281,12 @@ class BaseAgent(LogMixin):
 
                                 if len(current_thinking) >= self.STREAM_FLUSH_CHARS:
                                     thinking_started = True
-                                    yield {
-                                        "type": "thinking",
-                                        "content": current_thinking,
-                                        "complete": False,
-                                        "uuid": thinking_uuid,
-                                    }
+                                    yield _stream_chunk("thinking", current_thinking, False, thinking_uuid)
                                     current_thinking = ""
 
                             elif event.type == "tool_use_start" and event.tool_call_delta:
                                 # Flush accumulated text first so the user doesn't have to wait for it.
-                                yield {
-                                    "type": "response",
-                                    "content": current_response,
-                                    "complete": True,
-                                    "uuid": response_uuid,
-                                }
+                                yield _stream_chunk("response", current_response, True, response_uuid)
                                 current_response = ""
                                 response_started = False
 
@@ -3278,25 +3310,16 @@ class BaseAgent(LogMixin):
                                 # every consumer) so a partially streamed response
                                 # entry is never stranded incomplete by rotation.
                                 if thinking_started or current_thinking:
-                                    yield {
-                                        "type": "thinking",
-                                        "content": current_thinking,
-                                        "complete": True,
-                                        "uuid": thinking_uuid,
-                                    }
+                                    yield _stream_chunk("thinking", current_thinking, True, thinking_uuid)
                                     current_thinking = ""
                                     thinking_started = False
                                     thinking_uuid = str(uuid.uuid4())
-                                yield {
-                                    "type": "response",
-                                    "content": current_response,
-                                    "complete": True,
-                                    "uuid": response_uuid,
-                                }
+                                yield _stream_chunk("response", current_response, True, response_uuid)
                                 current_response = ""
                                 response_started = False
                                 response_uuid = str(uuid.uuid4())
                                 await self._emit_hosted_tool_call(event.tool_call_delta)
+                                attempt_rendered_output = True
 
                     assistant_message = await stream.get_final_message()
                 self._normalize_freeform_tool_calls(assistant_message)
@@ -3354,10 +3377,10 @@ class BaseAgent(LogMixin):
                     truncated_turn_nudges = 0
 
                 if thinking_started or current_thinking:
-                    yield {"type": "thinking", "content": current_thinking, "complete": True, "uuid": thinking_uuid}
+                    yield _stream_chunk("thinking", current_thinking, True, thinking_uuid)
 
                 # Send the final message to mark it complete.
-                yield {"type": "response", "content": current_response, "complete": True, "uuid": response_uuid}
+                yield _stream_chunk("response", current_response, True, response_uuid)
 
                 if assistant_message.tool_calls:
                     await self.log_info(
@@ -3509,6 +3532,37 @@ class BaseAgent(LogMixin):
             except Exception as ex:
                 if getattr(ex, "session_persistence_error", False):
                     raise
+                if isinstance(ex, LLMIncompleteResponseError) and attempt_rendered_output:
+                    partial_message = ex.partial_message
+                    if partial_message is not None:
+                        self._normalize_freeform_tool_calls(partial_message)
+                        self._update_context_residual(partial_message)
+                        partial_message.usage_metadata["edit_protocol"] = self.edit_protocol.value
+                        committing_history = True
+                        try:
+                            await self._commit_assistant_message(partial_message)
+                        except Exception as commit_error:
+                            raise LLMError(f"Session history commit failed: {commit_error}") from commit_error
+                        finally:
+                            committing_history = False
+
+                    if thinking_started or current_thinking:
+                        yield _stream_chunk("thinking", current_thinking, True, thinking_uuid)
+                    yield _stream_chunk("response", current_response, True, response_uuid)
+
+                    await self.emitter.llm_request(
+                        "end",
+                        provider=self.primary_model_config.provider.value,
+                        model=self.primary_model_config.model,
+                        elapsed_s=round(time.monotonic() - _req_start, 2),
+                        stop_reason="interrupted",
+                    )
+                    await self.handle_llm_error(ex, continuing_partial=True)
+
+                    from .prompts import build_interrupted_turn_nudge
+
+                    await self._record_context_user_message(build_interrupted_turn_nudge(self._consecutive_llm_retries))
+                    continue
                 if committing_history:
                     # Keep the legacy LLMError boundary for recorder/host errors,
                     # but never classify a failed history projection as a

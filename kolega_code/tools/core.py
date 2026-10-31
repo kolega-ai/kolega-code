@@ -22,6 +22,10 @@ class ToolError(Exception):
     """
 
 
+class ToolInputError(ToolError):
+    """The model supplied arguments that cannot be bound to the tool handler."""
+
+
 @dataclass(frozen=True)
 class Tool:
     """A single callable tool: provider-facing definition plus implementation."""
@@ -115,7 +119,9 @@ class Tool:
         try:
             signature.bind(**inputs)
         except TypeError as exc:
-            raise ToolError(f"Invalid arguments for `{self.name}`: {exc}. Usage: {self._usage(signature)}") from None
+            raise ToolInputError(
+                f"Invalid arguments for `{self.name}`: {exc}. Usage: {self._usage(signature)}"
+            ) from None
 
     def _usage(self, signature: inspect.Signature) -> str:
         """Render the tool's public call signature, e.g. ``eval(code, language='py')``."""

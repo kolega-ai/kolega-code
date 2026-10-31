@@ -260,6 +260,7 @@ class AgentEventEmitter:
         images: Optional[Sequence[Tuple[str, str]]] = None,
         tool_subject: Optional[str] = None,
         tool_display: Optional[dict[str, Any]] = None,
+        tool_error_kind: Optional[str] = None,
     ) -> None:
         """Send a chat_message event (responses, tool calls/results/errors).
 
@@ -291,6 +292,8 @@ class AgentEventEmitter:
             display = {}
         if display:
             payload["tool_display"] = display
+        if tool_error_kind is not None:
+            payload["tool_error_kind"] = tool_error_kind
 
         await self.emit(
             AgentEvent(

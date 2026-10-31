@@ -178,6 +178,7 @@ def _tool_result_with_content(tool_result: ToolResult, content: Any) -> ToolResu
         cache_checkpoint=tool_result.cache_checkpoint,
         execution_id=tool_result.execution_id,
         input_kind=tool_result.input_kind,
+        error_kind=tool_result.error_kind,
     )
 
 

@@ -1078,6 +1078,7 @@ class ToolResult(ContentBlock):
         cache_checkpoint: bool = False,
         execution_id: Optional[str] = None,
         input_kind: ToolInputKind = "json",
+        error_kind: Optional[str] = None,
     ):
         super().__init__(type=self.TYPE_NAME, cache_checkpoint=cache_checkpoint)
 
@@ -1087,6 +1088,7 @@ class ToolResult(ContentBlock):
         self.is_error = bool(is_error)
         self.execution_id = execution_id
         self.input_kind: ToolInputKind = input_kind
+        self.error_kind = error_kind
 
     def to_dict(self) -> Dict[str, Any]:
         serialized_content: Union[str, List[Dict[str, Any]]]
@@ -1108,6 +1110,8 @@ class ToolResult(ContentBlock):
         }
         if self.execution_id:
             result["execution_id"] = self.execution_id
+        if self.error_kind:
+            result["error_kind"] = self.error_kind
         return result
 
     @classmethod
@@ -1131,6 +1135,7 @@ class ToolResult(ContentBlock):
             is_error=data["is_error"],
             execution_id=data.get("execution_id"),
             input_kind=data.get("input_kind", "json"),
+            error_kind=data.get("error_kind"),
         )
 
     def to_anthropic(self) -> Dict[str, Any]:

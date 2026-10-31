@@ -14,7 +14,9 @@ from kolega_code.llm.exceptions import (
     LLMBadRequestError,
     LLMContentPolicyViolationError,
     LLMContextWindowExceededError,
+    LLMConnectionError,
     LLMError,
+    LLMIncompleteResponseError,
     LLMInternalServerError,
     LLMInvalidRequestError,
     LLMNotFoundError,
@@ -94,9 +96,15 @@ def test_llm_exception_instantiation(exception_class):
         (401, LLMAuthenticationError),
         (403, LLMPermissionDeniedError),
         (404, LLMNotFoundError),
+        (408, LLMTimeout),
+        (409, LLMInternalServerError),
         (422, LLMUnprocessableEntityError),
         (429, LLMRateLimitError),
         (500, LLMInternalServerError),
+        (502, LLMInternalServerError),
+        (503, LLMInternalServerError),
+        (504, LLMInternalServerError),
+        (599, LLMInternalServerError),
         (999, LLMError),  # Test default case
     ],
 )
@@ -108,6 +116,30 @@ def test_map_openai_errors(status_code, expected_exception):
     # Check provider is set correctly - should always be OPENAI
     assert mapped_error.provider == ModelProvider.OPENAI.value
     assert "OpenAI APIError:" in str(mapped_error)
+
+
+def test_transient_openai_http_errors_are_in_retryable_families():
+    timeout = map_openai_errors(MockOpenAIError("request timed out", status_code=408), provider="deepseek")
+    conflict = map_openai_errors(MockOpenAIError("lock timeout", status_code=409), provider="deepseek")
+    unavailable = map_openai_errors(MockOpenAIError("upstream unavailable", status_code=503), provider="deepseek")
+
+    assert isinstance(timeout, LLMConnectionError)
+    assert isinstance(conflict, LLMInternalServerError)
+    assert isinstance(unavailable, LLMInternalServerError)
+    assert {timeout.provider, conflict.provider, unavailable.provider} == {"deepseek"}
+
+
+def test_incomplete_response_is_retryable_connection_error():
+    error = LLMIncompleteResponseError(
+        "stream ended early",
+        provider="deepseek",
+        pending_tool_calls=1,
+        partial_output=True,
+    )
+    assert isinstance(error, LLMConnectionError)
+    assert error.provider == "deepseek"
+    assert error.pending_tool_calls == 1
+    assert error.partial_output is True
 
 
 def test_map_openai_errors_no_status_code():
