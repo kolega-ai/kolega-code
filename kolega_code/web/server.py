@@ -126,7 +126,7 @@ def create_app(config: ServerConfig) -> FastAPI:
         # ever compares against metadata already in memory.
         wanted = _normalized_project(project)
         summaries: list[dict[str, Any]] = []
-        for record in config.store.list():
+        for record in config.store.list(recover=False):
             if not _in_scope(config, record.session_id):
                 continue
             if wanted is not None and _normalized_project(record.project_path) != wanted:
@@ -347,7 +347,7 @@ def create_app(config: ServerConfig) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     async def index() -> Response:
-        records = [record for record in config.store.list() if _in_scope(config, record.session_id)]
+        records = [record for record in config.store.list(recover=False) if _in_scope(config, record.session_id)]
         rows = []
         for record in records:
             meta = await _head(config, record.session_id)

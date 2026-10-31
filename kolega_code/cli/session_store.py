@@ -649,7 +649,7 @@ class SessionStore:
         return self.recorder(session_id).start_epoch(reason)
 
     def load_by_thread_id(self, thread_id: str) -> SessionRecord:
-        for record in self._iter_records():
+        for record in self._iter_records(recover=False):
             if record.thread_id == thread_id:
                 return record
         raise SessionStoreError(f"Thread not found: {thread_id}")
@@ -682,7 +682,7 @@ class SessionStore:
         return sorted(records, key=lambda record: record.updated_at, reverse=True)
 
     def latest_for_project(self, project_path: Path) -> Optional[SessionRecord]:
-        records = self.list(project_path=project_path)
+        records = self.list(project_path=project_path, recover=False)
         return records[0] if records else None
 
     def export(self, session_id: str) -> str:

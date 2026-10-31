@@ -253,6 +253,52 @@ def test_metadata_listing_never_repairs_locked_sessions(
         owner.release_session_lock(session_id)
 
 
+@pytest.mark.parametrize("operation", ["load_by_thread_id", "latest_for_project"])
+@pytest.mark.parametrize("damage", ["none", "corrupt", "missing"])
+def test_preclaim_discovery_never_repairs_locked_sessions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, damage: str
+) -> None:
+    project, state_dir, owner, session_id = _create_session(tmp_path)
+    thread_id = "thread-for-discovery"
+    record = owner.load(session_id)
+    record.thread_id = thread_id
+    owner.save(record)
+    owner.claim_for_resume(session_id, project)
+    try:
+        metadata_path = owner.path_for(session_id)
+        if damage == "corrupt":
+            metadata_path.write_text('{"partial":', encoding="utf-8")
+        elif damage == "missing":
+            metadata_path.unlink()
+        events_path = owner.events_path_for(session_id)
+        events_path.write_bytes(events_path.read_bytes() + b'{"partial":')
+        before = _session_tree_snapshot(state_dir)
+
+        reader = SessionStore(state_dir)
+        journal = Mock(side_effect=AssertionError("Pre-claim discovery must not open journals"))
+        monkeypatch.setattr(reader, "journal", journal)
+        if operation == "load_by_thread_id":
+            if damage == "none":
+                discovered = reader.load_by_thread_id(thread_id)
+            else:
+                with pytest.raises(SessionStoreError, match="Thread not found"):
+                    reader.load_by_thread_id(thread_id)
+                discovered = None
+        else:
+            discovered = reader.latest_for_project(project)
+
+        expected_id = session_id if damage == "none" else None
+        assert (discovered.session_id if discovered is not None else None) == expected_id
+        if discovered is not None:
+            assert discovered.history == []
+            assert discovered.compaction == {}
+        journal.assert_not_called()
+        assert _session_tree_snapshot(state_dir) == before
+        _assert_claim_refused(state_dir, session_id, project)
+    finally:
+        owner.release_session_lock(session_id)
+
+
 def test_metadata_listing_does_not_create_state_directories(tmp_path: Path) -> None:
     state_dir = tmp_path / "absent-state"
     assert SessionStore(state_dir).list(tmp_path, recover=False) == []
