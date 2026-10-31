@@ -230,11 +230,11 @@ def test_sessions_list_shows_resume_ids_oldest_to_newest(
             updated_at="2026-07-19T10:00:00+00:00",
         ),
     ]
-    projects: list[Path | None] = []
+    calls: list[tuple[Path | None, bool]] = []
 
     class FakeStore:
-        def list(self, project_path: Path | None = None) -> list[SessionRecord]:
-            projects.append(project_path)
+        def list(self, project_path: Path | None = None, *, recover: bool = True) -> list[SessionRecord]:
+            calls.append((project_path, recover))
             return records
 
     monkeypatch.setattr(main_module, "_store_from_args", lambda args: FakeStore())
@@ -242,7 +242,7 @@ def test_sessions_list_shows_resume_ids_oldest_to_newest(
     exit_code = main_module.main(["sessions", "list", "--project", str(project)])
 
     assert exit_code == 0
-    assert projects == [project.resolve()]
+    assert calls == [(project.resolve(), False)]
     output = capsys.readouterr().out
     assert "Resume ID: oldest-session" in output
     assert "Resume ID: newest-session" in output
@@ -281,7 +281,7 @@ def test_sessions_list_shows_title_name_and_description(
     ]
 
     class FakeStore:
-        def list(self, project_path: Path | None = None) -> list[SessionRecord]:
+        def list(self, project_path: Path | None = None, *, recover: bool = True) -> list[SessionRecord]:
             return records
 
     monkeypatch.setattr(main_module, "_store_from_args", lambda args: FakeStore())
@@ -300,7 +300,7 @@ def test_sessions_list_prints_empty_state(capsys, monkeypatch: pytest.MonkeyPatc
     from kolega_code.cli import main as main_module
 
     class EmptyStore:
-        def list(self, project_path: Path | None = None) -> list[SessionRecord]:
+        def list(self, project_path: Path | None = None, *, recover: bool = True) -> list[SessionRecord]:
             return []
 
     monkeypatch.setattr(main_module, "_store_from_args", lambda args: EmptyStore())

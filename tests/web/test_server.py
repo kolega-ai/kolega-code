@@ -76,6 +76,27 @@ async def test_lists_sessions_with_replay_metadata(store: SessionStore, tmp_path
 
 
 @pytest.mark.asyncio
+async def test_session_discovery_uses_non_recovering_reads(
+    store: SessionStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _seed(store, tmp_path)
+    calls: list[bool] = []
+    real_list = store.list
+
+    def tracked_list(project_path: Path | None = None, *, recover: bool = True):
+        calls.append(recover)
+        return real_list(project_path=project_path, recover=recover)
+
+    monkeypatch.setattr(store, "list", tracked_list)
+
+    with _client(store) as client:
+        assert client.get("/api/sessions").status_code == 200
+        assert client.get("/").status_code == 200
+
+    assert calls == [False, False]
+
+
+@pytest.mark.asyncio
 async def test_project_filter_matches_the_returned_path(store: SessionStore, tmp_path: Path) -> None:
     mine = await _seed(store, tmp_path)
     other = store.create(tmp_path / "elsewhere", "code", {"model": "test"}, title="Other project")

@@ -297,6 +297,7 @@ class SessionJournal:
         #: pointless: no other writer can have appended since.
         self._owns_cross_process_lock: Callable[[], bool] = owns_cross_process_lock or (lambda: False)
         self._loaded = False
+        self._tail_requires_recovery = False
         self._next_seq = 1
         self._epoch_id: Optional[str] = None
         self._root_stamp = AgentStamp(
@@ -331,17 +332,18 @@ class SessionJournal:
             return self._epoch_id
 
     def read_events(self, *, repair_tail: bool = True) -> list[SessionEvent]:
+        """Read complete events, repairing a partial tail only while holding the session lock."""
         with self._lock:
-            events = self._read_events_locked(repair_tail=repair_tail)
+            events = self._read_events_with_recovery_locked(repair_tail=repair_tail)
             self._set_state_from_events_locked(events)
             return events
 
     def raw_events(self) -> str:
-        self.read_events(repair_tail=True)
-        try:
-            return self.events_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise SessionJournalError(f"Could not read session events: {self.events_path}") from exc
+        with self._lock:
+            raw = self._read_event_bytes_with_recovery_locked(repair_tail=True)
+            events = self._parse_event_bytes_locked(raw)
+            self._set_state_from_events_locked(events)
+            return raw.decode("utf-8")
 
     def append(
         self,
@@ -468,11 +470,10 @@ class SessionJournal:
                 chunk = fh.read()
         except OSError:
             return None
-        if chunk.endswith(b"\n"):
-            lines = chunk.split(b"\n")
-            last = lines[-2] if len(lines) >= 2 else b""
-        else:
-            last = chunk.split(b"\n")[-1]
+        if not chunk.endswith(b"\n"):
+            return None
+        lines = chunk.split(b"\n")
+        last = lines[-2] if len(lines) >= 2 else b""
         if not last.strip():
             return None
         try:
@@ -720,10 +721,34 @@ class SessionJournal:
                 self._hydrate_blocks(raw["content"])
 
     def _ensure_loaded_locked(self) -> None:
-        if self._loaded:
+        if self._loaded and not self._tail_requires_recovery:
             return
-        events = self._read_events_locked(repair_tail=True)
+        events = self._read_events_with_recovery_locked(repair_tail=True)
         self._set_state_from_events_locked(events)
+
+    def _read_events_with_recovery_locked(self, *, repair_tail: bool) -> list[SessionEvent]:
+        if not repair_tail or self._cross_process_lock is None:
+            return self._read_events_locked(repair_tail=repair_tail)
+        try:
+            self._cross_process_lock.acquire(timeout=0)
+        except Timeout:
+            return self._read_events_locked(repair_tail=False)
+        try:
+            return self._read_events_locked(repair_tail=True)
+        finally:
+            self._cross_process_lock.release()
+
+    def _read_event_bytes_with_recovery_locked(self, *, repair_tail: bool) -> bytes:
+        if not repair_tail or self._cross_process_lock is None:
+            return self._read_event_bytes_locked(repair_tail=repair_tail)
+        try:
+            self._cross_process_lock.acquire(timeout=0)
+        except Timeout:
+            return self._read_event_bytes_locked(repair_tail=False)
+        try:
+            return self._read_event_bytes_locked(repair_tail=True)
+        finally:
+            self._cross_process_lock.release()
 
     def _set_state_from_events_locked(self, events: Iterable[SessionEvent]) -> None:
         events = list(events)
@@ -735,27 +760,36 @@ class SessionJournal:
         self._loaded = True
 
     def _read_events_locked(self, *, repair_tail: bool, strict_seq: bool = True) -> list[SessionEvent]:
+        raw = self._read_event_bytes_locked(repair_tail=repair_tail)
+        return self._parse_event_bytes_locked(raw, strict_seq=strict_seq)
+
+    def _read_event_bytes_locked(self, *, repair_tail: bool) -> bytes:
         if not self.events_path.exists():
-            return []
+            self._tail_requires_recovery = False
+            return b""
         try:
             raw = self.events_path.read_bytes()
         except OSError as exc:
             raise SessionJournalError(f"Could not read session events: {self.events_path}") from exc
 
         if raw and not raw.endswith(b"\n"):
-            if not repair_tail:
-                raise SessionJournalError(f"Session event log has an incomplete final record: {self.events_path}")
             valid_length = raw.rfind(b"\n") + 1
-            try:
-                fd = os.open(self.events_path, os.O_WRONLY)
+            if repair_tail:
                 try:
-                    os.ftruncate(fd, valid_length)
-                finally:
-                    os.close(fd)
-            except OSError as exc:
-                raise SessionJournalError(f"Could not repair session event tail: {self.events_path}") from exc
+                    fd = os.open(self.events_path, os.O_WRONLY)
+                    try:
+                        os.ftruncate(fd, valid_length)
+                    finally:
+                        os.close(fd)
+                except OSError as exc:
+                    raise SessionJournalError(f"Could not repair session event tail: {self.events_path}") from exc
+            self._tail_requires_recovery = not repair_tail
             raw = raw[:valid_length]
+        else:
+            self._tail_requires_recovery = False
+        return raw
 
+    def _parse_event_bytes_locked(self, raw: bytes, *, strict_seq: bool = True) -> list[SessionEvent]:
         events: list[SessionEvent] = []
         expected_seq = 1
         for line_number, line in enumerate(raw.splitlines(), start=1):

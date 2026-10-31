@@ -26,6 +26,26 @@ def _options(agent: AcpAgent, session: AcpSession) -> list[Any]:
     return agent._factory.config_options_for(session)  # noqa: SLF001
 
 
+def test_list_sessions_uses_non_recovering_discovery(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    record = SessionRecord.create(project, "code", {})
+    calls: list[tuple[Path | None, bool]] = []
+
+    class FakeStore:
+        def list(self, project_path: Path | None = None, *, recover: bool = True) -> list[SessionRecord]:
+            calls.append((project_path, recover))
+            return [record]
+
+    factory = AgentFactory()
+    factory._store = cast(Any, FakeStore())  # noqa: SLF001
+
+    sessions = factory.list_sessions(str(project))
+
+    assert [session.session_id for session in sessions] == [record.session_id]
+    assert calls == [(project.resolve(), False)]
+
+
 @pytest.mark.asyncio
 async def test_new_session_response_advertises_options(tmp_path: Path) -> None:
     session, _cm = _make_session(tmp_path, StreamingLLM())

@@ -232,6 +232,106 @@ def test_append_resyncs_from_tail_after_foreign_writer(tmp_path: Path) -> None:
     assert [e.seq for e in journal.read_events()] == [1, 2, 3, 4, 5]
 
 
+def test_append_repairs_foreign_record_missing_newline_before_resync(tmp_path: Path) -> None:
+    import json
+
+    from filelock import FileLock
+
+    from kolega_code.cli.session_journal import SessionJournal
+
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
+    lock = FileLock(tmp_path / "session.lock", timeout=0, thread_local=False)
+    journal = SessionJournal("test-session", session_dir, cross_process_lock=lock)
+    journal.append("context.epoch_started", actor="system", epoch_id="epoch-1")
+    journal.append("test.event", actor="system", epoch_id="epoch-1")
+
+    events_path = session_dir / "events.jsonl"
+    foreign = json.loads(events_path.read_text(encoding="utf-8").splitlines()[-1])
+    foreign["seq"] = 3
+    foreign["id"] = "foreign-in-progress"
+    with events_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(foreign))
+
+    event = journal.append("test.event", actor="system", epoch_id="epoch-1")
+    events = journal.read_events()
+
+    assert event.seq == 3
+    assert [stored.seq for stored in events] == [1, 2, 3]
+    assert events[-1].event_id == event.event_id
+    assert all(stored.event_id != "foreign-in-progress" for stored in events)
+    assert events_path.read_bytes().endswith(b"\n")
+
+
+@pytest.mark.parametrize("with_cross_process_lock", [False, True])
+def test_append_recovers_tail_ignored_by_prior_read(tmp_path: Path, with_cross_process_lock: bool) -> None:
+    import json
+
+    from filelock import FileLock
+
+    from kolega_code.cli.session_journal import SessionJournal
+
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
+    lock = FileLock(tmp_path / "session.lock", timeout=0, thread_local=False) if with_cross_process_lock else None
+    journal = SessionJournal("test-session", session_dir, cross_process_lock=lock)
+    journal.append("context.epoch_started", actor="system", epoch_id="epoch-1")
+    journal.append("test.event", actor="system", epoch_id="epoch-1")
+
+    events_path = session_dir / "events.jsonl"
+    ignored = json.loads(events_path.read_text(encoding="utf-8").splitlines()[-1])
+    ignored["seq"] = 3
+    ignored["id"] = "ignored-in-progress"
+    with events_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(ignored))
+    before = events_path.read_bytes()
+
+    assert [event.seq for event in journal.read_events(repair_tail=False)] == [1, 2]
+    assert events_path.read_bytes() == before
+
+    appended = journal.append("test.event", actor="system", epoch_id="epoch-1")
+    events = journal.read_events()
+
+    assert appended.seq == 3
+    assert [event.seq for event in events] == [1, 2, 3]
+    assert all(event.event_id != "ignored-in-progress" for event in events)
+    assert events_path.read_bytes().endswith(b"\n")
+
+
+@pytest.mark.parametrize("operation", ["read", "epoch"])
+def test_direct_journal_recovery_acquires_supplied_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    from filelock import FileLock
+
+    from kolega_code.cli import session_journal as session_journal_module
+    from kolega_code.cli.session_journal import SessionJournal
+
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
+    lock = FileLock(tmp_path / "session.lock", timeout=0, thread_local=False)
+    seed = SessionJournal("test-session", session_dir, cross_process_lock=lock)
+    seed.append("context.epoch_started", actor="system", epoch_id="epoch-1")
+    with seed.events_path.open("ab") as handle:
+        handle.write(b'{"version":2,"event_id":"in-progress"')
+
+    journal = SessionJournal("test-session", session_dir, cross_process_lock=lock)
+    real_ftruncate = session_journal_module.os.ftruncate
+
+    def checked_ftruncate(fd: int, length: int) -> None:
+        assert lock.is_locked
+        real_ftruncate(fd, length)
+
+    monkeypatch.setattr(session_journal_module.os, "ftruncate", checked_ftruncate)
+
+    if operation == "read":
+        assert [event.seq for event in journal.read_events()] == [1]
+    else:
+        assert journal.epoch_id == "epoch-1"
+
+    assert seed.events_path.read_bytes().endswith(b"\n")
+
+
 def test_concurrent_appends_keep_sequence_monotonic(tmp_path: Path) -> None:
     """Two processes appending to one journal produce one contiguous sequence."""
     import subprocess

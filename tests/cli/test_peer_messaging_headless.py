@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from kolega_code.cli.peer_messaging import HeadlessPeerInbox, start_headless_peer_inbox
+from kolega_code.cli.peer_messaging import HeadlessPeerInbox, start_headless_peer_inbox, store_title_lookup
 from kolega_code.cli.session_event_store import FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.events import KnownEventType
@@ -63,6 +63,20 @@ def _inbox(state_root: Path):
         journal_factory=lambda: FileSessionEventStore(store.journal(session.session_id)),
     )
     return inbox, store, session
+
+
+def test_store_title_lookup_uses_non_recovering_discovery() -> None:
+    calls: list[tuple[None, bool]] = []
+
+    class FakeStore:
+        def list(self, project_path=None, *, recover=True):
+            calls.append((project_path, recover))
+            return [type("Record", (), {"session_id": "session-1", "name": "worker"})()]
+
+    lookup = store_title_lookup(FakeStore())
+
+    assert lookup("session-1") == "worker"
+    assert calls == [(None, False)]
 
 
 @pytest.mark.asyncio

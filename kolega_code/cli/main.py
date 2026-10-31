@@ -2627,7 +2627,7 @@ def _run_sessions(args: argparse.Namespace) -> int:
     store = _store_from_args(args)
     if args.sessions_command == "list":
         project = args.project.expanduser().resolve() if args.project else None
-        records = store.list(project_path=project)
+        records = store.list(project_path=project, recover=False)
         if not records:
             print("No saved sessions.")
             return 0

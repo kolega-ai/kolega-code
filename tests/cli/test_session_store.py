@@ -4,6 +4,7 @@ import re
 import stat
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from unittest.mock import Mock
@@ -20,7 +21,13 @@ from kolega_code.cli.session_journal import (
     SessionRecorder,
     derive_root_agent_id,
 )
-from kolega_code.cli.session_store import SessionRecord, SessionStore, SessionStoreError, default_state_dir
+from kolega_code.cli.session_store import (
+    SessionLockedError,
+    SessionRecord,
+    SessionStore,
+    SessionStoreError,
+    default_state_dir,
+)
 from kolega_code.llm.models import (
     ImageBlock,
     Message,
@@ -329,6 +336,7 @@ def test_incomplete_final_jsonl_fragment_is_repaired(tmp_path: Path) -> None:
     project.mkdir()
     store = SessionStore(tmp_path / "state")
     record = store.create(project, "code", {})
+    store.recorder(record.session_id)
     path = store.events_path_for(record.session_id)
     original = path.read_bytes()
     with path.open("ab") as handle:
@@ -338,6 +346,162 @@ def test_incomplete_final_jsonl_fragment_is_repaired(tmp_path: Path) -> None:
 
     assert len(events) == 2
     assert path.read_bytes() == original
+    with pytest.raises(SessionLockedError):
+        SessionStore(tmp_path / "state").recorder(record.session_id)
+
+
+def test_read_events_without_tail_repair_returns_complete_prefix_without_mutating(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+    path = store.events_path_for(record.session_id)
+    with path.open("ab") as handle:
+        handle.write(b'{"version":2,"event_id":"in-progress"')
+    before = path.read_bytes()
+
+    events = store.journal(record.session_id).read_events(repair_tail=False)
+
+    assert len(events) == 2
+    assert path.read_bytes() == before
+
+
+def test_contended_load_repairs_ignored_tail_before_later_save(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    owner = SessionStore(tmp_path / "state")
+    record = owner.create(project, "code", {})
+    owner.recorder(record.session_id)
+    path = owner.events_path_for(record.session_id)
+    ignored = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    ignored["seq"] = 3
+    ignored["id"] = "ignored-in-progress"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(ignored))
+    before = path.read_bytes()
+
+    reader = SessionStore(tmp_path / "state")
+    loaded = reader.load(record.session_id)
+
+    assert path.read_bytes() == before
+    owner.release_session_lock(record.session_id)
+    loaded.description = "saved after contention"
+    reader.save(loaded)
+
+    events = reader.journal(record.session_id).read_events()
+    assert [event.seq for event in events] == [1, 2, 3]
+    assert events[-1].event_type == "session.metadata_updated"
+    assert all(event.event_id != "ignored-in-progress" for event in events)
+    assert path.read_bytes().endswith(b"\n")
+
+
+@pytest.mark.parametrize("operation", ["load", "list", "journal", "epoch", "raw", "export", "bug_export"])
+def test_reader_does_not_repair_an_owned_sessions_incomplete_tail(tmp_path: Path, operation: str) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    owner = SessionStore(tmp_path / "state")
+    record = owner.create(project, "code", {})
+    owner.recorder(record.session_id)
+    path = owner.events_path_for(record.session_id)
+    with path.open("ab") as handle:
+        handle.write(b'{"version":2,"event_id":"in-progress"')
+    before = path.read_bytes()
+
+    reader = SessionStore(tmp_path / "state")
+    if operation == "load":
+        assert reader.load(record.session_id).session_id == record.session_id
+    elif operation == "list":
+        owner.path_for(record.session_id).unlink()
+        assert [item.session_id for item in reader.list()] == [record.session_id]
+    elif operation == "journal":
+        assert len(reader.journal(record.session_id).read_events()) == 2
+    elif operation == "epoch":
+        assert reader.journal(record.session_id).epoch_id
+    elif operation == "raw":
+        assert reader.journal(record.session_id).raw_events().endswith("\n")
+    elif operation == "export":
+        assert reader.export_events(record.session_id).endswith("\n")
+    else:
+        assert reader.bug_export(record.session_id).events_jsonl.endswith("\n")
+
+    assert path.read_bytes() == before
+
+
+def test_recovery_reader_does_not_truncate_an_event_completed_after_its_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    owner = SessionStore(tmp_path / "state")
+    record = owner.create(project, "code", {})
+    owner.recorder(record.session_id)
+    journal = owner.journal(record.session_id)
+    path = owner.events_path_for(record.session_id)
+    real_write = session_journal_module.os.write
+    partial_ready = threading.Event()
+    finish_write = threading.Event()
+    writer_done = threading.Event()
+    writer_result: dict[str, object] = {}
+    writer_thread: threading.Thread
+
+    def staged_write(fd: int, data: bytes) -> int:
+        if threading.current_thread() is writer_thread:
+            assert data.endswith(b"\n")
+            assert real_write(fd, data[:-1]) == len(data) - 1
+            partial_ready.set()
+            assert finish_write.wait(timeout=5)
+            assert real_write(fd, data[-1:]) == 1
+            return len(data)
+        return real_write(fd, data)
+
+    def write_event() -> None:
+        try:
+            writer_result["event"] = journal.append(
+                "test.event",
+                actor="system",
+                payload={"phase": "completed-after-snapshot"},
+                epoch_id=journal.epoch_id,
+            )
+        except BaseException as exc:
+            writer_result["error"] = exc
+        finally:
+            writer_done.set()
+
+    monkeypatch.setattr(session_journal_module.os, "write", staged_write)
+    writer_thread = threading.Thread(target=write_event, daemon=True)
+    writer_thread.start()
+    assert partial_ready.wait(timeout=5)
+
+    real_read_bytes = Path.read_bytes
+    snapshot_taken = False
+
+    def return_stale_snapshot(target: Path) -> bytes:
+        nonlocal snapshot_taken
+        snapshot = real_read_bytes(target)
+        if target == path and not snapshot_taken:
+            snapshot_taken = True
+            assert not snapshot.endswith(b"\n")
+            finish_write.set()
+            assert writer_done.wait(timeout=5)
+        return snapshot
+
+    monkeypatch.setattr(Path, "read_bytes", return_stale_snapshot)
+    try:
+        reader = SessionStore(tmp_path / "state")
+        assert len(reader.journal(record.session_id).read_events()) == 2
+    finally:
+        finish_write.set()
+        writer_thread.join(timeout=5)
+
+    assert not writer_thread.is_alive()
+    assert "error" not in writer_result
+    completed = writer_result["event"]
+    assert isinstance(completed, SessionEvent)
+    assert completed.event_id.encode() in real_read_bytes(path)
+
+    journal.append("test.event", actor="system", payload={"phase": "next"}, epoch_id=journal.epoch_id)
+    events = SessionStore(tmp_path / "state").journal(record.session_id).read_events()
+    assert [event.seq for event in events] == list(range(1, len(events) + 1))
 
 
 def test_short_append_is_repaired_before_the_next_sequence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

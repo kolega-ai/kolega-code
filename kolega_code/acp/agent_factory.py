@@ -154,7 +154,7 @@ class AgentFactory:
             logger.exception("acp session close: agent cleanup failed (session=%s)", session_id)
 
     def list_sessions(self, cwd: str | None) -> list[SessionInfo]:
-        records = self._store.list(project_path=Path(cwd).resolve() if cwd else None)
+        records = self._store.list(project_path=Path(cwd).resolve() if cwd else None, recover=False)
         return [
             SessionInfo(
                 session_id=record.session_id, cwd=record.project_path, title=record.title, updated_at=record.updated_at
