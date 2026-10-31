@@ -9,6 +9,7 @@ the pair, behavior is byte-for-byte the legacy path (no counting, params
 untouched).
 """
 
+import contextlib
 from typing import Any, AsyncContextManager, Coroutine, Dict, cast
 from unittest.mock import MagicMock
 
@@ -96,8 +97,13 @@ def _mock_langfuse():
     langfuse = MagicMock()
     generation = MagicMock()
     trace = MagicMock()
-    trace.start_generation = MagicMock(return_value=generation)
-    langfuse.start_span = MagicMock(return_value=trace)
+    trace.start_observation = MagicMock(return_value=generation)
+
+    @contextlib.contextmanager
+    def _start_as_current_observation(**_kwargs):
+        yield trace
+
+    langfuse.start_as_current_observation = MagicMock(side_effect=_start_as_current_observation)
     return langfuse, trace, generation
 
 
@@ -387,7 +393,7 @@ async def test_instrumented_precomputed_count_used_and_kept_out_of_trace_metadat
     assert captured["generate_calls"] == 1
     assert "_precomputed_input_tokens" not in captured["generate_kwargs"]
 
-    span_metadata = trace.start_generation.call_args.kwargs["metadata"]
+    span_metadata = langfuse.start_as_current_observation.call_args.kwargs["metadata"]
     assert "_precomputed_input_tokens" not in span_metadata
 
 

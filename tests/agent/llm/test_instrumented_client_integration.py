@@ -7,6 +7,7 @@ and Langfuse tracing.
 """
 
 import asyncio
+import contextlib
 import inspect
 import os
 from pathlib import Path
@@ -66,7 +67,7 @@ def real_langfuse_client():
 
 @pytest.fixture
 def mock_langfuse_client():
-    """Create a mock Langfuse client for testing (v3 API)."""
+    """Create a mock Langfuse client for testing (v4 API)."""
     langfuse = Mock()
 
     # Create a mock generation that tracks calls
@@ -76,15 +77,34 @@ def mock_langfuse_client():
 
     # Create a mock trace/span that returns the generation
     trace = Mock()
-    trace.update_trace = Mock()
     trace.update = Mock()
     trace.end = Mock()
-    trace.start_generation = Mock(return_value=generation)
+    trace.start_observation = Mock(return_value=generation)
 
-    # Make langfuse.start_span() return the trace
-    langfuse.start_span = Mock(return_value=trace)
+    @contextlib.contextmanager
+    def _start_as_current_observation(**_kwargs):
+        yield trace
+
+    langfuse.start_as_current_observation = Mock(side_effect=_start_as_current_observation)
+    langfuse._test_trace = trace
 
     return langfuse
+
+
+@pytest.fixture
+def trace_attributes(monkeypatch):
+    """Capture the trace-level attributes handed to langfuse.propagate_attributes()."""
+    calls: list[dict] = []
+
+    @contextlib.contextmanager
+    def _capture(**kwargs):
+        calls.append(kwargs)
+        yield
+
+    import langfuse
+
+    monkeypatch.setattr(langfuse, "propagate_attributes", _capture)
+    return calls
 
 
 @pytest.mark.slow
@@ -125,13 +145,13 @@ class TestInstrumentedClientWithRealAPIs:
         assert response.get_text_content()
         assert "4" in response.get_text_content()
 
-        # Verify Langfuse was called (v3 API)
-        mock_langfuse_client.start_span.assert_called_once()
-        trace = mock_langfuse_client.start_span.return_value
-        trace.start_generation.assert_called_once()
+        # Verify Langfuse was called (v4 API)
+        mock_langfuse_client.start_as_current_observation.assert_called_once()
+        trace = mock_langfuse_client._test_trace
+        trace.start_observation.assert_called_once()
 
         # Verify usage data was extracted
-        generation = trace.start_generation.return_value
+        generation = trace.start_observation.return_value
         generation.update.assert_called_once()
         generation.end.assert_called_once()
         update_call = generation.update.call_args
@@ -141,7 +161,7 @@ class TestInstrumentedClientWithRealAPIs:
         assert update_call.kwargs["level"] == "DEFAULT"
 
     @pytest.mark.asyncio
-    async def test_openai_generation_with_instrumentation(self, mock_langfuse_client):
+    async def test_openai_generation_with_instrumentation(self, mock_langfuse_client, trace_attributes):
         """Test OpenAI generation with instrumentation using real API."""
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
@@ -173,8 +193,7 @@ class TestInstrumentedClientWithRealAPIs:
         assert "4" in response.get_text_content()
 
         # Verify Langfuse was called with correct tags
-        trace_call = mock_langfuse_client.start_span.return_value.update_trace.call_args
-        assert trace_call.kwargs["tags"] == [
+        assert trace_attributes[0]["tags"] == [
             "production",
             "workspace:test-workspace",
             "thread:test-thread",
@@ -183,7 +202,8 @@ class TestInstrumentedClientWithRealAPIs:
         ]
 
         # Verify usage tracking
-        generation = mock_langfuse_client.start_span.return_value.start_generation.return_value
+        trace = mock_langfuse_client._test_trace
+        generation = trace.start_observation.return_value
         update_call = generation.update.call_args
         usage = update_call.kwargs["usage_details"]
         assert usage["input"] > 0
@@ -221,10 +241,10 @@ class TestInstrumentedClientWithRealAPIs:
         assert response.get_text_content()
 
         # Verify Langfuse integration
-        assert mock_langfuse_client.start_span.called
+        assert mock_langfuse_client.start_as_current_observation.called
 
     @pytest.mark.asyncio
-    async def test_streaming_with_instrumentation(self, mock_langfuse_client):
+    async def test_streaming_with_instrumentation(self, mock_langfuse_client, trace_attributes):
         """Test streaming with instrumentation using real Anthropic API."""
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
@@ -263,19 +283,18 @@ class TestInstrumentedClientWithRealAPIs:
         assert "4" in accumulated_text
 
         # Verify Langfuse was called
-        mock_langfuse_client.start_span.assert_called_once()
-        trace = mock_langfuse_client.start_span.return_value
-        trace.start_generation.assert_called_once()
+        mock_langfuse_client.start_as_current_observation.assert_called_once()
+        trace = mock_langfuse_client._test_trace
+        trace.start_observation.assert_called_once()
 
         # Verify streaming tag
-        trace_update_call = trace.update_trace.call_args
-        assert "streaming" in trace_update_call.kwargs["tags"]
+        assert "streaming" in trace_attributes[0]["tags"]
 
-        gen_call = trace.start_generation.call_args
+        gen_call = trace.start_observation.call_args
         assert gen_call.kwargs["model_parameters"]["streaming"] is True
 
         # Verify generation.end was called
-        generation = trace.start_generation.return_value
+        generation = trace.start_observation.return_value
         generation.update.assert_called_once()
         generation.end.assert_called_once()
 
@@ -302,8 +321,8 @@ class TestInstrumentedClientWithRealAPIs:
             )
 
         # Verify error was logged to Langfuse
-        trace = mock_langfuse_client.start_span.return_value
-        generation = trace.start_generation.return_value
+        trace = mock_langfuse_client._test_trace
+        generation = trace.start_observation.return_value
         generation.update.assert_called_once()
         generation.end.assert_called_once()
         update_call = generation.update.call_args
@@ -348,8 +367,8 @@ class TestInstrumentedClientWithRealAPIs:
         )
 
         # Cache usage is not guaranteed, but usage details should be captured for each call.
-        trace = mock_langfuse_client.start_span.return_value
-        generation = trace.start_generation.return_value
+        trace = mock_langfuse_client._test_trace
+        generation = trace.start_observation.return_value
         assert generation.update.call_count >= 2, "Should have made at least 2 calls"
         usage_updates = [
             call.kwargs["usage_details"]
@@ -479,7 +498,7 @@ class TestInstrumentedClientCompatibility:
                 print(f"✅ {provider} instrumentation working")
 
                 # Verify Langfuse was called
-                assert mock_langfuse_client.start_span.called
+                assert mock_langfuse_client.start_as_current_observation.called
 
             except Exception as e:
                 pytest.fail(f"Failed to test {provider}: {str(e)}")
@@ -542,7 +561,7 @@ class TestInstrumentedClientCompatibility:
             assert "location" in tool_calls[0].input
 
         # Verify Langfuse tracked it
-        trace = mock_langfuse_client.start_span.return_value
-        generation = trace.start_generation.return_value
+        trace = mock_langfuse_client._test_trace
+        generation = trace.start_observation.return_value
         generation.update.assert_called_once()
         generation.end.assert_called_once()

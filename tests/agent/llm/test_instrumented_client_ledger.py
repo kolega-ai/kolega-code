@@ -4,6 +4,7 @@ The Langfuse stream path is the one that historically triple-finalizes
 (MinimalLangfuseStreamWrapper.__aexit__ calls get_final_message twice, then the
 caller once more): the ledger must record exactly one settlement."""
 
+import contextlib
 from typing import Any, cast
 from unittest.mock import MagicMock
 
@@ -19,8 +20,13 @@ def _mock_langfuse():
     langfuse = MagicMock()
     generation = MagicMock()
     trace = MagicMock()
-    trace.start_generation = MagicMock(return_value=generation)
-    langfuse.start_span = MagicMock(return_value=trace)
+    trace.start_observation = MagicMock(return_value=generation)
+
+    @contextlib.contextmanager
+    def _start_as_current_observation(**_kwargs):
+        yield trace
+
+    langfuse.start_as_current_observation = MagicMock(side_effect=_start_as_current_observation)
     return langfuse
 
 

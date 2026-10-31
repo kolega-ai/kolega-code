@@ -6,6 +6,21 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Security
+
+- Updated transformers to 5.20.2 in the optional `tinker` extra, fixing a
+  `save_pretrained` path traversal (CVE-2026-9856) and untrusted custom
+  generation code being written to disk before consent (CVE-2026-80047). The
+  pin was previously impossible because tinker-cookbook capped transformers
+  below the fixed releases; tinker-cookbook 0.5.9 lifts that cap.
+- Updated the dev-only virtualenv pin to 21.14.13, closing twelve 21.14.x
+  activation, seed-wheel and launcher advisories that stayed an accepted risk
+  while langfuse held packaging below 26. langfuse moves to 4.18.0, whose
+  bundle includes that fix; Langfuse tracing now uses the v4
+  `start_observation`/`propagate_attributes` API. Traces keep the same span
+  names, generations, user, session and tags, but require Langfuse Cloud or a
+  self-hosted Langfuse server that supports the v4 SDK.
+
 ## 0.47.1 - 2026-10-27
 
 ### Changed
