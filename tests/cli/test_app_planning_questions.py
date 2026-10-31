@@ -515,12 +515,12 @@ async def test_cancelled_turn_skips_ui_cleanup_when_app_is_exiting(
 
         app._exit = True
         try:
-            cancelled = await app._run_turn_stream(lambda: cancelled_stream())
+            result = await app._run_turn_stream(lambda: cancelled_stream())
         finally:
             app._exit = False
-        assert cancelled is True
+        assert result.outcome == "cancelled"
         assert calls == []
 
-        cancelled = await app._run_turn_stream(lambda: cancelled_stream())
-        assert cancelled is True
+        result = await app._run_turn_stream(lambda: cancelled_stream())
+        assert result.outcome == "cancelled"
         assert calls == ["question", "approval"]

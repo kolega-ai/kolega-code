@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, cast
 
 from kolega_code.agent import (
@@ -71,6 +73,18 @@ from . import app_base as tui_app_base
 from . import constants as tui_constants
 from . import state as tui_state
 from . import widgets as tui_widgets
+
+
+class _TurnOutcome(StrEnum):
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class _TurnResult:
+    outcome: _TurnOutcome
+    error: str = ""
 
 
 #: Event types carried on the stream purely so it is a complete, replayable
@@ -318,8 +332,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
 
     async def _run_turn_stream(
         self, stream_factory, *, checkpoint_label: str | None = None, preserve_inspector: bool = False
-    ) -> bool:
-        """Run one agent stream and return whether it was cancelled by the user.
+    ) -> _TurnResult:
+        """Run one agent stream and return its terminal outcome.
 
         When ``checkpoint_label`` is given, the session-diff checkpoint is
         captured after progress begins, so the status strip flips off the
@@ -327,9 +341,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         resolves through the normal cancelled path.
         """
         if self._agent_execution_draining():
-            return True
+            return _TurnResult(_TurnOutcome.CANCELLED)
         owner = self.agent_worker
-        cancelled_by_user = False
+        result = _TurnResult(_TurnOutcome.COMPLETED)
         self._begin_turn_progress(
             messages.PREPARING_CHECKPOINT if checkpoint_label is not None else messages.WORKING,
             preserve_inspector=preserve_inspector,
@@ -337,17 +351,19 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         try:
             await self._stream_turn_body(owner, stream_factory, checkpoint_label)
         except asyncio.CancelledError:
-            cancelled_by_user = True
+            result = _TurnResult(_TurnOutcome.CANCELLED)
             await self._settle_turn(owner, messages.STOPPED_BY_USER, tui_state.TurnState.STOPPED, exiting=True)
         except LLMError as exc:
             model = self.config.long_context_config.model if self.config is not None else None
-            await self._settle_turn(owner, llm_error_message(exc, model=model), tui_state.TurnState.ERROR)
+            error = llm_error_message(exc, model=model)
+            result = _TurnResult(_TurnOutcome.FAILED, error)
+            await self._settle_turn(owner, error, tui_state.TurnState.ERROR)
         except Exception as exc:
             await self._settle_turn(owner, messages.STOPPED_WITH_ERROR.format(error=exc), tui_state.TurnState.ERROR)
             raise
         finally:
-            self._teardown_turn(owner, cancelled_by_user=cancelled_by_user)
-        return cancelled_by_user
+            self._teardown_turn(owner, cancelled_by_user=result.outcome is _TurnOutcome.CANCELLED)
+        return result
 
     async def _stream_turn_body(self, owner: object | None, stream_factory, checkpoint_label: str | None) -> None:
         """Drive a turn to completion, stopping early once another worker owns the slot."""
@@ -515,12 +531,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 await self._background_jobs.deliver(self.agent)
                 if self.agent_worker is not owner:
                     return False
-            cancelled_by_user = await self._run_turn_stream(
+            turn_result = await self._run_turn_stream(
                 lambda: self._agent_turn_stream(message, attachments),
                 checkpoint_label=turn_label or message,
             )
             if self.agent_worker is not owner:
-                return cancelled_by_user
+                return turn_result.outcome is _TurnOutcome.CANCELLED
             # A committed workspace switch applies between turns: the agent is
             # rebuilt in the new checkout, then handed one continuation turn so
             # the work that prompted the switch resumes there. A cancelled turn
@@ -528,16 +544,21 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             while True:
                 continuation = await self._apply_pending_workspace_switch()
                 if self.agent_worker is not owner:
-                    return cancelled_by_user
-                if cancelled_by_user or continuation is None:
+                    return turn_result.outcome is _TurnOutcome.CANCELLED
+                if turn_result.outcome is not _TurnOutcome.COMPLETED or continuation is None:
                     break
-                cancelled_by_user = await self._run_turn_stream(
+                turn_result = await self._run_turn_stream(
                     lambda prompt=continuation: self._agent_turn_stream(prompt),
                     checkpoint_label=continuation,
                 )
-            if cancelled_by_user:
+            if turn_result.outcome is _TurnOutcome.CANCELLED:
                 self._schedule_maybe_start_queued_message()
                 return True
+            if turn_result.outcome is _TurnOutcome.FAILED:
+                if self._goal is not None and not self._goal.met:
+                    await self._pause_goal_after_failed_turn(turn_result.error)
+                self._schedule_maybe_start_queued_message()
+                return False
             # Un-pause a paused goal on any user-initiated turn so the loop resumes.
             if self._goal is not None and self._goal.paused and not self._goal.met:
                 self._goal.paused = False
@@ -884,7 +905,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                         ),
                     )
                 )
-                cancelled = await self._run_turn_stream(lambda: self._agent_turn_stream(nudge))
+                turn_result = await self._run_turn_stream(lambda: self._agent_turn_stream(nudge))
                 if self.agent_worker is not owner:
                     return
                 # The goal nudge is itself the continuation, so a switch
@@ -892,8 +913,11 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 await self._apply_pending_workspace_switch()
                 if self.agent_worker is not owner:
                     return
-                if cancelled:
+                if turn_result.outcome is _TurnOutcome.CANCELLED:
                     await self._pause_goal(messages.GOAL_PAUSED.format(reason="Stopped by user. "))
+                    break
+                if turn_result.outcome is _TurnOutcome.FAILED:
+                    await self._pause_goal_after_failed_turn(turn_result.error)
                     break
         except asyncio.CancelledError:
             if self.agent_worker is not owner:
@@ -939,12 +963,19 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         if self.agent is not None:
             self.agent.apply_goal(None)
 
-    async def _pause_goal(self, note: str) -> None:
+    async def _pause_goal_after_failed_turn(self, error: str) -> None:
+        detail = error.strip() or "The turn failed."
+        await self._pause_goal(
+            messages.GOAL_PAUSED_AFTER_FAILED_TURN.format(error=detail),
+            status_note=detail,
+        )
+
+    async def _pause_goal(self, note: str, *, status_note: str = "Stopped by user.") -> None:
         if self._goal is None:
             return
         self._drain_goal_tokens()  # count the cancelled nudge turn's spend
         self._goal.paused = True
-        self._goal.status_note = "Stopped by user."
+        self._goal.status_note = status_note
         self._refresh_status_dashboard()
         await self._persist_goal_async()
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=note, tone="warning"))

@@ -47,7 +47,7 @@ from kolega_code.agent.prompt_dump import (
     validate_prompt_overrides,
 )
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config
-from kolega_code.llm.exceptions import LLMBillingError, billing_error_message
+from kolega_code.llm.exceptions import LLMError, LLMBillingError, billing_error_message, llm_error_message
 from kolega_code.llm.models import Message, TextBlock
 
 from .peer_messaging import start_headless_peer_inbox
@@ -1684,6 +1684,37 @@ def _record_ask_run_terminal(
         logging.getLogger(__name__).exception("Failed to record the run terminal event")
 
 
+def _ask_llm_failure_details(exc: LLMError, *, model: str) -> tuple[dict[str, str], str]:
+    if isinstance(exc, LLMBillingError):
+        return (
+            {"code": "billing_error", "message": CLI_BILLING_ERROR_MESSAGE},
+            billing_error_message(exc, model=model),
+        )
+    message = llm_error_message(exc, model=model)
+    return {"code": type(exc).__name__, "message": message[:500]}, message
+
+
+def _pause_headless_goal_after_failed_turn(
+    goal_state: Optional[GoalState],
+    recorder: SessionRecorder,
+    error: str,
+) -> bool:
+    if goal_state is None or goal_state.met:
+        return False
+    goal_state.paused = True
+    goal_state.status_note = error
+    recorder.record_goal_completed(
+        {
+            "met": False,
+            "paused": True,
+            "turns": goal_state.turns_evaluated,
+            "reason": goal_state.last_reason,
+            "error": error,
+        }
+    )
+    return True
+
+
 def _resolve_ask_session(
     args: argparse.Namespace,
     store: SessionStore,
@@ -1947,6 +1978,9 @@ async def _run_ask(args: argparse.Namespace) -> int:
     # a propagating exception (the caller owns the process exit code there).
     terminal_exit_code: Optional[int] = None
     generation_closed = False
+    goal_state: Optional[GoalState] = None
+    drain_goal_tokens: Optional[Callable[[GoalState], None]] = None
+    persist_failed_goal_after_cleanup = False
 
     async def _close_generation() -> None:
         # At most once; agent before bundle; each step guarded so a cleanup
@@ -2086,7 +2120,6 @@ async def _run_ask(args: argparse.Namespace) -> int:
 
         # --goal: apply the goal-aware prompt extension and synthesise the first
         # work-turn message when no explicit prompt was given.
-        goal_state: Optional[GoalState] = None
         if goal_condition:
             max_turns = getattr(args, "goal_max_turns", None) or DEFAULT_GOAL_MAX_TURNS
             goal_state = GoalState.create(goal_condition, max_turns=max_turns, run_to_completion=True)
@@ -2172,6 +2205,8 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 state.tokens_spent += delta.total_tokens
             usage_mark = current
 
+        drain_goal_tokens = _drain_tokens
+
         # In --json mode the journal tee is the only stdout writer: assistant
         # messages, tool results, and terminal records print as semantic events
         # the moment they are journaled. Consuming the stream drives the turn
@@ -2255,12 +2290,16 @@ async def _run_ask(args: argparse.Namespace) -> int:
         exit_code = 2
         terminal_exit_code = 2
         return exit_code
-    except LLMBillingError as exc:
+    except LLMError as exc:
         exit_code = 1
         run_status = "failed"
-        run_error = {"code": "billing_error", "message": CLI_BILLING_ERROR_MESSAGE}
+        run_error, message = _ask_llm_failure_details(exc, model=config.long_context_config.model)
         terminal_exit_code = 1
-        message = billing_error_message(exc, model=config.long_context_config.model)
+        persist_failed_goal_after_cleanup = _pause_headless_goal_after_failed_turn(
+            goal_state,
+            session_recorder,
+            message,
+        )
         _print_styled(message, style="error", stderr=True)
     except asyncio.CancelledError:
         # Ctrl-C: asyncio.run cancels this coroutine; main() still exits 130.
@@ -2297,6 +2336,18 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 await usage_sink.aclose()
             except Exception as exc:  # noqa: BLE001 — reported, never masks the primary exception
                 print(f"Warning: usage sink close failed: {exc}", file=sys.stderr)
+        if persist_failed_goal_after_cleanup and goal_state is not None:
+            if drain_goal_tokens is not None:
+                drain_goal_tokens(goal_state)
+            if args.save or args.session:
+                session.goal = goal_state.to_dict()
+                session.config = summary
+        failed_goal_save_error: Optional[Exception] = None
+        if persist_failed_goal_after_cleanup and (args.save or args.session):
+            try:
+                store.save(session)
+            except Exception as exc:  # Preserve terminal recording and cleanup before surfacing the save failure.
+                failed_goal_save_error = exc
         # The run terminal is recorded synchronously after the usage sink has
         # drained, on every exit path — an await here could be re-cancelled
         # while a CancelledError is already propagating.
@@ -2340,6 +2391,8 @@ async def _run_ask(args: argparse.Namespace) -> int:
         # embedded hosts) is not refused. A concurrent process cannot run
         # while this command is alive, so there is no window to exploit.
         store.release_session_locks()
+        if failed_goal_save_error is not None:
+            raise failed_goal_save_error
 
     return exit_code
 
