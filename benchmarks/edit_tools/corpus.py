@@ -410,16 +410,16 @@ def _load_snapshot_task(raw: dict, *, package_root: Path) -> dict:
     workspace_files = [validate_relative_path(str(item)) for item in raw.get("workspace_files") or []]
     if not workspace_files:
         raise ValueError(f"snapshot task {raw.get('id')!r} has no workspace_files")
-    tree = snapshot_root / "tree"
+    source_root = snapshot_root / "vendor"
     for relative in workspace_files:
         metadata = manifest_files.get(relative)
         if not isinstance(metadata, dict):
             raise ValueError(f"snapshot file is not declared in {snapshot_id}: {relative}")
-        source = (tree / relative).resolve()
+        source = (source_root / relative).resolve()
         try:
-            source.relative_to(tree.resolve())
+            source.relative_to(source_root.resolve())
         except ValueError as exc:
-            raise ValueError(f"snapshot path escapes tree: {relative}") from exc
+            raise ValueError(f"snapshot path escapes vendor directory: {relative}") from exc
         data = source.read_bytes()
         digest = sha256(data).hexdigest()
         if digest != metadata.get("sha256"):

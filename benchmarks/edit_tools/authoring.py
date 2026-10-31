@@ -161,7 +161,7 @@ def _stable_candidates(paths: Iterable[Path], *, checkout: Path, seed: int, snap
 def _copy_snapshot_file(checkout: Path, snapshot_root: Path, relative: str) -> dict[str, Any]:
     source = checkout / relative
     data = source.read_bytes()
-    destination = snapshot_root / "tree" / relative
+    destination = snapshot_root / "vendor" / relative
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(data)
     return {
@@ -345,7 +345,7 @@ def _load_slot_before(package_root: Path, slot: dict[str, Any]) -> dict[str, Fil
     before: dict[str, FileContent] = {}
     for relative in slot["workspace_files"]:
         metadata = manifest["files"][relative]
-        data = (snapshot_root / "tree" / relative).read_bytes()
+        data = (snapshot_root / "vendor" / relative).read_bytes()
         if sha256(data).hexdigest() != metadata["sha256"]:
             raise ValueError(f"snapshot hash mismatch for {slot['snapshot_id']}/{relative}")
         before[relative] = FileContent(text=data.decode("utf-8"))
