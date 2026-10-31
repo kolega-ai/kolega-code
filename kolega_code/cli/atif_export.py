@@ -22,7 +22,7 @@ import shutil
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Optional, Protocol, Sequence
+from typing import Any, Optional, Protocol, Sequence
 
 from kolega_code.cli.session_event_protocol import to_public_event
 from kolega_code.cli.session_journal import SessionEvent
@@ -384,7 +384,6 @@ class _Grouper:
             "epochs": [],
             "unknown_events": [],
         }
-        self._saw_v1 = False
 
     # -- draft resolution ---------------------------------------------------
 
@@ -1064,13 +1063,3 @@ def export_atif_to_path(source: TrajectorySource, *, output: Path, **kwargs: Any
                     leftover.unlink(missing_ok=True)
             if old_aside.exists() and not assets_dir.exists():
                 old_aside.rename(assets_dir)
-
-
-def iter_public_events_for_source(
-    source: TrajectorySource, *, secret_values: Sequence[str] = ()
-) -> Iterable[dict[str, Any]]:
-    """Public events for an arbitrary source (used by tests and tooling)."""
-    for event in source.read_events(repair_tail=True):
-        public = to_public_event(event, secret_values=secret_values)
-        if public is not None:
-            yield public

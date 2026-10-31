@@ -48,7 +48,6 @@ from .protocol import (
 STARTUP_TIMEOUT_S = 30.0
 INTERRUPT_GRACE_S = 5.0
 SHUTDOWN_GRACE_S = 1.0
-CELL_PROTOCOL_VERSION = 1
 
 
 @dataclass

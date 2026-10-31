@@ -18,7 +18,6 @@ from kolega_code.local_state import write_private_secret_text
 MCP_CONFIG_SCHEMA_VERSION = 1
 MCP_GLOBAL_CONFIG_FILENAME = "mcp_servers.json"
 MCP_CONFIG_RELATIVE_PATH = Path(".kolega") / MCP_GLOBAL_CONFIG_FILENAME
-MCP_TRANSPORTS = ("streamable_http", "sse", "stdio")
 _SERVER_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 # Tool wire names are capped at 64 chars total; a 32-char server id leaves at
 # least 25 chars of budget for the tool id after the ``mcp__{server}__`` prefix.

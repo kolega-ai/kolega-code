@@ -104,7 +104,6 @@ SUB_AGENT_INSPECTOR_NO_STEPS = "No trajectory captured yet…"
 SUB_AGENT_TRAJECTORY_COPIED = "Copied the sub-agent trajectory to the clipboard."
 CHANGES_INSPECTOR_EMPTY = "No file changes since this session started."
 CHANGES_INSPECTOR_EMPTY_VS = "No file changes since {label}."
-CHANGES_INSPECTOR_NO_SELECTION = "No file selected."
 CHANGES_COPIED = "Copied file changes to the clipboard."
 CHANGES_BASELINE_SESSION_START = "Session start"
 CHANGES_SCOPE_WORKTREE = "Worktree: {name}"
@@ -257,7 +256,6 @@ SETTINGS_REQUIRED = "Configure a provider/model and API key before chatting."
 SETTINGS_REQUIRED_SKILL = "Configure a provider/model and API key before activating a skill."
 
 # Handoff
-HANDOFF_NOTHING_TO_SUMMARIZE = "Nothing to hand off (no messages yet)."
 HANDOFF_GENERATING = "Generating handoff… (Esc to cancel)"
 HANDOFF_CANCELLED = "Handoff cancelled."
 HANDOFF_FAILED = "Handoff failed: {error}"
@@ -290,7 +288,6 @@ PROVIDERS_HINT = (
 )
 MODEL_CREDENTIAL_POINTER = "API keys and ChatGPT sign-in live under Providers."
 PROVIDER_CREDENTIAL_STATUS = "Credential status: {status}"
-PROVIDER_KEY_STAGED = "Key will be saved for {provider} when you Apply."
 PROVIDER_KEY_NOT_STORED = (
     "There is no locally stored key for this provider. Environment credentials are not changed here."
 )
