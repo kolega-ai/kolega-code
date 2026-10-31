@@ -137,17 +137,43 @@ def test_snapshot_manifests_pin_provenance_licenses_and_file_hashes() -> None:
     assert len(manifests) == 12
     for manifest_path in manifests:
         root = manifest_path.parent
+        vendor = root / "vendor"
         manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        assert vendor.is_dir()
+        assert not (root / "tree").exists()
         assert manifest["repository"].startswith("https://github.com/")
         assert len(manifest["commit"]) == 40
         assert manifest["license"]
         assert manifest["license_files"]
         assert all((root / relative).is_file() for relative in manifest["license_files"])
         for relative, metadata in manifest["files"].items():
-            data = (root / "tree" / relative).read_bytes()
+            data = (vendor / relative).read_bytes()
             assert sha256(data).hexdigest() == metadata["sha256"]
             assert len(data) == metadata["bytes"]
             assert metadata["git_blob"]
+
+
+def test_snapshot_import_writes_source_files_under_vendor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.edit_tools import authoring
+
+    checkout = tmp_path / "checkout"
+    source = checkout / "src" / "example.py"
+    source_bytes = b"first line\nsecond line\n"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(source_bytes)
+    snapshot_root = tmp_path / "snapshot"
+    monkeypatch.setattr(authoring, "_git", lambda *_: "pinned-git-blob")
+
+    metadata = authoring._copy_snapshot_file(checkout, snapshot_root, "src/example.py")
+
+    assert (snapshot_root / "vendor" / "src" / "example.py").read_bytes() == source_bytes
+    assert not (snapshot_root / "tree").exists()
+    assert metadata == {
+        "sha256": sha256(source_bytes).hexdigest(),
+        "bytes": len(source_bytes),
+        "lines": 2,
+        "git_blob": "pinned-git-blob",
+    }
 
 
 def test_smoke_suite_selects_four_curated_cases() -> None:

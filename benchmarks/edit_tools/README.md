@@ -98,7 +98,9 @@ so a substantial deletion is not mislabeled as a tiny task.
 Source snapshots include repository URL, immutable commit, license, Git blob
 ID, byte count, line count, and SHA-256 for every copied file. Snapshot-backed
 run manifests record task and tree digests without copying the same source trees
-into every run.
+into every run. Copied source files live below each snapshot's `vendor/`
+directory so GitHub's dependency graph does not treat their upstream manifests
+as dependencies of this repository.
 
 ### Browse the test cases
 
