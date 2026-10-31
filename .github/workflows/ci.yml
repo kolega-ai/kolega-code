@@ -128,13 +128,12 @@ jobs:
         if: needs.changes.outputs.coverage-badge-only != 'true'
         run: uv run pre-commit run --all-files --show-diff-on-failure
 
-      # Coverage runs on 3.11 only: it is the version whose coverage.xml the
-      # badge job consumes, and instrumenting the other matrix jobs costs
-      # minutes of wall time for artifacts nothing reads.
+      # Coverage runs on 3.12 only: its sysmon core avoids most instrumentation
+      # overhead, and the badge job consumes this job's coverage.xml artifact.
       - name: Run fast tests
         if: needs.changes.outputs.coverage-badge-only != 'true'
         run: |
-          if [ "${{ matrix.python-version }}" = "3.11" ]; then
+          if [ "${{ matrix.python-version }}" = "3.12" ]; then
             ./run_tests.sh --coverage
           else
             ./run_tests.sh
@@ -147,7 +146,7 @@ jobs:
           uv run python scripts/verify_bundled_skill_artifacts.py /tmp/kolega-code-dist/*
 
       - name: Upload coverage report
-        if: needs.changes.outputs.coverage-badge-only != 'true' && matrix.python-version == '3.11'
+        if: needs.changes.outputs.coverage-badge-only != 'true' && matrix.python-version == '3.12'
         uses: actions/upload-artifact@v6
         with:
           name: coverage-xml-python-${{ matrix.python-version }}
@@ -180,10 +179,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --frozen
 
-      - name: Download Python 3.11 coverage report
+      - name: Download Python 3.12 coverage report
         uses: actions/download-artifact@v8
         with:
-          name: coverage-xml-python-3.11
+          name: coverage-xml-python-3.12
           path: coverage-artifact
 
       - name: Generate coverage badge

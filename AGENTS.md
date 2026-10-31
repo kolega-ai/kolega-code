@@ -20,7 +20,7 @@ Multi-agent terminal coding agent: Python 3.11+ package `kolega_code/` (hatchlin
 - Lint/format/typecheck: `uv run ruff check .`, `uv run ruff format .`, `uv run pyright`.
 - CI parity check: `uv run pre-commit run --all-files --show-diff-on-failure` (same command as CI and the tracked git hook).
 - Browser-dependent tests need Chromium: `uv run playwright install --with-deps chromium`.
-- CI matrix: Python 3.11–3.14, coverage enforced on 3.11 only. Jobs that install Playwright are pinned to `ubuntu-24.04`: `ubuntu-latest` moved to 26.04 ahead of Playwright, which failed the release build and would fail any CI job that misses the browser cache (#763), so keep that pin instead of "modernizing" it.
+- CI matrix: Python 3.11–3.14, coverage enforced on 3.12 only so coverage.py can use its faster sysmon core. Jobs that install Playwright are pinned to `ubuntu-24.04`: `ubuntu-latest` moved to 26.04 ahead of Playwright, which failed the release build and would fail any CI job that misses the browser cache (#763), so keep that pin instead of "modernizing" it.
 
 ## Coding Style & Naming Conventions
 
