@@ -442,7 +442,7 @@ class TestInstrumentedLLMClient:
 
 
 @pytest.mark.asyncio
-async def test_real_langfuse_sdk_emits_trace_attributes():
+async def test_real_langfuse_sdk_emits_trace_attributes(request: pytest.FixtureRequest):
     """Drive the real Langfuse v4 SDK and read the spans it produces.
 
     The mocked tests above only prove our calls; this one proves the calls are
@@ -462,14 +462,17 @@ async def test_real_langfuse_sdk_emits_trace_attributes():
     # onto the in-memory exporter, and tracer_provider keeps these spans off any
     # globally registered provider. Both processors may export a span; the
     # assertions below read them by name.
+    # Langfuse shares tracing resources by public key, so each real-SDK test
+    # needs its own key to keep its tracer provider and exporter isolated.
     langfuse = Langfuse(
-        public_key="pk-lf-test",
+        public_key="pk-lf-test-generate",
         secret_key="sk-lf-test",
         host="http://127.0.0.1:9",
         tracing_enabled=True,
         tracer_provider=provider,
         span_exporter=exporter,
     )
+    request.addfinalizer(langfuse.shutdown)
     client = InstrumentedLLMClient(
         provider="anthropic",
         api_key="test-key",
@@ -524,7 +527,7 @@ async def test_real_langfuse_sdk_emits_trace_attributes():
 
 
 @pytest.mark.asyncio
-async def test_real_langfuse_sdk_stream_preserves_host_span_attributes():
+async def test_real_langfuse_sdk_stream_preserves_host_span_attributes(request: pytest.FixtureRequest):
     """Keep stream trace attributes off an enclosing host observation."""
     from langfuse import Langfuse
     from opentelemetry.sdk.trace import TracerProvider
@@ -534,14 +537,16 @@ async def test_real_langfuse_sdk_stream_preserves_host_span_attributes():
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
+    # Do not reuse the generate test's key: Langfuse would reuse its exporter.
     langfuse = Langfuse(
-        public_key="pk-lf-test",
+        public_key="pk-lf-test-stream",
         secret_key="sk-lf-test",
         host="http://127.0.0.1:9",
         tracing_enabled=True,
         tracer_provider=provider,
         span_exporter=exporter,
     )
+    request.addfinalizer(langfuse.shutdown)
     client = InstrumentedLLMClient(
         provider="anthropic",
         api_key="test-key",
