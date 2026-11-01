@@ -107,27 +107,30 @@ def _delegating_turn() -> list[AgentEvent]:
             task="count the lines",
         ),
         _delegated(
+            _event(KnownEventType.LLM_STATUS_UPDATE, 4, elapsed_ms=650, message="Provider overloaded, retrying")
+        ),
+        _delegated(
             _event(
                 KnownEventType.THINKING_DELTA,
-                4,
+                5,
                 elapsed_ms=700,
                 uuid="subth",
                 text="Delegated reasoning that must be visible.",
                 complete=True,
             )
         ),
-        _delegated(_event(KnownEventType.ASSISTANT_DELTA, 5, elapsed_ms=800, uuid="subas", text="241", complete=True)),
-        _delegated(_event(KnownEventType.CHAT_MESSAGE, 6, elapsed_ms=900, status="STOPPED", message="done")),
+        _delegated(_event(KnownEventType.ASSISTANT_DELTA, 6, elapsed_ms=800, uuid="subas", text="241", complete=True)),
+        _delegated(_event(KnownEventType.CHAT_MESSAGE, 7, elapsed_ms=900, status="STOPPED", message="done")),
         _event(
             KnownEventType.CHAT_MESSAGE,
-            7,
+            8,
             elapsed_ms=1000,
             message_type="tool_result",
             text="241",
             tool_call_id="c1",
         ),
-        _event(KnownEventType.ASSISTANT_DELTA, 8, elapsed_ms=1100, uuid="as", text="It has 241 lines.", complete=True),
-        _event(KnownEventType.TURN_ENDED, 9, elapsed_ms=1200, turn_id="t1", status="completed"),
+        _event(KnownEventType.ASSISTANT_DELTA, 9, elapsed_ms=1100, uuid="as", text="It has 241 lines.", complete=True),
+        _event(KnownEventType.TURN_ENDED, 10, elapsed_ms=1200, turn_id="t1", status="completed"),
     ]
 
 
@@ -277,12 +280,20 @@ async def test_a_dispatch_is_one_openable_entry_not_spliced_into_the_thread(dele
             card = await page.evaluate(
                 """() => {
                     const el = document.querySelector('.kc-agent-card');
-                    return el && {text: el.innerText, status: el.dataset.status, key: el.dataset.agentKey};
+                    return el && {
+                        text: el.innerText,
+                        status: el.dataset.status,
+                        key: el.dataset.agentKey,
+                        notice: el.querySelector('.kc-agent-card-notice')?.textContent ?? null,
+                    };
                 }"""
             )
+            rail_notice = await page.text_content(".kc-sub-agent-notice")
             await page.click(".kc-agent-card")
             opened = await page.evaluate(_ENTRIES_JS)
             header = await page.inner_text(".kc-agent-header")
+            header_status = await page.inner_text(".kc-agent-header .kc-tool-status")
+            header_notice = await page.inner_text(".kc-agent-header-notice")
             await page.click(".kc-agent-back")
             restored = await page.evaluate(_ENTRIES_JS)
         finally:
@@ -290,6 +301,8 @@ async def test_a_dispatch_is_one_openable_entry_not_spliced_into_the_thread(dele
 
     assert card is not None, "the dispatch left no entry in the main thread"
     assert "investigator" in card["text"] and card["status"] == "completed"
+    assert card["notice"] == "Provider overloaded, retrying"
+    assert rail_notice == "Provider overloaded, retrying"
     assert "3 steps" in card["text"], "the card should say how much the agent did"
     assert not any(entry["agent"] == "investigator" for entry in main_thread), (
         "the delegate's own steps must not be spliced into the main thread"
@@ -304,6 +317,8 @@ async def test_a_dispatch_is_one_openable_entry_not_spliced_into_the_thread(dele
     assert [entry["kind"] for entry in opened] == ["user", "thinking", "assistant"]
     assert opened[1]["text"] == "Delegated reasoning that must be visible."
     assert "investigator" in header and "Back" in header
+    assert header_status.lower() == "completed"
+    assert header_notice == "Provider overloaded, retrying"
 
     assert restored == main_thread, "going back did not restore the main thread"
 

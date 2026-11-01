@@ -77,6 +77,8 @@ class SubAgentActivity:
     name: str = ""
     task: str = ""
     status: str = "running"
+    #: Latest free-text provider/runtime notice, separate from lifecycle status.
+    notice: str = ""
     steps: list[ConversationItem] = field(default_factory=list)
     last_text: str = ""
     context: Optional[dict] = None
@@ -217,6 +219,7 @@ class PresentationState:
                     "name": activity.name,
                     "task": activity.task,
                     "status": activity.status,
+                    "notice": activity.notice,
                     "last_text": activity.last_text,
                     "context": activity.context,
                     "label": activity.label,
@@ -746,7 +749,9 @@ def _on_status_update(state: PresentationState, event: AgentEvent) -> None:
     text = _text_of(event, "message", "status", "text")
     key = _sub_agent_key(event)
     if key is not None:
-        _sub_agent(state, key, event).status = text or "running"
+        activity = _sub_agent(state, key, event)
+        if text:
+            activity.notice = text
         return
     if text:
         state.status = text

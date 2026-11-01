@@ -287,6 +287,38 @@ def test_sub_agent_error_lifecycle_marks_failure() -> None:
     assert replay([event]).sub_agents["d1"].status == "failed"
 
 
+@pytest.mark.parametrize(("lifecycle", "expected_status"), [("STOPPED", "completed"), ("ERROR", "failed")])
+def test_sub_agent_notice_does_not_overwrite_lifecycle_status(lifecycle: str, expected_status: str) -> None:
+    events = [
+        _delegated(_event(KnownEventType.LLM_STATUS_UPDATE, 1, status="reading", message="Reading model response…")),
+        _delegated(_event(KnownEventType.CHAT_MESSAGE, 2, status=lifecycle, message="Settled")),
+        _delegated(_event(KnownEventType.LLM_STATUS_UPDATE, 3, status="retrying", message="Retrying request (1/3)")),
+        _delegated(_event(KnownEventType.LLM_STATUS_UPDATE, 4, status="", message="")),
+    ]
+
+    running = replay(events[:1]).sub_agents["d1"]
+    assert running.status == "running"
+    assert running.notice == "Reading model response…"
+
+    state = replay(events)
+    activity = state.sub_agents["d1"]
+    assert activity.status == expected_status
+    assert activity.notice == "Retrying request (1/3)"
+    assert state.to_dict()["sub_agents"]["d1"] == {
+        "key": "d1",
+        "name": "investigator",
+        "task": "",
+        "status": expected_status,
+        "notice": "Retrying request (1/3)",
+        "last_text": "",
+        "context": None,
+        "label": "",
+        "phase": "",
+        "workflow_run_id": "",
+        "steps": [],
+    }
+
+
 def test_empty_completed_delta_creates_no_entry() -> None:
     """Every iteration that ends in a tool call closes with an empty prose delta."""
     events = [

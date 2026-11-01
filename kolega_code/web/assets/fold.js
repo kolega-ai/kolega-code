@@ -95,6 +95,7 @@ function subAgent(state, key, event) {
       name: String(info.agent_name || key),
       task: String(info.task || ""),
       status: "running",
+      notice: "",
       steps: [],
       lastText: "",
       context: null,
@@ -332,7 +333,8 @@ function onStatusUpdate(state, event) {
   const text = textOf(event, "message", "status", "text");
   const key = subAgentKey(event);
   if (key !== null) {
-    subAgent(state, key, event).status = text || "running";
+    const activity = subAgent(state, key, event);
+    if (text) activity.notice = text;
     return;
   }
   if (text) state.status = text;
@@ -630,6 +632,7 @@ export function toDict(state) {
       name: activity.name,
       task: activity.task,
       status: activity.status,
+      notice: activity.notice,
       last_text: activity.lastText,
       context: activity.context,
       label: activity.label,
