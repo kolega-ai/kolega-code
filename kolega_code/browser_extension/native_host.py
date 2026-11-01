@@ -228,14 +228,6 @@ class NativeMessageEndpoint:
         self._closing = False
         self._write_failure: BaseException | None = None
 
-    @property
-    def outstanding_write_count(self) -> int:
-        return self._outstanding_writes
-
-    @property
-    def outstanding_write_bytes(self) -> int:
-        return self._outstanding_write_bytes
-
     async def read(self) -> dict[str, Any] | None:
         return await asyncio.to_thread(read_message, self.input_stream, max_bytes=self.max_inbound_message_bytes)
 

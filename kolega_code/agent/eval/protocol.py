@@ -23,10 +23,6 @@ import json
 from typing import Any, Dict
 
 # Frame type constants (host side; the kernels mirror these literals).
-FRAME_EXEC = "exec"
-FRAME_EXIT = "exit"
-
-FRAME_STARTED = "started"
 FRAME_STDOUT = "stdout"
 FRAME_STDERR = "stderr"
 FRAME_DISPLAY = "display"
@@ -36,7 +32,6 @@ FRAME_ERROR = "error"
 FRAME_DONE = "done"
 
 STATUS_OK = "ok"
-STATUS_ERROR = "error"
 
 # StreamReader limit for kernel stdout. Display bundles carry base64 images, so
 # frames are routinely larger than the asyncio default of 64 KiB.

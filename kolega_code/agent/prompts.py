@@ -61,7 +61,6 @@ CURRENT_PLAN_ARTIFACT_PROMPT_TEMPLATE = prompt_template_source("extensions/cli/c
 SKILL_CATALOG_PROMPT_TEMPLATE = prompt_template_source("extensions/skills/catalog.md.j2").replace(
     "{{ catalog }}", "{catalog}"
 )
-PLANNING_AGENT_SYSTEM_PROMPT_TEMPLATE = prompt_template_source("system/agents/planning.md.j2")
 
 
 def build_compression_summary_user_prompt(history: str, previous_summary: Optional[str] = None) -> str:

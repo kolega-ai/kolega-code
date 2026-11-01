@@ -103,7 +103,6 @@ class WorkflowRuntime:
 
         self._call_index = 0
         self._current_phase: Optional[str] = None
-        self._nested_depth = 0
         self._resume_cache: ResumeCache = resume_cache if resume_cache is not None else ResumeCache()
         self._pending_emits: "set[asyncio.Task]" = set()
         self._seen_labels: set[str] = set()
@@ -380,11 +379,7 @@ class WorkflowRuntime:
             raise WorkflowScriptError("nested workflows are unavailable in this run")
         source = self._resolver(name_or_ref)
         namespace = self._build_namespace(args=args, nested=True)
-        self._nested_depth += 1
-        try:
-            return await run_script(source, namespace)
-        finally:
-            self._nested_depth -= 1
+        return await run_script(source, namespace)
 
     async def _nested_blocked(self, *_args: Any, **_kwargs: Any) -> Any:
         raise WorkflowScriptError("workflow() cannot be nested more than one level deep")

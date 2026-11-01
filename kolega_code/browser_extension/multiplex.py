@@ -110,12 +110,6 @@ class MultiplexedPeer:
     async def wait_closed(self) -> None:
         await self._closed_event.wait()
 
-    async def drain_events(self) -> None:
-        """Wait for event callbacks already admitted by the read loop."""
-        tasks = tuple(self._event_tasks)
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
     async def request(
         self,
         operation: str,

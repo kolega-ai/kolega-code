@@ -51,9 +51,6 @@ OPAQUE_BLOCK_FIELDS = {
     "responses_reasoning": ("encrypted_content", "item_id"),
 }
 
-SYNTHETIC_ORIGIN = "synthetic"
-LLM_ORIGIN = "llm"
-
 #: Event payload keys whose value is a prepared Message dict.
 _MESSAGE_BEARING_TYPES = {
     "turn.started",

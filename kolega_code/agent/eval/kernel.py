@@ -115,7 +115,7 @@ class _Execution:
         elif frame_type == FRAME_DONE:
             result.status = str(frame.get("status") or "error")
             self.done.set()
-        # FRAME_STARTED needs no handling.
+        # "started" frames need no handling.
 
 
 class BaseKernel:
