@@ -1,18 +1,10 @@
-"""Agent permission requests answered through the ACP client.
-
-Saved allow rules are matched first (same semantics as the TUI's
-``SessionRuntime``); otherwise the request is sent to the client via
-``session/request_permission`` and the outcome mapped back to a
-``PermissionDecision``. allow-always persists the chosen rule before
-answering.
-"""
+"""Map runtime permission prompts to the ACP client protocol."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from acp.helpers import update_tool_call
 from acp.interfaces import Client
@@ -23,8 +15,7 @@ from kolega_code.permissions import (
     PermissionDecision,
     PermissionRequest,
     PermissionRule,
-    ProjectPermissionStore,
-    allow_rule_options,
+    PermissionRuleOption,
 )
 from kolega_code.session.control import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
@@ -32,38 +23,38 @@ logger = logging.getLogger(__name__)
 
 OPTION_ALLOW_ONCE = "allow-once"
 OPTION_REJECT_ONCE = "reject-once"
+CONTROL_REQUEST_ID_META_KEY = "kolega_control_request_id"
 
 
 class AcpPermissionBroker:
-    """Prompt and rule handling for one ACP session's permission requests."""
+    """Present one runtime-owned prompt and map the client's selected option."""
 
     def __init__(
         self,
         conn: Client,
         session_id: str,
-        project_path: Path,
         agent_provider: Callable[[], Any],
         *,
         timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
     ) -> None:
         self._conn = conn
         self._session_id = session_id
-        self._store = ProjectPermissionStore(project_path)
         self._agent_provider = agent_provider
         self._timeout = timeout
 
-    async def __call__(self, request: PermissionRequest) -> PermissionDecision:
-        saved = self._store.first_match(request)
-        if saved is not None:
-            return PermissionDecision(allowed=True, reason=f"Allowed by saved rule {saved.id}.", rule=saved)
-        return await self._prompt(request)
-
-    async def _prompt(self, request: PermissionRequest) -> PermissionDecision:
+    async def prompt(
+        self,
+        request: PermissionRequest,
+        rule_options: list[PermissionRuleOption],
+        *,
+        request_id: str | None = None,
+        on_delivered: Callable[[], Awaitable[object]] | None = None,
+    ) -> PermissionDecision:
         rules_by_option: dict[str, PermissionRule] = {}
         options: list[PermissionOption] = [
             PermissionOption(option_id=OPTION_ALLOW_ONCE, name="Allow once", kind="allow_once"),
         ]
-        for index, candidate in enumerate(allow_rule_options(request)):
+        for index, candidate in enumerate(rule_options):
             option_id = f"allow-always-{index}"
             rules_by_option[option_id] = candidate.rule
             options.append(PermissionOption(option_id=option_id, name=candidate.label, kind="allow_always"))
@@ -78,7 +69,12 @@ class AcpPermissionBroker:
         )
         try:
             response = await asyncio.wait_for(
-                self._conn.request_permission(self._session_id, tool_call, options),
+                self._conn.request_permission(
+                    self._session_id,
+                    tool_call,
+                    options,
+                    **({CONTROL_REQUEST_ID_META_KEY: request_id} if request_id is not None else {}),
+                ),
                 timeout=self._timeout,
             )
         except asyncio.TimeoutError:
@@ -87,6 +83,9 @@ class AcpPermissionBroker:
             logger.exception("acp permission request failed")
             return PermissionDecision(allowed=False, reason="The permission prompt could not be shown.")
 
+        # Embedded clients without a transport observer can acknowledge at reply.
+        if on_delivered is not None:
+            await on_delivered()
         outcome = getattr(response, "outcome", None)
         if outcome is None and isinstance(response, dict):
             outcome = response.get("outcome")
@@ -105,10 +104,6 @@ class AcpPermissionBroker:
         rule = rules_by_option.get(option_id)
         if rule is None:
             return PermissionDecision(allowed=False, reason="Unknown approval option.")
-        try:
-            self._store.add_rule(rule)
-        except Exception:
-            logger.exception("acp could not persist allow-always rule")
         return PermissionDecision(allowed=True, reason="Allowed and remembered.", rule=rule)
 
     def _current_tool_call_id(self) -> str:

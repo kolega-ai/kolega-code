@@ -1522,15 +1522,6 @@ class BaseAgent(LogMixin):
 
             permission_request = permission_request_for_tool(tool_name, inputs)
             if permission_request is not None and self.permission_mode == PermissionMode.ASK:
-                await self.fire_hook(
-                    HookEvent.NOTIFICATION,
-                    {
-                        "notification_type": "permission_prompt",
-                        "message": f"Permission requested for {tool_name}",
-                        "tool_name": tool_name,
-                    },
-                    target="permission_prompt",
-                )
                 try:
                     decision = await self.permission_callback(permission_request)
                     if not isinstance(decision, PermissionDecision):

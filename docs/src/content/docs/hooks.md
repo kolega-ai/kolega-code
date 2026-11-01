@@ -66,7 +66,7 @@ Both files use the same shape:
 | `PostCompact` | After the conversation is compacted | Advisory; payload reports before/after token counts |
 | `Stop` | The agent is about to finish its turn | Keeps the agent working; the reason becomes its next instruction |
 | `SubagentStop` | A dispatched sub-agent finished | Advisory; can annotate the result the parent sees |
-| `Notification` | A permission prompt is about to be shown | Advisory (desktop notifications, sounds) |
+| `Notification` | A permission or question prompt has been delivered to a human controller | Advisory (desktop notifications, sounds) |
 | `SessionEnd` | The session ends | Advisory (cleanup, final logging) |
 
 Hooks can also **modify** rather than block:
@@ -75,6 +75,27 @@ Hooks can also **modify** rather than block:
 - `PostToolUse` can return `updatedToolOutput` to replace what the model sees, or
   `additionalContext` to append to it.
 - `SessionStart` / `UserPromptSubmit` can return `additionalContext` to inject text.
+
+### Prompt notifications
+
+`Notification` fires once per delivered prompt, after the frontend successfully
+renders or transmits it—not when the agent first requests approval. Its matcher
+target and payload `notification_type` are:
+
+- `permission_prompt`: approval for a tool operation; the payload also includes
+  `tool_name` and a human-readable `message`.
+- `question`: a question from `ask_user_choice`; `message` contains the question.
+
+Auto-approved operations, saved permission rules, and requests without a human
+controller do not fire notifications. Failed deliveries and stale requests do not
+fire them either. Repeated delivery acknowledgements do not duplicate the hook,
+and a notification hook failure does not block the answer.
+
+The TUI acknowledges mounted prompts, `ask` acknowledges printed permission prompts, ACP
+acknowledges successful transport writes, and the gateway acknowledges successful
+channel sends. Embedded ACP clients without a transport observer acknowledge on
+reply instead. ACP and gateway production agents do not yet load configured hooks;
+the delivery contract applies when a hook dispatcher is provided.
 
 ## Hook types
 

@@ -74,7 +74,7 @@ def run_acp(args: Any) -> int:
     async def serve() -> None:
         agent = AcpAgent(factory=AgentFactory(permission_mode=permission_mode))
         try:
-            await run_agent(agent)
+            await run_agent(agent, observers=[agent.on_transport_message])
         finally:
             await agent.shutdown()
 

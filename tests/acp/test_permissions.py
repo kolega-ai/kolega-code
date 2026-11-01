@@ -19,8 +19,7 @@ from kolega_code.permissions import (
     PermissionKind,
     PermissionMode,
     PermissionRequest,
-    PermissionRule,
-    ProjectPermissionStore,
+    allow_rule_options,
 )
 
 from tests.agent.compaction_helpers import build_agent
@@ -56,51 +55,38 @@ def _command_request(command: str = "rm -rf /tmp/x") -> PermissionRequest:
     )
 
 
-def _broker(conn: _FakeConn, tmp_path: Path, agent: Any = None, **kwargs: Any) -> AcpPermissionBroker:
-    return AcpPermissionBroker(cast(Client, conn), "s1", Path(tmp_path), lambda: agent, **kwargs)
+def _broker(conn: _FakeConn, agent: Any = None, **kwargs: Any) -> AcpPermissionBroker:
+    return AcpPermissionBroker(cast(Client, conn), "s1", lambda: agent, **kwargs)
 
 
-@pytest.mark.asyncio
-async def test_saved_rule_short_circuits_prompt(tmp_path: Path) -> None:
-    request = _command_request()
-    ProjectPermissionStore(Path(tmp_path)).add_rule(
-        PermissionRule.create(kind=PermissionKind.COMMAND, tool="*", match_type="exact", pattern=request.command),
-    )
-    conn = _FakeConn(responder=lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not prompt")))
-
-    decision = await _broker(conn, tmp_path)(request)
-
-    assert decision.allowed is True
-    assert "saved rule" in decision.reason
-    assert conn.calls == []
+async def _prompt(broker: AcpPermissionBroker, request: PermissionRequest) -> Any:
+    return await broker.prompt(request, allow_rule_options(request))
 
 
 @pytest.mark.asyncio
 async def test_allow_once(tmp_path: Path) -> None:
     conn = _FakeConn(responder=lambda *a, **k: _selected(OPTION_ALLOW_ONCE))
-    decision = await _broker(conn, tmp_path)(_command_request())
+    decision = await _prompt(_broker(conn), _command_request())
     assert decision.allowed is True
     assert decision.rule is None
-    assert ProjectPermissionStore(Path(tmp_path)).load() == []
 
 
 @pytest.mark.asyncio
-async def test_allow_always_persists_matching_rule(tmp_path: Path) -> None:
+async def test_allow_always_returns_matching_rule_without_persisting(tmp_path: Path) -> None:
     request = _command_request()
     conn = _FakeConn(responder=lambda *a, **k: _selected("allow-always-0"))
-    decision = await _broker(conn, tmp_path)(request)
+    decision = await _prompt(_broker(conn), request)
 
     assert decision.allowed is True
     assert decision.rule is not None
-    saved = ProjectPermissionStore(Path(tmp_path)).first_match(request)
-    assert saved is not None
-    assert saved.matches(request)
+    assert decision.rule.matches(request)
+    assert not (tmp_path / ".kolega" / "permissions.json").exists()
 
 
 @pytest.mark.asyncio
 async def test_options_carry_rule_candidates(tmp_path: Path) -> None:
     conn = _FakeConn(responder=lambda *a, **k: _selected(OPTION_ALLOW_ONCE))
-    await _broker(conn, tmp_path)(_command_request())
+    await _prompt(_broker(conn), _command_request())
     _, _, options = conn.calls[0]
 
     kinds = [option.kind for option in options]
@@ -113,14 +99,14 @@ async def test_options_carry_rule_candidates(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_reject_once_denies(tmp_path: Path) -> None:
     conn = _FakeConn(responder=lambda *a, **k: _selected(OPTION_REJECT_ONCE))
-    decision = await _broker(conn, tmp_path)(_command_request())
+    decision = await _prompt(_broker(conn), _command_request())
     assert decision.allowed is False
 
 
 @pytest.mark.asyncio
 async def test_cancelled_outcome_denies(tmp_path: Path) -> None:
     conn = _FakeConn(responder=lambda *a, **k: _cancelled())
-    decision = await _broker(conn, tmp_path)(_command_request())
+    decision = await _prompt(_broker(conn), _command_request())
     assert decision.allowed is False
 
 
@@ -130,7 +116,7 @@ async def test_client_error_denies(tmp_path: Path) -> None:
         raise RuntimeError("client exploded")
 
     conn = _FakeConn(responder=responder)
-    decision = await _broker(conn, tmp_path)(_command_request())
+    decision = await _prompt(_broker(conn), _command_request())
     assert decision.allowed is False
     assert "could not be shown" in decision.reason
 
@@ -141,7 +127,7 @@ async def test_timeout_denies(tmp_path: Path) -> None:
         await asyncio.Event().wait()
 
     conn = _FakeConn(responder=responder)
-    decision = await _broker(conn, tmp_path, timeout=0.05)(_command_request())
+    decision = await _prompt(_broker(conn, timeout=0.05), _command_request())
     assert decision.allowed is False
     assert "Timed out" in decision.reason
 
@@ -151,7 +137,7 @@ async def test_pending_tool_call_carries_tool_context(tmp_path: Path) -> None:
     agent = SimpleNamespace(current_tool_call_id="call-7")
     request = _command_request()
     conn = _FakeConn(responder=lambda *a, **k: _selected(OPTION_ALLOW_ONCE))
-    await _broker(conn, tmp_path, agent=agent)(request)
+    await _prompt(_broker(conn, agent=agent), request)
 
     _, tool_call, _ = conn.calls[0]
     assert tool_call.tool_call_id == "call-7"
@@ -185,9 +171,13 @@ def _gated_agent(tmp_path: Path, conn: _FakeConn) -> tuple[Any, _FakeRegistry]:
     registry = _FakeRegistry()
     assert agent.tool_collection is not None
     agent.tool_collection.registry = MagicMock(return_value=registry)
-    broker = _broker(conn, tmp_path, agent=agent)
+    broker = _broker(conn, agent=agent)
+
+    async def permission_callback(request: PermissionRequest) -> Any:
+        return await broker.prompt(request, allow_rule_options(request))
+
     agent.set_permission_mode(PermissionMode.ASK)
-    agent.set_permission_callback(broker)
+    agent.set_permission_callback(permission_callback)
     return agent, registry
 
 
@@ -219,12 +209,31 @@ async def test_agent_gate_allows_tool_when_client_approves(tmp_path: Path) -> No
 @pytest.mark.asyncio
 async def test_dict_shaped_permission_outcome_is_accepted(tmp_path: Path) -> None:
     conn = _FakeConn(responder=lambda *a, **k: {"outcome": {"outcome": "selected", "optionId": OPTION_ALLOW_ONCE}})
-    decision = await _broker(conn, tmp_path)(_command_request())
+    decision = await _prompt(_broker(conn), _command_request())
     assert decision.allowed is True
 
 
 @pytest.mark.asyncio
 async def test_dict_shaped_cancelled_outcome_denies(tmp_path: Path) -> None:
     conn = _FakeConn(responder=lambda *a, **k: {"outcome": {"outcome": "cancelled"}})
-    decision = await _broker(conn, tmp_path)(_command_request())
+    decision = await _prompt(_broker(conn), _command_request())
     assert decision.allowed is False
+
+
+@pytest.mark.asyncio
+async def test_delivery_callback_runs_once_after_client_returns(tmp_path: Path) -> None:
+    delivered: list[str] = []
+    conn = _FakeConn(responder=lambda *a, **k: _selected(OPTION_ALLOW_ONCE))
+
+    decision = await _broker(conn).prompt(
+        _command_request(),
+        allow_rule_options(_command_request()),
+        on_delivered=lambda: _record_delivery(delivered),
+    )
+
+    assert decision.allowed is True
+    assert delivered == ["delivered"]
+
+
+async def _record_delivery(delivered: list[str]) -> None:
+    delivered.append("delivered")

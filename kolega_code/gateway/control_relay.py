@@ -21,8 +21,8 @@ from typing import Any, Callable, Optional
 
 from kolega_code.events import AgentEvent, KnownEventType
 from kolega_code.gateway.adapters.base import ButtonOption, ChatRef, GatewayAdapter, InboundMessage
-from kolega_code.permissions import PermissionDecision, PermissionRule
-from kolega_code.session.runtime import deserialize_permission_request
+from kolega_code.permissions import PermissionDecision, PermissionRuleOption
+from kolega_code.session.runtime import deserialize_permission_request, deserialize_permission_rule_options
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class _PendingPrompt:
     kind: str
     request_id: str
     token: str
-    rule_options: list[dict[str, Any]]
+    rule_options: list[PermissionRuleOption]
     options: list[str]
 
 
@@ -112,7 +112,7 @@ class ControlRelay:
         request_id = str(event.content.get("request_id") or "")
         kind = str(event.content.get("kind") or "")
         payload = event.content.get("payload") or {}
-        if not request_id:
+        if not request_id or not isinstance(payload, dict) or not self._runtime.control.is_pending(request_id):
             return
         if kind == "permission":
             await self._render_permission(request_id, payload)
@@ -122,12 +122,18 @@ class ControlRelay:
             logger.debug("gateway relay: ignoring unknown control kind %r", kind)
 
     async def _render_permission(self, request_id: str, payload: dict[str, Any]) -> None:
-        request = deserialize_permission_request(payload.get("request") or {})
-        rule_options = [dict(entry) for entry in (payload.get("rule_options") or []) if isinstance(entry, dict)]
+        wire_request = payload.get("request")
+        if not isinstance(wire_request, dict):
+            return
+        try:
+            request = deserialize_permission_request(wire_request)
+        except (ValueError, TypeError):
+            return
+        rule_options = deserialize_permission_rule_options(payload.get("rule_options"))
         summary = str(request.summary or request.tool_name or "a tool")
         buttons = [ButtonOption(OPTION_ALLOW_ONCE, "Allow once")]
         for index, entry in enumerate(rule_options):
-            label = str(entry.get("label") or "allow always")
+            label = entry.label or "allow always"
             buttons.append(ButtonOption(f"{OPTION_ALLOW_ALWAYS_PREFIX}{index}", f"Always: {label}"))
         buttons.append(ButtonOption(OPTION_DENY, "Deny"))
         try:
@@ -139,26 +145,33 @@ class ControlRelay:
         except Exception:  # noqa: BLE001 — a lost prompt falls back to the channel default
             logger.exception("gateway relay: could not render permission prompt")
             return
+        if not self._runtime.control.is_pending(request_id):
+            return
         self._pending[token] = _PendingPrompt(
             kind="permission", request_id=request_id, token=token, rule_options=rule_options, options=[]
         )
+        await self._runtime.prompt_delivered(request_id)
 
     async def _render_question(self, request_id: str, payload: dict[str, Any]) -> None:
-        question = str(payload.get("question") or "Pick an option")
-        options = [str(option) for option in (payload.get("options") or [])]
+        question = str(payload.get("question") or "")
+        wire_options = payload.get("options")
+        if not question or not isinstance(wire_options, list) or len(wire_options) < 2:
+            return
+        options = [str(option) for option in wire_options]
         buttons = [
             ButtonOption(str(index), label[:MAX_BUTTON_LABEL_CHARS] or "\u00a0") for index, label in enumerate(options)
         ]
-        if not buttons:
-            return
         try:
             token = await self._adapter.send_buttons(self._chat_ref.chat_id, self._scrub(question), buttons)
         except Exception:  # noqa: BLE001
             logger.exception("gateway relay: could not render question prompt")
             return
+        if not self._runtime.control.is_pending(request_id):
+            return
         self._pending[token] = _PendingPrompt(
             kind="question", request_id=request_id, token=token, rule_options=[], options=options
         )
+        await self._runtime.prompt_delivered(request_id)
 
     # -- Tap handling ------------------------------------------------------
 
@@ -189,8 +202,10 @@ class ControlRelay:
             return PermissionDecision(allowed=False, reason=DENIED_REASON)
         if option_id.startswith(OPTION_ALLOW_ALWAYS_PREFIX):
             try:
-                entry = pending.rule_options[int(option_id[len(OPTION_ALLOW_ALWAYS_PREFIX) :])]
-                rule = PermissionRule.from_dict(entry.get("rule") or {})
+                index = int(option_id[len(OPTION_ALLOW_ALWAYS_PREFIX) :])
+                if index < 0:
+                    raise IndexError
+                rule = pending.rule_options[index].rule
             except (ValueError, IndexError, TypeError):
                 return PermissionDecision(allowed=False, reason=UNKNOWN_OPTION_REASON)
             return PermissionDecision(allowed=True, reason="Allowed and remembered.", rule=rule)
@@ -199,6 +214,7 @@ class ControlRelay:
     @staticmethod
     def _question_answer(option_id: str, pending: _PendingPrompt) -> str:
         try:
-            return pending.options[int(option_id)]
+            index = int(option_id)
+            return pending.options[index] if index >= 0 else ""
         except (ValueError, IndexError):
             return ""

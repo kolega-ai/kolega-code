@@ -46,7 +46,7 @@ from kolega_code.session.inbox import (
     PeerMessageError,
     validate_peer_text as validate_peer_message_text,
 )
-from kolega_code.session.runtime import deserialize_permission_request
+from kolega_code.session.runtime import deserialize_permission_request, deserialize_permission_rule_options
 from kolega_code.session.background import BackgroundAgentManager
 from kolega_code.tools import ToolError
 from textual.widgets import Static
@@ -214,7 +214,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 # leave it to the channel's default rather than show a broken
                 # prompt.
                 return
-            self._begin_approval(request_id, request)
+            rule_options = deserialize_permission_rule_options(payload.get("rule_options"))
+            if self._begin_approval(request_id, request, rule_options):
+                asyncio.create_task(self.session_runtime.prompt_delivered(request_id))
             return
         if kind == "question":
             options = payload.get("options")
@@ -222,12 +224,14 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             if not question or not isinstance(options, list) or len(options) < 2:
                 return
             descriptions = payload.get("descriptions")
-            self._begin_question(
+            shown = self._begin_question(
                 request_id,
                 question,
                 [str(option) for option in options],
                 [str(item) for item in descriptions] if isinstance(descriptions, list) else None,
             )
+            if shown:
+                asyncio.create_task(self.session_runtime.prompt_delivered(request_id))
 
     def _control_request_is_open(self, request_id: str) -> bool:
         """Whether the channel is still waiting on this request.
@@ -237,7 +241,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         why that event clears a prompt as well.
         """
         try:
-            return any(request.request_id == request_id for request in self.control_channel.pending())
+            return self.control_channel.is_pending(request_id)
         except Exception:
             return True
 

@@ -25,7 +25,7 @@ from kolega_code.cli.session_store import SessionRecord
 from kolega_code.config import ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.llm.models import ImageBlock, Message, TextBlock
 from kolega_code.llm.providers.models import TokenCount
-from kolega_code.permissions import PermissionKind, PermissionRequest
+from kolega_code.permissions import PermissionKind, PermissionMode, PermissionRequest
 
 from tests.agent.compaction_helpers import build_agent
 
@@ -354,6 +354,7 @@ async def test_new_session_registers_and_returns_session_id(tmp_path: Path) -> N
 @pytest.mark.asyncio
 async def test_permission_callback_prompts_through_client(tmp_path: Path) -> None:
     session, _cm = _make_session(tmp_path, StreamingLLM())
+    session.agent.set_permission_mode(PermissionMode.ASK)
     agent, conn = _make_agent(session)
     new_session = await agent.new_session(cwd=str(tmp_path))
     session.agent.current_tool_call_id = "call-9"

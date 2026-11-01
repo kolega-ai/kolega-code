@@ -25,21 +25,23 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable, Optional
+from typing import Any, AsyncIterator, Awaitable, Callable, Optional, cast
 
 from kolega_code.events import AgentEvent
+from kolega_code.hooks.events import HookEvent
 from kolega_code.permissions import (
     PermissionDecision,
     PermissionKind,
     PermissionMode,
     PermissionRequest,
     PermissionRule,
+    PermissionRuleOption,
     PermissionStoreError,
     ProjectPermissionStore,
     allow_rule_options,
 )
 
-from .control import ControlChannel
+from .control import ControlChannel, ControlRequest
 
 #: Builds the agent for this session. Called on start and on every rebuild.
 AgentFactory = Callable[[], Awaitable[Any]]
@@ -73,6 +75,49 @@ def deserialize_permission_request(payload: dict[str, Any]) -> PermissionRequest
         path=str(payload.get("path") or ""),
         mcp_server=str(payload.get("mcp_server") or ""),
         mcp_tool=str(payload.get("mcp_tool") or ""),
+    )
+
+
+def deserialize_permission_rule_options(payload: Any) -> list[PermissionRuleOption]:
+    """Decode rule candidates supplied by the runtime to a presentation adapter."""
+    if not isinstance(payload, list):
+        return []
+    options: list[PermissionRuleOption] = []
+    for entry in payload:
+        if not isinstance(entry, dict) or not isinstance(entry.get("rule"), dict):
+            continue
+        try:
+            rule = PermissionRule.from_dict(entry["rule"])
+        except PermissionStoreError:
+            continue
+        options.append(
+            PermissionRuleOption(
+                label=str(entry.get("label") or ""),
+                description=str(entry.get("description") or ""),
+                rule=rule,
+            )
+        )
+    return options
+
+
+def _permission_rule_from_response(
+    response: dict[str, Any], options: list[PermissionRuleOption]
+) -> Optional[PermissionRule]:
+    rule_data = response.get("rule")
+    if response.get("allowed") is not True or not isinstance(rule_data, dict):
+        return None
+    try:
+        rule = PermissionRule.from_dict(rule_data)
+    except Exception:
+        return None
+    return next(
+        (
+            option.rule
+            for option in options
+            if (rule.kind, rule.tool, rule.match_type, rule.pattern)
+            == (option.rule.kind, option.rule.tool, option.rule.match_type, option.rule.pattern)
+        ),
+        None,
     )
 
 
@@ -120,8 +165,7 @@ class SessionRuntime:
         """Build the agent for this session using the supplied factory."""
         if self._agent_factory is None:
             raise SessionRuntimeError("This runtime has no agent factory; use adopt() instead")
-        self._agent = await self._agent_factory()
-        return self._agent
+        return self._bind_agent(await self._agent_factory())
 
     def adopt(self, agent: Any) -> None:
         """Take ownership of an agent the caller composed itself.
@@ -131,7 +175,18 @@ class SessionRuntime:
         that logic to gain a runtime. It composes as before and hands the result
         over, and control still flows through this runtime and its channel.
         """
+        self._bind_agent(agent)
+
+    def _bind_agent(self, agent: Any) -> Any:
+        """Attach the runtime policy to the current agent generation."""
         self._agent = agent
+        set_mode = getattr(agent, "set_permission_mode", None)
+        if callable(set_mode):
+            set_mode(self.permission_mode)
+        set_callback = getattr(agent, "set_permission_callback", None)
+        if callable(set_callback):
+            set_callback(self.permission_callback)
+        return agent
 
     async def rebuild(self) -> Any:
         """Replace the agent, disposing of the previous one first."""
@@ -179,10 +234,9 @@ class SessionRuntime:
         Installed on the agent in place of a UI-supplied callback. The ordering is
         deliberate: cheap local policy first, a human last.
         """
-        if self.permission_mode != PermissionMode.ASK:
-            return PermissionDecision(allowed=True)
-
         async with self._permission_lock:
+            if self.permission_mode != PermissionMode.ASK:
+                return PermissionDecision(allowed=True)
             matched = self._matching_rule(request)
             if matched is not None:
                 return PermissionDecision(allowed=True, reason=f"Allowed by saved rule {matched.id}.")
@@ -199,7 +253,7 @@ class SessionRuntime:
                 },
                 default=DENIED_BY_DEFAULT,
             )
-            return self._decision_from_response(response)
+            return self._decision_from_response(response, options)
 
     def _matching_rule(self, request: PermissionRequest) -> Optional[PermissionRule]:
         try:
@@ -210,19 +264,70 @@ class SessionRuntime:
             self._notify(str(exc))
             return None
 
-    def _decision_from_response(self, response: dict[str, Any]) -> PermissionDecision:
-        rule_data = response.get("rule")
-        rule: Optional[PermissionRule] = None
-        if isinstance(rule_data, dict):
+    def _decision_from_response(
+        self, response: dict[str, Any], options: list[PermissionRuleOption]
+    ) -> PermissionDecision:
+        allowed = response.get("allowed") is True
+        rule = _permission_rule_from_response(response, options)
+        if rule is not None:
             try:
-                rule = PermissionRule.from_dict(rule_data)
-            except Exception:
-                rule = None
+                ProjectPermissionStore(self.project_path).add_rule(rule)
+            except PermissionStoreError as exc:
+                self._notify(str(exc))
+                return PermissionDecision(
+                    allowed=True,
+                    reason="Allowed once because the rule could not be saved.",
+                )
         return PermissionDecision(
-            allowed=bool(response.get("allowed")),
+            allowed=allowed,
             reason=str(response.get("reason") or ""),
             rule=rule,
         )
+
+    async def prompt_delivered(self, request_id: str) -> bool:
+        """Emit one advisory hook after a live human prompt is presented."""
+        request = self.control.mark_delivered(request_id)
+        if request is None:
+            return False
+        await self._fire_prompt_notification(request)
+        return True
+
+    async def _fire_prompt_notification(self, request: ControlRequest) -> None:
+        agent = self._agent
+        fire_hook = getattr(agent, "fire_hook", None) if agent is not None else None
+        if not callable(fire_hook):
+            return
+
+        payload: dict[str, Any]
+        target: str
+        if request.kind == "permission":
+            wire_request = request.payload.get("request")
+            tool_name = str(wire_request.get("tool_name") or "") if isinstance(wire_request, dict) else ""
+            if not tool_name:
+                return
+            target = "permission_prompt"
+            payload = {
+                "notification_type": target,
+                "message": f"Permission requested for {tool_name or 'a tool'}",
+                "tool_name": tool_name,
+            }
+        elif request.kind == "question":
+            question = str(request.payload.get("question") or "")
+            if not question.strip():
+                return
+            target = "question"
+            payload = {
+                "notification_type": target,
+                "message": question or "The agent asked a question.",
+            }
+        else:
+            return
+
+        try:
+            await cast(Awaitable[Any], fire_hook(HookEvent.NOTIFICATION, payload, target=target))
+        except Exception:
+            # Notification hooks are advisory and must never settle the prompt.
+            pass
 
     def answer_permission(
         self,
