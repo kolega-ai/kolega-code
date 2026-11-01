@@ -23,6 +23,7 @@ ALIAS_CASES = [
     ("exec_command", "exec_command", {"command": "ls", "timeout": 60}, {"command": "ls", "yield_time_ms": 60000}),
     ("exec_command", "exec_command", {"command": "ls", "timeout": 5000}, {"command": "ls", "yield_time_ms": 5000}),
     ("exec_command", "exec_command", {"command": "ls", "title": "list files"}, {"command": "ls"}),
+    ("exec_command", "exec_command", {"cmd": "ls"}, {"command": "ls"}),
     ("eval", "eval", {"command": "print(1)"}, {"code": "print(1)"}),
     ("read", "read", {"path": "a.py"}, {"file_path": "a.py"}),
     ("claude_write", "write", {"path": "a.py", "content": "hello"}, {"file_path": "a.py", "content": "hello"}),
@@ -36,6 +37,7 @@ CANONICAL_WINS_CASES = [
         {"command": "ls", "timeout": 60, "yield_time_ms": 500},
         {"command": "ls", "yield_time_ms": 500},
     ),
+    ("exec_command", "exec_command", {"command": "ls", "cmd": "rm -rf /"}, {"command": "ls"}),
     ("eval", "eval", {"command": "print(1)", "code": "print(2)"}, {"code": "print(2)"}),
     ("read", "read", {"path": "a.py", "file_path": "b.py"}, {"file_path": "b.py"}),
     (

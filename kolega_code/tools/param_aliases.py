@@ -81,6 +81,7 @@ PARAM_ALIASES: Dict[str, Dict[str, ParamAlias]] = {
         # transform); non-numeric values are dropped so the call succeeds
         # regardless.
         "timeout": ParamAlias("yield_time_ms", transform=_timeout_to_yield_ms),
+        "cmd": ParamAlias("command"),
         # Seen 9×, borrowed from eval's title. Purely cosmetic: discard.
         "title": ParamAlias(),
     },
