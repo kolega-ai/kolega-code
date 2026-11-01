@@ -10,17 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import warnings
+from typing import Any
 
 import httpx
-
-# The firecrawl package emits a pydantic UserWarning at import time — its
-# v2/types.py defines a model field named "json" that shadows BaseModel.json.
-# That's a bug in firecrawl's own code (not ours and not fixable here), so we
-# silence exactly that warning at the import boundary; otherwise it prints to
-# stderr on every startup.
-with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=UserWarning, module=r"firecrawl.*")
-    from firecrawl import Firecrawl
 
 from .base import DEFAULT_RESULTS, SearchBackend, clamp_results
 from .errors import (
@@ -34,6 +26,24 @@ from .models import SearchResponse, SearchResult
 
 # Same REST endpoint the SDK posts to; keyless requests simply omit the Authorization header.
 FIRECRAWL_SEARCH_URL = "https://api.firecrawl.dev/v2/search"
+
+
+def _new_client(*, api_key: str, timeout: float) -> Any:
+    """Construct an SDK client, importing firecrawl-py on first use.
+
+    The SDK builds its whole pydantic type tree at import time — ~205 ms of every
+    CLI start, paid by every command and TUI launch for a backend most sessions
+    never select. Only the keyed path builds a client, so the import waits until
+    then; the interpreter caches the module for later searches.
+    """
+    # firecrawl-py's v2/types.py defines a model field named "json" that shadows
+    # BaseModel.json, so loading it emits a pydantic UserWarning: firecrawl's bug,
+    # silenced at the import boundary rather than leaking to stderr.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=UserWarning, module=r"firecrawl.*")
+        from firecrawl import Firecrawl
+
+    return Firecrawl(api_key=api_key, timeout=timeout)
 
 
 def _field(item, key: str):
@@ -83,7 +93,7 @@ class FirecrawlBackend(SearchBackend):
         return _field(data, "web") or []
 
     def _sdk_search(self, query: str, count: int):
-        client = Firecrawl(api_key=self.api_key or "", timeout=self.timeout)
+        client = _new_client(api_key=self.api_key or "", timeout=self.timeout)
         return client.search(query, limit=count, timeout=int(self.timeout * 1000))
 
     async def _search_keyless(self, query: str, count: int) -> list:

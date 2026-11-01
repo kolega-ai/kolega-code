@@ -12,8 +12,9 @@ already imported. In environments without the ``[tinker]`` extra the assertion
 is trivially true; with it installed (the dev venv), this catches any eager
 import creeping back into the package root.
 
-The same guard covers the web-fetch HTML extraction stack, which only a fetch
-that extracts HTML needs but which used to load on every CLI start.
+The same guard covers the web-fetch HTML extraction stack and the Firecrawl SDK,
+which only a fetch or a keyed search needs but which used to load on every CLI
+start.
 """
 
 import subprocess
@@ -39,6 +40,16 @@ heavy = [name for name in ("trafilatura", "readability", "markdownify") if name 
 assert not heavy, f"import kolega_code.cli.main eagerly loaded: {heavy}"
 """
 
+#: firecrawl-py builds its entire pydantic type tree at import time (~205 ms).
+#: Only a keyed Firecrawl search uses the SDK, so it may not load on a CLI start.
+_FIRECRAWL_CHECK = """
+import sys
+import kolega_code.cli.main
+import kolega_code.agent.tool_backend.search_backends.firecrawl
+
+assert "firecrawl" not in sys.modules, "import kolega_code.cli.main eagerly loaded: firecrawl"
+"""
+
 
 def test_importing_the_package_does_not_load_the_native_tinker_stack() -> None:
     result = subprocess.run(
@@ -58,6 +69,22 @@ def test_cli_start_does_not_load_the_html_extraction_stack() -> None:
     """
     result = subprocess.run(
         [sys.executable, "-c", _WEB_FETCH_CHECK],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_cli_start_does_not_load_the_firecrawl_sdk() -> None:
+    """The Firecrawl SDK loads on the first keyed search, not on start.
+
+    Importing it costs ~205 ms of pydantic type construction; the keyless path
+    talks to the REST endpoint over httpx and most sessions never select the
+    backend at all.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", _FIRECRAWL_CHECK],
         capture_output=True,
         text=True,
         timeout=120,
