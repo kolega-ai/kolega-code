@@ -110,6 +110,24 @@ _SUB_AGENT_STREAM_EVENTS = frozenset(
     }
 )
 
+#: Output that already reached the stream before a turn was cancelled still
+#: belongs in the transcript; every other event from a draining turn is dropped.
+_RENDERED_WHILE_DRAINING = frozenset(
+    {
+        KnownEventType.LOG_MESSAGE,
+        KnownEventType.TERMINAL_OUTPUT,
+        KnownEventType.FILE_EDIT_PREVIEW,
+    }
+)
+
+_TERMINAL_RENDER_EVENTS = frozenset(
+    {
+        KnownEventType.LOG_MESSAGE,
+        KnownEventType.TERMINAL_OUTPUT,
+        KnownEventType.TERMINAL_COMMAND,
+    }
+)
+
 
 class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
     def _agent_execution_draining(self) -> bool:
@@ -1558,125 +1576,161 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
 
     def _render_event(self, event: AgentEvent) -> None:
         self._diag_tee(event)
-        if event.event_type in ("llm_error", "llm_request"):
-            return  # diagnostics-only events; persisted by the tee, nothing to render
+        if self._consume_non_rendered_event(event):
+            return
+        if event.event_type in _TERMINAL_RENDER_EVENTS:
+            self._render_terminal_event(event)
+        elif event.event_type == KnownEventType.CHAT_MESSAGE:
+            self._render_chat_message(event)
+        elif event.event_type == KnownEventType.TOOL_STREAMING_UPDATE:
+            self._render_tool_streaming_update(event)
+        elif event.event_type == KnownEventType.FILE_EDIT_PREVIEW:
+            self._render_file_edit_preview(event)
+        elif event.event_type == KnownEventType.LLM_CONTEXT_UPDATE:
+            self._render_context_status(event)
+        elif event.event_type == KnownEventType.COMPACTION_STATUS:
+            self._render_compaction_status(event)
+        elif event.event_type in (KnownEventType.LLM_STATUS_UPDATE, KnownEventType.STATUS_UPDATE):
+            self._render_status_update(event)
+        else:
+            self._render_unhandled_event(event)
+
+    def _consume_non_rendered_event(self, event: AgentEvent) -> bool:
+        """Return True when the event is routed elsewhere, or deliberately renders nothing."""
+        if event.event_type in (KnownEventType.LLM_ERROR, KnownEventType.LLM_REQUEST):
+            return True  # diagnostics-only events; persisted by the tee, nothing to render
         if event.event_type == KnownEventType.CONTROL_RESOLVED:
             resolved_id = str(event.content.get("request_id") or "")
             self._clear_approval_if_resolved(resolved_id)
             self._clear_question_if_resolved(resolved_id)
-            return
+            return True
         if (
             self._agent_execution_draining()
             and not event.sub_agent_info
-            and event.event_type not in ("log_message", "terminal_output", "file_edit_preview")
+            and event.event_type not in _RENDERED_WHILE_DRAINING
         ):
-            if (
-                event.event_type == KnownEventType.CONTROL_REQUESTED
-                and self.control_channel.controller == tui_constants.TUI_CLIENT_ID
-            ):
-                request_id = str(event.content.get("request_id") or "")
-                for request in self.control_channel.pending():
-                    if request.request_id == request_id:
-                        self.control_channel.respond(request_id, request.default, client_id=tui_constants.TUI_CLIENT_ID)
-                        break
-            return
+            self._answer_drained_control_request(event)
+            return True
         if event.event_type == KnownEventType.CONTROL_REQUESTED:
             self._handle_control_request(event)
-            return
+            return True
         if event.sub_agent_info and event.event_type in _SUB_AGENT_STREAM_EVENTS:
             self._render_sub_agent_delta(event)
-            return
+            return True
         if event.event_type in _RECORDING_ONLY_EVENTS:
-            # Assistant prose, reasoning, and turn boundaries exist on the event
-            # stream so that non-TUI frontends and the replay player can render a
-            # conversation. This TUI still renders them from
-            # process_message_stream's generator, so rendering them here too would
-            # duplicate every response.
+            # Assistant prose, reasoning, and turn boundaries are recorded for replay
+            # and non-TUI frontends; rendering them here too would duplicate every response.
+            return True
+        return False
+
+    def _answer_drained_control_request(self, event: AgentEvent) -> None:
+        """Answer our own control prompt with its default once the turn is draining; nobody will see it."""
+        if (
+            event.event_type != KnownEventType.CONTROL_REQUESTED
+            or self.control_channel.controller != tui_constants.TUI_CLIENT_ID
+        ):
             return
-        if event.event_type == "log_message":
+        request_id = str(event.content.get("request_id") or "")
+        for request in self.control_channel.pending():
+            if request.request_id == request_id:
+                self.control_channel.respond(request_id, request.default, client_id=tui_constants.TUI_CLIENT_ID)
+                break
+
+    def _render_terminal_event(self, event: AgentEvent) -> None:
+        if event.event_type == KnownEventType.LOG_MESSAGE:
             if self.show_logs:
                 level = str(event.content.get("level", "info"))
                 self._write_log(self._display_text_from_event(event), level)
-        elif event.event_type == "terminal_output":
+        elif event.event_type == KnownEventType.TERMINAL_OUTPUT:
             output = event.content.get("display_output")
             if output is None:
                 output = event.content.get("output", "")
             self._queue_terminal_output(str(output))
             self._mark_session_diff_dirty()
-        elif event.event_type == "terminal_command":
+        elif event.event_type == KnownEventType.TERMINAL_COMMAND:
             command = str(event.content.get("command") or "")
             self._write_terminal_command(command)
             if command:
                 self._update_activity_progress(
                     messages.RUNNING_TERMINAL_COMMAND, state=tui_state.TurnState.RUNNING_TOOL
                 )
-        elif event.event_type == "chat_message":
-            if event.sub_agent_info:
-                self._render_sub_agent_event(event)
-                return
-            message_text = event.content.get("text", "")
-            message_type = event.content.get("message_type", "message")
-            if message_type in {"tool_call", "tool_result", "tool_error"}:
-                self._add_tool_message(message_type, event.content)
-            elif message_type == "workflow_start":
-                self._handle_workflow_start(event.content)
-            elif message_type == "workflow_phase":
-                self._handle_workflow_phase(event.content)
-            elif message_type == "workflow_log":
-                self._handle_workflow_log(event.content)
-            elif message_type == "workflow_end":
-                self._handle_workflow_end(event.content)
-            elif message_text:
-                self._add_conversation_entry(tui_state.ConversationEntry(kind="message", content=message_text))
-        elif event.event_type == "tool_streaming_update":
-            if event.sub_agent_info:
-                self._note_sub_agent_tool_stream(event)
-            else:
-                self._apply_tool_streaming_update(event.content)
-        elif event.event_type == "file_edit_preview":
-            # UI-only diff/head preview. Main-agent edits stay inline; every edit is
-            # also captured in the session changes inspector. Sub-agent previews attach
-            # to their trajectory steps so Ctrl+G and Ctrl+R can both reveal them.
-            self._record_file_change_event(event)
-            if event.sub_agent_info:
-                self._apply_sub_agent_edit_preview(event)
-            else:
-                self._apply_edit_preview(event.content)
-            self._mark_session_diff_dirty()
-        elif event.event_type == "llm_context_update":
-            if event.sub_agent_info:
-                self._note_sub_agent_context(event)
-            else:
-                self._apply_context_status_update(event.content)
-        elif event.event_type == "compaction_status":
-            # Only the main agent's compaction drives the status dashboard; a
-            # sub-agent's compaction must not stomp the main indicator.
-            if not event.sub_agent_info:
-                self._apply_compaction_status(event.content)
-        elif event.event_type in {"llm_status_update", "status_update"}:
-            if event.sub_agent_info:
-                self._note_sub_agent_status(event)
-            else:
-                if event.content.get("resumed") and self._turn_status_text != "Waiting for response…":
-                    return
-                text = self._display_text_from_event(event)
-                if text:
-                    if self.show_logs:
-                        self._write_log(text, "info")
-                    self._update_activity_progress(text)
-                    if event.content.get("retry"):
-                        # A retry belongs in the transcript: the status line is
-                        # overwritten by the next stream delta, leaving the user
-                        # unable to tell a flapping connection from a slow model.
-                        self._add_conversation_entry(
-                            tui_state.ConversationEntry(kind="system", content=text, complete=True, tone="warning")
-                        )
-        elif self.show_logs:
-            text = self._display_text_from_event(event)
-            if text:
-                self._write_log(f"{event.event_type}: {text}", "info")
-            else:
-                self._write_log(messages.LOG_IGNORED_EVENT.format(event_type=event.event_type), "debug")
+
+    def _render_chat_message(self, event: AgentEvent) -> None:
+        if event.sub_agent_info:
+            self._render_sub_agent_event(event)
+            return
+        message_text = event.content.get("text", "")
+        message_type = event.content.get("message_type", "message")
+        if message_type in {"tool_call", "tool_result", "tool_error"}:
+            self._add_tool_message(message_type, event.content)
+        elif message_type == "workflow_start":
+            self._handle_workflow_start(event.content)
+        elif message_type == "workflow_phase":
+            self._handle_workflow_phase(event.content)
+        elif message_type == "workflow_log":
+            self._handle_workflow_log(event.content)
+        elif message_type == "workflow_end":
+            self._handle_workflow_end(event.content)
+        elif message_text:
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="message", content=message_text))
+
+    def _render_tool_streaming_update(self, event: AgentEvent) -> None:
+        if event.sub_agent_info:
+            self._note_sub_agent_tool_stream(event)
+        else:
+            self._apply_tool_streaming_update(event.content)
+
+    def _render_file_edit_preview(self, event: AgentEvent) -> None:
+        # UI-only diff/head preview. Main-agent edits stay inline; every edit is
+        # also captured in the session changes inspector. Sub-agent previews attach
+        # to their trajectory steps so Ctrl+G and Ctrl+R can both reveal them.
+        self._record_file_change_event(event)
+        if event.sub_agent_info:
+            self._apply_sub_agent_edit_preview(event)
+        else:
+            self._apply_edit_preview(event.content)
+        self._mark_session_diff_dirty()
+
+    def _render_context_status(self, event: AgentEvent) -> None:
+        if event.sub_agent_info:
+            self._note_sub_agent_context(event)
+        else:
+            self._apply_context_status_update(event.content)
+
+    def _render_compaction_status(self, event: AgentEvent) -> None:
+        # Only the main agent's compaction drives the status dashboard; a
+        # sub-agent's compaction must not stomp the main indicator.
+        if not event.sub_agent_info:
+            self._apply_compaction_status(event.content)
+
+    def _render_status_update(self, event: AgentEvent) -> None:
+        if event.sub_agent_info:
+            self._note_sub_agent_status(event)
+            return
+        if event.content.get("resumed") and self._turn_status_text != "Waiting for response…":
+            return
+        text = self._display_text_from_event(event)
+        if not text:
+            return
+        if self.show_logs:
+            self._write_log(text, "info")
+        self._update_activity_progress(text)
+        if event.content.get("retry"):
+            # A retry belongs in the transcript: the status line is
+            # overwritten by the next stream delta, leaving the user
+            # unable to tell a flapping connection from a slow model.
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(kind="system", content=text, complete=True, tone="warning")
+            )
+
+    def _render_unhandled_event(self, event: AgentEvent) -> None:
+        if not self.show_logs:
+            return
+        text = self._display_text_from_event(event)
+        if text:
+            self._write_log(f"{event.event_type}: {text}", "info")
+        else:
+            self._write_log(messages.LOG_IGNORED_EVENT.format(event_type=event.event_type), "debug")
 
     def action_cancel_generation(self) -> None:
         if self._startup_pending and self._pending_question is None and self._pending_approval is None:
