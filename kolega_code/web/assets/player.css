@@ -252,6 +252,14 @@ body::after {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.kc-agent-card-notice {
+  margin-top: 0.2rem;
+  font-size: 0.74rem;
+  color: var(--kc-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Whose thread you are looking at, while one agent is open. */
 .kc-agent-header {
@@ -270,6 +278,15 @@ body::after {
 .kc-agent-header-title {
   font-weight: 600;
   color: var(--kc-tool);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kc-agent-header-notice {
+  min-width: 0;
+  flex: 1 1 12rem;
+  font-size: 0.74rem;
+  color: var(--kc-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -669,6 +686,12 @@ button.kc-tool-name:focus-visible {
 }
 .kc-sub-agent-task {
   color: color-mix(in srgb, var(--kc-foreground) 62%, var(--kc-text-muted));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kc-sub-agent-notice {
+  color: var(--kc-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

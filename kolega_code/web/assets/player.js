@@ -665,8 +665,14 @@ function entrySnapshot(row) {
   const item = row.item;
   if (row.card) {
     // A card is a live view of its agent, so what it draws keeps changing after
-    // it is on screen: the status settles and the step count climbs.
-    return { card: true, agent: row.agent, status: row.agent.status, steps: row.agent.steps.length };
+    // it is on screen: the status settles, notices change, and the step count climbs.
+    return {
+      card: true,
+      agent: row.agent,
+      status: row.agent.status,
+      notice: row.agent.notice,
+      steps: row.agent.steps.length,
+    };
   }
   return {
     item,
@@ -688,6 +694,7 @@ function entryChanged(previous, row) {
       previous.card !== row.card ||
       previous.agent !== row.agent ||
       previous.status !== row.agent.status ||
+      previous.notice !== row.agent.notice ||
       previous.steps !== row.agent.steps.length
     );
   }
@@ -767,6 +774,17 @@ function renderAgentHeader() {
       badge.dataset.status = activity.status === "running" ? "running" : activity.status;
       badge.textContent = activity.status || "running";
     }
+    let notice = existing.querySelector(".kc-agent-header-notice");
+    if (!activity.notice) {
+      notice?.remove();
+    } else {
+      if (!notice) {
+        notice = document.createElement("span");
+        notice.className = "kc-agent-header-notice";
+        existing.append(notice);
+      }
+      notice.textContent = activity.notice;
+    }
     return;
   }
 
@@ -792,6 +810,13 @@ function renderAgentHeader() {
   status.dataset.status = activity.status === "running" ? "running" : activity.status;
   status.textContent = activity.status || "running";
   header.append(status);
+
+  if (activity.notice) {
+    const notice = document.createElement("span");
+    notice.className = "kc-agent-header-notice";
+    notice.textContent = activity.notice;
+    header.append(notice);
+  }
 
   dom.transcript.parentElement?.prepend(header);
 }
@@ -881,6 +906,12 @@ function renderAgentCard(activity) {
     task.className = "kc-agent-card-task";
     task.textContent = activity.task;
     card.append(task);
+  }
+  if (activity.notice) {
+    const notice = document.createElement("div");
+    notice.className = "kc-agent-card-notice";
+    notice.textContent = activity.notice;
+    card.append(notice);
   }
   row.append(card);
   return row;
@@ -1130,6 +1161,12 @@ function renderSubAgents() {
     task.className = "kc-sub-agent-task";
     task.textContent = activity.task || activity.lastText || "";
     row.append(name, task);
+    if (activity.notice) {
+      const notice = document.createElement("div");
+      notice.className = "kc-sub-agent-notice";
+      notice.textContent = activity.notice;
+      row.append(notice);
+    }
     dom.subAgents.append(row);
   }
 }

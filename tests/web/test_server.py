@@ -180,12 +180,34 @@ async def test_reads_an_event_range_and_reports_the_next_cursor(store: SessionSt
 @pytest.mark.asyncio
 async def test_server_side_fold_matches_the_projection(store: SessionStore, tmp_path: Path) -> None:
     record = await _seed(store, tmp_path)
+    events = FileSessionEventStore(store.journal(record.session_id))
+    sub_agent_info = {"dispatch_id": "d1", "agent_name": "investigator", "task": "trace it"}
+    await events.append(
+        AgentEvent(
+            session_id=record.session_id,
+            sender="agent",
+            event_type=KnownEventType.LLM_STATUS_UPDATE,
+            content={"status": "overloaded", "message": "Provider overloaded, retrying"},
+            sub_agent_info=sub_agent_info,
+        )
+    )
+    await events.append(
+        AgentEvent(
+            session_id=record.session_id,
+            sender="agent",
+            event_type=KnownEventType.CHAT_MESSAGE,
+            content={"status": "STOPPED", "message": "done"},
+            sub_agent_info=sub_agent_info,
+        )
+    )
 
     with _client(store) as client:
         state = client.get(f"/api/sessions/{record.session_id}/state").json()
 
     assert [item["kind"] for item in state["conversation"]] == ["user"] + ["assistant"] * 4
     assert state["turns"][0]["status"] == "completed"
+    assert state["sub_agents"]["d1"]["status"] == "completed"
+    assert state["sub_agents"]["d1"]["notice"] == "Provider overloaded, retrying"
     assert "_streams" not in state
 
 

@@ -275,6 +275,20 @@ def _fixture_events() -> list[AgentEvent]:
             turn_id="peer-turn",
             status="completed",
         ),
+        _sub_agent(
+            _event(
+                KnownEventType.LLM_STATUS_UPDATE,
+                48,
+                elapsed_ms=1090,
+                status="retrying",
+                message="Retrying delegated request",
+            ),
+            dispatch_id="d2",
+        ),
+        _sub_agent(
+            _event(KnownEventType.LLM_STATUS_UPDATE, 49, elapsed_ms=1092, status="", message=""),
+            dispatch_id="d2",
+        ),
     ]
 
 
@@ -311,13 +325,15 @@ def test_python_and_javascript_folds_agree(tmp_path: Path) -> None:
     actual = _run_js_fold([event.model_dump(mode="json") for event in events], tmp_path)
 
     assert actual == expected, "the JavaScript fold diverged from the Python fold"
+    assert actual["sub_agents"]["d2"]["status"] == "completed"
+    assert actual["sub_agents"]["d2"]["notice"] == "Retrying delegated request"
 
 
 def test_folds_agree_at_every_prefix(tmp_path: Path) -> None:
     """Seeking must agree too, not just the final state."""
     events = _fixture_events()
     serialized = [event.model_dump(mode="json") for event in events]
-    for cut in (1, 5, 11, 18, 22, 30, 38, 41, 43, 44, 45, 46, len(events)):
+    for cut in (1, 5, 11, 18, 22, 30, 38, 41, 43, 44, 45, 46, 48, len(events)):
         expected = replay(events[:cut]).to_dict()
         actual = _run_js_fold(serialized[:cut], tmp_path)
         assert actual == expected, f"folds diverged after {cut} events"
