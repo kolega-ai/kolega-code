@@ -61,6 +61,8 @@ class ControlRequest:
     payload: dict[str, Any]
     #: Returned if nobody answers, or if no client can.
     default: dict[str, Any]
+    #: Set exactly once by the client that actually presented the prompt.
+    delivered: bool = field(default=False, repr=False, compare=False)
     future: "asyncio.Future[dict[str, Any]]" = field(repr=False, compare=False, default=None)  # type: ignore[assignment]
 
     def describe(self) -> dict[str, Any]:
@@ -142,15 +144,14 @@ class ControlChannel:
         )
         self._pending[request.request_id] = request
 
-        # Emitted even when nobody can answer, so the recording shows that the
-        # agent reached a decision point and how it was resolved.
-        await self._announce(KnownEventType.CONTROL_REQUESTED, request, extra={"has_controller": self.has_controller})
-
-        if not self.has_controller:
-            self._settle(request, default, reason="no_controller")
-            return await request.future
-
         try:
+            # Record the decision point even when there is nobody to answer it.
+            await self._announce(
+                KnownEventType.CONTROL_REQUESTED, request, extra={"has_controller": self.has_controller}
+            )
+            if not self.has_controller:
+                self._settle(request, default, reason="no_controller")
+                return await request.future
             return await asyncio.wait_for(asyncio.shield(request.future), timeout=effective_timeout)
         except asyncio.TimeoutError:
             self._settle(request, default, reason="timeout")
@@ -158,7 +159,7 @@ class ControlChannel:
         except asyncio.CancelledError:
             # The turn was cancelled; stop tracking so a late answer cannot
             # resolve a request nobody is waiting on.
-            self._pending.pop(request.request_id, None)
+            self._settle(request, default, reason="cancelled")
             raise
 
     @property
@@ -170,6 +171,14 @@ class ControlChannel:
     def pending(self) -> list[ControlRequest]:
         """Outstanding requests, so a client attaching mid-prompt can catch up."""
         return list(self._pending.values())
+
+    def mark_delivered(self, request_id: str) -> Optional[ControlRequest]:
+        """Mark a live prompt as presented, returning it only on the first call."""
+        request = self._pending.get(request_id)
+        if not self.has_controller or request is None or request.delivered or request.future.done():
+            return None
+        request.delivered = True
+        return request
 
     def respond(
         self,
@@ -186,7 +195,7 @@ class ControlChannel:
         if client_id is not None and self._lease is not None and client_id != self._lease:
             raise ControlLeaseError(f"{client_id} does not hold control; {self._lease} does")
         request = self._pending.get(request_id)
-        if request is None:
+        if not self.has_controller or request is None:
             return False
         self._settle(request, response, reason="answered")
         return True

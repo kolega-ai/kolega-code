@@ -20,9 +20,6 @@ from kolega_code.permissions import (
     PermissionDecision,
     PermissionRequest,
     PermissionRuleOption,
-    PermissionStoreError,
-    ProjectPermissionStore,
-    allow_rule_options,
 )
 from kolega_code.agent.tool_definitions import tool_description_asset
 from kolega_code.tools import ASK_USER_CHOICE_INPUT_SCHEMA, ToolError
@@ -226,7 +223,7 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
         question: str,
         options: list[str],
         descriptions: Optional[list[str]] = None,
-    ) -> None:
+    ) -> bool:
         """Show a planning question announced on the control channel."""
         self._pending_question = PendingQuestion(
             question=question,
@@ -234,11 +231,18 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
             descriptions=descriptions,
             request_id=request_id,
         )
-        self._show_question_options(question, options, descriptions)
+        try:
+            shown = self._show_question_options(question, options, descriptions)
+        except Exception:
+            shown = False
+        if not shown:
+            self._pending_question = None
+            return False
         self._set_composer_status(messages.QUESTION_PLACEHOLDER)
         self._set_chat_enabled(True)
         self._refresh_input_area_visibility()
         self._update_activity_progress(messages.WAITING_FOR_ANSWER, state=TurnState.WAITING_FOR_USER)
+        return True
 
     def _clear_question_if_resolved(self, request_id: str) -> None:
         """Drop the prompt once the channel reports it settled by any means."""
@@ -277,11 +281,11 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
 
     def _show_question_options(
         self, question: str, options: list[str], descriptions: Optional[list[str]] = None
-    ) -> None:
+    ) -> bool:
         try:
             panel = self.query_one("#question_prompt", PromptPanel)
         except Exception:
-            return
+            return False
         option_widgets = [
             Option(
                 self._question_option_label(index, option, self._option_description(descriptions, index)),
@@ -291,8 +295,14 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
         ]
         panel.prompt(escape(question), option_widgets)
         self._focus_active_prompt()
+        return True
 
-    def _begin_approval(self, request_id: str, request: PermissionRequest) -> None:
+    def _begin_approval(
+        self,
+        request_id: str,
+        request: PermissionRequest,
+        rule_options: list[PermissionRuleOption],
+    ) -> bool:
         """Show a permission prompt announced on the control channel.
 
         This client learns about a prompt the same way any other frontend does, by
@@ -301,17 +311,23 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
         happened in the session runtime, so anything reaching here genuinely needs
         a person.
         """
-        rule_options = allow_rule_options(request)
         self._pending_approval = PendingApproval(
             request=request,
             rule_options=rule_options,
             request_id=request_id,
         )
-        self._show_approval_options(rule_options)
+        try:
+            shown = self._show_approval_options(rule_options)
+        except Exception:
+            shown = False
+        if not shown:
+            self._pending_approval = None
+            return False
         self._set_composer_status(messages.APPROVAL_PLACEHOLDER)
         self._set_chat_enabled(False)
         self._refresh_input_area_visibility()
         self._update_activity_progress(messages.WAITING_FOR_PERMISSION, state=TurnState.WAITING_FOR_USER)
+        return True
 
     def _clear_approval_if_resolved(self, request_id: str) -> None:
         """Drop the prompt once the channel reports it answered.
@@ -326,8 +342,8 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
         self._set_approval_actions_visible(False)
         self._refresh_input_area_visibility()
 
-    def _show_approval_options(self, rule_options: list[PermissionRuleOption]) -> None:
-        self._set_approval_actions_visible(True)
+    def _show_approval_options(self, rule_options: list[PermissionRuleOption]) -> bool:
+        return self._set_approval_actions_visible(True)
 
     async def _answer_approval_option(self, option_index: int) -> None:
         pending = self._pending_approval
@@ -347,13 +363,7 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
                 return
             rule = pending.rule_options[rule_index].rule
             chosen_label = pending.rule_options[rule_index].label
-            try:
-                ProjectPermissionStore(self.session_runtime.project_path).add_rule(rule)
-            except PermissionStoreError as exc:
-                self._notify_user(str(exc), severity="warning")
-                decision = PermissionDecision(allowed=True, reason="Allowed once because the rule could not be saved.")
-            else:
-                decision = PermissionDecision(allowed=True, reason="Allowed by a saved rule.", rule=rule)
+            decision = PermissionDecision(allowed=True, reason="Allowed and remembered.", rule=rule)
 
         self._pending_approval = None
         self._set_approval_actions_visible(False)
@@ -420,11 +430,11 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
         else:
             panel.hide()
 
-    def _set_approval_actions_visible(self, visible: bool) -> None:
+    def _set_approval_actions_visible(self, visible: bool) -> bool:
         try:
             panel = self.query_one("#approval_prompt", PromptPanel)
         except Exception:
-            return
+            return False
         if visible and self._pending_approval is not None:
             labels = ["Allow once", "Deny", *(option.label for option in self._pending_approval.rule_options)]
             options = [
@@ -435,6 +445,7 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
             self._focus_active_prompt()
         else:
             panel.hide()
+        return True
 
     def _cancel_pending_question(self) -> None:
         pending_question = self._pending_question

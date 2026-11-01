@@ -238,3 +238,54 @@ async def test_emit_failure_does_not_break_the_round_trip() -> None:
     await task
 
     assert result == ALLOW
+
+
+@pytest.mark.asyncio
+async def test_delivery_marker_is_idempotent_and_stale_ids_are_inert() -> None:
+    channel, _ = _channel()
+    channel.acquire("tui")
+    task = asyncio.create_task(channel.request("question", {"question": "?"}, default=DENY))
+    await asyncio.sleep(0)
+    (request,) = channel.pending()
+    assert channel.mark_delivered(request.request_id) is request
+    assert channel.mark_delivered(request.request_id) is None
+    channel.respond(request.request_id, ALLOW, client_id="tui")
+    assert await task == ALLOW
+    assert channel.mark_delivered(request.request_id) is None
+    assert channel.mark_delivered("unknown") is None
+
+
+@pytest.mark.asyncio
+async def test_no_controller_cannot_acknowledge_or_answer_during_announcement() -> None:
+    attempted: list[tuple[object, bool]] = []
+
+    async def emit(event: AgentEvent) -> None:
+        if event.event_type == KnownEventType.CONTROL_REQUESTED:
+            request_id = event.content["request_id"]
+            attempted.append((channel.mark_delivered(request_id), channel.respond(request_id, ALLOW)))
+
+    channel = ControlChannel(session_id="s1", emit=emit)
+    assert await channel.request("permission", {}, default=DENY) == DENY
+    assert attempted == [(None, False)]
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_announcement_drops_pending_request() -> None:
+    announced = asyncio.Event()
+
+    async def emit(event: AgentEvent) -> None:
+        if event.event_type == KnownEventType.CONTROL_REQUESTED:
+            announced.set()
+            await asyncio.Event().wait()
+
+    channel = ControlChannel(session_id="s1", emit=emit)
+    channel.acquire("tui")
+    task = asyncio.create_task(channel.request("permission", {}, default=DENY))
+    await asyncio.wait_for(announced.wait(), 5)
+    request_id = channel.pending()[0].request_id
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert channel.pending() == []
+    assert channel.mark_delivered(request_id) is None
+    assert channel.respond(request_id, ALLOW) is False

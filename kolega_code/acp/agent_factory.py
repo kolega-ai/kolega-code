@@ -112,7 +112,10 @@ class AgentFactory:
         return [self._model_option(session), self._permission_option(session), self._mode_option(session)]
 
     async def set_permission_mode(self, session: AcpSession, mode: PermissionMode) -> None:
-        session.agent.set_permission_mode(mode)
+        if session.runtime is not None:
+            session.runtime.set_permission_mode(mode)
+        else:
+            session.agent.set_permission_mode(mode)
         session.record.permission_mode = mode.value
 
     async def set_interaction_mode(self, session: AcpSession, mode: str) -> None:
@@ -342,6 +345,8 @@ class AgentFactory:
         if manager is not session.manager:
             raise RuntimeError("ACP rebuild must preserve the session connection manager")
         session.agent = agent
+        if session.runtime is not None:
+            session.runtime.adopt(agent)
         jobs = getattr(old, "background_jobs", None)
         if jobs is not None and agent is not old:
             agent.background_jobs = jobs
@@ -438,7 +443,7 @@ class AgentFactory:
             prompt_extensions=prompt_extensions,
             tool_extensions=[
                 self._task_list_extension(record, agent_holder, interaction_mode),
-                build_question_extension(question_state or {}),
+                build_question_extension(question_state if question_state is not None else {}),
             ],
             # Mirror the ask path: a resumed session hands the recorder over after
             # restoring history, so construction never double-records a resumed turn.

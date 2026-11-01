@@ -14,8 +14,7 @@ from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.tui import agent_runtime as agent_runtime_module
 from kolega_code.cli.tui import constants as tui_constants
-from kolega_code.cli.tui.state import PendingApproval
-from kolega_code.permissions import PERMISSIONS_RELATIVE_PATH, allow_rule_options, permission_request_for_tool
+from kolega_code.permissions import PERMISSIONS_RELATIVE_PATH, ProjectPermissionStore, permission_request_for_tool
 from kolega_code.services.terminal import LocalTerminalManager
 from kolega_code.tools import ToolError
 
@@ -24,6 +23,7 @@ from ._app_test_utils import (
     build_test_config,
     extension_by_name,
     install_fake_agents,
+    wait_for_layout,
     wait_for_session_diff_baseline,
 )
 
@@ -515,7 +515,7 @@ async def test_apply_pending_switch_rebuilds_workspace_and_returns_continuation(
 
     monkeypatch.setattr(agent_runtime_module, "build_mcp_tool_extension", fake_build_mcp)
 
-    async with app.run_test():
+    async with app.run_test() as pilot:
         first_agent = app.agent
         tracker_before = app._session_diff_tracker
         (main / "same-name.txt").write_text("launch root\n", encoding="utf-8")
@@ -581,16 +581,14 @@ async def test_apply_pending_switch_rebuilds_workspace_and_returns_continuation(
 
         request = permission_request_for_tool("exec_command", {"command": "npm run test"})
         assert request is not None
-        app._pending_approval = PendingApproval(
-            request=request,
-            request_id="switched-root-permission",
-            rule_options=allow_rule_options(request),
-        )
-        monkeypatch.setattr(app, "_answer_permission_request", Mock())
+        decision_task = asyncio.create_task(app.session_runtime.permission_callback(request))
+        await wait_for_layout(pilot, lambda: app._pending_approval is not None)
+        assert not (main / PERMISSIONS_RELATIVE_PATH).exists()
         await app._answer_approval_option(2)
-        # Saved rules persist in the enclosing launch checkout, so they
-        # survive the worktree and apply to every workspace in the session.
-        assert (main / PERMISSIONS_RELATIVE_PATH).is_file()
+        decision = await asyncio.wait_for(decision_task, timeout=5)
+        assert decision.allowed
+        assert decision.rule is not None
+        assert ProjectPermissionStore(main).load() == [decision.rule]
         assert not (linked / PERMISSIONS_RELATIVE_PATH).exists()
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from kolega_code.session.runtime import SessionRuntime
 from typing import Any
 
 from kolega_code.agent import CoderAgent
@@ -26,6 +27,8 @@ class AcpSession:
     manager: CliConnectionManager
     #: Bound at build time so a model/mode-switch rebuild reattaches the same callback.
     permission_callback: Any = None
+    #: Shared permission-policy owner and control channel for this session.
+    runtime: SessionRuntime | None = None
     #: The AgentConfig the agent was built with, reused by mode-switch rebuilds.
     config: Any = None
     #: Shared with the ask_user_choice tool extension; the server binds the
@@ -35,6 +38,7 @@ class AcpSession:
     turn_task: asyncio.Task | None = field(default=None, repr=False)
     execution_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     event_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    control_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, repr=False)
     background_task: asyncio.Task[None] | None = field(default=None, repr=False)
     bridge: Any = field(default=None, repr=False)
     background_wake: asyncio.Event = field(default_factory=asyncio.Event, repr=False)

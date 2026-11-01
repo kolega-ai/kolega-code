@@ -2,7 +2,8 @@
 from pathlib import Path
 import asyncio
 import json
-import time
+from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -19,7 +20,18 @@ from kolega_code.llm.exceptions import (
     LLMInternalServerError,
 )
 from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult
-from kolega_code.events import AgentEvent
+from kolega_code.events import AgentEvent, KnownEventType
+from kolega_code.hooks.events import HookEvent
+from kolega_code.permissions import (
+    PERMISSIONS_RELATIVE_PATH,
+    PermissionMode,
+    PermissionStoreError,
+    ProjectPermissionStore,
+    allow_rule_options,
+    permission_request_for_tool,
+)
+from kolega_code.cli.tui.constants import TUI_CLIENT_ID
+from kolega_code.session.runtime import deserialize_permission_rule_options
 from kolega_code.session.runtime import serialize_permission_request
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.cli.config import build_agent_config, config_summary
@@ -46,13 +58,16 @@ from ._app_test_utils import (
     install_fake_agents,
     question_payload,
     renderable_text,
+    wait_for_layout as _wait_for_layout,
 )
 
 
-def _build_permission_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def _build_permission_test_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, coder_cls: type[FakeCoderAgent] = FakeCoderAgent
+):
     from kolega_code.cli.app import KolegaCodeApp
 
-    install_fake_agents(monkeypatch, coder_cls=FakeCoderAgent)
+    install_fake_agents(monkeypatch, coder_cls=coder_cls)
     project = tmp_path / "project"
     project.mkdir()
     config = build_test_config(project)
@@ -68,22 +83,6 @@ def _build_permission_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 _ANSWER_TIMEOUT_S = 5.0
 
 
-async def _wait_for_layout(pilot, predicate, *, timeout: float = 6.0) -> None:
-    """Poll until ``predicate()`` is truthy or time out.
-
-    Showing a prompt panel takes two layout passes: the first sizes the header's
-    scroll container, and only the second gives its scrollbar a region.
-    ``pilot.pause()``'s idle heuristic can return before that second pass on a
-    busy CI runner, so geometry assertions must wait for the region to materialize.
-    """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        await pilot.pause(0.02)
-        if predicate():
-            return
-    raise AssertionError(f"layout did not settle within {timeout}s")
-
-
 DEFAULT_DENIAL = {"allowed": False, "reason": "nobody answered"}
 
 
@@ -97,7 +96,13 @@ async def _open_permission_request(app, request) -> tuple[str, "asyncio.Task[dic
     task = asyncio.create_task(
         app.control_channel.request(
             "permission",
-            {"request": serialize_permission_request(request), "rule_options": []},
+            {
+                "request": serialize_permission_request(request),
+                "rule_options": [
+                    {"label": option.label, "description": option.description, "rule": option.rule.to_dict()}
+                    for option in allow_rule_options(request)
+                ],
+            },
             default=DEFAULT_DENIAL,
         )
     )
@@ -130,6 +135,261 @@ async def _open_question_request(app, question: str, options: list[str]) -> tupl
     pending = app.control_channel.pending()
     assert pending, "the control channel never registered the question"
     return pending[0].request_id, task
+
+
+def _control_event(request: Any) -> AgentEvent:
+    return AgentEvent(
+        sender="system",
+        event_type=KnownEventType.CONTROL_REQUESTED,
+        session_id="test",
+        content=request.describe(),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("save_fails", [False, True])
+async def test_permission_delivery_notifies_once_and_runtime_owns_saving(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, save_fails: bool
+) -> None:
+    from kolega_code.cli.tui.widgets import PromptPanel
+
+    app = _build_permission_test_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        rule_store = ProjectPermissionStore(app.session_runtime.project_path)
+        saves: list[Path] = []
+        original_save = ProjectPermissionStore.save
+
+        def save(store: ProjectPermissionStore, rules: Any) -> None:
+            saves.append(store.path)
+            if save_fails:
+                raise PermissionStoreError("cannot save test rules")
+            original_save(store, rules)
+
+        monkeypatch.setattr(ProjectPermissionStore, "save", save)
+
+        rendered: list[tuple[bool, bool, bool]] = []
+
+        async def fire_hook(_event: HookEvent, _payload: dict[str, Any], *, target: str) -> None:
+            rendered.append(
+                (
+                    app.query_one("#approval_prompt", PromptPanel).display,
+                    app._pending_approval is not None,
+                    rule_store.path.exists(),
+                )
+            )
+
+        hook = AsyncMock(side_effect=fire_hook)
+        monkeypatch.setattr(app.agent, "fire_hook", hook, raising=False)
+        request = permission_request_for_tool("exec_command", {"command": "npm run test"})
+        assert request is not None
+        decision_task = asyncio.create_task(app.session_runtime.permission_callback(request))
+        await _wait_for_layout(pilot, lambda: hook.await_count == 1)
+        assert rendered == [(True, True, False)]
+        assert hook.await_args is not None
+        assert hook.await_args.args == (
+            HookEvent.NOTIFICATION,
+            {
+                "notification_type": "permission_prompt",
+                "message": "Permission requested for exec_command",
+                "tool_name": "exec_command",
+            },
+        )
+        assert hook.await_args.kwargs == {"target": "permission_prompt"}
+        pending = app.control_channel.pending()[0]
+        canonical = pending.payload["rule_options"]
+        assert app._pending_approval is not None
+        assert [option.rule.to_dict() for option in app._pending_approval.rule_options] == [
+            option["rule"] for option in canonical
+        ]
+        app._handle_control_request(_control_event(pending))
+        assert await app.session_runtime.prompt_delivered(pending.request_id) is False
+        hook.assert_awaited_once()
+        assert saves == []
+        await app._answer_approval_option(2)
+        decision = await asyncio.wait_for(decision_task, timeout=_ANSWER_TIMEOUT_S)
+        assert decision.allowed
+        assert saves == [rule_store.path]
+        if save_fails:
+            assert decision.rule is None
+            assert decision.reason == "Allowed once because the rule could not be saved."
+            assert not rule_store.path.exists()
+        else:
+            assert decision.rule is not None
+            assert decision.rule.to_dict() == canonical[0]["rule"]
+            assert rule_store.load() == [decision.rule]
+            assert (await app.session_runtime.permission_callback(request)).allowed
+        hook.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_question_delivery_notifies_once_after_panel_render(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kolega_code.cli.tui.widgets import PromptPanel
+
+    app = _build_permission_test_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        rendered: list[tuple[bool, bool]] = []
+
+        async def fire_hook(_event: HookEvent, _payload: dict[str, Any], *, target: str) -> None:
+            rendered.append((app.query_one("#question_prompt", PromptPanel).display, app._pending_question is not None))
+
+        hook = AsyncMock(side_effect=fire_hook)
+        monkeypatch.setattr(app.agent, "fire_hook", hook, raising=False)
+        task = asyncio.create_task(app._ask_user_choice("Which approach?", ["red", "green"]))
+        await _wait_for_layout(pilot, lambda: hook.await_count == 1)
+        assert rendered == [(True, True)]
+        assert hook.await_args is not None
+        assert hook.await_args.args == (
+            HookEvent.NOTIFICATION,
+            {"notification_type": "question", "message": "Which approach?"},
+        )
+        assert hook.await_args.kwargs == {"target": "question"}
+        pending = app.control_channel.pending()[0]
+        app._handle_control_request(_control_event(pending))
+        await app._answer_question_option(1)
+        assert await asyncio.wait_for(task, timeout=_ANSWER_TIMEOUT_S) == "green"
+        assert await app.session_runtime.prompt_delivered(pending.request_id) is False
+        hook.assert_awaited_once()
+        assert not (app.project_path / PERMISSIONS_RELATIVE_PATH).exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy", ["saved", "auto", "no_controller"])
+async def test_permission_policy_without_human_prompt_does_not_notify(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, policy: str
+) -> None:
+    app = _build_permission_test_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        hook = AsyncMock()
+        monkeypatch.setattr(app.agent, "fire_hook", hook, raising=False)
+        request = permission_request_for_tool("exec_command", {"command": "npm run test"})
+        assert request is not None
+        if policy == "saved":
+            ProjectPermissionStore(app.project_path).add_rule(allow_rule_options(request)[0].rule)
+        elif policy == "auto":
+            app.session_runtime.permission_mode = PermissionMode.AUTO
+        else:
+            app.control_channel.release(TUI_CLIENT_ID)
+        decision = await app.session_runtime.permission_callback(request)
+        assert decision.allowed is (policy != "no_controller")
+        await pilot.pause()
+        assert app._pending_approval is None
+        assert app.control_channel.pending() == []
+        hook.assert_not_awaited()
+        if policy != "saved":
+            assert not (app.project_path / PERMISSIONS_RELATIVE_PATH).exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["permission", "question"])
+@pytest.mark.parametrize("failure", ["missing_panel", "render_exception"])
+async def test_prompt_render_failure_does_not_notify_or_leave_pending_ui(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, failure: str
+) -> None:
+    from kolega_code.cli.tui.widgets import PromptPanel
+
+    app = _build_permission_test_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        hook = AsyncMock()
+        monkeypatch.setattr(app.agent, "fire_hook", hook, raising=False)
+        panel = app.query_one("#approval_prompt" if kind == "permission" else "#question_prompt", PromptPanel)
+        if failure == "missing_panel":
+            await panel.remove()
+        else:
+
+            def fail_render(*_args: Any, **_kwargs: Any) -> None:
+                raise RuntimeError("cannot render prompt")
+
+            monkeypatch.setattr(panel, "prompt", fail_render)
+        request = permission_request_for_tool("exec_command", {"command": "npm run test"})
+        assert request is not None
+        task = asyncio.create_task(
+            app.session_runtime.permission_callback(request)
+            if kind == "permission"
+            else app.control_channel.request(
+                "question", {"question": "Pick", "options": ["a", "b"]}, default={"answer": None}
+            )
+        )
+        await _wait_for_layout(pilot, lambda: bool(app.control_channel.pending()))
+        pending = app.control_channel.pending()[0]
+        app._handle_control_request(_control_event(pending))
+        assert pending.delivered is False
+        assert app._pending_approval is None
+        assert app._pending_question is None
+        hook.assert_not_awaited()
+        app.control_channel.release(TUI_CLIENT_ID)
+        await asyncio.wait_for(task, timeout=_ANSWER_TIMEOUT_S)
+        assert not (app.project_path / PERMISSIONS_RELATIVE_PATH).exists()
+
+
+@pytest.mark.asyncio
+async def test_stale_permission_announcement_and_response_do_not_notify_or_persist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_permission_test_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        hook = AsyncMock()
+        monkeypatch.setattr(app.agent, "fire_hook", hook, raising=False)
+        handle = app._handle_control_request
+        events: list[AgentEvent] = []
+        monkeypatch.setattr(app, "_handle_control_request", events.append)
+        request = permission_request_for_tool("exec_command", {"command": "npm run test"})
+        assert request is not None
+        task = asyncio.create_task(app.session_runtime.permission_callback(request))
+        await _wait_for_layout(pilot, lambda: bool(events))
+        pending = app.control_channel.pending()[0]
+        app.control_channel.release(TUI_CLIENT_ID)
+        assert not (await asyncio.wait_for(task, timeout=_ANSWER_TIMEOUT_S)).allowed
+        handle(events[0])
+        assert app._pending_approval is None
+        app._pending_approval = tui_state.PendingApproval(
+            request=request,
+            request_id=pending.request_id,
+            rule_options=deserialize_permission_rule_options(pending.payload["rule_options"]),
+        )
+        await app._answer_approval_option(2)
+        hook.assert_not_awaited()
+        assert app._pending_approval is None
+        assert not (app.project_path / PERMISSIONS_RELATIVE_PATH).exists()
+
+
+@pytest.mark.asyncio
+async def test_tui_rebuild_preserves_runtime_permission_mode_and_callback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class ModeAwareAgent(FakeCoderAgent):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.permission_mode = kwargs["permission_mode"]
+            self.permission_callback = kwargs["permission_callback"]
+
+        def set_permission_mode(self, mode: PermissionMode) -> None:
+            self.permission_mode = mode
+
+        def set_permission_callback(self, callback: Any) -> None:
+            self.permission_callback = callback
+
+    app = _build_permission_test_app(tmp_path, monkeypatch, coder_cls=ModeAwareAgent)
+    async with app.run_test():
+        first = app.agent
+        await app._set_permission_mode(PermissionMode.AUTO)
+        assert app.config is not None
+        await app._build_agent(app.config, rebuild=True)
+        rebuilt = app.agent
+        assert isinstance(rebuilt, ModeAwareAgent)
+        assert rebuilt is not first
+        assert rebuilt.kwargs["permission_mode"] == PermissionMode.AUTO
+        assert rebuilt.permission_mode == app.session_runtime.permission_mode == PermissionMode.AUTO
+        assert rebuilt.permission_callback == app.session_runtime.permission_callback
+        hook = AsyncMock()
+        monkeypatch.setattr(rebuilt, "fire_hook", hook, raising=False)
+        request = permission_request_for_tool("exec_command", {"command": "npm run test"})
+        assert request is not None
+        assert (await rebuilt.permission_callback(request)).allowed
+        hook.assert_not_awaited()
+        assert app.control_channel.pending() == []
+        assert not (app.project_path / PERMISSIONS_RELATIVE_PATH).exists()
 
 
 @pytest.mark.asyncio
@@ -411,7 +671,7 @@ async def test_textual_app_queued_messages_hide_during_permission_and_restore_af
     pytest.importorskip("textual")
 
     from kolega_code.cli.tui.widgets import ChatComposer
-    from kolega_code.permissions import permission_request_for_tool
+    from kolega_code.permissions import allow_rule_options, permission_request_for_tool
 
     app = _build_permission_test_app(tmp_path, monkeypatch)
 
@@ -428,10 +688,8 @@ async def test_textual_app_queued_messages_hide_during_permission_and_restore_af
 
         request = permission_request_for_tool("exec_command", {"command": "npm run test"})
         assert request is not None
-        request_id, permission_task = await _open_permission_request(app, request)
-        # Drive the real path: the prompt appears because the channel announced it.
-        app._begin_approval(request_id, request)
-        await pilot.pause()
+        _request_id, permission_task = await _open_permission_request(app, request)
+        await _wait_for_layout(pilot, lambda: app._pending_approval is not None)
 
         composer = app.query_one("#composer", ChatComposer)
         assert app._pending_approval is not None

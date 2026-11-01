@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from kolega_code.hooks import HookDispatcher
     from kolega_code.llm.ledger import UsageLedger, UsageSnapshot
     from kolega_code.memory import ProjectMemoryManager
-    from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
+    from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest, PermissionRuleOption
 
     from .. import messages
     from ..config import CliConfigOverrides
@@ -408,7 +408,12 @@ class KolegaAppBase(App):
         # ------------------------------------------------------------------
         def _cancel_pending_approval(self) -> None: ...
 
-        def _begin_approval(self, request_id: str, request: PermissionRequest) -> None: ...
+        def _begin_approval(
+            self,
+            request_id: str,
+            request: PermissionRequest,
+            rule_options: list[PermissionRuleOption],
+        ) -> bool: ...
 
         def _clear_approval_if_resolved(self, request_id: str) -> None: ...
 
@@ -420,7 +425,7 @@ class KolegaAppBase(App):
             question: str,
             options: list[str],
             descriptions: list[str] | None = None,
-        ) -> None: ...
+        ) -> bool: ...
 
         def _clear_question_if_resolved(self, request_id: str) -> None: ...
 

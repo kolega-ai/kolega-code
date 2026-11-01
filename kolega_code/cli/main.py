@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import faulthandler
 import importlib.util
+import io
 import json
 import logging
 import os
@@ -33,7 +34,7 @@ from kolega_code.llm.specs.custom_endpoints import CUSTOM_THINKING_PRESETS
 from kolega_code.llm.specs.thinking import REASONING_REPLAY_VALUES
 
 from .ask_output import InMemorySessionJournal, SemanticStdoutPrinter
-from .session_journal import SessionRecorder
+from .session_journal import SessionJournal, SessionRecorder
 from .session_usage import SessionUsageSink
 from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
 from kolega_code.agent.orchestration.guide import gigacode_prompt_extension
@@ -49,6 +50,7 @@ from kolega_code.agent.prompt_dump import (
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config
 from kolega_code.llm.exceptions import LLMError, LLMBillingError, billing_error_message, llm_error_message
 from kolega_code.llm.models import Message, TextBlock
+from kolega_code.events import AgentEvent, KnownEventType
 
 from .peer_messaging import start_headless_peer_inbox
 from .session_event_store import FileSessionEventStore
@@ -76,10 +78,15 @@ from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.permissions import (
     PermissionDecision,
     PermissionMode,
-    PermissionStoreError,
-    ProjectPermissionStore,
-    allow_rule_options,
+    PermissionRequest,
+    PermissionRuleOption,
     normalize_permission_mode,
+)
+from kolega_code.session.control import ControlChannel
+from kolega_code.session.runtime import (
+    SessionRuntime,
+    deserialize_permission_request,
+    deserialize_permission_rule_options,
 )
 from kolega_code.browser_extension.installer import (
     BROWSER_EXTENSION_CHANNELS,
@@ -1455,25 +1462,101 @@ def known_secret_values(
     return [value for value in values if value]
 
 
-def _permission_callback_for_ask(project_path: Path):
-    async def permission_callback(request) -> PermissionDecision:
-        store = ProjectPermissionStore(project_path)
+class _AskPermissionController:
+    """Terminal presentation adapter for one ask-mode runtime."""
+
+    client_id: str = "ask-terminal"
+
+    def __init__(self, *, session_id: str, project_path: Path, permission_mode: PermissionMode) -> None:
+        self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._input_lock: asyncio.Lock = asyncio.Lock()
+        self._closed: bool = False
+        self.runtime: SessionRuntime = SessionRuntime(
+            session_id=session_id,
+            project_path=project_path,
+            control=ControlChannel(session_id=session_id, emit=self.emit),
+            permission_mode=permission_mode,
+            on_notice=lambda notice: print(f"Warning: {notice}", file=sys.stderr),
+        )
+        self.runtime.control.acquire(self.client_id)
+
+    async def emit(self, event: AgentEvent) -> None:
+        request_id = str(event.content.get("request_id") or "")
+        if event.event_type == KnownEventType.CONTROL_RESOLVED:
+            task = self._tasks.get(request_id)
+            if task is not None:
+                task.cancel()
+            return
+        if (
+            self._closed
+            or event.event_type != KnownEventType.CONTROL_REQUESTED
+            or not bool(event.content.get("has_controller"))
+            or str(event.content.get("kind") or "") != "permission"
+            or not request_id
+            or request_id in self._tasks
+        ):
+            return
+        task = asyncio.create_task(self._handle_permission(event))
+        self._tasks[request_id] = task
+        task.add_done_callback(lambda _: self._tasks.pop(request_id, None))
+
+    async def close(self) -> None:
+        self._closed = True
+        self.runtime.control.release(self.client_id)
+        tasks = list(self._tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._tasks.clear()
+
+    async def _handle_permission(self, event: AgentEvent) -> None:
+        request_id = str(event.content.get("request_id") or "")
         try:
-            matched_rule = store.first_match(request)
-        except PermissionStoreError as exc:
-            print(f"Warning: {exc}", file=sys.stderr)
-            matched_rule = None
+            decision = await self._prompt_permission(request_id, event.content.get("payload"))
+        except EOFError:
+            decision = PermissionDecision(allowed=False, reason="Permission denied because stdin reached EOF.")
+        except Exception:
+            decision = PermissionDecision(allowed=False, reason="Permission prompt could not be answered.")
+        if decision is not None:
+            self.runtime.answer_permission(request_id, decision, client_id=self.client_id)
 
-        if matched_rule is not None:
-            return PermissionDecision(allowed=True, reason=f"Allowed by saved rule {matched_rule.id}.")
-
+    async def _prompt_permission(self, request_id: str, payload: Any) -> PermissionDecision | None:
+        if self.runtime.control.controller != self.client_id or not any(
+            pending.request_id == request_id for pending in self.runtime.control.pending()
+        ):
+            return None
+        if not isinstance(payload, dict):
+            raise ValueError("Missing permission payload.")
+        request_data = payload.get("request")
+        if not isinstance(request_data, dict):
+            raise ValueError("Missing permission request.")
+        request = deserialize_permission_request(request_data)
+        rule_options = deserialize_permission_rule_options(payload.get("rule_options"))
         if not sys.stdin.isatty():
             return PermissionDecision(
                 allowed=False,
                 reason="Permission required, but stdin is not interactive.",
             )
 
-        rule_options = allow_rule_options(request)
+        self._render_permission(request, rule_options)
+        print("Choose an option: ", end="", file=sys.stderr, flush=True)
+        if not await self.runtime.prompt_delivered(request_id):
+            return
+        async with self._input_lock:
+            option_index = await self._read_option(2 + len(rule_options))
+        if option_index == 0:
+            return PermissionDecision(allowed=True, reason="Allowed once by the user.")
+        if option_index == 1:
+            return PermissionDecision(allowed=False, reason="Denied by the user.")
+        return PermissionDecision(
+            allowed=True,
+            reason="Allowed and remembered.",
+            rule=rule_options[option_index - 2].rule,
+        )
+
+    @staticmethod
+    def _render_permission(request: PermissionRequest, rule_options: list[PermissionRuleOption]) -> None:
         print("", file=sys.stderr)
         if request.kind.value == "command":
             print("Allow the agent to run this command?", file=sys.stderr)
@@ -1482,6 +1565,9 @@ def _permission_callback_for_ask(project_path: Path):
             print("Allow the agent to call this MCP tool?", file=sys.stderr)
             print(f"  server: {request.mcp_server}", file=sys.stderr)
             print(f"  tool:   {request.mcp_tool}", file=sys.stderr)
+        elif request.kind.value == "message":
+            print("Allow the agent to send this peer message?", file=sys.stderr)
+            print(f"  {request.summary}", file=sys.stderr)
         else:
             target = f" on {request.path}" if request.path else ""
             print(f"Allow the agent to run {request.tool_name}{target}?", file=sys.stderr)
@@ -1490,34 +1576,42 @@ def _permission_callback_for_ask(project_path: Path):
         for index, label in enumerate(labels, start=1):
             print(f"  {index}. {label}", file=sys.stderr)
 
+    async def _read_option(self, option_count: int) -> int:
         while True:
+            line = await self._readline()
+            if line == "":
+                raise EOFError
+            choice = line.strip()
+            if choice.isdigit() and 1 <= int(choice) <= option_count:
+                return int(choice) - 1
+            if choice:
+                print("Enter a number from the list.", file=sys.stderr)
             print("Choose an option: ", end="", file=sys.stderr, flush=True)
-            choice = (await asyncio.to_thread(sys.stdin.readline)).strip()
-            if not choice:
-                continue
-            if not choice.isdigit():
-                print("Enter a number from the list.", file=sys.stderr)
-                continue
-            option_index = int(choice) - 1
-            if option_index < 0 or option_index >= len(labels):
-                print("Enter a number from the list.", file=sys.stderr)
-                continue
-            break
 
-        if option_index == 0:
-            return PermissionDecision(allowed=True, reason="Allowed once by the user.")
-        if option_index == 1:
-            return PermissionDecision(allowed=False, reason="Denied by the user.")
+    @staticmethod
+    async def _readline() -> str:
+        if isinstance(sys.stdin, io.StringIO):
+            return sys.stdin.readline()
+        fd = sys.stdin.fileno()
+        loop = asyncio.get_running_loop()
+        line = bytearray()
+        while True:
+            ready: asyncio.Future[None] = loop.create_future()
 
-        rule = rule_options[option_index - 2].rule
-        try:
-            store.add_rule(rule)
-        except PermissionStoreError as exc:
-            print(f"Warning: {exc}", file=sys.stderr)
-            return PermissionDecision(allowed=True, reason="Allowed once because the rule could not be saved.")
-        return PermissionDecision(allowed=True, reason="Allowed by a saved rule.", rule=rule)
+            def readable() -> None:
+                if not ready.done():
+                    ready.set_result(None)
 
-    return permission_callback
+            loop.add_reader(fd, readable)
+            try:
+                await ready
+                # Read no further than this line, leaving later prompt answers on stdin.
+                byte = os.read(fd, 1)
+            finally:
+                loop.remove_reader(fd)
+            line.extend(byte)
+            if not byte or byte == b"\n":
+                return line.decode(sys.stdin.encoding or "utf-8", errors=sys.stdin.errors or "strict")
 
 
 class _AskBackgroundJobs:
@@ -1757,6 +1851,53 @@ def _apply_launch_name(
         store.save(session)
 
 
+def _prepare_ask_journal(
+    args: argparse.Namespace,
+    store: SessionStore,
+    session: SessionRecord,
+    *,
+    settings: CliSettings,
+    settings_store: SettingsStore,
+    project_path: Path,
+) -> tuple[SessionRecord, SessionJournal, SessionRecorder]:
+    if args.save or args.session:
+        recorder = store.recorder(session.session_id)
+        session = store.load(session.session_id)
+        journal = store.journal(session.session_id)
+    else:
+        journal = InMemorySessionJournal(session.session_id)
+        recorder = None
+
+    printer: SemanticStdoutPrinter | None = None
+    if args.json:
+        printer = SemanticStdoutPrinter(
+            secret_values=known_secret_values(settings, settings_store, project_path=project_path)
+        )
+        journal.add_listener(printer)
+
+    if recorder is None:
+        from kolega_code import __version__ as kolega_version
+
+        bootstrap_epoch = str(uuid.uuid4())
+        journal.append(
+            "session.created",
+            actor="system",
+            payload={"metadata": session.to_metadata_dict(), "kolega_version": kolega_version},
+            epoch_id=bootstrap_epoch,
+        )
+        journal.append(
+            "context.epoch_started",
+            actor="system",
+            payload={"reason": "session_created"},
+            epoch_id=bootstrap_epoch,
+        )
+        recorder = SessionRecorder(journal, recover=False)
+    elif printer is not None and args.save and not args.session:
+        # New-session bootstrap events predate the printer; resumed sessions stream from the tail.
+        printer.emit_backlog(journal.read_events())
+    return session, journal, recorder
+
+
 async def _run_ask(args: argparse.Namespace) -> int:
     launch_project_path = _select_startup_project(args.project, args)
     project_path = launch_project_path
@@ -1867,44 +2008,14 @@ async def _run_ask(args: argparse.Namespace) -> int:
     session, restoring_session = _resolve_ask_session(args, store, project_path, summary, resumed_session)
     _apply_launch_name(store, session, getattr(args, "name", None), persistable=bool(args.save or args.session))
 
-    # Every run records the semantic journal; unsaved runs use an in-memory
-    # sink with the same id/seq/schema rules and never touch the state dir.
-    if args.save or args.session:
-        session_recorder = store.recorder(session.session_id)
-        session = store.load(session.session_id)
-        journal = store.journal(session.session_id)
-    else:
-        journal = InMemorySessionJournal(session.session_id)
-        session_recorder = None
-
-    json_printer: Optional[SemanticStdoutPrinter] = None
-    if args.json:
-        json_printer = SemanticStdoutPrinter(
-            secret_values=known_secret_values(settings, settings_store, project_path=launch_project_path)
-        )
-        journal.add_listener(json_printer)
-
-    if session_recorder is None:
-        from kolega_code import __version__ as _kolega_version
-
-        bootstrap_epoch = str(uuid.uuid4())
-        journal.append(
-            "session.created",
-            actor="system",
-            payload={"metadata": session.to_metadata_dict(), "kolega_version": _kolega_version},
-            epoch_id=bootstrap_epoch,
-        )
-        journal.append(
-            "context.epoch_started",
-            actor="system",
-            payload={"reason": "session_created"},
-            epoch_id=bootstrap_epoch,
-        )
-        session_recorder = SessionRecorder(journal, recover=False)
-    elif json_printer is not None and args.save and not args.session:
-        # A session created by this invocation journaled its bootstrap events
-        # before the printer attached; a resumed session streams from the tail.
-        json_printer.emit_backlog(journal.read_events())
+    session, journal, session_recorder = _prepare_ask_journal(
+        args,
+        store,
+        session,
+        settings=settings,
+        settings_store=settings_store,
+        project_path=launch_project_path,
+    )
 
     run_started_at = now_iso()
 
@@ -1978,6 +2089,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
     # a propagating exception (the caller owns the process exit code there).
     terminal_exit_code: Optional[int] = None
     generation_closed = False
+    permission_controller: _AskPermissionController | None = None
     goal_state: Optional[GoalState] = None
     drain_goal_tokens: Optional[Callable[[GoalState], None]] = None
     persist_failed_goal_after_cleanup = False
@@ -1989,10 +2101,18 @@ async def _run_ask(args: argparse.Namespace) -> int:
         if generation_closed:
             return
         generation_closed = True
+        if permission_controller is not None:
+            try:
+                await permission_controller.close()
+            except Exception as exc:
+                print(f"Warning: permission controller cleanup failed: {exc}", file=sys.stderr)
         built_agent = agent_ref.get("agent")
         if built_agent is not None:
             try:
-                await built_agent.cleanup()
+                if permission_controller is not None and permission_controller.runtime.agent is built_agent:
+                    await permission_controller.runtime.shutdown()
+                else:
+                    await built_agent.cleanup()
             except Exception as exc:  # noqa: BLE001 — reported, never masks the primary exception
                 print(f"Warning: agent cleanup failed: {exc}", file=sys.stderr)
         if extension_bundle is not None:
@@ -2006,6 +2126,12 @@ async def _run_ask(args: argparse.Namespace) -> int:
             getattr(args, "permission_mode", ASK_DEFAULT_PERMISSION_MODE),
             default=PermissionMode.AUTO,
         )
+        permission_controller = _AskPermissionController(
+            session_id=session.session_id,
+            project_path=launch_project_path,
+            permission_mode=permission_mode,
+        )
+        permission_runtime = permission_controller.runtime
         # Journal every settled non-history response and failure (in-memory journal
         # for unsaved runs). Attached before the SESSION_START hook below: hook
         # prompts are paid LLM calls and must be covered from the first request.
@@ -2034,9 +2160,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 prompt_extensions=prompt_extensions,
                 tool_extensions=tool_extensions,
                 permission_mode=permission_mode,
-                permission_callback=_permission_callback_for_ask(launch_project_path)
-                if permission_mode == PermissionMode.ASK
-                else None,
+                permission_callback=permission_runtime.permission_callback,
                 session_recorder=constructor_recorder,
                 hook_dispatcher=hook_dispatcher,
                 custom_agent_catalog=custom_agent_catalog,
@@ -2057,6 +2181,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
             terminal_exit_code = 2
             return exit_code
         agent_ref["agent"] = agent
+        permission_runtime.adopt(agent)
         # --gigacode turns orchestration on for this run; a resumed session that had
         # it on keeps it on, exactly as the TUI's /gigacode toggle persists.
         gigacode_enabled = bool(getattr(args, "gigacode", False)) or bool(session.gigacode_enabled)

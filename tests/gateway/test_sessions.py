@@ -26,7 +26,7 @@ from kolega_code.gateway.daemon import GatewayDaemon
 from kolega_code.gateway.sessions import AgentTurnHandler
 from kolega_code.llm.models import Message, TextBlock
 from kolega_code.llm.providers.models import TokenCount
-from kolega_code.permissions import PermissionKind, PermissionRequest, allow_rule_options
+from kolega_code.permissions import PermissionKind, PermissionMode, PermissionRequest, allow_rule_options
 from kolega_code.session.runtime import serialize_permission_request
 
 
@@ -167,6 +167,7 @@ def make_handler(
     store: SessionStore | None = None,
     transcriber: Any | None = None,
     stt_enabled: bool = True,
+    permission_mode: str = "ask",
 ) -> tuple[AgentTurnHandler, RecordingAdapter, GatewayConfig]:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -176,7 +177,7 @@ def make_handler(
         project_path=workspace,
         state_dir=state_dir,
         allowed_users=("7",),
-        permission_mode="ask",
+        permission_mode=permission_mode,
         edit_throttle_seconds=0.0,
         max_sessions=max_sessions,
         session_idle_ttl_seconds=None,
@@ -468,6 +469,56 @@ async def test_model_switch_rebuilds_and_keeps_history(tmp_path: Path) -> None:
     history_texts = [block.get("text", "") for message in record.history for block in message.get("content", [])]
     assert "first" in history_texts
     assert "still here?" in history_texts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initial_mode", ["ask", "auto"])
+async def test_builder_receives_current_permission_mode_on_build_rebuild_and_restore(
+    tmp_path: Path, initial_mode: str
+) -> None:
+    built_modes: list[PermissionMode] = []
+    builder = make_builder(ScriptedLLM(), make_agent_config())
+
+    async def capture_mode(record: Any, config: Any, **kwargs: Any) -> BaseAgent:
+        built_modes.append(kwargs["permission_mode"])
+        return await builder(record, config, **kwargs)
+
+    handler, adapter, _config = make_handler(tmp_path, permission_mode=initial_mode)
+    handler._agent_builder = capture_mode
+    try:
+        await handler.handle(chat_ref(), inbound("hello"))
+        assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(adapter))
+        await wait_for_turn_done(handler, chat_ref())
+        assert built_modes == [PermissionMode(initial_mode)]
+        await handler.handle(chat_ref(), inbound("/permissions auto", message_id="m-2"))
+        entry = handler._registry.get(chat_ref())
+        assert entry is not None
+        before = entry.payload.runtime.agent
+        await handler.handle(chat_ref(), inbound("/model anthropic/claude-haiku-4-5-20251001", message_id="m-3"))
+        assert await wait_for(lambda: "Model: anthropic/claude-haiku-4-5-20251001" in all_sent_texts(adapter))
+        assert built_modes == [PermissionMode(initial_mode), PermissionMode.AUTO]
+        assert entry.payload.runtime.agent is not before
+        assert entry.payload.runtime.permission_mode == PermissionMode.AUTO
+        assert entry.payload.runtime.agent is not None
+        assert entry.payload.runtime.agent.permission_mode == PermissionMode.AUTO
+    finally:
+        await handler.shutdown()
+        handler._store.release_session_locks()
+
+    restored, restored_adapter, _config = make_handler(tmp_path)
+    restored._agent_builder = capture_mode
+    try:
+        await restored.handle(chat_ref(), inbound("restored"))
+        assert await wait_for(lambda: "hello from the scripted model" in all_sent_texts(restored_adapter))
+        await wait_for_turn_done(restored, chat_ref())
+        assert built_modes == [PermissionMode(initial_mode), PermissionMode.AUTO, PermissionMode.AUTO]
+        entry = restored._registry.get(chat_ref())
+        assert entry is not None and entry.payload.runtime.agent is not None
+        assert entry.payload.runtime.permission_mode == PermissionMode.AUTO
+        assert entry.payload.runtime.agent.permission_mode == PermissionMode.AUTO
+    finally:
+        await restored.shutdown()
+        restored._store.release_session_locks()
 
 
 @pytest.mark.asyncio

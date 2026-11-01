@@ -697,7 +697,7 @@ class AgentTurnHandler:
                 recording=recording,
                 recorder=recorder,
                 permission_callback=runtime.permission_callback,
-                permission_mode=PermissionMode.ASK,
+                permission_mode=runtime.permission_mode,
                 restore=build_state["restore"],
                 question_state=question_state,
             )

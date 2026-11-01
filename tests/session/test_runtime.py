@@ -17,16 +17,19 @@ from typing import Any
 import pytest
 
 from kolega_code.events import AgentEvent, KnownEventType
+from kolega_code.hooks.events import HookEvent
 from kolega_code.permissions import (
     PermissionDecision,
     PermissionKind,
     PermissionMode,
     PermissionRequest,
+    PermissionRule,
+    PermissionStoreError,
     ProjectPermissionStore,
     allow_rule_options,
     permission_request_for_tool,
 )
-from kolega_code.session.control import ControlChannel
+from kolega_code.session.control import ControlChannel, ControlRequest
 from kolega_code.session.runtime import (
     SessionRuntime,
     SessionRuntimeError,
@@ -43,6 +46,7 @@ class _FakeAgent:
     def __init__(self) -> None:
         self.cleaned_up = False
         self.permission_mode: PermissionMode | None = None
+        self.permission_callback: Any = None
         self.sent: list[tuple[str, Any]] = []
 
     async def cleanup(self) -> None:
@@ -50,6 +54,9 @@ class _FakeAgent:
 
     def set_permission_mode(self, mode: PermissionMode) -> None:
         self.permission_mode = mode
+
+    def set_permission_callback(self, callback: Any) -> None:
+        self.permission_callback = callback
 
     async def process_message_stream(self, text: str, attachments: Any = None):
         self.sent.append((text, attachments))
@@ -283,6 +290,7 @@ async def test_answer_can_carry_a_rule_to_persist(tmp_path: Path) -> None:
     runtime.control.acquire(CLIENT)
     request = _request("pytest -q")
     option = allow_rule_options(request)[0]
+    offered: list[PermissionRule] = []
 
     async def act_as_client() -> None:
         for _ in range(200):
@@ -293,9 +301,10 @@ async def test_answer_can_carry_a_rule_to_persist(tmp_path: Path) -> None:
         # The offered rules travel on the wire too, so a remote client does not
         # have to reimplement how they are derived.
         assert pending.payload["rule_options"][0]["label"] == option.label
+        offered.append(PermissionRule.from_dict(pending.payload["rule_options"][0]["rule"]))
         runtime.answer_permission(
             pending.request_id,
-            PermissionDecision(allowed=True, reason="Allowed by a saved rule.", rule=option.rule),
+            PermissionDecision(allowed=True, reason="Allowed by a saved rule.", rule=offered[0]),
             client_id=CLIENT,
         )
 
@@ -304,7 +313,8 @@ async def test_answer_can_carry_a_rule_to_persist(tmp_path: Path) -> None:
     await client
 
     assert decision.rule is not None
-    assert decision.rule.to_dict() == option.rule.to_dict(), "the rule must survive the round trip"
+    assert decision.rule == offered[0], "the runtime-owned rule must survive the round trip"
+    assert ProjectPermissionStore(tmp_path).first_match(request) == decision.rule
 
 
 @pytest.mark.asyncio
@@ -438,3 +448,222 @@ def test_permission_request_survives_serialisation() -> None:
         ),
     ):
         assert deserialize_permission_request(serialize_permission_request(request)) == request
+
+
+class _HookAgent(_FakeAgent):
+    def __init__(self, *, fail: bool = False) -> None:
+        super().__init__()
+        self.hooks: list[tuple[HookEvent, dict[str, Any], str]] = []
+        self.fail = fail
+
+    async def fire_hook(self, event: HookEvent, payload: dict[str, Any], *, target: str) -> None:
+        self.hooks.append((event, payload, target))
+        if self.fail:
+            raise RuntimeError("notification hook failed")
+
+
+async def _pending_request(runtime: SessionRuntime) -> ControlRequest:
+    async with asyncio.timeout(5):
+        while not runtime.control.pending():
+            await asyncio.sleep(0)
+    return runtime.control.pending()[0]
+
+
+@pytest.mark.asyncio
+async def test_start_adopt_and_rebuild_bind_runtime_mode_and_callback(tmp_path: Path) -> None:
+    runtime, _, _ = _runtime(tmp_path, mode=PermissionMode.AUTO)
+    first = await runtime.start()
+    assert first.permission_mode == PermissionMode.AUTO
+    assert first.permission_callback == runtime.permission_callback
+    replacement = _FakeAgent()
+    runtime.adopt(replacement)
+    assert replacement.permission_mode == PermissionMode.AUTO
+    assert replacement.permission_callback == runtime.permission_callback
+    runtime.set_permission_mode(PermissionMode.ASK)
+    rebuilt = await runtime.rebuild()
+    assert rebuilt.permission_mode == PermissionMode.ASK
+    assert rebuilt.permission_callback == runtime.permission_callback
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["permission", "question"])
+async def test_notification_requires_delivery_and_acknowledges_exactly_once(tmp_path: Path, kind: str) -> None:
+    runtime, _, _ = _runtime(tmp_path)
+    agent = _HookAgent()
+    runtime.adopt(agent)
+    runtime.control.acquire(CLIENT)
+    task = asyncio.create_task(
+        runtime.permission_callback(_request())
+        if kind == "permission"
+        else runtime.control.request("question", {"question": "Which approach?"}, default={"answer": None})
+    )
+    request = await _pending_request(runtime)
+    assert agent.hooks == [], "an event and lease do not prove human delivery"
+    assert await runtime.prompt_delivered(request.request_id) is True
+    assert await runtime.prompt_delivered(request.request_id) is False
+    target = "permission_prompt" if kind == "permission" else "question"
+    assert len(agent.hooks) == 1
+    assert agent.hooks[0][0] == HookEvent.NOTIFICATION
+    assert agent.hooks[0][1]["notification_type"] == target
+    assert agent.hooks[0][2] == target
+    runtime.control.respond(request.request_id, request.default, client_id=CLIENT)
+    await task
+    assert await runtime.prompt_delivered(request.request_id) is False
+    assert len(agent.hooks) == 1
+
+
+@pytest.mark.asyncio
+async def test_delivery_resolves_current_agent_after_adopt(tmp_path: Path) -> None:
+    runtime, _, _ = _runtime(tmp_path)
+    old = _HookAgent()
+    runtime.adopt(old)
+    runtime.control.acquire(CLIENT)
+    task = asyncio.create_task(runtime.permission_callback(_request()))
+    pending = await _pending_request(runtime)
+    current = _HookAgent()
+    runtime.adopt(current)
+    await runtime.prompt_delivered(pending.request_id)
+    runtime.answer_permission(pending.request_id, PermissionDecision(allowed=False), client_id=CLIENT)
+    await task
+    assert old.hooks == []
+    assert len(current.hooks) == 1
+
+
+@pytest.mark.asyncio
+async def test_notification_failure_is_advisory_and_not_retried(tmp_path: Path) -> None:
+    runtime, _, _ = _runtime(tmp_path)
+    agent = _HookAgent(fail=True)
+    runtime.adopt(agent)
+    runtime.control.acquire(CLIENT)
+    task = asyncio.create_task(runtime.permission_callback(_request()))
+    pending = await _pending_request(runtime)
+    assert await runtime.prompt_delivered(pending.request_id) is True
+    assert await runtime.prompt_delivered(pending.request_id) is False
+    runtime.answer_permission(pending.request_id, PermissionDecision(allowed=True), client_id=CLIENT)
+    assert (await task).allowed is True
+    assert len(agent.hooks) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy", ["auto", "saved", "no_controller"])
+async def test_nonhuman_policy_paths_never_notify(tmp_path: Path, policy: str) -> None:
+    runtime, _, _ = _runtime(tmp_path, mode=PermissionMode.AUTO if policy == "auto" else PermissionMode.ASK)
+    agent = _HookAgent()
+    runtime.adopt(agent)
+    if policy == "saved":
+        ProjectPermissionStore(tmp_path).add_rule(allow_rule_options(_request())[0].rule)
+    if policy != "no_controller":
+        runtime.control.acquire(CLIENT)
+    decision = await runtime.permission_callback(_request())
+    assert decision.allowed is (policy != "no_controller")
+    assert agent.hooks == []
+
+
+@pytest.mark.asyncio
+async def test_save_failure_degrades_to_allow_once_and_notifies_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime, _, notices = _runtime(tmp_path)
+    runtime.adopt(_HookAgent())
+    runtime.control.acquire(CLIENT)
+
+    def fail_save(self: ProjectPermissionStore, rule: PermissionRule) -> None:
+        raise PermissionStoreError("permission storage unavailable")
+
+    monkeypatch.setattr(ProjectPermissionStore, "add_rule", fail_save)
+    task = asyncio.create_task(runtime.permission_callback(_request()))
+    pending = await _pending_request(runtime)
+    rule = PermissionRule.from_dict(pending.payload["rule_options"][0]["rule"])
+    runtime.answer_permission(pending.request_id, PermissionDecision(allowed=True, rule=rule), client_id=CLIENT)
+    decision = await task
+    assert decision.allowed is True
+    assert decision.rule is None
+    assert decision.reason == "Allowed once because the rule could not be saved."
+    assert notices == ["permission storage unavailable"]
+    assert not (tmp_path / ".kolega" / "permissions.json").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("settle", ["timeout", "cancel", "release"])
+async def test_stale_response_never_persists_or_notifies(tmp_path: Path, settle: str) -> None:
+    runtime, _, _ = _runtime(tmp_path, timeout=0.02 if settle == "timeout" else 30)
+    agent = _HookAgent()
+    runtime.adopt(agent)
+    runtime.control.acquire(CLIENT)
+    task = asyncio.create_task(runtime.permission_callback(_request()))
+    pending = await _pending_request(runtime)
+    rule = PermissionRule.from_dict(pending.payload["rule_options"][0]["rule"])
+    if settle == "cancel":
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    else:
+        if settle == "release":
+            runtime.control.release(CLIENT)
+        assert (await task).allowed is False
+    assert runtime.answer_permission(pending.request_id, PermissionDecision(allowed=True, rule=rule)) is False
+    assert await runtime.prompt_delivered(pending.request_id) is False
+    assert ProjectPermissionStore(tmp_path).load() == []
+    assert agent.hooks == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response", [{"allowed": False}, {"allowed": "true"}, {"allowed": True, "rule": {}}])
+async def test_denied_and_malformed_answers_do_not_save_rules(tmp_path: Path, response: dict[str, Any]) -> None:
+    runtime, _, _ = _runtime(tmp_path)
+    runtime.adopt(_HookAgent())
+    runtime.control.acquire(CLIENT)
+    task = asyncio.create_task(runtime.permission_callback(_request()))
+    pending = await _pending_request(runtime)
+    if "rule" not in response:
+        response = {**response, "rule": pending.payload["rule_options"][0]["rule"]}
+    runtime.control.respond(pending.request_id, response, client_id=CLIENT)
+    decision = await task
+    assert decision.rule is None
+    assert decision.allowed is (response["allowed"] is True)
+    assert ProjectPermissionStore(tmp_path).load() == []
+
+
+@pytest.mark.asyncio
+async def test_unoffered_rule_does_not_become_a_persistent_grant(tmp_path: Path) -> None:
+    runtime, _, _ = _runtime(tmp_path)
+    await runtime.start()
+    runtime.control.acquire(CLIENT)
+    task = asyncio.create_task(runtime.permission_callback(_request("pytest")))
+    pending = await _pending_request(runtime)
+    unrelated = allow_rule_options(_request("git push"))[0].rule
+    runtime.answer_permission(pending.request_id, PermissionDecision(allowed=True, rule=unrelated), client_id=CLIENT)
+    decision = await task
+    assert decision.allowed is True
+    assert decision.rule is None
+    assert ProjectPermissionStore(tmp_path).load() == []
+
+
+@pytest.mark.asyncio
+async def test_structurally_matching_response_persists_only_runtime_owned_rule_metadata(tmp_path: Path) -> None:
+    runtime, _, _ = _runtime(tmp_path)
+    await runtime.start()
+    runtime.control.acquire(CLIENT)
+    task = asyncio.create_task(runtime.permission_callback(_request()))
+    pending = await _pending_request(runtime)
+    offered = pending.payload["rule_options"][0]["rule"]
+    response = {**offered, "id": "not-offered", "created_at": "not-a-timestamp"}
+    runtime.control.respond(pending.request_id, {"allowed": True, "rule": response}, client_id=CLIENT)
+    decision = await task
+    assert decision.rule == PermissionRule.from_dict(offered)
+    assert ProjectPermissionStore(tmp_path).load() == [PermissionRule.from_dict(offered)]
+
+
+@pytest.mark.asyncio
+async def test_queued_permission_checks_current_mode_after_waiting(tmp_path: Path) -> None:
+    runtime, _, _ = _runtime(tmp_path)
+    await runtime.start()
+    runtime.control.acquire(CLIENT)
+    first = asyncio.create_task(runtime.permission_callback(_request("first")))
+    pending = await _pending_request(runtime)
+    second = asyncio.create_task(runtime.permission_callback(_request("second")))
+    await asyncio.sleep(0)
+    runtime.set_permission_mode(PermissionMode.AUTO)
+    runtime.answer_permission(pending.request_id, PermissionDecision(allowed=True), client_id=CLIENT)
+    assert all(decision.allowed for decision in await asyncio.gather(first, second))
+    assert runtime.control.pending() == []
