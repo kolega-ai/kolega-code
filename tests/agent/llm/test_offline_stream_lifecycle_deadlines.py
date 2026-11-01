@@ -93,6 +93,25 @@ async def _wrapper(client: AsyncOpenAI) -> ResponsesStreamWrapper:
     return ResponsesStreamWrapper(raw)
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _warm_sdk_response_models() -> None:
+    """Build the SDK's Responses models before any test arms a stall deadline.
+
+    The first ``client.responses.create`` compiles its pydantic models on the
+    calling thread, blocking the loop for hundreds of milliseconds. On a coverage
+    runner that outlives the 80 ms first-chunk deadline, so whichever test in the
+    worker pays the cost stalls before the setup it is driving even starts.
+    """
+
+    async def warm() -> None:
+        body = _Body()
+        async with _client(lambda _: _response(body)) as client:
+            stream = await client.responses.create(model="offline-test", input="hello", stream=True)
+            await stream.close()
+
+    asyncio.run(warm())
+
+
 @pytest.fixture
 def guarded(base_agent: BaseAgent, monkeypatch: pytest.MonkeyPatch) -> BaseAgent:
     base_agent._stream_first_chunk_timeout = 0.08
@@ -257,20 +276,24 @@ async def test_cancellation_resistant_setup_is_closed_when_it_eventually_returns
             wrapper = await _wrapper(client)
             return DelayedEnter() if phase == "enter" else wrapper
 
+        if cancel_turn:
+            # Let the cancel the test drives decide the outcome: an 80 ms stall
+            # deadline would win whenever the loop runs late.
+            guarded._stream_first_chunk_timeout = 60.0
         task = asyncio.create_task(_drain(guarded, setup))
         try:
-            await asyncio.wait_for(entered.wait(), 1)
+            await asyncio.wait_for(entered.wait(), 5)
             if cancel_turn:
                 task.cancel()
-            done, _ = await asyncio.wait({task}, timeout=0.3)
+            done, _ = await asyncio.wait({task}, timeout=5)
             assert task in done, "source cancellation must not hold the turn open"
             with pytest.raises(asyncio.CancelledError if cancel_turn else LLMStreamStalled):
                 task.result()
-            assert cancelled.is_set()
+            await asyncio.wait_for(cancelled.wait(), 5)
             assert not body.closed.is_set()
         finally:
             release.set()
-            await asyncio.wait_for(body.closed.wait(), 1)
+            await asyncio.wait_for(body.closed.wait(), 5)
             with suppress(asyncio.CancelledError, LLMStreamStalled):
                 await task
         assert wrapper is not None and wrapper._closed
