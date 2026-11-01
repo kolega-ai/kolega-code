@@ -515,3 +515,93 @@ async def test_status_dashboard_names_the_worktree_only_when_linked(
 
         assert cli_messages.STATUS_WORKTREE_LABEL in dashboard
         assert "a (feat-a)" in dashboard
+
+
+@pytest.mark.asyncio
+async def test_plain_chat_message_renders_as_one_transcript_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A chat_message without a message_type is assistant prose, rendered once."""
+    pytest.importorskip("textual")
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        before = list(app.conversation_entries)
+
+        app._render_event(AgentEvent(event_type="chat_message", sender="coder", content={"text": "All set."}))
+
+        added = app.conversation_entries[len(before) :]
+
+        assert len(added) == 1
+        assert added[0].kind == "message"
+        assert added[0].content == "All set."
+
+
+@pytest.mark.asyncio
+async def test_compaction_status_only_drives_dashboard_for_the_main_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(
+            AgentEvent(
+                event_type="compaction_status",
+                sender="sub-agent",
+                content={"phase": "started"},
+                sub_agent_info={"agent_id": "agent-1"},
+            )
+        )
+        assert app._status_state.is_compacting is False
+
+        app._render_event(AgentEvent(event_type="compaction_status", sender="coder", content={"phase": "started"}))
+
+        assert app._status_state.is_compacting is True
+
+
+@pytest.mark.asyncio
+async def test_status_update_writes_the_activity_to_logs_when_shown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch, show_logs=True)
+
+    async with app.run_test():
+        written: list[tuple[str, str]] = []
+        monkeypatch.setattr(app, "_write_log", lambda text, level="info": written.append((text, level)))
+
+        app._render_event(AgentEvent(event_type="status_update", sender="coder", content={"text": "Indexing"}))
+
+        assert written == [("Indexing", "info")]
+
+
+@pytest.mark.asyncio
+async def test_unrecognized_event_is_logged_only_when_logs_are_shown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import messages as cli_messages
+
+    def render(app) -> list[tuple[str, str]]:
+        written: list[tuple[str, str]] = []
+        monkeypatch.setattr(app, "_write_log", lambda text, level="info": written.append((text, level)))
+        app._render_event(AgentEvent(event_type="memory_suggestions", sender="coder", content={"text": "a hint"}))
+        app._render_event(AgentEvent(event_type="future_event", sender="coder", content={}))
+        return written
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch, show_logs=True)
+
+    async with app.run_test():
+        assert render(app) == [
+            ("memory_suggestions: a hint", "info"),
+            (cli_messages.LOG_IGNORED_EVENT.format(event_type="future_event"), "debug"),
+        ]
+
+        monkeypatch.setattr(app, "show_logs", False)
+
+        assert render(app) == []
