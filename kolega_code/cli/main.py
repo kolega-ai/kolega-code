@@ -1522,9 +1522,7 @@ class _AskPermissionController:
             self.runtime.answer_permission(request_id, decision, client_id=self.client_id)
 
     async def _prompt_permission(self, request_id: str, payload: Any) -> PermissionDecision | None:
-        if self.runtime.control.controller != self.client_id or not any(
-            pending.request_id == request_id for pending in self.runtime.control.pending()
-        ):
+        if self.runtime.control.controller != self.client_id or not self.runtime.control.is_pending(request_id):
             return None
         if not isinstance(payload, dict):
             raise ValueError("Missing permission payload.")

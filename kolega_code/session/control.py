@@ -172,6 +172,9 @@ class ControlChannel:
         """Outstanding requests, so a client attaching mid-prompt can catch up."""
         return list(self._pending.values())
 
+    def is_pending(self, request_id: str) -> bool:
+        return request_id in self._pending
+
     def mark_delivered(self, request_id: str) -> Optional[ControlRequest]:
         """Mark a live prompt as presented, returning it only on the first call."""
         request = self._pending.get(request_id)

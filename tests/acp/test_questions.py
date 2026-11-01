@@ -108,9 +108,12 @@ class _ElicitConn:
 async def test_elicit_answer_gates_on_client_capabilities(tmp_path: Path) -> None:
     session, _cm = _make_session(tmp_path, StreamingLLM())
     agent = AcpAgent(factory=cast(Any, _FakeFactory(session)))
+    agent._sessions[session.session_id] = session  # noqa: SLF001
+    agent._attach_runtime(session)  # noqa: SLF001
+    assert session.control_adapter is not None
 
     with pytest.raises(ToolError, match="does not support"):
-        await agent._elicit_answer(session.session_id, "Q?", ["A", "B"], ["", ""])  # noqa: SLF001
+        await session.control_adapter.request_question("Q?", ["A", "B"], ["", ""])
 
 
 @pytest.mark.asyncio
@@ -123,8 +126,11 @@ async def test_elicit_answer_returns_accepted_option(tmp_path: Path) -> None:
     )
     conn = _ElicitConn([AcceptElicitationResponse(action="accept", content={"answer": "B"})])
     agent.on_connect(cast(Client, conn))
+    agent._sessions[session.session_id] = session  # noqa: SLF001
+    agent._attach_runtime(session)  # noqa: SLF001
+    assert session.control_adapter is not None
 
-    answer = await agent._elicit_answer(session.session_id, "Pick one", ["A", "B"], ["", ""])  # noqa: SLF001
+    answer = await session.control_adapter.request_question("Pick one", ["A", "B"], ["first option", ""])
 
     assert answer == "B"
     message, mode = conn.calls[0]
@@ -133,6 +139,7 @@ async def test_elicit_answer_returns_accepted_option(tmp_path: Path) -> None:
     schema = mode.requested_schema
     assert schema.required == ["answer"]
     assert [option.const for option in schema.properties["answer"].one_of or []] == ["A", "B"]
+    assert [option.description for option in schema.properties["answer"].one_of or []] == ["first option", None]
 
 
 @pytest.mark.asyncio
@@ -145,9 +152,47 @@ async def test_elicit_answer_errors_on_decline(tmp_path: Path) -> None:
     )
     conn = _ElicitConn([DeclineElicitationResponse(action="decline")])
     agent.on_connect(cast(Client, conn))
+    agent._sessions[session.session_id] = session  # noqa: SLF001
+    agent._attach_runtime(session)  # noqa: SLF001
+    assert session.control_adapter is not None
 
     with pytest.raises(ToolError, match="declined"):
-        await agent._elicit_answer(session.session_id, "Q?", ["A", "B"], ["", ""])  # noqa: SLF001
+        await session.control_adapter.request_question("Q?", ["A", "B"], ["", ""])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "error"),
+    [
+        (None, "No client connection is available for questions."),
+        (
+            AcceptElicitationResponse(action="accept", content={}),
+            "The client accepted the question but returned no answer.",
+        ),
+        (
+            AcceptElicitationResponse(action="accept", content={"answer": "   "}),
+            "The user declined to answer the question.",
+        ),
+    ],
+)
+async def test_question_transport_errors_survive_control_mapping(tmp_path: Path, response: Any, error: str) -> None:
+    session, _ = _make_session(tmp_path, StreamingLLM())
+    agent = AcpAgent(factory=cast(Any, _FakeFactory(session)))
+    await agent.initialize(
+        protocol_version=1,
+        client_capabilities=ClientCapabilities(elicitation=ElicitationCapabilities(form=ElicitationFormCapabilities())),
+    )
+    if response is not None:
+        agent.on_connect(cast(Client, _ElicitConn([response])))
+    agent._sessions[session.session_id] = session  # noqa: SLF001
+    agent._attach_runtime(session)  # noqa: SLF001
+    assert session.control_adapter is not None
+    try:
+        with pytest.raises(ToolError) as exc:
+            await session.control_adapter.request_question("Q?", ["A", "B"], ["", ""])
+        assert str(exc.value) == error
+    finally:
+        await session.control_adapter.shutdown()
 
 
 @pytest.mark.asyncio

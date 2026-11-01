@@ -100,6 +100,27 @@ def deserialize_permission_rule_options(payload: Any) -> list[PermissionRuleOpti
     return options
 
 
+def _permission_rule_from_response(
+    response: dict[str, Any], options: list[PermissionRuleOption]
+) -> Optional[PermissionRule]:
+    rule_data = response.get("rule")
+    if response.get("allowed") is not True or not isinstance(rule_data, dict):
+        return None
+    try:
+        rule = PermissionRule.from_dict(rule_data)
+    except Exception:
+        return None
+    return next(
+        (
+            option.rule
+            for option in options
+            if (rule.kind, rule.tool, rule.match_type, rule.pattern)
+            == (option.rule.kind, option.rule.tool, option.rule.match_type, option.rule.pattern)
+        ),
+        None,
+    )
+
+
 class SessionRuntime:
     """Runs one session's agent, independent of any user interface."""
 
@@ -247,23 +268,7 @@ class SessionRuntime:
         self, response: dict[str, Any], options: list[PermissionRuleOption]
     ) -> PermissionDecision:
         allowed = response.get("allowed") is True
-        rule_data = response.get("rule")
-        rule: Optional[PermissionRule] = None
-        if allowed and isinstance(rule_data, dict):
-            try:
-                rule = PermissionRule.from_dict(rule_data)
-            except Exception:
-                rule = None
-        if rule is not None:
-            rule = next(
-                (
-                    option.rule
-                    for option in options
-                    if (rule.kind, rule.tool, rule.match_type, rule.pattern)
-                    == (option.rule.kind, option.rule.tool, option.rule.match_type, option.rule.pattern)
-                ),
-                None,
-            )
+        rule = _permission_rule_from_response(response, options)
         if rule is not None:
             try:
                 ProjectPermissionStore(self.project_path).add_rule(rule)

@@ -112,7 +112,7 @@ class ControlRelay:
         request_id = str(event.content.get("request_id") or "")
         kind = str(event.content.get("kind") or "")
         payload = event.content.get("payload") or {}
-        if not request_id or not isinstance(payload, dict) or not self._request_is_open(request_id):
+        if not request_id or not isinstance(payload, dict) or not self._runtime.control.is_pending(request_id):
             return
         if kind == "permission":
             await self._render_permission(request_id, payload)
@@ -145,7 +145,7 @@ class ControlRelay:
         except Exception:  # noqa: BLE001 — a lost prompt falls back to the channel default
             logger.exception("gateway relay: could not render permission prompt")
             return
-        if not self._request_is_open(request_id):
+        if not self._runtime.control.is_pending(request_id):
             return
         self._pending[token] = _PendingPrompt(
             kind="permission", request_id=request_id, token=token, rule_options=rule_options, options=[]
@@ -166,15 +166,12 @@ class ControlRelay:
         except Exception:  # noqa: BLE001
             logger.exception("gateway relay: could not render question prompt")
             return
-        if not self._request_is_open(request_id):
+        if not self._runtime.control.is_pending(request_id):
             return
         self._pending[token] = _PendingPrompt(
             kind="question", request_id=request_id, token=token, rule_options=[], options=options
         )
         await self._runtime.prompt_delivered(request_id)
-
-    def _request_is_open(self, request_id: str) -> bool:
-        return any(request.request_id == request_id for request in self._runtime.control.pending())
 
     # -- Tap handling ------------------------------------------------------
 

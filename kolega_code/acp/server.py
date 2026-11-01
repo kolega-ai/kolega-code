@@ -13,14 +13,13 @@ Phase 0 (transport skeleton) is preserved in the module's git history; see
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
 from acp import Agent, InitializeResponse, NewSessionResponse, PromptResponse
-from acp.connection import StreamDirection, StreamEvent
+from acp.connection import StreamEvent
 from acp.exceptions import RequestError
 from acp.helpers import (
     text_block,
@@ -34,17 +33,12 @@ from acp.helpers import (
 )
 from acp.interfaces import Client
 from acp.schema import (
-    AcceptElicitationResponse,
     AgentCapabilities,
     AudioContentBlock,
     AvailableCommand,
     ClientCapabilities,
     ConfigOptionUpdate,
-    ElicitationFormSessionMode,
-    ElicitationSchema,
-    ElicitationStringPropertySchema,
     EmbeddedResourceContentBlock,
-    EnumOption,
     HttpMcpServer,
     ImageContentBlock,
     Implementation,
@@ -74,8 +68,8 @@ from kolega_code.acp.agent_factory import (
     AgentFactory,
 )
 from kolega_code.acp.bridge import AcpBridge, SUB_SESSION_PREFIX
+from kolega_code.acp.control import AcpControlAdapter
 from kolega_code.acp.diffs import AcpDiffProvider
-from kolega_code.acp.permissions import CONTROL_REQUEST_ID_META_KEY, AcpPermissionBroker
 from kolega_code.acp.plans import task_entries_from_markdown
 from kolega_code.acp.session import AcpSession
 from kolega_code.acp.usage import build_usage_update
@@ -83,17 +77,11 @@ from kolega_code.agent.prompts import build_implement_plan_prompt
 from kolega_code.cli.config import CliConfigError
 from kolega_code.cli.session_store import SessionStoreError
 from kolega_code.cli.slash_commands import agent_command_entries
-from kolega_code.events import AgentEvent, KnownEventType
 from kolega_code.llm.models import MessageHistory
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
 from kolega_code.session.control import ControlChannel, DEFAULT_REQUEST_TIMEOUT_SECONDS
 from kolega_code.session.projection import replay, sub_agent_key
-from kolega_code.session.runtime import (
-    SessionRuntime,
-    deserialize_permission_request,
-    deserialize_permission_rule_options,
-)
-from kolega_code.tools.core import ToolError
+from kolega_code.session.runtime import SessionRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +112,6 @@ class AcpAgent(Agent):
     def __init__(self, factory: AgentFactory | None = None) -> None:
         self._factory = factory or AgentFactory()
         self._sessions: dict[str, AcpSession] = {}
-        self._brokers: dict[str, AcpPermissionBroker] = {}
         self._conn: Client
         self._client_capabilities: ClientCapabilities | None = None
 
@@ -173,7 +160,6 @@ class AcpAgent(Agent):
             raise AgentFactory.protocol_error(exc) from exc
         self._sessions[session.session_id] = session
         self._attach_runtime(session)
-        self._attach_question_elicit(session)
         response = NewSessionResponse(
             session_id=session.session_id,
             config_options=self._factory.config_options_for(session),
@@ -212,7 +198,6 @@ class AcpAgent(Agent):
             return None
         self._sessions[session.session_id] = session
         self._attach_runtime(session)
-        self._attach_question_elicit(session)
         await self._emit_initial_usage(session)
         await self._send_available_commands(session)
         await self._replay_transcript(session)
@@ -277,10 +262,8 @@ class AcpAgent(Agent):
             if session.background_task is not None:
                 session.background_task.cancel()
                 await asyncio.gather(session.background_task, return_exceptions=True)
-            await self._cancel_control_tasks(session)
-            if session.runtime is not None:
-                session.runtime.control.release(self._control_client_id(session.session_id))
-        self._brokers.pop(session_id, None)
+            if session.control_adapter is not None:
+                await session.control_adapter.shutdown()
         if session is not None:
             async with session.execution_lock:
                 await self._factory.close_session(session_id)
@@ -428,151 +411,35 @@ class AcpAgent(Agent):
 
         return callback
 
-    @staticmethod
-    def _control_client_id(session_id: str) -> str:
-        return f"acp:{session_id}"
-
     def _attach_runtime(self, session: AcpSession) -> None:
-        async def emit(event: AgentEvent) -> None:
-            await session.agent.connection_manager.broadcast_event(
-                event,
-                session.record.workspace_id,
-                session.record.thread_id,
-            )
-            request_id = str(event.content.get("request_id") or "")
-            if event.event_type == KnownEventType.CONTROL_RESOLVED:
-                task = session.control_tasks.get(request_id)
-                if task is not None and event.content.get("reason") != "answered":
-                    task.cancel()
-                return
-            if event.event_type != KnownEventType.CONTROL_REQUESTED or not event.content.get("has_controller"):
-                return
-            task = asyncio.create_task(
-                self._handle_control_request(session.session_id, event),
-                name=f"acp-control-{session.session_id}",
-            )
-            session.control_tasks[request_id] = task
-            task.add_done_callback(lambda _task: session.control_tasks.pop(request_id, None))
-
+        adapter = AcpControlAdapter(
+            session,
+            session_provider=lambda: self._sessions.get(session.session_id),
+            connection_provider=lambda: getattr(self, "_conn", None),
+            capabilities_provider=lambda: self._client_capabilities,
+        )
         runtime = SessionRuntime(
             session_id=session.session_id,
             project_path=Path(session.record.project_path),
             control=ControlChannel(
                 session_id=session.session_id,
-                emit=emit,
+                emit=adapter.emit,
                 timeout=DEFAULT_REQUEST_TIMEOUT_SECONDS,
             ),
             permission_mode=session.agent.permission_mode,
             on_notice=lambda notice: logger.warning("acp session %s: %s", session.session_id, notice),
         )
         runtime.adopt(session.agent)
-        runtime.control.acquire(self._control_client_id(session.session_id))
+        runtime.control.acquire(adapter.client_id)
         session.runtime = runtime
+        session.control_adapter = adapter
         session.permission_callback = runtime.permission_callback
 
     async def on_transport_message(self, event: StreamEvent) -> None:
         """A successful ACP write acknowledges presentation before the human replies."""
-        if event.direction != StreamDirection.OUTGOING or event.message.get("method") not in {
-            "session/request_permission",
-            "elicitation/create",
-        }:
-            return
-        params = event.message.get("params")
-        if not isinstance(params, dict):
-            return
-        metadata = params.get("_meta")
-        if not isinstance(metadata, dict):
-            return
-        request_id = metadata.get(CONTROL_REQUEST_ID_META_KEY)
-        if not isinstance(request_id, str):
-            return
         for session in self._sessions.values():
-            if request_id in session.control_tasks and session.runtime is not None:
-                await session.runtime.prompt_delivered(request_id)
+            if session.control_adapter is not None and await session.control_adapter.on_transport_message(event):
                 return
-
-    async def _handle_control_request(self, session_id: str, event: AgentEvent) -> None:
-        session = self._sessions.get(session_id)
-        if session is None or session.runtime is None:
-            return
-        request_id = str(event.content.get("request_id") or "")
-        kind = str(event.content.get("kind") or "")
-        payload = event.content.get("payload")
-        if not request_id or not isinstance(payload, dict):
-            return
-        runtime = session.runtime
-        if not any(request.request_id == request_id for request in runtime.control.pending()):
-            return
-        if kind == "permission":
-            request_data = payload.get("request")
-            if not isinstance(request_data, dict):
-                session.runtime.answer_permission(
-                    request_id,
-                    PermissionDecision(allowed=False, reason="The permission request was malformed."),
-                    client_id=self._control_client_id(session_id),
-                )
-                return
-            try:
-                request = deserialize_permission_request(request_data)
-            except Exception:
-                session.runtime.answer_permission(
-                    request_id,
-                    PermissionDecision(allowed=False, reason="The permission request was malformed."),
-                    client_id=self._control_client_id(session_id),
-                )
-                return
-            broker = self._brokers.get(session_id)
-            if broker is None:
-                broker = AcpPermissionBroker(
-                    self._conn,
-                    session_id,
-                    lambda: session.agent,
-                )
-                self._brokers[session_id] = broker
-            decision = await broker.prompt(
-                request,
-                deserialize_permission_rule_options(payload.get("rule_options")),
-                request_id=request_id,
-                on_delivered=lambda: runtime.prompt_delivered(request_id),
-            )
-            runtime.answer_permission(
-                request_id,
-                decision,
-                client_id=self._control_client_id(session_id),
-            )
-            return
-        if kind == "question":
-            question = str(payload.get("question") or "")
-            labels = [str(label) for label in (payload.get("options") or [])]
-            descriptions = [str(item) for item in (payload.get("descriptions") or [])]
-            try:
-                answer = await self._elicit_answer(
-                    session_id,
-                    question,
-                    labels,
-                    descriptions,
-                    request_id=request_id,
-                )
-            except Exception as exc:
-                runtime.answer_question(
-                    request_id,
-                    {"answer": None, "error": str(exc)},
-                    client_id=self._control_client_id(session_id),
-                )
-                return
-            runtime.answer_question(
-                request_id,
-                {"answer": answer or None},
-                client_id=self._control_client_id(session_id),
-            )
-
-    async def _cancel_control_tasks(self, session: AcpSession) -> None:
-        tasks = list(session.control_tasks.values())
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        session.control_tasks.clear()
 
     async def _emit_initial_usage(self, session: AcpSession) -> None:
         conn = getattr(self, "_conn", None)
@@ -602,40 +469,6 @@ class AcpAgent(Agent):
             return
         await conn.session_update(session_id=session.session_id, update=update, source="kolega_code")
 
-    def _attach_question_elicit(self, session: AcpSession) -> None:
-        """Bind the elicitation bridge to the session's ask_user_choice tool.
-
-        The bound callable lives on ``session.question_state``, which the tool
-        extension holds by reference, so it survives agent rebuilds.
-        """
-        session.question_state["elicit"] = functools.partial(self._request_question, session.session_id)
-
-    async def _request_question(
-        self,
-        session_id: str,
-        question: str,
-        labels: list[str],
-        descriptions: list[str],
-    ) -> str:
-        session = self._sessions.get(session_id)
-        if session is None or session.runtime is None:
-            raise ToolError("The session is no longer active.")
-        response = await session.runtime.control.request(
-            "question",
-            {
-                "question": question,
-                "options": list(labels),
-                "descriptions": list(descriptions),
-            },
-            default={"answer": None},
-        )
-        if response.get("error"):
-            raise ToolError(str(response["error"]))
-        answer = response.get("answer")
-        if not isinstance(answer, str) or not answer.strip():
-            raise ToolError("The user declined to answer the question.")
-        return answer
-
     def _schedule_open_updates(self, session_id: str) -> None:
         """Send the open-time updates after the client has processed the
         ``session/new`` response (Zed drops pre-response notifications)."""
@@ -662,51 +495,6 @@ class AcpAgent(Agent):
             AvailableCommand(name=entry.name, description=entry.description) for entry in agent_command_entries()
         ]
         await self._send_session_update(session, update_available_commands(commands))
-
-    async def _elicit_answer(
-        self,
-        session_id: str,
-        question: str,
-        labels: list[str],
-        descriptions: list[str],
-        *,
-        request_id: str | None = None,
-    ) -> str:
-        """Ask one choice question through the client's elicitation surface."""
-        capabilities = self._client_capabilities
-        elicitation = getattr(capabilities, "elicitation", None) if capabilities is not None else None
-        if elicitation is None or not getattr(elicitation, "form", None):
-            raise ToolError(
-                "This editor client does not support interactive question forms; "
-                "ask the user directly in the conversation instead."
-            )
-        conn = getattr(self, "_conn", None)
-        if conn is None:
-            raise ToolError("No client connection is available for questions.")
-        options = [
-            EnumOption(const=label, title=label, description=description or None)
-            for label, description in zip(labels, descriptions)
-        ]
-        schema = ElicitationSchema(
-            properties={"answer": ElicitationStringPropertySchema(type="string", title=question, one_of=options)},
-            required=["answer"],
-        )
-        response = await conn.create_elicitation(
-            message=question,
-            mode=ElicitationFormSessionMode(session_id=session_id, requested_schema=schema),
-            **({CONTROL_REQUEST_ID_META_KEY: request_id} if request_id is not None else {}),
-        )
-        if request_id is not None:
-            session = self._sessions.get(session_id)
-            if session is not None and session.runtime is not None:
-                await session.runtime.prompt_delivered(request_id)
-        if isinstance(response, AcceptElicitationResponse):
-            content = response.content or {}
-            answer = content.get("answer")
-            if answer:
-                return str(answer)
-            raise ToolError("The client accepted the question but returned no answer.")
-        raise ToolError("The user declined to answer the question.")
 
     async def _replay_transcript(self, session: AcpSession) -> None:
         """Replay the persisted transcript before responding to ``session/load``.

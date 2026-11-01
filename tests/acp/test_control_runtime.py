@@ -11,6 +11,7 @@ import pytest
 from acp.agent.connection import AgentSideConnection
 from acp.interfaces import Client
 from acp.schema import (
+    AcceptElicitationResponse,
     ClientCapabilities,
     ElicitationCapabilities,
     ElicitationFormCapabilities,
@@ -80,8 +81,8 @@ async def test_wire_delivery_notifies_once_before_reply_and_failed_writes_never_
     monkeypatch.setattr(session.agent, "fire_hook", hook)
     agent._sessions[session.session_id] = session  # noqa: SLF001
     agent._attach_runtime(session)  # noqa: SLF001
-    agent._attach_question_elicit(session)  # noqa: SLF001
     assert session.runtime is not None
+    assert session.control_adapter is not None
     task = asyncio.create_task(
         session.runtime.permission_callback(_permission())
         if kind == "permission"
@@ -127,7 +128,7 @@ async def test_wire_delivery_notifies_once_before_reply_and_failed_writes_never_
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-        await agent._cancel_control_tasks(session)  # noqa: SLF001
+        await session.control_adapter.shutdown()
         await connection._conn.close()  # noqa: SLF001
 
 
@@ -144,6 +145,7 @@ async def test_acp_auto_saved_and_no_controller_skip_transport_and_notification(
     agent._sessions[session.session_id] = session  # noqa: SLF001
     agent._attach_runtime(session)  # noqa: SLF001
     assert session.runtime is not None
+    assert session.control_adapter is not None
     hook = AsyncMock()
     monkeypatch.setattr(session.agent, "fire_hook", hook)
     if policy == "auto":
@@ -151,7 +153,7 @@ async def test_acp_auto_saved_and_no_controller_skip_transport_and_notification(
     elif policy == "saved":
         ProjectPermissionStore(tmp_path).add_rule(allow_rule_options(_permission())[0].rule)
     else:
-        session.runtime.control.release(agent._control_client_id(session.session_id))  # noqa: SLF001
+        session.runtime.control.release(session.control_adapter.client_id)
     assert session.agent.permission_callback is not None
     decision = await session.agent.permission_callback(_permission())
     assert decision.allowed is (policy != "no_controller")
@@ -160,18 +162,29 @@ async def test_acp_auto_saved_and_no_controller_skip_transport_and_notification(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["permission", "question"])
 @pytest.mark.parametrize("settle", ["cancel", "release", "timeout"])
 async def test_nonanswer_resolution_cancels_pending_acp_transport(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settle: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settle: str, kind: str
 ) -> None:
     session, _ = _make_session(tmp_path, StreamingLLM())
     session.agent.set_permission_mode(PermissionMode.ASK)
     agent = AcpAgent(factory=cast(Any, _FakeFactory(session)))
+    await agent.initialize(
+        protocol_version=1,
+        client_capabilities=ClientCapabilities(elicitation=ElicitationCapabilities(form=ElicitationFormCapabilities())),
+    )
     started = asyncio.Event()
     cancelled = asyncio.Event()
 
     class WaitingConn(_FakeConn):
         async def request_permission(self, *args: Any, **kwargs: Any) -> Any:
+            return await self._wait()
+
+        async def create_elicitation(self, *args: Any, **kwargs: Any) -> Any:
+            return await self._wait()
+
+        async def _wait(self) -> None:
             started.set()
             try:
                 await asyncio.Event().wait()
@@ -182,44 +195,62 @@ async def test_nonanswer_resolution_cancels_pending_acp_transport(
     agent._sessions[session.session_id] = session  # noqa: SLF001
     agent._attach_runtime(session)  # noqa: SLF001
     assert session.runtime is not None
+    assert session.control_adapter is not None
     hook = AsyncMock()
     monkeypatch.setattr(session.agent, "fire_hook", hook)
     if settle == "timeout":
         session.runtime.control.timeout = 0.05
-    task = asyncio.create_task(session.runtime.permission_callback(_permission()))
+    task = asyncio.create_task(
+        session.runtime.permission_callback(_permission())
+        if kind == "permission"
+        else session.question_state["elicit"]("Which approach?", ["A", "B"], ["", ""])
+    )
     await asyncio.wait_for(started.wait(), 5)
     pending = session.runtime.control.pending()[0]
-    transport_task = session.control_tasks[pending.request_id]
+    transport_task = session.control_adapter.tasks[pending.request_id]
     if settle == "cancel":
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
     else:
         if settle == "release":
-            session.runtime.control.release(agent._control_client_id(session.session_id))  # noqa: SLF001
-        assert (await asyncio.wait_for(task, 5)).allowed is False
+            session.runtime.control.release(session.control_adapter.client_id)
+        if kind == "permission":
+            assert (await asyncio.wait_for(task, 5)).allowed is False
+        else:
+            with pytest.raises(ToolError, match="The user declined to answer the question."):
+                await asyncio.wait_for(task, 5)
     await asyncio.wait_for(cancelled.wait(), 5)
     await asyncio.gather(transport_task, return_exceptions=True)
     assert transport_task.cancelled()
     async with asyncio.timeout(5):
-        while session.control_tasks:
+        while session.control_adapter.tasks:
             await asyncio.sleep(0)
-    assert session.control_tasks == {}
+    assert session.control_adapter.tasks == {}
     assert await session.runtime.prompt_delivered(pending.request_id) is False
     assert ProjectPermissionStore(tmp_path).load() == []
     hook.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_cancel_foreground_turn_keeps_independent_background_permission_live(tmp_path: Path) -> None:
+@pytest.mark.parametrize("kind", ["permission", "question"])
+async def test_cancel_foreground_turn_keeps_independent_background_prompt_live(tmp_path: Path, kind: str) -> None:
     session, _ = _make_session(tmp_path, StreamingLLM())
     session.agent.set_permission_mode(PermissionMode.ASK)
     agent = AcpAgent(factory=cast(Any, _FakeFactory(session)))
+    await agent.initialize(
+        protocol_version=1,
+        client_capabilities=ClientCapabilities(elicitation=ElicitationCapabilities(form=ElicitationFormCapabilities())),
+    )
     started = asyncio.Event()
-    response: asyncio.Future[RequestPermissionResponse] = asyncio.get_running_loop().create_future()
+    response: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
 
     class WaitingConn(_FakeConn):
         async def request_permission(self, *args: Any, **kwargs: Any) -> RequestPermissionResponse:
+            started.set()
+            return await response
+
+        async def create_elicitation(self, *args: Any, **kwargs: Any) -> AcceptElicitationResponse:
             started.set()
             return await response
 
@@ -227,13 +258,18 @@ async def test_cancel_foreground_turn_keeps_independent_background_permission_li
     agent._sessions[session.session_id] = session  # noqa: SLF001
     agent._attach_runtime(session)  # noqa: SLF001
     assert session.runtime is not None
-    background = asyncio.create_task(session.runtime.permission_callback(_permission()))
+    assert session.control_adapter is not None
+    background = asyncio.create_task(
+        session.runtime.permission_callback(_permission())
+        if kind == "permission"
+        else session.question_state["elicit"]("Which approach?", ["A", "B"], ["", ""])
+    )
     foreground = asyncio.create_task(asyncio.Event().wait())
     session.turn_task = cast(Any, foreground)
     try:
         await asyncio.wait_for(started.wait(), 5)
         pending = session.runtime.control.pending()[0]
-        transport = session.control_tasks[pending.request_id]
+        transport = session.control_adapter.tasks[pending.request_id]
         await agent.cancel(session.session_id)
         with pytest.raises(asyncio.CancelledError):
             await foreground
@@ -242,26 +278,39 @@ async def test_cancel_foreground_turn_keeps_independent_background_permission_li
         assert len(session.runtime.control.pending()) == 1
         response.set_result(
             RequestPermissionResponse.model_validate({"outcome": {"outcome": "selected", "optionId": "allow-once"}})
+            if kind == "permission"
+            else AcceptElicitationResponse(action="accept", content={"answer": "B"})
         )
-        assert (await asyncio.wait_for(background, 5)).allowed is True
+        answer = await asyncio.wait_for(background, 5)
+        if kind == "permission":
+            assert answer.allowed is True
+        else:
+            assert answer == "B"
         assert session.runtime.control.pending() == []
-        # The background callback released the serialized permission lane.
         session.runtime.set_permission_mode(PermissionMode.AUTO)
         assert (await asyncio.wait_for(session.runtime.permission_callback(_permission()), 5)).allowed is True
     finally:
         foreground.cancel()
         background.cancel()
         await asyncio.gather(foreground, background, return_exceptions=True)
-        await agent._cancel_control_tasks(session)  # noqa: SLF001
+        await session.control_adapter.shutdown()
 
 
 @pytest.mark.asyncio
 async def test_factory_rebuild_keeps_runtime_callback_and_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     session, manager = _make_session(tmp_path, StreamingLLM())
+    session.agent.set_permission_mode(PermissionMode.ASK)
     server = AcpAgent(factory=cast(Any, _FakeFactory(session)))
+    conn = _FakeConn()
+    server.on_connect(cast(Client, conn))
     server._sessions[session.session_id] = session  # noqa: SLF001
     server._attach_runtime(session)  # noqa: SLF001
     assert session.runtime is not None
+    assert session.control_adapter is not None
+    adapter = session.control_adapter
+    elicit = session.question_state["elicit"]
+    session.agent.current_tool_call_id = "before-rebuild"
+    assert (await session.runtime.permission_callback(_permission())).allowed is True
     factory = AgentFactory()
     await factory.set_permission_mode(session, PermissionMode.AUTO)
     monkeypatch.setattr(session.agent, "cleanup", AsyncMock())
@@ -278,3 +327,9 @@ async def test_factory_rebuild_keeps_runtime_callback_and_mode(tmp_path: Path, m
     await factory.set_permission_mode(session, PermissionMode.ASK)
     assert session.runtime.permission_mode == PermissionMode.ASK
     assert session.agent.permission_mode == PermissionMode.ASK
+    session.agent.current_tool_call_id = "after-rebuild"
+    assert (await session.runtime.permission_callback(_permission())).allowed is True
+    assert [call[1].tool_call_id for call in conn.permission_calls] == ["before-rebuild", "after-rebuild"]
+    assert session.control_adapter is adapter
+    assert session.question_state["elicit"] is elicit
+    await adapter.shutdown()

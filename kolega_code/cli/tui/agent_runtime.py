@@ -241,7 +241,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         why that event clears a prompt as well.
         """
         try:
-            return any(request.request_id == request_id for request in self.control_channel.pending())
+            return self.control_channel.is_pending(request_id)
         except Exception:
             return True
 

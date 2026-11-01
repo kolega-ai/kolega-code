@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -608,7 +609,10 @@ async def test_stale_response_never_persists_or_notifies(tmp_path: Path, settle:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("response", [{"allowed": False}, {"allowed": "true"}, {"allowed": True, "rule": {}}])
+@pytest.mark.parametrize(
+    "response",
+    [{"allowed": False}, {"allowed": "true"}, {"allowed": 1}, {"allowed": None}, {"allowed": True, "rule": {}}],
+)
 async def test_denied_and_malformed_answers_do_not_save_rules(tmp_path: Path, response: dict[str, Any]) -> None:
     runtime, _, _ = _runtime(tmp_path)
     runtime.adopt(_HookAgent())
@@ -622,6 +626,48 @@ async def test_denied_and_malformed_answers_do_not_save_rules(tmp_path: Path, re
     assert decision.rule is None
     assert decision.allowed is (response["allowed"] is True)
     assert ProjectPermissionStore(tmp_path).load() == []
+
+
+@pytest.mark.parametrize("field", ["id", "kind", "match_type", "pattern", "created_at"])
+def test_response_rule_requires_parseable_metadata(tmp_path: Path, field: str) -> None:
+    runtime, _, _ = _runtime(tmp_path)
+    options = allow_rule_options(_request())
+    rule_data = options[0].rule.to_dict()
+    del rule_data[field]
+
+    decision = runtime._decision_from_response({"allowed": True, "reason": "once", "rule": rule_data}, options)
+
+    assert decision == PermissionDecision(allowed=True, reason="once")
+    assert ProjectPermissionStore(tmp_path).load() == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("kind", "edit"), ("tool", "other_tool"), ("match_type", "unoffered"), ("pattern", "*")],
+)
+def test_response_rule_must_match_every_candidate_field(tmp_path: Path, field: str, value: str) -> None:
+    runtime, _, _ = _runtime(tmp_path)
+    options = allow_rule_options(_request())
+    rule_data = {**options[0].rule.to_dict(), field: value}
+
+    decision = runtime._decision_from_response({"allowed": True, "reason": "once", "rule": rule_data}, options)
+
+    assert decision == PermissionDecision(allowed=True, reason="once")
+    assert ProjectPermissionStore(tmp_path).load() == []
+
+
+def test_response_rule_selects_first_runtime_owned_candidate(tmp_path: Path) -> None:
+    runtime, _, _ = _runtime(tmp_path)
+    option = allow_rule_options(_request())[0]
+    duplicate = replace(option, rule=replace(option.rule, id="duplicate"))
+    rule_data = {**option.rule.to_dict(), "id": "supplied", "created_at": "supplied"}
+
+    decision = runtime._decision_from_response({"allowed": True, "reason": 42, "rule": rule_data}, [option, duplicate])
+
+    assert decision.allowed is True
+    assert decision.reason == "42"
+    assert decision.rule is option.rule
+    assert ProjectPermissionStore(tmp_path).load() == [option.rule]
 
 
 @pytest.mark.asyncio

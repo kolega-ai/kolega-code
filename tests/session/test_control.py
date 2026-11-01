@@ -203,6 +203,50 @@ async def test_pending_lets_a_client_catch_up_mid_prompt() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("settlement", ["answer", "cancel", "release", "timeout", "no_controller"])
+async def test_is_pending_tracks_the_request_until_settlement(settlement: str) -> None:
+    emitted: list[AgentEvent] = []
+    announced = asyncio.Event()
+    proceed = asyncio.Event()
+
+    async def emit(event: AgentEvent) -> None:
+        emitted.append(event)
+        if event.event_type == KnownEventType.CONTROL_REQUESTED:
+            announced.set()
+            await proceed.wait()
+
+    channel = ControlChannel(session_id="s1", emit=emit, timeout=0.01 if settlement == "timeout" else 30.0)
+    if settlement != "no_controller":
+        channel.acquire("tui")
+    assert not channel.is_pending("unknown")
+    task = asyncio.create_task(channel.request("permission", {}, default=DENY))
+    try:
+        await asyncio.wait_for(announced.wait(), 5)
+        request_id = emitted[0].content["request_id"]
+        assert channel.is_pending(request_id)
+        assert not channel.is_pending("unknown")
+        if settlement == "answer":
+            assert channel.respond(request_id, ALLOW, client_id="tui")
+        elif settlement == "release":
+            channel.release("tui")
+        elif settlement == "cancel":
+            task.cancel()
+        proceed.set()
+        if settlement == "cancel":
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            assert await asyncio.wait_for(task, 5) == (ALLOW if settlement == "answer" else DENY)
+        assert not channel.is_pending(request_id)
+        assert channel.pending() == []
+        await _settle()
+    finally:
+        proceed.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_cancelling_a_turn_drops_the_request() -> None:
     """A late answer must not resolve a request nobody is waiting on."""
     channel, _ = _channel(timeout=30.0)
