@@ -8,6 +8,10 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Security
 
+- Live sharing now requires a token and validates Host and Origin headers for
+  both HTTP and WebSocket requests. Loopback and LAN links work automatically;
+  tunnel users must explicitly allow their public origin with
+  `KOLEGA_CODE_SHARE_ALLOWED_ORIGINS` before launching Kolega Code.
 - Updated transformers to 5.20.2 in the optional `tinker` extra, fixing a
   `save_pretrained` path traversal (CVE-2026-9856) and untrusted custom
   generation code being written to disk before consent (CVE-2026-80047). The

@@ -6,10 +6,8 @@ the caller's event loop and hands back the link.
 
 Three things matter for a link that is meant to be given away:
 
-* **A token is always minted.** ``create_app`` allows no token at all, which is
-  fine for a server aimed at the machine's owner. A share link exists to be
-  handed to someone else, so it must carry proof of access even before anyone
-  decides to expose it beyond loopback.
+* **A token is always required.** A share link carries proof of access even
+  before anyone decides to expose it beyond loopback.
 * **The link is scoped to one session.** The token gates routes, not sessions,
   so an unscoped server would let the person you shared one session with read
   every session in the store. Pass ``session_id`` and everything else 404s.
@@ -27,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import ipaddress
+import os
 import secrets
 import socket
 from dataclasses import dataclass
@@ -153,6 +152,7 @@ class ShareServer:
         port: int = 0,
         token: Optional[str] = None,
         session_id: Optional[str] = None,
+        allowed_origins: Optional[frozenset[str]] = None,
     ) -> None:
         self._store = store
         # Reach is resolved to an address at start, so nothing downstream can
@@ -161,7 +161,8 @@ class ShareServer:
         self._expose_on_lan = bind == LOCAL_NETWORK
         self._bind = LOOPBACK if self._expose_on_lan else bind
         self._requested_port = port
-        self._token = token or secrets.token_urlsafe(16)
+        self._token = secrets.token_urlsafe(16) if token is None else token
+        self._allowed_origins = allowed_origins
         # None keeps every session reachable, which only makes sense for a host
         # serving its own. A share link should always name its session.
         self._session_ids = None if session_id is None else frozenset({session_id})
@@ -190,16 +191,35 @@ class ShareServer:
 
         import uvicorn
 
+        from .access import LOOPBACK_HOSTS
         from .server import ServerConfig, create_app
 
         bind_host = self._resolve_bind_host()
-        app = create_app(ServerConfig(store=self._store, token=self._token, session_ids=self._session_ids))
+        allowed_origins = self._allowed_origins
+        if allowed_origins is None:
+            configured = os.environ.get("KOLEGA_CODE_SHARE_ALLOWED_ORIGINS", "")
+            allowed_origins = (
+                frozenset(origin.strip() for origin in configured.split(",")) if configured.strip() else frozenset()
+            )
+        try:
+            app = create_app(
+                ServerConfig(
+                    store=self._store,
+                    token=self._token,
+                    session_ids=self._session_ids,
+                    allowed_hosts=LOOPBACK_HOSTS if bind_host in LOOPBACK_HOSTS else frozenset({bind_host}),
+                    allowed_origins=allowed_origins,
+                )
+            )
+        except ValueError as exc:
+            raise ShareServerError(f"Invalid share access configuration: {exc}") from exc
         config = uvicorn.Config(
             app,
             host=bind_host,
             port=self._requested_port,
             log_level="warning",
             ws=WS_IMPL,
+            proxy_headers=False,
             # Nothing here uses ASGI lifespan, and leaving it on makes startup
             # failures surface as a hang rather than an error.
             lifespan="off",

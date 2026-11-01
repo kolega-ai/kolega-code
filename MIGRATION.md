@@ -233,13 +233,34 @@ session in the store, including ones recorded for unrelated projects. With it,
 every other session answers 404 — not 403, which would confirm they exist.
 
 The same scope is available on the app directly, as
-`ServerConfig(store=..., session_ids=frozenset({...}))`. It defaults to `None`,
-meaning unrestricted, so a host serving its own sessions needs no change:
+`ServerConfig(store=..., token=..., session_ids=frozenset({...}))`. The session
+scope defaults to `None`, meaning all sessions. **A token is now required even
+for loopback embedding**; missing, empty, whitespace or non-ASCII tokens are
+rejected at app construction:
 
 ```python
-create_app(ServerConfig(store=store))                       # every session, as before
-create_app(ServerConfig(store=store, session_ids=allowed))  # only these
+import secrets
+
+token = secrets.token_urlsafe(16)
+create_app(ServerConfig(store=store, token=token))                       # every session
+create_app(ServerConfig(store=store, token=token, session_ids=allowed))  # only these
 ```
+
+HTTP and WebSocket requests also validate Host and Origin before authentication.
+`ServerConfig.allowed_hosts` defaults to `127.0.0.1`, `localhost` and `::1`; pass
+the concrete hostname or address when embedding on another interface. Origins
+for these native hosts must match the request's scheme, host and effective port
+unless explicitly included in `ServerConfig.allowed_origins`. Additional origins
+also admit their hostnames, but those inferred hosts require an exact configured
+Origin rather than trusting other schemes or ports on the same hostname.
+Only exact HTTP(S) origins are accepted, not paths or wildcard patterns.
+An absent Origin is allowed for API clients; `Origin: null` is rejected.
+
+`ShareServer` configures its bound address automatically. For a tunnel, pass
+`allowed_origins=frozenset({"https://share.example.com"})`, or set the
+comma-separated `KOLEGA_CODE_SHARE_ALLOWED_ORIGINS` process environment variable.
+An explicit `allowed_origins` argument overrides the environment, including an
+empty set. Forwarded headers are not trusted.
 
 **A served session is not redacted.** `export_bundle` scrubs every string it
 writes; this serves recorded events as they are. Anything the agent printed —

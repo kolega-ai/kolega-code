@@ -26,6 +26,8 @@ from kolega_code.web.hosting import ShareServer
 
 playwright_api = pytest.importorskip("playwright.async_api", reason="playwright is required for player tests")
 
+pytestmark = pytest.mark.usefixtures("isolated_cli_env")
+
 SESSION_ID = "a" * 32
 
 #: Read the parts of the page a viewer would judge "is this live?" by.

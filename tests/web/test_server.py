@@ -18,6 +18,8 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.events import AgentEvent, ArtifactPurpose, KnownEventType
 from kolega_code.web.server import ServerConfig, create_app
 
+TEST_TOKEN = "test-share-token"
+
 
 @pytest.fixture
 def store(tmp_path: Path) -> SessionStore:
@@ -58,7 +60,11 @@ async def _seed(store: SessionStore, project: Path, *, count: int = 4):
 
 
 def _client(store: SessionStore, token: str | None = None) -> TestClient:
-    return TestClient(create_app(ServerConfig(store=store, token=token)))
+    return TestClient(
+        create_app(ServerConfig(store=store, token=TEST_TOKEN if token is None else token)),
+        base_url="http://127.0.0.1",
+        headers={"Authorization": f"Bearer {TEST_TOKEN}"} if token is None else None,
+    )
 
 
 @pytest.mark.asyncio
@@ -217,7 +223,7 @@ async def test_stream_replays_backlog_then_follows_live(store: SessionStore, tmp
     events = FileSessionEventStore(store.journal(record.session_id))
 
     with _client(store) as client:
-        with client.websocket_connect(f"/api/sessions/{record.session_id}/stream") as socket:
+        with client.websocket_connect(f"ws://127.0.0.1/api/sessions/{record.session_id}/stream") as socket:
             backlog = [json.loads(socket.receive_text()) for _ in range(4)]
             assert [item["event_type"] for item in backlog][0] == KnownEventType.TURN_STARTED
 
@@ -243,11 +249,11 @@ async def test_stream_resumes_at_a_given_sequence(store: SessionStore, tmp_path:
     record = await _seed(store, tmp_path)
 
     with _client(store) as client:
-        with client.websocket_connect(f"/api/sessions/{record.session_id}/stream") as socket:
+        with client.websocket_connect(f"ws://127.0.0.1/api/sessions/{record.session_id}/stream") as socket:
             first = [json.loads(socket.receive_text()) for _ in range(3)]
         resume_at = first[-1]["seq"] + 1
         with client.websocket_connect(
-            f"/api/sessions/{record.session_id}/stream",
+            f"ws://127.0.0.1/api/sessions/{record.session_id}/stream",
             params={"from_seq": resume_at},
         ) as socket:
             rest = [json.loads(socket.receive_text()) for _ in range(3)]
@@ -440,8 +446,8 @@ async def test_a_scoped_server_serves_only_the_session_it_was_given(store: Sessi
     shared = await _seed(store, tmp_path / "shared")
     private = await _seed(store, tmp_path / "private")
 
-    app = create_app(ServerConfig(store=store, session_ids=frozenset({shared.session_id})))
-    with TestClient(app) as client:
+    app = create_app(ServerConfig(store=store, token=TEST_TOKEN, session_ids=frozenset({shared.session_id})))
+    with TestClient(app, base_url="http://127.0.0.1", headers={"Authorization": f"Bearer {TEST_TOKEN}"}) as client:
         assert client.get(f"/api/sessions/{shared.session_id}/events").status_code == 200
 
         for path in (
@@ -460,7 +466,7 @@ async def test_a_scoped_server_serves_only_the_session_it_was_given(store: Sessi
         assert private.session_id not in client.get("/").text
 
         with pytest.raises(WebSocketDisconnect) as closed:
-            with client.websocket_connect(f"/api/sessions/{private.session_id}/stream"):
+            with client.websocket_connect(f"ws://127.0.0.1/api/sessions/{private.session_id}/stream"):
                 pass
         assert closed.value.code == 4404
 
@@ -487,6 +493,6 @@ async def test_scope_is_checked_after_a_thread_id_is_resolved(store: SessionStor
     if not thread_id:
         pytest.skip("sessions in this store are not addressable by thread id")
 
-    app = create_app(ServerConfig(store=store, session_ids=frozenset({shared.session_id})))
-    with TestClient(app) as client:
+    app = create_app(ServerConfig(store=store, token=TEST_TOKEN, session_ids=frozenset({shared.session_id})))
+    with TestClient(app, base_url="http://127.0.0.1", headers={"Authorization": f"Bearer {TEST_TOKEN}"}) as client:
         assert client.get(f"/api/sessions/{thread_id}/events").status_code == 404

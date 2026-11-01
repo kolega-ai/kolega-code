@@ -83,9 +83,12 @@ has that port, the share quietly takes a different one and says so; a port you
 asked for explicitly is treated as a requirement instead, because a tunnel is
 probably pointed at it.
 
-The link carries a token that is generated per share and is the only thing gating
-access, so treat it as the secret it is. Sharing stops when you run `/share stop`
-or leave the session; nothing keeps listening afterwards.
+The link carries a token that is generated per share, so treat it as a secret.
+Every HTTP request and WebSocket connection is token-protected and checked
+against allowed hosts and browser origins. Loopback and LAN links work without
+extra configuration; a tunnel needs its exact public origin in
+`KOLEGA_CODE_SHARE_ALLOWED_ORIGINS` when you launch Kolega Code. Sharing stops when
+you run `/share stop` or leave the session; nothing keeps listening afterwards.
 
 Viewers are **read-only**: they cannot type, approve a permission prompt, or
 interrupt a turn.
