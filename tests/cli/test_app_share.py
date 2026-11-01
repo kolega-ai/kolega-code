@@ -22,6 +22,8 @@ from kolega_code.web.hosting import ALL_INTERFACES, LOOPBACK
 
 from ._app_test_utils import _build_sub_agent_test_app
 
+pytestmark = pytest.mark.usefixtures("isolated_cli_env")
+
 
 def _status(url: str) -> int:
     return urllib.request.urlopen(url, timeout=5).getcode()

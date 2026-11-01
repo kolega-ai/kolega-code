@@ -10,16 +10,16 @@ client attaches and watches, live or after the fact — without pretending to of
 interactive control, which needs the headless session runtime and a control lease
 and is deliberately absent rather than stubbed.
 
-Security posture: bound to loopback unless told otherwise, and an optional bearer
-token gates every route. Exposing a session beyond the machine is left to tools
-users already have (Tailscale, ngrok, an SSH tunnel), so this never opens a port
-to the world on its own.
+Security posture: a required bearer token gates every route, and Host/Origin
+checks cover HTTP and WebSocket requests. Hosts default to loopback; tunnels
+require explicitly allowed origins.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -35,6 +35,7 @@ from kolega_code.events import ArtifactPurpose
 from kolega_code.session.projection import replay
 from kolega_code.session.store import SessionStoreError
 
+from .access import LOOPBACK_HOSTS, HostOriginMiddleware, HostOriginPolicy
 from .theme_css import stylesheet
 
 ASSET_DIR = Path(__file__).parent / "assets"
@@ -44,10 +45,10 @@ ASSET_DIR = Path(__file__).parent / "assets"
 MAX_EVENTS_PER_READ = 5_000
 
 
-@dataclass
+@dataclass(frozen=True)
 class ServerConfig:
     store: SessionStore
-    token: Optional[str] = None
+    token: str
     #: Sessions this server is allowed to expose. ``None`` means every session in
     #: the store, which is right for a host serving its own sessions.
     #:
@@ -56,6 +57,8 @@ class ServerConfig:
     #: including ones recorded for unrelated projects. ``ShareServer`` sets this
     #: to the single session being shared.
     session_ids: Optional[frozenset[str]] = None
+    allowed_hosts: frozenset[str] = LOOPBACK_HOSTS
+    allowed_origins: frozenset[str] = frozenset()
 
 
 def _digest_ok(digest: str) -> bool:
@@ -64,6 +67,13 @@ def _digest_ok(digest: str) -> bool:
 
 def create_app(config: ServerConfig) -> FastAPI:
     """Build the session server application."""
+    if (
+        not isinstance(config.token, str)
+        or not config.token
+        or any(not 33 <= ord(char) <= 126 for char in config.token)
+    ):
+        raise ValueError("A nonempty token containing only visible ASCII characters is required")
+    policy = HostOriginPolicy(config.allowed_hosts, config.allowed_origins)
     app = FastAPI(
         title="Kolega Code session server",
         version="1",
@@ -95,7 +105,9 @@ def create_app(config: ServerConfig) -> FastAPI:
         ):
             return JSONResponse({"detail": "Not authorized"}, status_code=401)
         response = await call_next(request)
-        if config.token and query_token == config.token and request.cookies.get(TOKEN_COOKIE) != config.token:
+        if _token_matches(query_token, config.token) and not _token_matches(
+            request.cookies.get(TOKEN_COOKIE), config.token
+        ):
             # Hand the link's token to the browser so the page's own subresources
             # load. Host-only, not readable from script, and not sent on
             # cross-site requests.
@@ -375,6 +387,7 @@ def create_app(config: ServerConfig) -> FastAPI:
     if ASSET_DIR.is_dir():
         app.mount("/assets", StaticFiles(directory=ASSET_DIR), name="assets")
 
+    app.add_middleware(HostOriginMiddleware, policy=policy)
     return app
 
 
@@ -418,16 +431,18 @@ def _authorized(
     unauthorized and the page renders blank, so a token-protected server is only
     usable by API clients.
     """
-    if not config.token:
-        return True
     # An explicitly presented credential has to be the right one. Falling back to
     # the cookie when a caller sent a wrong header or query token would report
     # success for a credential the caller actually got wrong.
     if header is not None:
-        return header.startswith("Bearer ") and header[7:] == config.token
+        return header.startswith("Bearer ") and _token_matches(header[7:], config.token)
     if query_token is not None:
-        return query_token == config.token
-    return cookie_token == config.token
+        return _token_matches(query_token, config.token)
+    return _token_matches(cookie_token, config.token)
+
+
+def _token_matches(candidate: Optional[str], token: str) -> bool:
+    return candidate is not None and secrets.compare_digest(candidate.encode("utf-8"), token.encode("utf-8"))
 
 
 def _in_scope(config: ServerConfig, session_id: str) -> bool:

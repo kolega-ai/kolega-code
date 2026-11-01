@@ -177,6 +177,16 @@ with vision support.
 | `KOLEGA_CODE_SUBAGENTS` | Sub-agent dispatch (`dispatch_agent`) master switch: `on` or `off` (default `on`). Useful for headless or CI runs; the `--subagents` flag takes precedence |
 | `KOLEGA_CODE_SKILLS` | [Agent Skills](../../skills/) master switch: `on` or `off` (default `on`). When `off`, skills are not discovered, the `skill` tool is not exposed, and `/skills` reports that Agent Skills are disabled; the `--skills` flag takes precedence |
 
+## Live sharing
+
+| Variable | Purpose |
+| --- | --- |
+| `KOLEGA_CODE_SHARE_ALLOWED_ORIGINS` | Comma-separated exact HTTP(S) origins permitted in addition to the local `/share` origin, such as `https://share.example.com` or `http://jump-host:8765`. Set before launching Kolega Code. Wildcards, credentials, paths, queries and fragments are rejected. Each origin also permits its hostname; tokens remain required. |
+
+Loopback and `/share lan` links need no additional origin. Set this only for
+tunnels you control; see [live sharing](../../cli/share/#letting-someone-off-your-machine-watch).
+Forwarded headers cannot expand the allowlist.
+
 ## Streaming & retries
 
 A streaming response is bounded by an **idle budget**, not by a single socket read.

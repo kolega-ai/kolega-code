@@ -18,6 +18,8 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.web import hosting
 from kolega_code.web.hosting import ALL_INTERFACES, LOCAL_NETWORK, LOOPBACK, ShareServer, ShareServerError
 
+pytestmark = pytest.mark.usefixtures("isolated_cli_env")
+
 
 @pytest.fixture
 def store(tmp_path: Path) -> SessionStore:
@@ -26,13 +28,13 @@ def store(tmp_path: Path) -> SessionStore:
     return store
 
 
-def _status(url: str) -> int:
-    return urllib.request.urlopen(url, timeout=5).getcode()
+def _status(url: str, headers: dict[str, str] | None = None) -> int:
+    return urllib.request.urlopen(urllib.request.Request(url, headers=headers or {}), timeout=5).getcode()
 
 
-async def _get(url: str) -> int:
+async def _get(url: str, headers: dict[str, str] | None = None) -> int:
     """Fetch off the loop; a blocking call here would deadlock against the server."""
-    return await asyncio.to_thread(_status, url)
+    return await asyncio.to_thread(_status, url, headers)
 
 
 @pytest.mark.asyncio
@@ -165,6 +167,7 @@ async def test_reaching_the_lan_binds_one_address_not_every_interface(
         # The advertised link points at exactly what was bound.
         assert handle.host == LOOPBACK and f"{LOOPBACK}:{handle.port}" in handle.url
         assert handle.exposed, "the caller still asked for a reachable share"
+        assert await _get(server.session_url("a" * 32), {"Origin": handle.url}) == 200
     finally:
         await server.stop()
 
@@ -233,3 +236,160 @@ def test_the_wildcard_is_no_longer_a_way_to_ask_for_reach() -> None:
     """
     assert "0.0.0.0" not in {LOCAL_NETWORK, ALL_INTERFACES}
     assert ALL_INTERFACES == LOCAL_NETWORK, "the exported name has to keep working"
+
+
+@pytest.mark.asyncio
+async def test_access_checks_cover_real_http_and_websocket_connections(store: SessionStore) -> None:
+    import json
+
+    from websockets.asyncio.client import connect
+    from websockets.exceptions import InvalidStatus
+    from websockets.typing import Origin
+
+    from kolega_code.cli.session_event_store import FileSessionEventStore
+    from kolega_code.events import AgentEvent, KnownEventType
+
+    session_id = "a" * 32
+    await FileSessionEventStore(store.journal(session_id)).append(
+        AgentEvent(
+            session_id=session_id,
+            sender="agent",
+            event_type=KnownEventType.TURN_STARTED,
+            content={"turn_id": "live", "user_text": "watch"},
+        )
+    )
+    server = ShareServer(store, session_id=session_id)
+    handle = await server.start()
+    try:
+        url = server.session_url(session_id)
+        assert await _get(url, {"Origin": handle.url}) == 200
+        for headers, status in (
+            ({"Host": "attacker.invalid"}, 400),
+            ({"Origin": "https://attacker.invalid"}, 403),
+            ({"Origin": f"http://127.0.0.1:{handle.port % 65535 + 1}"}, 403),
+            ({"Origin": "null"}, 403),
+            ({"Origin": handle.url.replace("http:", "https:"), "X-Forwarded-Proto": "https"}, 403),
+        ):
+            with pytest.raises(urllib.error.HTTPError) as refused:
+                await _get(url, headers)
+            assert refused.value.code == status
+            assert "Set-Cookie" not in refused.value.headers
+
+        stream = f"{handle.url.replace('http:', 'ws:')}/api/sessions/{session_id}/stream?token={handle.token}"
+        async with connect(stream, origin=Origin(handle.url), proxy=None) as websocket:
+            first = json.loads(await asyncio.wait_for(websocket.recv(), timeout=10))
+            assert first["event_type"] == KnownEventType.TURN_STARTED
+
+        for headers in (
+            {"Origin": "https://attacker.invalid"},
+            {"Origin": "null"},
+            {"Origin": handle.url.replace("http:", "https:"), "X-Forwarded-Proto": "https"},
+        ):
+            with pytest.raises(InvalidStatus) as refused_socket:
+                async with connect(stream, additional_headers=headers, proxy=None):
+                    pytest.fail("An untrusted WebSocket upgrade was accepted")
+            assert refused_socket.value.response.status_code == 403
+
+        with pytest.raises(InvalidStatus) as refused_host:
+            async with connect(
+                stream.replace("127.0.0.1", "attacker.invalid"),
+                host=handle.host,
+                port=handle.port,
+                proxy=None,
+            ):
+                pytest.fail("An untrusted WebSocket Host was accepted")
+        assert refused_host.value.response.status_code == 403
+
+        with pytest.raises(InvalidStatus) as missing_token:
+            async with connect(stream.partition("?")[0], origin=Origin(handle.url), proxy=None):
+                pytest.fail("A tokenless WebSocket upgrade was accepted")
+        assert missing_token.value.response.status_code == 403
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_tunnel_origins_require_explicit_configuration(
+    store: SessionStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from websockets.asyncio.client import connect
+    from websockets.exceptions import InvalidStatus
+    from websockets.typing import Origin
+
+    origin = "https://share.example.test"
+    monkeypatch.setenv("KOLEGA_CODE_SHARE_ALLOWED_ORIGINS", origin)
+    server = ShareServer(store)
+    handle = await server.start()
+    try:
+        url = server.session_url("a" * 32)
+        assert await _get(url, {"Host": "share.example.test", "Origin": origin}) == 200
+        assert await _get(url, {"Origin": origin}) == 200
+        for host in (handle.host, "share.example.test"):
+            stream = f"ws://{host}:{handle.port}/api/sessions/{'a' * 32}/stream?token={handle.token}"
+            async with connect(
+                stream, origin=Origin(origin), host=handle.host, port=handle.port, proxy=None
+            ) as websocket:
+                assert websocket.response is not None and websocket.response.status_code == 101
+        tunnel_host = f"share.example.test:{handle.port}"
+        downgraded_origin = f"http://{tunnel_host}"
+        with pytest.raises(urllib.error.HTTPError) as downgrade:
+            await _get(url, {"Host": tunnel_host, "Origin": downgraded_origin})
+        assert downgrade.value.code == 403
+        with pytest.raises(InvalidStatus) as downgraded_socket:
+            async with connect(
+                f"ws://{tunnel_host}/api/sessions/{'a' * 32}/stream?token={handle.token}",
+                origin=Origin(downgraded_origin),
+                host=handle.host,
+                port=handle.port,
+                proxy=None,
+            ):
+                pytest.fail("An unconfigured HTTP tunnel Origin was accepted")
+        assert downgraded_socket.value.response.status_code == 403
+        with pytest.raises(urllib.error.HTTPError) as refused:
+            await _get(url, {"Host": "share.example.test", "Origin": "https://other.example.test"})
+        assert refused.value.code == 403
+    finally:
+        await server.stop()
+
+    restricted = ShareServer(store, allowed_origins=frozenset())
+    await restricted.start()
+    try:
+        with pytest.raises(urllib.error.HTTPError) as refused:
+            await _get(restricted.session_url("a" * 32), {"Origin": origin})
+        assert refused.value.code == 403
+    finally:
+        await restricted.stop()
+
+
+@pytest.mark.asyncio
+async def test_explicit_origins_override_the_environment(store: SessionStore, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KOLEGA_CODE_SHARE_ALLOWED_ORIGINS", "not-an-origin")
+    origin = "https://explicit.example.test"
+    server = ShareServer(store, allowed_origins=frozenset({origin}))
+    await server.start()
+    try:
+        assert await _get(server.session_url("a" * 32), {"Origin": origin}) == 200
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("configured", ["*", "https://share.example.test/path", "null", "https://share.example.test,"])
+async def test_invalid_tunnel_configuration_does_not_bind(
+    store: SessionStore, monkeypatch: pytest.MonkeyPatch, configured: str
+) -> None:
+    monkeypatch.setenv("KOLEGA_CODE_SHARE_ALLOWED_ORIGINS", configured)
+    server = ShareServer(store)
+    with pytest.raises(ShareServerError, match="Invalid share access configuration"):
+        await server.start()
+    assert not server.running
+    assert server.handle is None
+    assert server._socket is None
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_empty_token_is_not_replaced_by_a_generated_one(store: SessionStore) -> None:
+    server = ShareServer(store, token="")
+    with pytest.raises(ShareServerError, match="token"):
+        await server.start()
+    assert not server.running

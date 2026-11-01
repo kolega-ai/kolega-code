@@ -112,6 +112,14 @@ Watching is **read-only**. A viewer cannot type, approve a permission prompt, or
 interrupt a turn. A link reaches only the session you shared it from; every other
 session on your machine is invisible to it.
 
+Every HTTP request and WebSocket connection requires the link's token. The server
+also validates Host and Origin headers: loopback shares accept loopback hosts,
+and `/share lan` accepts the address it binds. For those native hosts, browser
+origins must match the requested scheme, host and port. Tunnel browser origins
+must match an explicitly configured origin, including its scheme and port.
+Requests without Origin, including top-level browser navigation and non-browser
+clients, still need a valid Host and token.
+
 :::danger
 **A live link is not redacted.** `share export` scrubs secrets and rewrites your
 home directory; `/share` serves the session exactly as recorded, because it is
@@ -127,9 +135,21 @@ see raw output, and run `/share stop` when you are done.
 no built-in relay: to let someone else watch, you forward the port yourself
 through a tunnel you control.
 
+**Allow the tunnel's exact public origin before starting Kolega Code.** For
+example, after your tunnel has assigned its address:
+
+```bash
+KOLEGA_CODE_SHARE_ALLOWED_ORIGINS=https://share.example.com kolega-code
+```
+
+Set the variable to the actual origin shown by Tailscale, ngrok or your SSH
+forwarding setup, including a non-default port when needed. Multiple origins can
+be comma-separated. Paths, credentials, queries, fragments and wildcards are
+rejected; this is not a suffix allowlist.
+
 Leave the server on **loopback** — the tunnel connects to it locally, so binding
 wider only widens exposure. Give the share a fixed port so the tunnel keeps
-pointing at the right place:
+pointing at the right place, running this in the process you just launched:
 
 ```bash
 /share 8765
@@ -144,8 +164,20 @@ local    http://127.0.0.1:8765/s/<session-id>?token=<token>
 tunnel   https://<tunnel-host>/s/<session-id>?token=<token>
 ```
 
-The token has to survive the swap. It is the only thing gating access, and the
-player needs it to load its own files and open its WebSocket.
+The token has to survive the swap: the player needs it to load its own files and
+open its WebSocket.
+
+An approved origin also approves its hostname, so both proxies that preserve
+the public Host and proxies that rewrite it to the local upstream work.
+This does not approve other origins on that hostname or downgrade HTTPS to HTTP.
+These are browser-Origin checks, not HTTPS-only transport enforcement; configure
+that at your tunnel or reverse proxy.
+
+Forwarded headers do not bypass these checks. Without explicit configuration,
+the public Host or the browser's WebSocket Origin is refused even when the link
+contains a valid token. The allowlist does not replace the token or change which
+session is shared. Stop the share and restart Kolega Code to change its
+environment-based allowlist.
 
 #### Tailscale
 
