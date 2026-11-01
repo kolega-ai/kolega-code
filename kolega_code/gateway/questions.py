@@ -10,7 +10,7 @@ the session's own control channel.
 from __future__ import annotations
 
 import json
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from kolega_code.agent import ToolExtension
 from kolega_code.agent.tool_definitions import tool_description_asset
@@ -18,9 +18,6 @@ from kolega_code.tools import ASK_USER_CHOICE_INPUT_SCHEMA, ToolError
 from kolega_code.tools.ask_user import normalize_choice_questions
 
 QUESTION_TOOL_NAME = "ask_user_choice"
-
-#: (question, labels, descriptions) -> chosen label.
-ElicitAnswer = Callable[[str, list[str], list[str]], Awaitable[str]]
 
 
 def build_question_extension(question_state: dict[str, Any]) -> ToolExtension:

@@ -56,7 +56,6 @@ class MemoryScreen(ModalScreen[None]):
         self._selected_reference: str | None = None
         self._loaded_entry: MemoryEntry | None = None
         self._editing = False
-        self._creating = False
         self._inspect_disabled = inspect_disabled
         self._agent_view = False
         self._busy = False
@@ -383,7 +382,6 @@ class MemoryScreen(ModalScreen[None]):
 
     def _set_edit_mode(self, editing: bool, *, creating: bool = False) -> None:
         self._editing = editing
-        self._creating = creating if editing else False
         self.query_one("#memory_filter", Input).disabled = editing
         self.query_one("#memory_entries", OptionList).disabled = editing
         self.query_one("#memory_preview_scroll").display = not editing
