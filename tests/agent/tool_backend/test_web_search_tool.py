@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
@@ -20,6 +21,7 @@ from kolega_code.agent.tool_backend.search_backends import (
     get_backend_class,
 )
 from kolega_code.agent.tool_backend.search_backends.base import clamp_results
+from kolega_code.agent.tool_backend.search_backends.firecrawl import _new_client
 from kolega_code.agent.tool_backend.web_search_tool import WebSearchTool
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider
 
@@ -181,11 +183,13 @@ async def test_firecrawl_keyed_uses_sdk() -> None:
     )
     client = Mock()
     client.search.return_value = data
-    with patch(f"{_FIRE}.Firecrawl", return_value=client):
+    with patch(f"{_FIRE}._new_client", return_value=client) as new_client:
         response = await build_search_backend("firecrawl", api_key="fc").search("q", max_results=4)
     assert [r.url for r in response.results] == ["https://a.test"]
     assert response.results[0].snippet == "desc"
     assert response.results[0].content == "full"
+    # The client is built with the configured key and timeout.
+    assert new_client.call_args.kwargs == {"api_key": "fc", "timeout": WebSearchTool.SEARCH_TIMEOUT_SECONDS}
     # limit is forwarded; firecrawl timeout is milliseconds.
     _, kwargs = client.search.call_args
     assert kwargs["limit"] == 4 and kwargs["timeout"] == int(WebSearchTool.SEARCH_TIMEOUT_SECONDS * 1000)
@@ -195,9 +199,28 @@ async def test_firecrawl_keyed_uses_sdk() -> None:
 async def test_firecrawl_401_mapped_to_not_configured() -> None:
     client = Mock()
     client.search.side_effect = RuntimeError("HTTP 401 Unauthorized")
-    with patch(f"{_FIRE}.Firecrawl", return_value=client):
+    with patch(f"{_FIRE}._new_client", return_value=client):
         with pytest.raises(SearchBackendNotConfigured):
             await build_search_backend("firecrawl", api_key="fc").search("q")
+
+
+def test_firecrawl_client_is_built_from_the_imported_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The keyed path reaches the real SDK import, not just the patched seam.
+
+    That import is deferred to first keyed search, so this also proves it still
+    resolves firecrawl-py and passes the credentials through.
+    """
+    import firecrawl
+
+    created: dict[str, Any] = {}
+
+    class _FakeClient:
+        def __init__(self, **kwargs: Any) -> None:
+            created.update(kwargs)
+
+    monkeypatch.setattr(firecrawl, "Firecrawl", _FakeClient)
+    assert isinstance(_new_client(api_key="fc-obviously-fake", timeout=3.0), _FakeClient)
+    assert created == {"api_key": "fc-obviously-fake", "timeout": 3.0}
 
 
 # ----------------------------------------------------------------------------- searxng
