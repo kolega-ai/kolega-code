@@ -31,6 +31,8 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Mapping, Optional
 
+from .accounting import UsageObservation, freeze_json, publish_observation, read_wire, reported_cost
+
 if TYPE_CHECKING:
     from .models import Message
 
@@ -384,9 +386,186 @@ def _normalize_google(metadata: Mapping[str, Any], provider: str, model: Optiona
     )
 
 
-def attach_normalized_usage(message: "Message", provider_name: str, model: Optional[str]) -> "Message":
+def attach_normalized_usage(
+    message: "Message", provider_name: str, model: Optional[str], *, complete: bool = True
+) -> "Message":
     """Attach the normalized usage to a completed message. Overwrite-safe:
     recomputing from the same raw metadata yields an equal value, so repeated
     stream finalization and double-attach paths stay idempotent."""
     message.usage = normalize_usage(message.usage_metadata, provider_name, model)
+    message.usage_observation = observation_from_metadata(
+        message.usage_metadata, provider_name, model, complete=complete
+    )
+    publish_observation(message.usage_observation)
     return message
+
+
+def observation_from_metadata(
+    metadata: Mapping[str, Any] | None, provider: str, model: str | None, *, complete: bool = False
+) -> UsageObservation:
+    raw = dict(metadata or {})
+    usage = normalize_usage(raw, provider, model)
+    values: dict[str, Any] = {name: getattr(usage, name) for name in _TOKEN_FIELDS}
+    if not usage.reported:
+        anthropic = provider in ANTHROPIC_USAGE_PROVIDERS or (provider.startswith("custom:") and "input_tokens" in raw)
+        google = provider in GOOGLE_USAGE_PROVIDERS
+        in_key, out_key = (
+            ("input_tokens", "output_tokens")
+            if anthropic
+            else ("prompt_token_count", "candidates_token_count")
+            if google
+            else ("prompt_tokens", "completion_tokens")
+        )
+        if provider in _ZERO_INPUT_SENTINEL_PROVIDERS and raw.get(in_key) == -1:
+            raw[in_key] = 0
+        inp = _strict_nonneg_int(raw.get(in_key))
+        out = _strict_nonneg_int(raw.get(out_key))
+        read_key = "cached_content_token_count" if google else "cache_read_input_tokens"
+        write_key = "cache_write_input_tokens"
+        reason_key = "thoughts_token_count" if google else "reasoning_output_tokens"
+        read = _strict_nonneg_int(raw.get(read_key))
+        write = _strict_nonneg_int(raw.get(write_key))
+        reasoning = _strict_nonneg_int(raw.get(reason_key))
+
+        def add(base: int | None, keys: tuple[str, ...]) -> int | None:
+            if base is None:
+                return None
+            for key in keys:
+                value, malformed = _classify(raw, key)
+                if malformed:
+                    return None
+                base += value or 0
+            return base
+
+        inp = add(
+            inp, (read_key, write_key) if anthropic else ("tool_use_prompt_token_count",) if google else (write_key,)
+        )
+        out = add(out, (reason_key,) if google or provider == "xai" else ())
+        values.update(
+            input_tokens=inp,
+            output_tokens=out,
+            total_tokens=(
+                inp + out
+                if inp is not None and out is not None
+                else _strict_nonneg_int(raw.get("total_token_count" if google else "total_tokens"))
+            ),
+            cache_read_input_tokens=read if inp is None or read is None or read <= inp else None,
+            cache_write_input_tokens=write,
+            reasoning_output_tokens=reasoning if out is None or reasoning is None or reasoning <= out else None,
+        )
+    quantities: dict[str, Any] = {}
+    for key in (
+        "cache_creation",
+        "server_tool_use",
+        "tool_calls_details",
+        "prompt_tokens_details",
+        "completion_tokens_details",
+        "candidates_tokens_details",
+        "cache_tokens_details",
+        "tool_use_prompt_tokens_details",
+        "service_tier",
+        "pricing_tier_input_tokens",
+        "resolved_model",
+        "base_model",
+    ):
+        if key not in raw or raw[key] is None:
+            continue
+        try:
+            quantities[key] = freeze_json(raw[key])
+        except ValueError:
+            logger.debug("Discarding non-JSON pricing detail %s", key)
+    for key, source in (
+        ("cache_write_5m", "ephemeral_5m_input_tokens"),
+        ("cache_write_1h", "ephemeral_1h_input_tokens"),
+    ):
+        value = read_detail_int(raw.get("cache_creation"), source)
+        if value is not None:
+            quantities[key] = value
+    for container, direction in (
+        ("prompt_tokens_details", "input"),
+        ("completion_tokens_details", "output"),
+        ("candidates_tokens_details", "output"),
+    ):
+        details = raw.get(container)
+        if isinstance(details, Mapping):
+            for modality in ("text", "audio", "image", "video"):
+                value = read_detail_int(details, f"{modality}_tokens")
+                if value is not None:
+                    quantities[f"{modality}_{direction}_tokens"] = value
+        elif isinstance(details, list):
+            for detail in details:
+                modality = read_wire(detail, "modality")
+                value = read_detail_int(detail, "token_count")
+                if isinstance(modality, str) and value is not None:
+                    key = f"{modality.lower()}_{direction}_tokens"
+                    quantities[key] = quantities.get(key, 0) + value
+    for container in ("server_tool_use", "tool_calls_details", "pricing_quantities"):
+        details = raw.get(container)
+        if isinstance(details, Mapping):
+            for key, value in details.items():
+                if isinstance(key, str) and _strict_nonneg_int(value) is not None:
+                    quantities[key] = value
+    return UsageObservation(
+        provider=provider,
+        model=raw["resolved_model"] if isinstance(raw.get("resolved_model"), str) else model,
+        **values,
+        complete=complete and usage.reported,
+        cost=reported_cost(provider, raw),
+        pricing_quantities=quantities,
+        unavailable_reason=None if complete and usage.reported else usage.unavailable_reason,
+    )
+
+
+def anthropic_usage_metadata(usage: Any) -> dict[str, Any]:
+    metadata = {
+        key: read_wire(usage, wire_key)
+        for key, wire_key in (
+            ("input_tokens", "input_tokens"),
+            ("output_tokens", "output_tokens"),
+            ("cache_read_input_tokens", "cache_read_input_tokens"),
+            ("cache_write_input_tokens", "cache_creation_input_tokens"),
+        )
+        if read_wire(usage, wire_key) is not None
+    }
+    reasoning = read_detail_int(read_wire(usage, "output_tokens_details"), "thinking_tokens")
+    if reasoning is not None:
+        metadata["reasoning_output_tokens"] = reasoning
+    for key in ("cache_creation", "server_tool_use", "service_tier", "pricing_tier_input_tokens"):
+        value = read_wire(usage, key)
+        if value is not None:
+            dump = getattr(value, "model_dump", None)
+            metadata[key] = dump(exclude_none=True) if callable(dump) else value
+    return metadata
+
+
+def google_usage_metadata(usage: Any) -> dict[str, Any]:
+    metadata = {
+        key: read_wire(usage, key)
+        for key in (
+            "prompt_token_count",
+            "candidates_token_count",
+            "total_token_count",
+            "cached_content_token_count",
+            "thoughts_token_count",
+            "tool_use_prompt_token_count",
+        )
+        if read_wire(usage, key) is not None
+    }
+    for key in (
+        "prompt_tokens_details",
+        "candidates_tokens_details",
+        "cache_tokens_details",
+        "tool_use_prompt_tokens_details",
+    ):
+        details = read_wire(usage, key)
+        if not isinstance(details, (list, tuple)):
+            continue
+        captured = []
+        for detail in details:
+            modality = read_wire(detail, "modality")
+            modality = getattr(modality, "value", modality)
+            count = read_detail_int(detail, "token_count")
+            if isinstance(modality, str) and count is not None:
+                captured.append({"modality": modality, "token_count": count})
+        metadata[key] = captured
+    return metadata

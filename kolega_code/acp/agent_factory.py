@@ -21,6 +21,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any, Awaitable, Callable, cast
+from uuid import uuid4
 
 from acp.exceptions import RequestError
 from acp.schema import (
@@ -32,6 +33,7 @@ from acp.schema import (
 )
 
 from kolega_code.acp.questions import build_question_extension
+from kolega_code.acp.accounting import AcpUsageAccounting
 from kolega_code.acp.session import AcpSession
 from kolega_code.agent import CoderAgent, PromptExtension, ToolExtension
 from kolega_code.agent.planningagent import PlanningAgent
@@ -45,6 +47,10 @@ from kolega_code.cli.provider_registry import PROVIDER_LABELS, ui_model_options
 from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
 from kolega_code.cli.session_store import SessionRecord, SessionStore, SessionStoreError
 from kolega_code.cli.settings import CliSettings, SettingsStore
+from kolega_code.cli.session_usage import SessionUsageSink
+from kolega_code.events import AgentEvent
+from kolega_code.llm.ledger import UsageLedger
+from kolega_code.llm.pricing import PricingResolver
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest, normalize_permission_mode
 from kolega_code.session.recording import RecordingConnectionManager
 
@@ -65,6 +71,15 @@ ConfigOption = SessionConfigOptionSelect | SessionConfigOptionBoolean
 
 def agent_class_for(mode: str) -> type[CoderAgent]:
     return PlanningAgent if mode == MODE_PLAN else CoderAgent
+
+
+class _AcpRecordingConnectionManager(RecordingConnectionManager):
+    generation: str
+
+    async def broadcast_event(self, event: AgentEvent, workspace_id: str, thread_id: str) -> None:
+        if event.event_type == "llm_context_update":
+            event = event.model_copy(update={"content": {**event.content, "acp_generation": self.generation}})
+        await super().broadcast_event(event, workspace_id, thread_id)
 
 
 class AgentFactory:
@@ -97,6 +112,9 @@ class AgentFactory:
         *,
         permission_callback: PermissionCallback | None = None,
     ) -> AcpSession | None:
+        existing = self._acp_sessions.get(session_id)
+        if existing is not None:
+            return existing
         try:
             record = self._store.load(session_id)
         except SessionStoreError as exc:
@@ -141,20 +159,27 @@ class AgentFactory:
         session = self._acp_sessions.pop(session_id, None)
         if session is None:
             return
-        self.persist(session)
         try:
+            self.persist(session)
             jobs = getattr(session.agent, "background_jobs", None)
             if jobs is not None:
                 jobs.set_callbacks(on_ready=None, on_delivered=None)
                 await jobs.close()
                 await jobs.deliver(session.agent)
             self.persist(session)
-            for old in session.retired_agents:
-                await old.cleanup()
-            session.retired_agents.clear()
-            await session.agent.cleanup()
         except Exception:  # noqa: BLE001 — closing must not mask the primary outcome
             logger.exception("acp session close: agent cleanup failed (session=%s)", session_id)
+        finally:
+            try:
+                for agent in [*session.retired_agents, session.agent]:
+                    try:
+                        await agent.cleanup()
+                    except Exception:  # noqa: BLE001
+                        logger.exception("acp agent cleanup failed (session=%s)", session_id)
+                session.retired_agents.clear()
+            finally:
+                if session.accounting is not None:
+                    await session.accounting.aclose()
 
     def list_sessions(self, cwd: str | None) -> list[SessionInfo]:
         records = self._store.list(project_path=Path(cwd).resolve() if cwd else None, recover=False)
@@ -332,6 +357,8 @@ class AgentFactory:
         # (as the TUI does before rebuilds) so the rebuild restores the full
         # conversation, not the stale pre-turn snapshot.
         self.persist(session)
+        if session.accounting is not None:
+            session.accounting.invalidate_context()
         agent, manager = await self._construct_agent(
             session.record,
             config,
@@ -339,12 +366,15 @@ class AgentFactory:
             permission_callback=session.permission_callback,
             permission_mode=old.permission_mode,
             question_state=session.question_state,
+            accounting=session.accounting,
         )
         # New generations must keep publishing into the session-lifetime event
         # consumer, including children still using the previous generation.
         if manager is not session.manager:
             raise RuntimeError("ACP rebuild must preserve the session connection manager")
         session.agent = agent
+        if session.accounting is not None:
+            session.accounting.rebind(agent)
         if session.runtime is not None:
             session.runtime.adopt(agent)
         jobs = getattr(old, "background_jobs", None)
@@ -378,14 +408,33 @@ class AgentFactory:
             else self._permission_mode
         )
         question_state: dict[str, Any] = {}
-        agent, manager = await self._construct_agent(
-            record,
-            config,
-            restore=restore,
-            permission_callback=permission_callback,
-            permission_mode=permission_mode,
-            question_state=question_state,
+        accounting = AcpUsageAccounting(
+            record.session_id,
+            baseline=record.usage,
+            ledger=UsageLedger(pricing_resolver=PricingResolver(getattr(config, "usage_pricing", None))),
         )
+        accounting.sink = SessionUsageSink(
+            self._store.journal(record.session_id),
+            self._store.recorder(record.session_id),
+            accounting.ledger,
+            mode="acp",
+        )
+        try:
+            await accounting.sink.start()
+            accounting.ledger.observer = accounting.sink
+            agent, manager = await self._construct_agent(
+                record,
+                config,
+                restore=restore,
+                permission_callback=permission_callback,
+                permission_mode=permission_mode,
+                question_state=question_state,
+                accounting=accounting,
+            )
+        except BaseException:
+            await accounting.aclose()
+            raise
+        accounting.rebind(agent)
         session = AcpSession(
             session_id=record.session_id,
             record=record,
@@ -394,6 +443,7 @@ class AgentFactory:
             permission_callback=permission_callback,
             config=config,
             question_state=question_state,
+            accounting=accounting,
         )
         self._acp_sessions[record.session_id] = session
         return session
@@ -407,17 +457,19 @@ class AgentFactory:
         permission_callback: PermissionCallback | None,
         permission_mode: PermissionMode | None = None,
         question_state: dict[str, Any] | None = None,
+        accounting: AcpUsageAccounting | None = None,
     ) -> tuple[CoderAgent, CliConnectionManager]:
         journal = self._store.journal(record.session_id)
         recorder = self._store.recorder(record.session_id)
         existing = self._acp_sessions.get(record.session_id)
         manager = existing.manager if existing is not None else CliConnectionManager()
-        recording = RecordingConnectionManager(
+        recording = _AcpRecordingConnectionManager(
             manager,
             FileSessionEventStore(journal),
             session_id=record.session_id,
             artifact_store=FileArtifactStore(journal),
         )
+        recording.generation = uuid4().hex
         interaction_mode = record.interaction_mode or MODE_BUILD
         agent_class = agent_class_for(interaction_mode)
         agent_holder: dict[str, Any] = {}
@@ -448,16 +500,25 @@ class AgentFactory:
             # Mirror the ask path: a resumed session hands the recorder over after
             # restoring history, so construction never double-records a resumed turn.
             session_recorder=None if restore else recorder,
+            usage_ledger=accounting.ledger if accounting is not None else None,
         )
+        setattr(agent, "_acp_generation", recording.generation)
         agent_holder["agent"] = agent
         agent.add_volatile_section(self._task_list_volatile_section(record))
-        lsp_messages = await agent.tool_collection.initialize()
-        for message in lsp_messages:
-            logger.debug("acp lsp: %s", message)
-        if restore:
-            agent.restore_message_history(record.history)
-            agent.restore_compaction_state(record.compaction)
-            agent.session_recorder = recorder
+        try:
+            lsp_messages = await agent.tool_collection.initialize()
+            for message in lsp_messages:
+                logger.debug("acp lsp: %s", message)
+            if restore:
+                agent.restore_message_history(record.history)
+                agent.restore_compaction_state(record.compaction)
+                agent.session_recorder = recorder
+        except BaseException:
+            try:
+                await agent.cleanup()
+            except Exception:  # noqa: BLE001
+                logger.exception("acp partial agent cleanup failed")
+            raise
         return agent, manager
 
     # -- error conversion -------------------------------------------------

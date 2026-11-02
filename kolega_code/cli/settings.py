@@ -309,6 +309,7 @@ class CliSettings:
     # Custom model endpoints keyed by endpoint id (provider value "custom:<id>").
     # Additive optional field — absent in older files -> empty mapping.
     custom_endpoints: dict[str, dict] = field(default_factory=dict)
+    usage_pricing: dict[str, Any] = field(default_factory=dict)
     # Account that scopes Cloudflare Workers AI requests (not a secret; the API
     # token lives in api_keys). Additive optional field — absent -> None.
     cloudflare_account_id: Optional[str] = None
@@ -377,6 +378,7 @@ class CliSettings:
             compression_threshold=_coerce_compression_threshold(data.get("compression_threshold")),
             # Additive optional field; absent in older files -> empty mapping.
             custom_endpoints=_coerce_custom_endpoints(data.get("custom_endpoints")),
+            usage_pricing=data["usage_pricing"] if isinstance(data.get("usage_pricing"), dict) else {},
             # Additive optional field; absent in older files -> None.
             cloudflare_account_id=_coerce_optional_text(data.get("cloudflare_account_id")),
         )
@@ -411,6 +413,7 @@ class CliSettings:
             "skills_enabled": self.skills_enabled,
             "compression_threshold": self.compression_threshold,
             "custom_endpoints": self.custom_endpoints,
+            "usage_pricing": self.usage_pricing,
             "cloudflare_account_id": self.cloudflare_account_id,
         }
 

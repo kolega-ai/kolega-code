@@ -63,26 +63,30 @@ def test_pre_pr3_journal_reports_partial_coverage_not_zero_authority(tmp_path):
     _run_turn(recorder)
 
     record = store.load(session.session_id)
-    assert record.usage["responses"] == 0
-    assert record.usage["total_tokens"] == 0
-    assert record.usage["coverage"] == {"accounted_runs": 0, "pre_accounting_turns": 2, "full": False}
+    assert record.usage["responses"] == 2
+    assert record.usage["total_tokens"] == 30
+    assert record.usage["coverage"]["pre_accounting_turns"] == 2
+    assert record.usage["coverage"]["legacy_identity_requests"] == 2
+    assert record.usage["coverage"]["full"] is False
     # Resume is unchanged: full history replays.
     assert len(record.history) == 4
 
 
-def test_post_marker_assistant_messages_counted_pre_marker_excluded(tmp_path):
+def test_legacy_pre_marker_evidence_retained_with_explicit_gaps(tmp_path):
     store, session = _store(tmp_path)
     recorder = store.recorder(session.session_id)
     journal = store.journal(session.session_id)
 
-    _run_turn(recorder, inp=100, out=1)  # pre-marker: excluded from sums
+    _run_turn(recorder, inp=100, out=1)
     _append_marker(journal)
     _run_turn(recorder, inp=10, out=5)  # post-marker: counted
 
     usage = store.load(session.session_id).usage
-    assert usage["responses"] == 1
-    assert usage["total_tokens"] == 15
-    assert usage["coverage"] == {"accounted_runs": 1, "pre_accounting_turns": 1, "full": False}
+    assert usage["responses"] == 2
+    assert usage["total_tokens"] == 116
+    assert usage["coverage"]["pre_accounting_turns"] == 1
+    assert usage["coverage"]["legacy_turns"] == 1
+    assert usage["coverage"]["full"] is False
 
 
 def test_rewound_and_prior_epoch_usage_still_counted(tmp_path):

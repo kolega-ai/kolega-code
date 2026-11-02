@@ -26,11 +26,13 @@ Two upstream endpoints are involved:
 from __future__ import annotations
 
 import json
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from .types import ThinkingEffortSpec
 from .validation import validate_model_spec
+from .pricing_feeds import feed_pricing, sanitize_spec_pricing
 
 PROVIDER = "openrouter"
 BASE_URL = "https://openrouter.ai/api/v1"
@@ -79,13 +81,6 @@ CACHE_FILENAME = "openrouter_models.json"
 
 class OpenRouterCatalogError(RuntimeError):
     """Raised when an OpenRouter payload cannot be used to build a catalog."""
-
-
-def _as_float(value: Any) -> Optional[float]:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _as_positive_int(value: Any) -> Optional[int]:
@@ -146,11 +141,14 @@ def is_catalogable(entry: Mapping[str, Any]) -> bool:
     if _as_positive_int(entry.get("context_length")) is None:
         return False
 
-    pricing = entry.get("pricing") or {}
-    prompt_price = _as_float(pricing.get("prompt"))
-    # A negative price marks a meta-router whose real model is chosen upstream.
-    if prompt_price is None or prompt_price < 0:
-        return False
+    pricing = entry.get("pricing")
+    if isinstance(pricing, Mapping):
+        try:
+            # -1 is the upstream routing sentinel, not a malformed rate card.
+            if Decimal(str(pricing.get("prompt"))) == -1:
+                return False
+        except InvalidOperation:
+            pass
 
     return True
 
@@ -232,6 +230,7 @@ def model_spec(entry: Mapping[str, Any]) -> dict[str, Any]:
 
     if identifier.startswith(_DROP_PRIOR_REASONING_PREFIXES):
         spec["drop_prior_reasoning"] = True
+    spec["pricing"] = feed_pricing(PROVIDER, identifier, entry)
 
     return spec
 
@@ -324,7 +323,7 @@ def featured_ids(
 
 def spec_to_jsonable(spec: Mapping[str, Any]) -> dict[str, Any]:
     """Return a JSON-serializable copy of a spec (``ThinkingEffortSpec`` expanded)."""
-    payload = dict(spec)
+    payload = sanitize_spec_pricing(spec)
     thinking = payload.get("thinking_effort")
     if isinstance(thinking, ThinkingEffortSpec):
         payload["thinking_effort"] = {
@@ -337,7 +336,7 @@ def spec_to_jsonable(spec: Mapping[str, Any]) -> dict[str, Any]:
 
 def spec_from_jsonable(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Rebuild a runtime spec from ``spec_to_jsonable`` output."""
-    spec = dict(payload)
+    spec = sanitize_spec_pricing(payload)
     thinking = spec.get("thinking_effort")
     if isinstance(thinking, Mapping):
         options = thinking.get("options") or []
@@ -397,6 +396,7 @@ def render_catalog_module(
     lines.append("")
     lines.append("OPENROUTER_SPECS = {")
     for identifier, spec in entries:
+        spec = sanitize_spec_pricing(spec)
         lines.append(f"    ({PROVIDER!r}, {identifier!r}): {{")
         ordered_keys = [key for key in _SPEC_KEY_ORDER if key in spec]
         ordered_keys += sorted(key for key in spec if key not in _SPEC_KEY_ORDER)

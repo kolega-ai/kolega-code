@@ -16,7 +16,9 @@ from typing import Any, Mapping, Sequence
 
 import httpx
 
-from .catalog.mistral import MISTRAL_REASONING
+from .catalog.mistral import MISTRAL_REASONING, MISTRAL_SPECS
+from .pricing import pricing_is_newer, pricing_to_json
+from .pricing_feeds import CHECKED_AT
 from .types import ThinkingEffortSpec
 from .validation import validate_model_spec
 
@@ -124,6 +126,28 @@ def _spec_for(identifier: str, item: Mapping[str, Any]) -> dict[str, Any] | None
     }
     if capabilities.get("reasoning") and identifier.startswith(_REASONING_ID_PREFIXES):
         spec["thinking_effort"] = MISTRAL_REASONING
+    bundled = MISTRAL_SPECS.get((PROVIDER, identifier), {}).get("pricing")
+    pricing = pricing_to_json(bundled) if bundled is not None else None
+    supplied = item.get("pricing")
+    if supplied is not None:
+        try:
+            candidate = pricing_to_json(supplied)
+            if (candidate["provider"], candidate["model"]) == (PROVIDER, identifier):
+                if pricing_is_newer(candidate, pricing):
+                    pricing = candidate
+        except (TypeError, ValueError, KeyError):
+            pass  # Malformed billing metadata must not discard usable capabilities.
+    spec["pricing"] = pricing or {
+        "schema_version": 1,
+        "pricing_id": f"mistral:{identifier}:unverified:{CHECKED_AT}",
+        "provider": PROVIDER,
+        "model": identifier,
+        "status": "unverified",
+        "billing_mode": "pay_as_you_go",
+        "checked_at": CHECKED_AT,
+        "reason": f"{identifier}: model discovery supplies no reviewed exact-route price; no family-rate inheritance.",
+        "sources": [{"url": MODELS_URL, "model_id": identifier, "checked_at": CHECKED_AT}],
+    }
     return spec
 
 
@@ -176,6 +200,8 @@ def fetch_models(*, api_key: str, timeout: float = 30.0) -> Any:
 def spec_to_jsonable(spec: Mapping[str, Any]) -> dict[str, Any]:
     """Return a JSON-serializable copy of a spec (``ThinkingEffortSpec`` expanded)."""
     payload = dict(spec)
+    if payload.get("pricing") is not None:
+        payload["pricing"] = pricing_to_json(payload["pricing"])
     thinking = payload.get("thinking_effort")
     if isinstance(thinking, ThinkingEffortSpec):
         payload["thinking_effort"] = {
@@ -189,6 +215,11 @@ def spec_to_jsonable(spec: Mapping[str, Any]) -> dict[str, Any]:
 def spec_from_jsonable(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Rebuild a runtime spec from ``spec_to_jsonable`` output."""
     spec = dict(payload)
+    if spec.get("pricing") is not None:
+        try:
+            spec["pricing"] = pricing_to_json(spec["pricing"])
+        except (TypeError, ValueError, KeyError):
+            spec.pop("pricing", None)
     thinking = spec.get("thinking_effort")
     if isinstance(thinking, Mapping) and thinking.get("mode") == "mistral_effort":
         spec["thinking_effort"] = ThinkingEffortSpec(

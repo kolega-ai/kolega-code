@@ -214,6 +214,14 @@ def test_cache_read_only_usage_leaves_prompt_tokens_alone() -> None:
     message = _final_message_from_stream(_Usage(1000, _Details(cached_tokens=200, cache_write_tokens=0)))
 
     assert message.usage_metadata["cache_read_input_tokens"] == 200
+    assert message.usage_metadata["cache_write_input_tokens"] == 0
+    assert message.usage_metadata["prompt_tokens"] == 1000
+
+
+def test_missing_cache_write_counter_remains_unknown() -> None:
+    message = _final_message_from_stream(_Usage(1000, {"cached_tokens": 200}))
+
+    assert message.usage_metadata["cache_read_input_tokens"] == 200
     assert "cache_write_input_tokens" not in message.usage_metadata
     assert message.usage_metadata["prompt_tokens"] == 1000
 

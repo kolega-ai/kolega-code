@@ -29,6 +29,8 @@ from kolega_code.llm.specs import openrouter_catalog as openrouter
 from kolega_code.llm.specs import perplexity_catalog as perplexity
 from kolega_code.llm.specs import tinker_catalog as tinker
 from kolega_code.llm.specs.validation import validate_model_spec
+from kolega_code.llm.specs.accessors import get_model_pricing
+from kolega_code.llm.specs.pricing import pricing_datetime, pricing_is_newer, pricing_to_json
 
 from .provider_registry import PROVIDER_LABELS, get_ui_model, rebuild_ui_model_options
 from .session_store import default_state_dir
@@ -164,8 +166,7 @@ def apply_catalog_overlay(
 ) -> int:
     """Merge a cached ``catalog`` overlay into ``MODEL_SPECS``; return entries added.
 
-    Bundled entries always win: a refresh may add models, never redefine the
-    reviewed specs (or the featured set) that shipped with the release. Any
+    Bundled capabilities always win; validated newer pricing can be replaced. Any
     failure is silent by design — the bundled snapshot is a complete catalog on
     its own, and no CLI command should fail because a cache file is unreadable.
     """
@@ -181,6 +182,13 @@ def apply_catalog_overlay(
     for identifier, spec in entries:
         key = (module.PROVIDER, identifier)
         if key in MODEL_SPECS:
+            candidate = spec.get("pricing")
+            if (
+                isinstance(candidate, dict)
+                and (candidate.get("provider"), candidate.get("model")) == key
+                and pricing_is_newer(candidate, MODEL_SPECS[key].get("pricing"))
+            ):
+                MODEL_SPECS[key] = dict(MODEL_SPECS[key], pricing=pricing_to_json(candidate))
             continue
         try:
             validate_model_spec(spec)
@@ -188,7 +196,14 @@ def apply_catalog_overlay(
             continue
         # Overlay models are never featured: the picker keeps showing the
         # release's reviewed most-used set.
-        MODEL_SPECS[key] = {key_name: value for key_name, value in spec.items() if key_name != "featured"}
+        merged = {key_name: value for key_name, value in spec.items() if key_name not in {"featured", "pricing"}}
+        try:
+            pricing = pricing_to_json(spec["pricing"])
+            if (pricing["provider"], pricing["model"]) == key:
+                merged["pricing"] = pricing
+        except (ValueError, TypeError, KeyError):
+            pass
+        MODEL_SPECS[key] = merged
         added += 1
 
     if added:
@@ -240,6 +255,7 @@ def catalog_rows(
                 "thinking_efforts": list(option.thinking_efforts) if option else [],
                 "default_thinking_effort": option.default_thinking_effort if option else None,
                 "featured": featured,
+                "pricing": get_model_pricing(provider_value, model),
             }
         )
 
@@ -248,7 +264,7 @@ def catalog_rows(
     return rows
 
 
-def format_rows(rows: Sequence[dict[str, Any]]) -> str:
+def format_rows(rows: Sequence[dict[str, Any]], *, pricing: bool = False) -> str:
     """Render catalog rows as an aligned plain-text table."""
     if not rows:
         return "No models matched."
@@ -273,6 +289,46 @@ def format_rows(rows: Sequence[dict[str, Any]]) -> str:
     if any(row["featured"] for row in rows):
         lines.append("")
         lines.append("* listed in the model picker and offered to sub-agents; other models work by exact id.")
+    if pricing:
+        lines.append("")
+        for row in rows:
+            card = row.get("pricing")
+            identity = f"{row['provider']}/{row['model']}"
+            if not card:
+                lines.append(f"{identity}: pricing unavailable (no validated exact-route card)")
+                continue
+            denomination = card.get("currency") or card.get("denomination") or "-"
+            status = card["status"]
+            if status == "priced":
+                rates = ", ".join(f"{name}={rate}" for name, rate in card.get("rates", {}).items())
+                text = f"{denomination} {card.get('unit', 'per_million_tokens')}: {rates or 'see component schedules'}"
+                if card.get("schedules"):
+                    text += " [tiered/scheduled; conditions apply]"
+            else:
+                text = card.get("reason", status)
+            age = (dt.datetime.now(dt.timezone.utc) - pricing_datetime(card["checked_at"])).days
+            lines.append(f"{identity}: {status} · {text}")
+            lines.append(
+                f"  {card['pricing_id']} · checked {card['checked_at']}"
+                + (" · due for review (>30 days)" if age > 30 else "")
+            )
+            if card.get("conditions"):
+                lines.append("  Applies: " + json.dumps(card["conditions"], sort_keys=True))
+            if card.get("default_context"):
+                lines.append("  Documented defaults: " + json.dumps(card["default_context"], sort_keys=True))
+            for schedule in card.get("schedules", []):
+                when = json.dumps(schedule.get("when", schedule.get("conditions", {})), sort_keys=True)
+                rates = ", ".join(f"{name}={rate}" for name, rate in schedule.get("rates", {}).items())
+                lines.append(f"  {schedule.get('mode', 'whole_request')} {schedule.get('id', '')} {when}: {rates}")
+            for component in card.get("components", []):
+                lines.append(
+                    f"  Component {component['name']}: {component['rate']} {denomination}"
+                    f" {component.get('unit', 'per_request')}"
+                    f" · quantity={component.get('quantity', component['name'])}"
+                    + (f" · {json.dumps(component['when'], sort_keys=True)}" if component.get("when") else "")
+                )
+            for source in card["sources"]:
+                lines.append(f"  {source.get('url', 'Operator settings')} [{source['model_id']}]")
     return "\n".join(lines)
 
 
@@ -299,7 +355,7 @@ def run_models_list(args: Any, printer) -> int:
     if getattr(args, "json", False):
         printer(json.dumps(rows, indent=2))
     else:
-        printer(format_rows(rows))
+        printer(format_rows(rows, pricing=bool(getattr(args, "pricing", False))))
     return 0
 
 

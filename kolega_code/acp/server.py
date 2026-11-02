@@ -67,6 +67,7 @@ from kolega_code.acp.agent_factory import (
     MODE_PLAN,
     AgentFactory,
 )
+from kolega_code.acp.accounting import USAGE_META_KEY, native_prompt_usage
 from kolega_code.acp.bridge import AcpBridge, SUB_SESSION_PREFIX
 from kolega_code.acp.control import AcpControlAdapter
 from kolega_code.acp.diffs import AcpDiffProvider
@@ -78,6 +79,7 @@ from kolega_code.cli.config import CliConfigError
 from kolega_code.cli.session_store import SessionStoreError
 from kolega_code.cli.slash_commands import agent_command_entries
 from kolega_code.llm.models import MessageHistory
+from kolega_code.llm.ledger import logical_prompt_scope
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
 from kolega_code.session.control import ControlChannel, DEFAULT_REQUEST_TIMEOUT_SECONDS
 from kolega_code.session.projection import replay, sub_agent_key
@@ -114,6 +116,7 @@ class AcpAgent(Agent):
         self._sessions: dict[str, AcpSession] = {}
         self._conn: Client
         self._client_capabilities: ClientCapabilities | None = None
+        self._native_end_turn_usage = False
 
     def on_connect(self, conn: Client) -> None:
         self._conn = conn
@@ -127,6 +130,9 @@ class AcpAgent(Agent):
     ) -> InitializeResponse:
         logger.info("acp initialize (protocol %s, client=%s)", protocol_version, client_info)
         self._client_capabilities = client_capabilities
+        meta = getattr(client_capabilities, "field_meta", None) or kwargs.get("_meta") or kwargs.get("field_meta") or {}
+        usage_meta = meta.get(USAGE_META_KEY, {})
+        self._native_end_turn_usage = isinstance(usage_meta, dict) and usage_meta.get("endTurnUsage") == "disjoint-v1"
         return InitializeResponse(
             protocol_version=protocol_version,
             agent_capabilities=AgentCapabilities(
@@ -294,9 +300,22 @@ class AcpAgent(Agent):
         self._start_session_tasks(session)
         async with session.execution_lock:
             session.auto_continue_paused = False
-            stop_reason = await self._run_turn(session, text, attachments)
-            self._factory.persist(session)
-        return PromptResponse(stop_reason=stop_reason)
+            prompt_id = uuid4().hex
+            with logical_prompt_scope(prompt_id):
+                try:
+                    stop_reason = await self._run_turn(session, text, attachments)
+                    self._factory.persist(session)
+                finally:
+                    if session.accounting is not None:
+                        await session.accounting.flush()
+        if session.accounting is None:
+            return PromptResponse(stop_reason=stop_reason)
+        extension = await session.accounting.finish_prompt(prompt_id)
+        return PromptResponse(
+            stop_reason=stop_reason,
+            field_meta={USAGE_META_KEY: extension},
+            usage=native_prompt_usage(extension, enabled=self._native_end_turn_usage),
+        )
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         session = self._sessions.get(session_id)
@@ -445,6 +464,10 @@ class AcpAgent(Agent):
         conn = getattr(self, "_conn", None)
         if conn is None:
             return
+        if session.accounting is not None:
+            session.accounting.start_publisher(lambda update: self._send_session_update(session, update))
+            await session.accounting.publish(force=True)
+            return
         update = build_usage_update(session.agent)
         if update is not None:
             await conn.session_update(session_id=session.session_id, update=update, source="kolega_code")
@@ -536,7 +559,10 @@ class AcpAgent(Agent):
             return
         if session.event_task is None:
             session.bridge = AcpBridge(
-                self._conn, diff_provider=AcpDiffProvider.for_session(session), agent=session.agent
+                self._conn,
+                diff_provider=AcpDiffProvider.for_session(session),
+                agent=session.agent,
+                accounting=session.accounting,
             )
             session.event_task = asyncio.create_task(
                 self._pump_events(session, session.bridge), name=f"acp-events-{session.session_id}"
@@ -598,7 +624,8 @@ class AcpAgent(Agent):
                         and not session.auto_continue_paused
                         and getattr(session.agent, "background_needs_turn", True)
                     ):
-                        await self._run_turn(session, None)
+                        with logical_prompt_scope(f"background-{uuid4().hex}"):
+                            await self._run_turn(session, None)
                     self._factory.persist(session)
                     if jobs is not getattr(session.agent, "background_jobs", None):
                         return  # a context reset installed another epoch's owner
@@ -724,6 +751,8 @@ class AcpAgent(Agent):
         logger.info("acp plan approval pending (session=%s)", session.session_id)
 
     def _clear_agent_context(self, session: AcpSession) -> None:
+        if session.accounting is not None:
+            session.accounting.invalidate_context()
         recorder = getattr(session.agent, "session_recorder", None)
         if recorder is not None and hasattr(recorder, "start_epoch"):
             recorder.start_epoch("acp_implement_plan_clear")

@@ -28,6 +28,7 @@ import httpx
 
 from .types import ThinkingEffortSpec
 from .validation import validate_model_spec
+from .pricing_feeds import reviewed_pricing, sanitize_spec_pricing
 
 PROVIDER = "ollama_cloud"
 MODELS_URL = "https://ollama.com/v1/models"
@@ -163,6 +164,7 @@ def _model_spec(identifier: str, detail: Mapping[str, Any], capabilities: set[st
     )
     if "thinking" in capabilities:
         spec["thinking_effort"] = THINKING_EFFORT_SPEC
+    spec["pricing"] = reviewed_pricing(PROVIDER, identifier)
     return spec
 
 
@@ -228,7 +230,7 @@ def fetch_models(*, timeout: float = 30.0, api_key: Optional[str] = None) -> dic
 
 def spec_to_jsonable(spec: Mapping[str, Any]) -> dict[str, Any]:
     """Return a JSON-serializable copy of a model spec."""
-    payload = dict(spec)
+    payload = sanitize_spec_pricing(spec)
     thinking = payload.get("thinking_effort")
     if isinstance(thinking, ThinkingEffortSpec):
         payload["thinking_effort"] = {
@@ -241,7 +243,7 @@ def spec_to_jsonable(spec: Mapping[str, Any]) -> dict[str, Any]:
 
 def spec_from_jsonable(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Rebuild and validate a runtime model spec from cached JSON."""
-    spec = dict(payload)
+    spec = sanitize_spec_pricing(payload)
     thinking = spec.get("thinking_effort")
     if thinking is not None:
         if not isinstance(thinking, Mapping):
@@ -303,6 +305,7 @@ def render_catalog_module(
     lines.append("")
     lines.append("OLLAMA_CLOUD_SPECS = {")
     for identifier, spec in entries:
+        spec = sanitize_spec_pricing(spec)
         lines.append(f"    ({PROVIDER!r}, {identifier!r}): {{")
         ordered_keys = [key for key in _SPEC_KEY_ORDER if key in spec]
         ordered_keys += sorted(key for key in spec if key not in _SPEC_KEY_ORDER)

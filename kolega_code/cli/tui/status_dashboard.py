@@ -12,6 +12,7 @@ from textual.content import Content
 from textual.widgets import Static
 
 from kolega_code.agent import AgentEvent
+from kolega_code.llm.pricing import usage_cost_summary
 
 from .. import messages, theme
 from ..theme import Color, Glyph
@@ -154,7 +155,15 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             return (base if isinstance(base, int) else 0) + getattr(live, key)
 
         coverage = baseline.get("coverage") or {}
-        partial = isinstance(coverage, dict) and bool(coverage.get("pre_accounting_turns"))
+        partial = (
+            isinstance(coverage, dict)
+            and any(value for key, value in coverage.items() if key not in {"accounted_runs", "full"})
+        ) or bool(
+            getattr(live, "unreported", 0)
+            or getattr(live, "open", 0)
+            or getattr(live, "partial", 0)
+            or getattr(live, "missing", 0)
+        )
         # No requests is different from a request with zero/unreported tokens.
         # Historical partial coverage must remain visible even with zero totals.
         if not partial and not any(
@@ -192,7 +201,11 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         if failed:
             requests_line += " · " + theme.styled(f"{failed:,} failed", Color.ERROR)
 
-        return f"{session_line}\n{split_line}\n{cache_line}\n{requests_line}"
+        prior_costs = baseline.get("costs") or ({"complete": False} if baseline else {})
+        cost_line = usage_cost_summary(prior_costs, getattr(live, "costs", None))
+        return f"{session_line}\n{split_line}\n{cache_line}\n{requests_line}" + (
+            f"\n{escape(cost_line)}" if cost_line else ""
+        )
 
     def _worktree_summary(self) -> str:
         """``name (branch)`` when this session runs in a linked worktree, else "".

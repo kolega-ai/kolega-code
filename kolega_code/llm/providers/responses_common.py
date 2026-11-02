@@ -40,7 +40,8 @@ from ..models import (
 )
 from ..specs import build_thinking_request_params
 from ..tool_execution_ids import ToolExecutionIdRegistry
-from ..usage import attach_normalized_usage, read_detail_int
+from ..accounting import UsageObservation, publish_observation, read_wire
+from ..usage import attach_normalized_usage, observation_from_metadata, read_detail_int
 from .models import GenerationParams
 from .openai import OpenAIProvider
 
@@ -376,9 +377,9 @@ def _usage_from_response(response: Any) -> Dict[str, Any]:
     usage = getattr(response, "usage", None)
     if usage is None:
         return {}
-    input_tokens = getattr(usage, "input_tokens", 0) or 0
-    output_tokens = getattr(usage, "output_tokens", 0) or 0
-    total_tokens = getattr(usage, "total_tokens", 0) or (input_tokens + output_tokens)
+    input_tokens = read_wire(usage, "input_tokens")
+    output_tokens = read_wire(usage, "output_tokens")
+    total_tokens = read_wire(usage, "total_tokens")
     metadata: Dict[str, Any] = {
         "prompt_tokens": input_tokens,
         "completion_tokens": output_tokens,
@@ -387,7 +388,7 @@ def _usage_from_response(response: Any) -> Dict[str, Any]:
     }
     details = getattr(usage, "input_tokens_details", None)
     cached = read_detail_int(details, "cached_tokens")
-    if cached:
+    if cached is not None:
         metadata["cache_read_input_tokens"] = cached
     # Deliberately NOT captured: input_tokens_details.cache_write_tokens. The
     # chat-completions capture path subtracts cache writes from prompt_tokens
@@ -399,11 +400,20 @@ def _usage_from_response(response: Any) -> Dict[str, Any]:
     if reasoning is not None:
         metadata["reasoning_output_tokens"] = reasoning
     # Perplexity's usage extras (dollar cost, per-tool invocation counts).
-    extras = getattr(usage, "model_extra", None) or {}
-    for key in ("cost", "tool_calls_details"):
-        value = extras.get(key)
+    for key in (
+        "cost",
+        "cost_details",
+        "cost_in_usd_ticks",
+        "tool_calls_details",
+        "server_tool_use",
+        "pricing_tier_input_tokens",
+    ):
+        value = read_wire(usage, key)
         if value is not None:
             metadata[key] = value
+    resolved = getattr(response, "model", None)
+    if isinstance(resolved, str):
+        metadata["resolved_model"] = resolved
     return metadata
 
 
@@ -507,6 +517,13 @@ class ResponsesStreamWrapper:
         self._deferred_tool_starts: List[MessageChunk] = []
         self._ready_chunks: List[MessageChunk] = []
         self._tool_calls_validated = False
+        self._observed_usage: dict[str, Any] = {}
+        self._usage_complete = False
+
+    def get_usage_observation(self) -> UsageObservation:
+        return observation_from_metadata(
+            self._observed_usage, self._provider_name, self._model, complete=self._usage_complete
+        )
 
     async def __aenter__(self) -> "ResponsesStreamWrapper":
         return self
@@ -688,6 +705,15 @@ class ResponsesStreamWrapper:
         return self._thinking_chunk(display)
 
     def _handle_event(self, event: Any) -> MessageChunk:
+        response = getattr(event, "response", None)
+        if response is not None and getattr(response, "usage", None) is not None:
+            self._observed_usage.update(_usage_from_response(response))
+            self._usage_complete = getattr(event, "type", None) in (
+                "response.completed",
+                "response.incomplete",
+                "response.failed",
+            )
+            publish_observation(self.get_usage_observation())
         event_type = getattr(event, "type", "")
         if event_type == "response.output_text.delta":
             delta = getattr(event, "delta", "") or ""
@@ -1181,9 +1207,12 @@ class ResponsesProviderBase(OpenAIProvider):
         wrapper = ResponsesStreamWrapper(
             responses_stream, provider_name=self.provider_name, model=str(request["model"])
         )
-        async with wrapper:
-            async for _chunk in wrapper:
-                pass
+        try:
+            async with wrapper:
+                async for _chunk in wrapper:
+                    pass
+        finally:
+            publish_observation(wrapper.get_usage_observation())
         message = await wrapper.get_final_message()
         if not message.usage_metadata:
             logger.warning("%s.generate: response had no usage metadata; billing may be skipped", type(self).__name__)

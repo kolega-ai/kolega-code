@@ -15,7 +15,8 @@ from kolega_code.utils.images import ascii_thumbnail_from_base64
 from .specs.accessors import _provider_value
 from .specs.thinking import reasoning_replay_field
 from .tool_execution_ids import ToolExecutionIdRegistry, new_tool_execution_id
-from .usage import NormalizedUsage, read_detail_int
+from .accounting import UsageObservation
+from .usage import NormalizedUsage, anthropic_usage_metadata, google_usage_metadata, read_detail_int
 
 
 class _LazyModule:
@@ -1445,6 +1446,7 @@ class Message:
         tool_calls: Optional[List[ToolCall]] = None,
         usage_metadata: Optional[Dict[str, Any]] = None,
         usage: Optional[NormalizedUsage] = None,
+        usage_observation: Optional[UsageObservation] = None,
     ):
         self.role = role
         self.content = content
@@ -1455,6 +1457,7 @@ class Message:
         # layer on every completed response (kolega_code/llm/usage.py). None on
         # user/system messages and on messages restored from pre-usage sessions.
         self.usage = usage
+        self.usage_observation = usage_observation
 
     def get_text_content(self) -> str:
         """
@@ -1657,13 +1660,8 @@ class Message:
         usage_metadata = {}
         if hasattr(message, "usage"):
             usage = message.usage
-            usage_metadata = {
-                "input_tokens": getattr(usage, "input_tokens", 0),
-                "output_tokens": getattr(usage, "output_tokens", 0),
-                "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", 0),
-                "cache_write_input_tokens": getattr(usage, "cache_creation_input_tokens", 0),
-                "provider": "anthropic",
-            }
+            usage_metadata = anthropic_usage_metadata(usage)
+            usage_metadata["provider"] = "anthropic"
             # Moonshot extends the Anthropic usage shape with a thinking-token
             # subset of output_tokens (non-streaming responses only).
             thinking = read_detail_int(getattr(usage, "output_tokens_details", None), "thinking_tokens")
@@ -1787,12 +1785,8 @@ class Message:
         usage_metadata = {}
         usage = getattr(message, "usage_metadata", None)
         if usage is not None:
-            usage_metadata = {
-                "prompt_token_count": getattr(usage, "prompt_token_count", 0),
-                "candidates_token_count": getattr(usage, "candidates_token_count", 0),
-                "total_token_count": getattr(usage, "total_token_count", 0),
-                "provider": "google",
-            }
+            usage_metadata = google_usage_metadata(usage)
+            usage_metadata["provider"] = "google"
             for optional_key in (
                 "cached_content_token_count",
                 "thoughts_token_count",
@@ -1936,6 +1930,8 @@ class Message:
         }
         if self.usage is not None:
             result["usage"] = self.usage.to_dict()
+        if self.usage_observation is not None:
+            result["usage_observation"] = self.usage_observation.to_dict()
         return result
 
     @classmethod
@@ -1963,6 +1959,7 @@ class Message:
             tool_calls=tool_calls,  # Populate from deserialized content
             usage_metadata=data.get("usage_metadata", {}),
             usage=NormalizedUsage.from_dict(data.get("usage")),
+            usage_observation=UsageObservation.from_dict(data.get("usage_observation")),
         )
 
     def to_markdown(self) -> str:

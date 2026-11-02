@@ -1011,6 +1011,7 @@ def build_agent_config(
                 f"Unsupported edit protocol '{edit_protocol_value}'. Valid protocols: {valid}"
             ) from exc
         config = AgentConfig(
+            usage_pricing=settings.usage_pricing if settings else {},
             anthropic_api_key=_api_key_for_provider(ModelProvider.ANTHROPIC, loaded_env, settings),
             openai_api_key=_api_key_for_provider(ModelProvider.OPENAI, loaded_env, settings),
             google_api_key=_api_key_for_provider(ModelProvider.GOOGLE, loaded_env, settings),

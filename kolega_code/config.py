@@ -205,6 +205,8 @@ class AgentConfig(BaseModel):
     contexts and their respective token limits and rate limits.
     """
 
+    usage_pricing: Dict[str, Any] = Field(default_factory=dict)
+
     # API Keys for different providers
     anthropic_api_key: Optional[str] = Field(default=None, description="API key for Anthropic")
     openai_api_key: Optional[str] = Field(default=None, description="API key for OpenAI")

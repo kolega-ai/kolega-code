@@ -529,7 +529,11 @@ def test_catalog_entries_are_uniform_regardless_of_id():
     entries = catalog.catalog_entries(payload)
     assert [identifier for identifier, _ in entries] == ["openai/gpt-5.6-sol", "perplexity/brand-new-model"]
     sol_spec, fallback_spec = entries[0][1], entries[1][1]
-    assert sol_spec == fallback_spec
+    assert {key: value for key, value in sol_spec.items() if key != "pricing"} == {
+        key: value for key, value in fallback_spec.items() if key != "pricing"
+    }
+    assert sol_spec["pricing"]["model"] == "openai/gpt-5.6-sol"
+    assert fallback_spec["pricing"]["model"] == "perplexity/brand-new-model"
     assert sol_spec["context_length"] == catalog.FALLBACK_CONTEXT_LENGTH
     assert sol_spec["max_completion_tokens"] == catalog.FALLBACK_MAX_COMPLETION_TOKENS
     assert sol_spec["thinking_effort"].mode == "openai_responses_reasoning"

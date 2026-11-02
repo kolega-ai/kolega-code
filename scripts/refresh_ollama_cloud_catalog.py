@@ -120,6 +120,7 @@ def _header_lines(*, entry_count: int, snapshot_date: str) -> list[str]:
         "",
         f"Membership: {catalog.MODELS_URL} (snapshot {snapshot_date})",
         f"Metadata:   {catalog.SHOW_URL} (snapshot {snapshot_date})",
+        "Pricing: reviewed Ollama USD list-value cards retain their own source-check dates and off-peak rules.",
         "",
         f"{entry_count} models containing both completion and tools capabilities.",
         "",

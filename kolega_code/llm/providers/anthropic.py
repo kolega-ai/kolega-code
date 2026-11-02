@@ -11,7 +11,8 @@ from ..models import ContentBlock, Message, MessageChunk, MessageHistory, ToolDe
 from ..specs import build_thinking_request_params, get_model_specs
 from ..timeouts import streaming_timeout
 from ..tool_execution_ids import ToolExecutionIdRegistry
-from ..usage import attach_normalized_usage
+from ..accounting import UsageObservation, publish_observation
+from ..usage import anthropic_usage_metadata, attach_normalized_usage, observation_from_metadata
 from ._token_encoding import get_counting_encoding
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
@@ -24,6 +25,8 @@ class AnthropicStreamWrapper:
         self.model = model
         self.generator: Any = None
         self._closed = False
+        self._usage_metadata: dict[str, Any] = {}
+        self._usage_complete = False
 
         # Track tool calls being streamed
         self.tool_execution_ids = ToolExecutionIdRegistry()
@@ -49,6 +52,16 @@ class AnthropicStreamWrapper:
 
         try:
             chunk = await self.generator.__anext__()
+            if chunk.type == "message_start":
+                raw_message = getattr(chunk, "message", None)
+                self._usage_metadata.update(anthropic_usage_metadata(getattr(raw_message, "usage", None)))
+                resolved = getattr(raw_message, "model", None)
+                if isinstance(resolved, str):
+                    self._usage_metadata["resolved_model"] = resolved
+            elif chunk.type == "message_delta":
+                self._usage_metadata.update(anthropic_usage_metadata(getattr(chunk, "usage", None)))
+            elif chunk.type == "message_stop":
+                self._usage_complete = True
 
             # Handle content_block_start events for tool use
             if chunk.type == "content_block_start" and hasattr(chunk, "content_block"):
@@ -88,13 +101,23 @@ class AnthropicStreamWrapper:
             raise
 
     async def get_final_message(self):
+        response = await self.generator.get_final_message()
+        self._usage_metadata.update(anthropic_usage_metadata(getattr(response, "usage", None)))
+        self._usage_complete = True
+        publish_observation(self.get_usage_observation())
         message = Message.from_anthropic(
-            await self.generator.get_final_message(),
+            response,
             tool_execution_ids=self.tool_execution_ids,
         )
+        message.usage_metadata.update(self._usage_metadata)
         if message.usage_metadata:
             message.usage_metadata["provider"] = self.provider_name
         return attach_normalized_usage(message, self.provider_name, self.model)
+
+    def get_usage_observation(self) -> UsageObservation:
+        return observation_from_metadata(
+            self._usage_metadata, self.provider_name, self.model, complete=self._usage_complete
+        )
 
 
 class AnthropicProvider(BaseLLMProvider):
@@ -522,7 +545,15 @@ class AnthropicProvider(BaseLLMProvider):
             timeout=self.async_client.timeout,
             **generation_params,
         )
+        metadata = anthropic_usage_metadata(getattr(response, "usage", None))
+        resolved = getattr(response, "model", None)
+        if isinstance(resolved, str):
+            metadata["resolved_model"] = resolved
+        publish_observation(
+            observation_from_metadata(metadata, self.provider_name, str(generation_params["model"]), complete=True)
+        )
         message = Message.from_anthropic(response)
+        message.usage_metadata.update(metadata)
         if message.usage_metadata:
             message.usage_metadata["provider"] = self.provider_name
         return attach_normalized_usage(message, self.provider_name, str(generation_params["model"]))

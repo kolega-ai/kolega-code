@@ -13,7 +13,7 @@ from acp.schema import UsageUpdate
 
 
 def context_window_for(agent: Any) -> int | None:
-    for attribute in ("model_max_input_tokens", "model_context_length"):
+    for attribute in ("model_context_length", "model_max_input_tokens"):
         value = getattr(agent, attribute, None)
         if value:
             return int(value)
@@ -22,9 +22,13 @@ def context_window_for(agent: Any) -> int | None:
     return int(value) if value else None
 
 
-def build_usage_update(agent: Any, used: int | None = None) -> UsageUpdate | None:
+def build_context_usage_update(agent: Any, used: int | None = None) -> UsageUpdate | None:
     size = context_window_for(agent)
-    if not size:
+    if not size or used is None:
         return None
-    resolved_used = min(int(used or 0), size)
+    resolved_used = max(0, min(int(used), size))
     return UsageUpdate(session_update="usage_update", used=resolved_used, size=size)
+
+
+def build_usage_update(agent: Any, used: int | None = None) -> UsageUpdate | None:
+    return build_context_usage_update(agent, used)

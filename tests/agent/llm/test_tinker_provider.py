@@ -10,13 +10,16 @@ only when the extra is installed.
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Sequence
 
 import pytest
 
 from kolega_code.llm.exceptions import LLMInvalidRequestError, map_tinker_errors as _map_errors
-from kolega_code.llm.ledger import HISTORY_ORIGIN, helper_origin, llm_call_origin
+from kolega_code.llm.client import LLMClient
+from kolega_code.llm.ledger import HISTORY_ORIGIN, UsageLedger, helper_origin, llm_call_origin
 from kolega_code.llm.models import (
     Message,
     MessageChunk,
@@ -291,6 +294,56 @@ async def test_checkpoint_model_uses_model_path_and_resolves_base(monkeypatch: p
 
     assert service.created == [{"model_path": CHECKPOINT}]
     assert provider._base_model == "thinkingmachines/Inkling"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("base_model", ["thinkingmachines/Inkling", "unknown/base", None])
+async def test_checkpoint_requests_remain_unpriced_even_with_identified_native_base(
+    monkeypatch: pytest.MonkeyPatch, streaming: bool, base_model: str | None
+) -> None:
+    sampling = FakeSamplingClient(base_model or "", FakeSampleResponse([FakeSequence([1], [0.1])]))
+    _patch_provider(monkeypatch, sampling, FakeRenderer({"role": "assistant", "content": "ok"}))
+    if base_model is None:
+
+        async def unavailable() -> str:
+            raise RuntimeError("checkpoint metadata unavailable")
+
+        monkeypatch.setattr(sampling, "get_base_model_async", unavailable)
+
+    ledger = UsageLedger()
+    begun: list[Any] = []
+    ledger.observer = SimpleNamespace(
+        on_begin=begun.append,
+        on_response=lambda *_args: None,
+        on_failure=lambda *_args: None,
+        on_observation=lambda *_args: None,
+    )
+    client = LLMClient(provider="tinker", api_key="test-key", model=CHECKPOINT, usage_ledger=ledger)
+    assert isinstance(client.provider, TinkerProvider)
+    assert client.provider._base_model is None
+    for _ in range(2):
+        if streaming:
+            pending = client.stream(MESSAGES, SYSTEM, model=CHECKPOINT)
+            wrapper = await pending if inspect.isawaitable(pending) else pending
+            async with wrapper as stream:
+                async for _chunk in stream:
+                    pass
+                await stream.get_final_message()
+        else:
+            await client.generate(MESSAGES, SYSTEM, model=CHECKPOINT)
+    assert len(begun) == len(sampling.calls) == 2
+    for index, request in enumerate(begun):
+        assert request.model == CHECKPOINT
+        assert request.pricing_context.get("base_model") == (base_model if index else None)
+        assert not request.pinned_pricing["pricing"]
+    snapshot = ledger.snapshot()
+    assert snapshot.complete
+    assert snapshot.requests == snapshot.responses == 2
+    assert (snapshot.input_tokens, snapshot.output_tokens, snapshot.total_tokens) == (10, 2, 12)
+    cost = snapshot.costs
+    assert not cost["complete"]
+    assert cost["currencies"] == {}
 
 
 @pytest.mark.asyncio

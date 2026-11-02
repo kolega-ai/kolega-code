@@ -18,6 +18,35 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
             default="max",
             mode="cloudflare_reasoning_effort",
         ),
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "cloudflare_workers_ai:@cf/zai-org/glm-5.3:2026-11-01",
+            "provider": "cloudflare_workers_ai",
+            "model": "@cf/zai-org/glm-5.3",
+            "status": "priced",
+            "billing_mode": "workers_ai_neuron_equivalent_usd",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "1.400", "output": "4.400", "cache_read": "0.260"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+                    "model_id": "@cf/zai-org/glm-5.3",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "neuron_conversion": {"usd_per_1000_neurons": "0.011"},
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published equivalent USD list value; neuron rounding may differ at billing precision.",
+                "10,000 free neurons per day are account-wide and reset at 00:00 UTC; no per-session quota allocation.",
+                "No DeepSeek-native or other upstream-vendor time discount applies to this Cloudflare route.",
+            ],
+        },
     },
     ("cloudflare_workers_ai", "@cf/zai-org/glm-5.3-flash"): {
         "context_length": 1048576,
@@ -30,6 +59,35 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
             default="max",
             mode="cloudflare_reasoning_effort",
         ),
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "cloudflare_workers_ai:@cf/zai-org/glm-5.3-flash:2026-11-01",
+            "provider": "cloudflare_workers_ai",
+            "model": "@cf/zai-org/glm-5.3-flash",
+            "status": "priced",
+            "billing_mode": "workers_ai_neuron_equivalent_usd",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.150", "output": "0.500", "cache_read": "0.030"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+                    "model_id": "@cf/zai-org/glm-5.3-flash",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "neuron_conversion": {"usd_per_1000_neurons": "0.011"},
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published equivalent USD list value; neuron rounding may differ at billing precision.",
+                "10,000 free neurons per day are account-wide and reset at 00:00 UTC; no per-session quota allocation.",
+                "No DeepSeek-native or other upstream-vendor time discount applies to this Cloudflare route.",
+            ],
+        },
     },
     ("cloudflare_workers_ai", "@cf/moonshotai/kimi-k2.7-code"): {
         "context_length": 262144,
@@ -37,6 +95,35 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": True,
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "cloudflare_workers_ai:@cf/moonshotai/kimi-k2.7-code:2026-11-01",
+            "provider": "cloudflare_workers_ai",
+            "model": "@cf/moonshotai/kimi-k2.7-code",
+            "status": "priced",
+            "billing_mode": "workers_ai_neuron_equivalent_usd",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.950", "output": "4.000", "cache_read": "0.190"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+                    "model_id": "@cf/moonshotai/kimi-k2.7-code",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "neuron_conversion": {"usd_per_1000_neurons": "0.011"},
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published equivalent USD list value; neuron rounding may differ at billing precision.",
+                "10,000 free neurons per day are account-wide and reset at 00:00 UTC; no per-session quota allocation.",
+                "No DeepSeek-native or other upstream-vendor time discount applies to this Cloudflare route.",
+            ],
+        },
     },
     ("cloudflare_workers_ai", "@cf/deepseek-ai/deepseek-v4.1-flash-1017"): {
         "context_length": 1048576,
@@ -49,6 +136,35 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
             default="high",
             mode="cloudflare_reasoning_effort",
         ),
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "cloudflare_workers_ai:@cf/deepseek-ai/deepseek-v4.1-flash-1017:2026-11-01",
+            "provider": "cloudflare_workers_ai",
+            "model": "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+            "status": "priced",
+            "billing_mode": "workers_ai_neuron_equivalent_usd",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.300", "output": "1.200", "cache_read": "0.006"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+                    "model_id": "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "neuron_conversion": {"usd_per_1000_neurons": "0.011"},
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published equivalent USD list value; neuron rounding may differ at billing precision.",
+                "10,000 free neurons per day are account-wide and reset at 00:00 UTC; no per-session quota allocation.",
+                "No DeepSeek-native or other upstream-vendor time discount applies to this Cloudflare route.",
+            ],
+        },
     },
     ("cloudflare_workers_ai", "@cf/deepseek-ai/deepseek-v4-pro-0813"): {
         "context_length": 1048576,
@@ -61,6 +177,35 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
             default="high",
             mode="cloudflare_reasoning_effort",
         ),
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "cloudflare_workers_ai:@cf/deepseek-ai/deepseek-v4-pro-0813:2026-11-01",
+            "provider": "cloudflare_workers_ai",
+            "model": "@cf/deepseek-ai/deepseek-v4-pro-0813",
+            "status": "priced",
+            "billing_mode": "workers_ai_neuron_equivalent_usd",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "1.320", "output": "3.960", "cache_read": "0.044"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+                    "model_id": "@cf/deepseek-ai/deepseek-v4-pro-0813",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "neuron_conversion": {"usd_per_1000_neurons": "0.011"},
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published equivalent USD list value; neuron rounding may differ at billing precision.",
+                "10,000 free neurons per day are account-wide and reset at 00:00 UTC; no per-session quota allocation.",
+                "No DeepSeek-native or other upstream-vendor time discount applies to this Cloudflare route.",
+            ],
+        },
     },
     ("cloudflare_workers_ai", "@cf/zai-org/glm-5.2"): {
         "context_length": 262144,
@@ -73,6 +218,35 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
             default="max",
             mode="cloudflare_reasoning_effort",
         ),
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "cloudflare_workers_ai:@cf/zai-org/glm-5.2:2026-11-01",
+            "provider": "cloudflare_workers_ai",
+            "model": "@cf/zai-org/glm-5.2",
+            "status": "priced",
+            "billing_mode": "workers_ai_neuron_equivalent_usd",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "1.400", "output": "4.400", "cache_read": "0.260"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+                    "model_id": "@cf/zai-org/glm-5.2",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "neuron_conversion": {"usd_per_1000_neurons": "0.011"},
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published equivalent USD list value; neuron rounding may differ at billing precision.",
+                "10,000 free neurons per day are account-wide and reset at 00:00 UTC; no per-session quota allocation.",
+                "No DeepSeek-native or other upstream-vendor time discount applies to this Cloudflare route.",
+            ],
+        },
     },
     ("cloudflare_workers_ai", "@cf/moonshotai/kimi-k2.6"): {
         "context_length": 262144,
@@ -85,6 +259,35 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
             default="high",
             mode="cloudflare_reasoning_effort",
         ),
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "cloudflare_workers_ai:@cf/moonshotai/kimi-k2.6:2026-11-01",
+            "provider": "cloudflare_workers_ai",
+            "model": "@cf/moonshotai/kimi-k2.6",
+            "status": "priced",
+            "billing_mode": "workers_ai_neuron_equivalent_usd",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.950", "output": "4.000", "cache_read": "0.160"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+                    "model_id": "@cf/moonshotai/kimi-k2.6",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "neuron_conversion": {"usd_per_1000_neurons": "0.011"},
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published equivalent USD list value; neuron rounding may differ at billing precision.",
+                "10,000 free neurons per day are account-wide and reset at 00:00 UTC; no per-session quota allocation.",
+                "No DeepSeek-native or other upstream-vendor time discount applies to this Cloudflare route.",
+            ],
+        },
     },
     ("cloudflare_workers_ai", "@cf/qwen/qwen3.8-27b"): {
         "context_length": 262144,
@@ -97,6 +300,35 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
             default="xhigh",
             mode="cloudflare_reasoning_effort",
         ),
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "cloudflare_workers_ai:@cf/qwen/qwen3.8-27b:2026-11-01",
+            "provider": "cloudflare_workers_ai",
+            "model": "@cf/qwen/qwen3.8-27b",
+            "status": "priced",
+            "billing_mode": "workers_ai_neuron_equivalent_usd",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.450", "output": "3.200"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+                    "model_id": "@cf/qwen/qwen3.8-27b",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "neuron_conversion": {"usd_per_1000_neurons": "0.011"},
+            "cache_policy": {"cache_write": "included", "cache_read": "included"},
+            "assumptions": [
+                "Published equivalent USD list value; neuron rounding may differ at billing precision.",
+                "10,000 free neurons per day are account-wide and reset at 00:00 UTC; no per-session quota allocation.",
+                "No DeepSeek-native or other upstream-vendor time discount applies to this Cloudflare route.",
+            ],
+        },
     },
     ("cloudflare_workers_ai", "@cf/google/gemma-4-26b-a4b-it"): {
         "context_length": 256000,
@@ -107,6 +339,35 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
         # Replayed reasoning makes it answer inside reasoning_content with empty content
         # after a tool result (probed 2026-10-26: 3/5 replayed vs 5/5 dropped).
         "drop_prior_reasoning": True,
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "cloudflare_workers_ai:@cf/google/gemma-4-26b-a4b-it:2026-11-01",
+            "provider": "cloudflare_workers_ai",
+            "model": "@cf/google/gemma-4-26b-a4b-it",
+            "status": "priced",
+            "billing_mode": "workers_ai_neuron_equivalent_usd",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.100", "output": "0.300"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+                    "model_id": "@cf/google/gemma-4-26b-a4b-it",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "neuron_conversion": {"usd_per_1000_neurons": "0.011"},
+            "cache_policy": {"cache_write": "included", "cache_read": "included"},
+            "assumptions": [
+                "Published equivalent USD list value; neuron rounding may differ at billing precision.",
+                "10,000 free neurons per day are account-wide and reset at 00:00 UTC; no per-session quota allocation.",
+                "No DeepSeek-native or other upstream-vendor time discount applies to this Cloudflare route.",
+            ],
+        },
     },
     ("cloudflare_workers_ai", "@cf/nvidia/nemotron-3-120b-a12b"): {
         "context_length": 256000,
@@ -114,6 +375,35 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 1.0,
         "supports_vision": False,
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "cloudflare_workers_ai:@cf/nvidia/nemotron-3-120b-a12b:2026-11-01",
+            "provider": "cloudflare_workers_ai",
+            "model": "@cf/nvidia/nemotron-3-120b-a12b",
+            "status": "priced",
+            "billing_mode": "workers_ai_neuron_equivalent_usd",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.500", "output": "1.500"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+                    "model_id": "@cf/nvidia/nemotron-3-120b-a12b",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "neuron_conversion": {"usd_per_1000_neurons": "0.011"},
+            "cache_policy": {"cache_write": "included", "cache_read": "included"},
+            "assumptions": [
+                "Published equivalent USD list value; neuron rounding may differ at billing precision.",
+                "10,000 free neurons per day are account-wide and reset at 00:00 UTC; no per-session quota allocation.",
+                "No DeepSeek-native or other upstream-vendor time discount applies to this Cloudflare route.",
+            ],
+        },
     },
     ("cloudflare_workers_ai", "@cf/openai/gpt-oss-120b"): {
         "context_length": 128000,
@@ -127,6 +417,35 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
             default="medium",
             mode="cloudflare_reasoning_effort",
         ),
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "cloudflare_workers_ai:@cf/openai/gpt-oss-120b:2026-11-01",
+            "provider": "cloudflare_workers_ai",
+            "model": "@cf/openai/gpt-oss-120b",
+            "status": "priced",
+            "billing_mode": "workers_ai_neuron_equivalent_usd",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.350", "output": "0.750"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+                    "model_id": "@cf/openai/gpt-oss-120b",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "neuron_conversion": {"usd_per_1000_neurons": "0.011"},
+            "cache_policy": {"cache_write": "included", "cache_read": "included"},
+            "assumptions": [
+                "Published equivalent USD list value; neuron rounding may differ at billing precision.",
+                "10,000 free neurons per day are account-wide and reset at 00:00 UTC; no per-session quota allocation.",
+                "No DeepSeek-native or other upstream-vendor time discount applies to this Cloudflare route.",
+            ],
+        },
     },
     ("cloudflare_workers_ai", "@cf/openai/gpt-oss-20b"): {
         "context_length": 128000,
@@ -140,6 +459,35 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
             default="medium",
             mode="cloudflare_reasoning_effort",
         ),
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "cloudflare_workers_ai:@cf/openai/gpt-oss-20b:2026-11-01",
+            "provider": "cloudflare_workers_ai",
+            "model": "@cf/openai/gpt-oss-20b",
+            "status": "priced",
+            "billing_mode": "workers_ai_neuron_equivalent_usd",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.200", "output": "0.300"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+                    "model_id": "@cf/openai/gpt-oss-20b",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "neuron_conversion": {"usd_per_1000_neurons": "0.011"},
+            "cache_policy": {"cache_write": "included", "cache_read": "included"},
+            "assumptions": [
+                "Published equivalent USD list value; neuron rounding may differ at billing precision.",
+                "10,000 free neurons per day are account-wide and reset at 00:00 UTC; no per-session quota allocation.",
+                "No DeepSeek-native or other upstream-vendor time discount applies to this Cloudflare route.",
+            ],
+        },
     },
     ("cloudflare_workers_ai", "@cf/zai-org/glm-4.7-flash"): {
         "context_length": 131072,
@@ -147,5 +495,34 @@ CLOUDFLARE_WORKERS_AI_SPECS = {
         "input_budget": "window_minus_output",
         "default_temperature": 0.6,
         "supports_vision": False,
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "cloudflare_workers_ai:@cf/zai-org/glm-4.7-flash:2026-11-01",
+            "provider": "cloudflare_workers_ai",
+            "model": "@cf/zai-org/glm-4.7-flash",
+            "status": "priced",
+            "billing_mode": "workers_ai_neuron_equivalent_usd",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.060", "output": "0.400"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+                    "model_id": "@cf/zai-org/glm-4.7-flash",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "neuron_conversion": {"usd_per_1000_neurons": "0.011"},
+            "cache_policy": {"cache_write": "included", "cache_read": "included"},
+            "assumptions": [
+                "Published equivalent USD list value; neuron rounding may differ at billing precision.",
+                "10,000 free neurons per day are account-wide and reset at 00:00 UTC; no per-session quota allocation.",
+                "No DeepSeek-native or other upstream-vendor time discount applies to this Cloudflare route.",
+            ],
+        },
     },
 }
