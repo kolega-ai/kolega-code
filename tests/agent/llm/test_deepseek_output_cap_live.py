@@ -31,13 +31,13 @@ import pytest
 from kolega_code.cli.config import API_KEY_ENV
 from kolega_code.config import ModelProvider
 from kolega_code.llm.client import LLMClient
-from kolega_code.llm.exceptions import LLMBillingError, LLMError, LLMRateLimitError
+from kolega_code.llm.exceptions import LLMBillingError, LLMInvalidRequestError, LLMRateLimitError
 from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.llm.providers.deepseek_responses import DeepSeekResponsesProvider
 from kolega_code.llm.providers.responses_common import ResponsesStreamWrapper
 from kolega_code.llm.specs import default_thinking_effort, get_model_specs
 
-pytestmark = [pytest.mark.slow, pytest.mark.integration]
+pytestmark = [pytest.mark.slow, pytest.mark.integration, pytest.mark.live_api]
 
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
 
@@ -51,17 +51,14 @@ TINY_CAP = 16
 # The value the wire clamp will send (see specs/accessors.py once Step 2 lands).
 CLAMPED_CAP = 64000
 
-_FLASH = "deepseek-v4-flash"
-
-# Chat-path hosts serving DeepSeek models (first-party pro + both Fireworks mirrors).
-CHAT_HOSTS = [
-    ("deepseek", "deepseek-v4-pro"),
-    ("fireworks", "accounts/fireworks/models/deepseek-v4-pro"),
-    ("fireworks", "accounts/fireworks/models/deepseek-v4-flash"),
-]
-_CHAT_IDS = [f"{p}-{m.rsplit('/', 1)[-1]}" for p, m in CHAT_HOSTS]
+_FLASH = "deepseek-flash"
+RESPONSES_MODELS = [_FLASH, "deepseek-v4-pro"]
 
 OPENROUTER_SLUGS = ["deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash"]
+
+# Fireworks retired these serverless mirrors; use the catalogued chat gateway.
+CHAT_HOSTS = [("openrouter", slug) for slug in OPENROUTER_SLUGS]
+_CHAT_IDS = [f"{p}-{m.rsplit('/', 1)[-1]}" for p, m in CHAT_HOSTS]
 
 CEILING_PROBE_ENABLED = os.getenv("KOLEGA_DEEPSEEK_CEILING_PROBE") == "1"
 
@@ -121,6 +118,28 @@ def _usage_fields(message: Message) -> dict:
     )
 
 
+def _is_output_cap_rejection(error: BaseException | None) -> bool:
+    if not isinstance(error, openai.BadRequestError):
+        return False
+    body = error.body
+    detail = body.get("error", body) if isinstance(body, dict) else body
+    message = detail.get("message") if isinstance(detail, dict) else detail
+    if not isinstance(message, str):
+        return False
+    message = message.lower()
+    return any(name in message for name in ("max_tokens", "max_output_tokens", "max_completion_tokens")) and any(
+        phrase in message
+        for phrase in (
+            "valid range",
+            "must be less",
+            "must be at most",
+            "cannot exceed",
+            "must be between",
+            "maximum value",
+        )
+    )
+
+
 # --- probe (a): over-ceiling cap — rejected, clamped, or accepted? -----------------
 
 
@@ -140,7 +159,9 @@ async def test_chat_overcap_request_outcome(provider_value: str, model: str) -> 
         )
     except _QUOTA_ERRORS as exc:
         pytest.skip(f"provider quota exhausted for this key: {exc}")
-    except LLMError as exc:
+    except LLMInvalidRequestError as exc:
+        if not _is_output_cap_rejection(exc.__cause__):
+            raise
         _record("chat-overcap", host=f"{provider_value}/{model}", outcome="rejected", error=str(exc))
         return
     _record(
@@ -154,17 +175,17 @@ async def test_chat_overcap_request_outcome(provider_value: str, model: str) -> 
 
 
 @pytest.mark.asyncio
-async def test_responses_overcap_request_outcome() -> None:
+@pytest.mark.parametrize("model", RESPONSES_MODELS)
+async def test_responses_overcap_request_outcome(model: str) -> None:
     api_key = _require_key("deepseek")
-    client = LLMClient(provider="deepseek", api_key=api_key, model=_FLASH)
+    client = LLMClient(provider="deepseek", api_key=api_key, model=model)
     provider = cast(DeepSeekResponsesProvider, client.provider)
-    # The shared Responses builder never emits max_output_tokens, so inject it and
-    # drive the raw SDK client to see how the backend treats an over-ceiling value.
-    request = provider._build_request(_messages(TRIVIAL_PROMPT), SYSTEM, None, {"model": _FLASH})
+    # Override the builder's clamped cap to measure the backend rejection boundary.
+    request = provider._build_request(_messages(TRIVIAL_PROMPT), SYSTEM, None, {"model": model})
     request["max_output_tokens"] = OVERCAP
     try:
         responses_stream = await provider.async_client.responses.create(**request)
-        wrapper = ResponsesStreamWrapper(responses_stream, provider_name="deepseek", model=_FLASH)
+        wrapper = ResponsesStreamWrapper(responses_stream, provider_name="deepseek", model=model)
         async with wrapper:
             async for _chunk in wrapper:
                 pass
@@ -172,11 +193,13 @@ async def test_responses_overcap_request_outcome() -> None:
     except openai.RateLimitError as exc:
         pytest.skip(f"provider quota exhausted for this key: {exc}")
     except openai.APIStatusError as exc:
-        _record("responses-overcap", host=f"deepseek/{_FLASH}", outcome="rejected", error=str(exc))
+        if not _is_output_cap_rejection(exc):
+            raise
+        _record("responses-overcap", host=f"deepseek/{model}", outcome="rejected", error=str(exc))
         return
     _record(
         "responses-overcap",
-        host=f"deepseek/{_FLASH}",
+        host=f"deepseek/{model}",
         outcome="accepted",
         stop_reason=message.stop_reason,
         status=getattr(wrapper._final_response, "status", None),
@@ -223,11 +246,12 @@ async def test_chat_tiny_cap_truncation_reporting(provider_value: str, model: st
 
 
 @pytest.mark.asyncio
-async def test_responses_tiny_cap_truncation_reporting() -> None:
+@pytest.mark.parametrize("model", RESPONSES_MODELS)
+async def test_responses_tiny_cap_truncation_reporting(model: str) -> None:
     api_key = _require_key("deepseek")
-    client = LLMClient(provider="deepseek", api_key=api_key, model=_FLASH)
+    client = LLMClient(provider="deepseek", api_key=api_key, model=model)
     provider = cast(DeepSeekResponsesProvider, client.provider)
-    request = provider._build_request(_messages(ESSAY_PROMPT), SYSTEM, None, {"model": _FLASH})
+    request = provider._build_request(_messages(ESSAY_PROMPT), SYSTEM, None, {"model": model})
     request["max_output_tokens"] = TINY_CAP
     # Iterate the RAW event stream (not the wrapper) so the terminal event type is
     # observable: the first probe run showed the wrapper sees no response.completed
@@ -248,7 +272,7 @@ async def test_responses_tiny_cap_truncation_reporting() -> None:
     usage = getattr(final, "usage", None)
     _record(
         "responses-tiny-cap",
-        host=f"deepseek/{_FLASH}",
+        host=f"deepseek/{model}",
         event_types=event_types,
         status=getattr(final, "status", None),
         incomplete_reason=getattr(details, "reason", None) if details is not None else None,
@@ -308,17 +332,18 @@ async def test_uncapped_long_generation_server_ceiling(provider_value: str, mode
 
 
 @pytest.mark.asyncio
-async def test_uncapped_long_generation_responses_server_ceiling() -> None:
-    """The flash/Responses variant: raw event stream with max_output_tokens
+@pytest.mark.parametrize("model", RESPONSES_MODELS)
+async def test_uncapped_long_generation_responses_server_ceiling(model: str) -> None:
+    """The Responses variant: raw event stream with max_output_tokens
     REMOVED from the built request. Shows whether the server's own cutoff emits
     a terminal response.incomplete (honest, once the wrapper captures it) or
     just drops the stream (truly silent)."""
     if not CEILING_PROBE_ENABLED:
         pytest.skip("Set KOLEGA_DEEPSEEK_CEILING_PROBE=1 to run (streams ~64k+ tokens; slow + real cost)")
     api_key = _require_key("deepseek")
-    client = LLMClient(provider="deepseek", api_key=api_key, model=_FLASH)
+    client = LLMClient(provider="deepseek", api_key=api_key, model=model)
     provider = cast(DeepSeekResponsesProvider, client.provider)
-    request = provider._build_request(_messages(LONG_GENERATION_PROMPT), SYSTEM, None, {"model": _FLASH})
+    request = provider._build_request(_messages(LONG_GENERATION_PROMPT), SYSTEM, None, {"model": model})
     request.pop("max_output_tokens", None)  # the override always adds it; measure WITHOUT
     event_types: list[str] = []
     final = None
@@ -340,7 +365,7 @@ async def test_uncapped_long_generation_responses_server_ceiling() -> None:
     usage = getattr(final, "usage", None)
     _record(
         "uncapped-ceiling-responses",
-        host=f"deepseek/{_FLASH}",
+        host=f"deepseek/{model}",
         terminal_events=event_types[-3:],
         status=getattr(final, "status", None),
         incomplete_reason=getattr(details, "reason", None) if details is not None else None,
@@ -358,10 +383,7 @@ async def test_uncapped_long_generation_responses_server_ceiling() -> None:
 async def test_openrouter_deepseek_accepts_clamped_cap(slug: str) -> None:
     api_key = _require_key("openrouter")
     client = LLMClient(provider="openrouter", api_key=api_key, model=slug)
-    # Drive the raw SDK client: the gateway rule pops max_tokens at the LLMClient
-    # level (pre-clamp code), and OpenRouter's routing filter is exactly what we
-    # need to observe ("if you set a max_tokens, then OpenRouter will only route
-    # to providers that support a response of that length").
+    # Bypass the client clamp to observe OpenRouter's raw max_tokens routing filter.
     raw = cast(openai.AsyncOpenAI, client.provider.async_client)
 
     def _served_by(resp) -> object:
@@ -414,6 +436,8 @@ async def test_openrouter_deepseek_accepts_clamped_cap(slug: str) -> None:
             max_tokens=OVERCAP,
         )
     except openai.APIStatusError as exc:
+        if not _is_output_cap_rejection(exc):
+            raise
         _record("openrouter-overcap", slug=slug, max_tokens=OVERCAP, outcome="rejected", error=str(exc))
     else:
         _record(

@@ -632,16 +632,29 @@ async def test_incomplete_responses_stream_does_not_announce_partial_write(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("phase", ["create", "enter", "read", "active"])
-async def test_remaining_retry_budget_bounds_subsequent_attempt(guarded: BaseAgent, phase: str) -> None:
+async def test_remaining_retry_budget_bounds_subsequent_attempt(
+    guarded: BaseAgent, phase: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     guarded._stream_first_chunk_timeout = 5
     guarded._stream_idle_timeout = 5
     guarded._llm_retry_budget_seconds = 0.04
-    guarded._llm_retry_budget_started = time.monotonic()
+    now = 0.0
+    # Replace the module reference, not time.monotonic: asyncio needs its real clock.
+    monkeypatch.setattr(agent_module, "time", SimpleNamespace(monotonic=lambda: now))
     closed = asyncio.Event()
+    stages: list[str] = []
+    consumed: list[MessageChunk] = []
+
+    def expire_budget() -> None:
+        nonlocal now
+        assert guarded._remaining_llm_retry_budget() == pytest.approx(0.04)
+        now += 0.05
 
     class Stream:
         async def __aenter__(self) -> Any:
+            stages.append("enter")
             if phase == "enter":
+                expire_budget()
                 await asyncio.Event().wait()
             return self
 
@@ -653,23 +666,48 @@ async def test_remaining_retry_budget_bounds_subsequent_attempt(guarded: BaseAge
             return self
 
         async def __anext__(self) -> MessageChunk:
+            stages.append("read")
             if phase == "active":
-                await asyncio.sleep(0.005)
+                await asyncio.sleep(0)
+                if consumed:
+                    expire_budget()
                 return MessageChunk(type="text", text="x")
+            expire_budget()
             await asyncio.Event().wait()
             raise StopAsyncIteration
 
     async def setup() -> Stream:
+        assert guarded._llm_retry_budget_started is None
+        guarded._llm_retry_budget_started = now
+        stages.append("create")
         if phase == "create":
+            expire_budget()
             await asyncio.Event().wait()
         return Stream()
 
-    started = time.monotonic()
+    async def consume() -> None:
+        async with guarded._open_stream_with_stall_guard(setup) as (stream, state):
+            async for chunk in guarded._iter_stream_with_stall_guard(stream, state=state):
+                consumed.append(chunk)
+
+    # Test preparation must not spend the retry budget before setup is reached.
+    now += 60.0
     with pytest.raises(LLMTimeout, match="retry wall-clock budget"):
-        await _drain(guarded, setup)
-    assert time.monotonic() - started < 0.3
+        await asyncio.wait_for(consume(), timeout=10)
+    assert guarded._llm_retry_budget_started == 60.0
+    assert guarded._remaining_llm_retry_budget() == pytest.approx(-0.01)
+    expected_stages = {
+        "create": ["create"],
+        "enter": ["create", "enter"],
+        "read": ["create", "enter", "read"],
+        "active": ["create", "enter", "read", "read"],
+    }[phase]
+    assert stages == expected_stages
+    assert [chunk.text for chunk in consumed] == (["x"] if phase == "active" else [])
     if phase != "create":
         assert closed.is_set()
+    else:
+        assert not closed.is_set()
 
 
 @pytest.mark.asyncio

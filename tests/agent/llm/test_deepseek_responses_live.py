@@ -27,7 +27,7 @@ from kolega_code.llm.models import (
 )
 from kolega_code.llm.providers.deepseek_responses import DeepSeekResponsesProvider
 
-pytestmark = [pytest.mark.slow, pytest.mark.integration]
+pytestmark = [pytest.mark.slow, pytest.mark.integration, pytest.mark.live_api]
 
 _MODEL = "deepseek-flash"
 # The released V4.1 Flash is multimodal, so the image-path tests use the same id;
@@ -191,11 +191,7 @@ def deepseek_pro_client() -> LLMClient:
 
 @pytest.mark.asyncio
 async def test_pro_hosted_web_search(deepseek_pro_client):
-    # Hosted search is gone from the flash architecture (V4.1 removed it silently: the
-    # docs' tool table moved web_search to "Ignored"), but the V4 Pro model still
-    # executes it, so this is the live coverage of the server-side path. NOTE: DeepSeek
-    # routes deepseek-v4-pro to V4.1 Flash from 12:00 Beijing Time 2026-09-14 — re-check
-    # this test and supports_hosted_web_search for pro after that date.
+    # The current Responses guide restricts hosted search to Pro; Flash ignores it.
     # Forcing a page open, rather than asking a question the model could answer from
     # memory, is what makes the assertion test the tool instead of the model's recall.
     messages = MessageHistory(

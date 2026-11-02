@@ -1,4 +1,4 @@
-"""Live hosted web_search on the Responses providers (DeepSeek flash + OpenAI).
+"""Live hosted web_search on the Responses providers (DeepSeek Pro + OpenAI).
 
 Two requests per provider, mirroring the Phase-0 probe
 (findings/probes/hosted_web_search_probe.py, results 2026-08-04):
@@ -32,7 +32,7 @@ from kolega_code.llm.providers.deepseek_responses import DeepSeekResponsesProvid
 from kolega_code.llm.providers.models import GenerationParams
 from kolega_code.llm.providers.openai_responses import OpenAIResponsesProvider
 
-pytestmark = [pytest.mark.slow, pytest.mark.integration]
+pytestmark = [pytest.mark.slow, pytest.mark.integration, pytest.mark.live_api]
 
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
 
@@ -55,7 +55,7 @@ MIN_RESTORED_TOKENS = 1_000
 MAX_RESTORED_TOKENS = 100_000
 
 PROVIDERS = {
-    "deepseek": (DeepSeekResponsesProvider, ModelProvider.DEEPSEEK, "deepseek-v4-flash", "high"),
+    "deepseek": (DeepSeekResponsesProvider, ModelProvider.DEEPSEEK, "deepseek-v4-pro", "high"),
     "openai": (OpenAIResponsesProvider, ModelProvider.OPENAI, "gpt-5.6-sol", "low"),
 }
 

@@ -7,6 +7,10 @@ without touching the network.
 """
 
 import asyncio
+from unittest.mock import AsyncMock
+
+import pytest
+from openai.types.chat import ChatCompletion
 
 from kolega_code.llm.client import LLMClient
 from kolega_code.llm.models import Message, MessageHistory
@@ -44,7 +48,14 @@ class _Recorder:
         return self.calls[-1]
 
 
-def _stream_request(monkeypatch, *, model: str, thinking=None, provider_name: str = "openrouter") -> dict:
+def _stream_request(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    model: str,
+    thinking: str | None = None,
+    provider_name: str = "openrouter",
+    max_completion_tokens: int | None = 4096,
+) -> dict:
     provider = OpenAIProvider(api_key="sk-or-test", provider_name=provider_name)
     recorder = _Recorder()
     monkeypatch.setattr(provider, "async_client", recorder)
@@ -52,7 +63,7 @@ def _stream_request(monkeypatch, *, model: str, thinking=None, provider_name: st
     async def run():
         await provider.stream(
             MessageHistory([]),
-            params=GenerationParams(temperature=0.7, max_completion_tokens=4096, thinking=thinking),
+            params=GenerationParams(temperature=0.7, max_completion_tokens=max_completion_tokens, thinking=thinking),
             model=model,
         )
 
@@ -115,8 +126,40 @@ def test_deepseek_slug_gets_clamped_cap_despite_gateway_omission(monkeypatch) ->
     # DeepSeek models are the exception: their real output ceiling (~64k) is far
     # below the catalog value and the server truncates silently, so the honest
     # clamped cap is always sent — the routing-filter effect is deliberate.
-    request = _stream_request(monkeypatch, model="deepseek/deepseek-v4-pro")
+    request = _stream_request(monkeypatch, model="deepseek/deepseek-v4-pro", max_completion_tokens=None)
     assert request["max_tokens"] == 64000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["generate", "stream"])
+@pytest.mark.parametrize("model", ["deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash"])
+@pytest.mark.parametrize("requested,expected", [(None, 64000), (16, 16), (4096, 4096), (384000, 64000)])
+async def test_deepseek_gateway_preserves_explicit_smaller_caps(
+    monkeypatch: pytest.MonkeyPatch, path: str, model: str, requested: int | None, expected: int
+) -> None:
+    provider = OpenAIProvider(api_key="sk-or-test", provider_name="openrouter")
+    response = ChatCompletion.model_validate(
+        {
+            "id": "offline-completion",
+            "object": "chat.completion",
+            "created": 0,
+            "model": model,
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "4"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11},
+        }
+    )
+    create = AsyncMock(return_value=response)
+    monkeypatch.setattr(provider.async_client.chat.completions, "create", create)
+    await getattr(provider, path)(
+        MessageHistory([]),
+        params=GenerationParams(max_completion_tokens=requested),
+        model=model,
+    )
+    create.assert_awaited_once()
+    request = create.call_args.kwargs
+    assert request["max_tokens"] == expected
+    assert request["extra_body"]["usage"] == {"include": True}
+    assert request["extra_body"]["cache_control"] == {"type": "ephemeral"}
 
 
 def test_temperature_follows_the_catalog_capability_flag(monkeypatch) -> None:

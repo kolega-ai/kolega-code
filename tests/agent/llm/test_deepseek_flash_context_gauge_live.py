@@ -36,11 +36,11 @@ from kolega_code.llm.models import (
 from kolega_code.llm.providers.deepseek_responses import DeepSeekResponsesProvider
 from kolega_code.llm.providers.models import GenerationParams
 
-pytestmark = [pytest.mark.slow, pytest.mark.integration]
+pytestmark = [pytest.mark.slow, pytest.mark.integration, pytest.mark.live_api]
 
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
 
-MODEL = "deepseek-v4-flash"
+MODEL = "deepseek-flash"
 MAX_ROUNDS = 4
 # Fixed offset band between tiktoken and DeepSeek's tokenizer/scaffolding
 # (measured ~300 on a bare request) plus per-round item wrapping. With retention

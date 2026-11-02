@@ -14,16 +14,21 @@ import anthropic
 import openai
 import pytest
 
-from kolega_code.cli.config import API_KEY_ENV, OAUTH_PROVIDERS
-from kolega_code.cli.provider_registry import default_model_for_provider
+from kolega_code.cli.config import API_KEY_ENV
 from kolega_code.config import ModelProvider
 from kolega_code.llm.client import LLMClient
-from kolega_code.llm.exceptions import LLMBillingError, LLMPermissionDeniedError, LLMRateLimitError
+from kolega_code.llm.exceptions import (
+    LLMBillingError,
+    LLMPermissionDeniedError,
+    LLMRateLimitError,
+    is_perplexity_quota_error,
+)
 from kolega_code.llm.models import Message, MessageHistory, TextBlock
-from kolega_code.llm.specs import MODEL_SPECS, default_thinking_effort, get_model_specs
 from kolega_code.llm.usage import NormalizedUsage
 
-pytestmark = pytest.mark.integration
+from ._live_models import provider_smoke_models, smoke_generation_settings
+
+pytestmark = [pytest.mark.integration, pytest.mark.live_api]
 
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
 
@@ -45,8 +50,6 @@ SYSTEM = Message(
     content=[TextBlock(text="You are a concise math assistant. Answer with as few tokens as possible.")],
 )
 
-OPENROUTER_SMOKE_MODEL = "openai/gpt-5.4-mini"
-
 
 def _messages() -> MessageHistory:
     return MessageHistory(
@@ -54,25 +57,7 @@ def _messages() -> MessageHistory:
     )
 
 
-def _provider_models() -> list[tuple[str, str]]:
-    pairs: list[tuple[str, str]] = []
-    added: set[str] = set()
-    for provider_value, _model in MODEL_SPECS:
-        if provider_value in added or ModelProvider(provider_value) in OAUTH_PROVIDERS:
-            continue
-        added.add(provider_value)
-        if provider_value == ModelProvider.OPENROUTER.value:
-            model = OPENROUTER_SMOKE_MODEL
-        else:
-            model = default_model_for_provider(ModelProvider(provider_value))
-        pairs.append((provider_value, model))
-    # The one model-level dispatch split: deepseek-flash speaks the Responses
-    # API while the rest of the deepseek catalog stays on Chat Completions.
-    pairs.append((ModelProvider.DEEPSEEK.value, "deepseek-flash"))
-    return pairs
-
-
-PROVIDER_MODELS = _provider_models()
+PROVIDER_MODELS = provider_smoke_models()
 _IDS = [f"{p}-{m.rsplit('/', 1)[-1]}" for p, m in PROVIDER_MODELS]
 
 
@@ -94,8 +79,7 @@ def _generation_kwargs(provider_value: str, model: str) -> dict:
         system=SYSTEM,
         model=model,
         max_completion_tokens=4096,
-        temperature=get_model_specs(provider_value, model)["default_temperature"],
-        thinking=default_thinking_effort(provider_value, model),
+        **smoke_generation_settings(provider_value, model),
     )
 
 
@@ -144,6 +128,10 @@ async def test_live_stream_attaches_reported_usage_idempotently(provider_value: 
         message = await stream.get_final_message()
     except _QUOTA_ERRORS as exc:
         pytest.skip(f"provider quota exhausted for this key: {exc}")
+    except openai.OpenAIError as exc:
+        if is_perplexity_quota_error(exc, provider=provider_value):
+            pytest.skip(f"Perplexity quota exhausted for this key: {exc}")
+        raise
     usage = _assert_reported_usage(message, provider_value, model)
     again = await stream.get_final_message()
     assert again.usage == usage
