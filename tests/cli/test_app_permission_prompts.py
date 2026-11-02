@@ -59,6 +59,7 @@ from ._app_test_utils import (
     question_payload,
     renderable_text,
     wait_for_layout as _wait_for_layout,
+    wait_for_turn_idle,
 )
 
 
@@ -1023,10 +1024,7 @@ async def test_cancelling_with_a_permission_prompt_open_restores_the_queued_mess
         )
 
         app.action_cancel_generation()
-        for _ in range(20):
-            await pilot.pause()
-            if app.agent_worker is None:
-                break
+        await wait_for_turn_idle(app, pilot)
 
         assert app.agent_worker is None, "cancelling with a prompt open must not hang the turn"
         assert app._pending_approval is None, "the prompt has to go with the turn it belonged to"
