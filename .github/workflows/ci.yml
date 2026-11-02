@@ -124,10 +124,6 @@ jobs:
         if: needs.changes.outputs.coverage-badge-only != 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
         run: uv run playwright install --with-deps chromium
 
-      - name: Run pre-commit hooks
-        if: needs.changes.outputs.coverage-badge-only != 'true'
-        run: uv run pre-commit run --all-files --show-diff-on-failure
-
       # Coverage runs on 3.12 only: its sysmon core avoids most instrumentation
       # overhead, and the badge job consumes this job's coverage.xml artifact.
       - name: Run fast tests
@@ -226,6 +222,9 @@ jobs:
         run: |
           gh pr merge "${{ steps.cpr.outputs.pull-request-number }}" --auto --squash --delete-branch
 
+  # This job is a required status check, so it also carries pre-commit: the
+  # hooks read the same tree on every interpreter, and running them here keeps
+  # lint as a merge gate without adding a serial step to every test leg.
   dependency-audit:
     name: Dependency audit
     needs: changes
@@ -310,3 +309,11 @@ jobs:
               select(.name != "socksio" or .status != "archived")
             ] | length == 0)
           ' /tmp/uv-audit.json
+
+      - name: Install dependencies
+        if: needs.changes.outputs.coverage-badge-only != 'true'
+        run: uv sync --extra dev --frozen
+
+      - name: Run pre-commit hooks
+        if: needs.changes.outputs.coverage-badge-only != 'true'
+        run: uv run pre-commit run --all-files --show-diff-on-failure
