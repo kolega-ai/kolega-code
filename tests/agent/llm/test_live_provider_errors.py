@@ -13,6 +13,7 @@ from kolega_code.llm.providers.openai import OpenAIProvider
 from kolega_code.llm.providers.responses_common import ResponsesProviderBase
 
 from . import test_deepseek_output_cap_live as output_cap
+from . import test_deepseek_responses_live as deepseek_responses
 from . import test_live_providers as smoke
 from . import test_normalized_usage_live as usage
 from .test_perplexity_quota_errors import QUOTA_MESSAGE, _FailingStream, _sdk_error
@@ -122,6 +123,89 @@ async def test_together_live_fixture_uses_real_sdk_transport_without_hiding_requ
     assert "thinking" not in requests[0]
     if suite == "stream_usage":
         assert requests[0]["stream_options"] == {"include_usage": True}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "delta,final_text",
+    [
+        ("vision-ok", "vision-ok"),
+        ("vision-9k", "vision-ok"),
+        ("vision-ok", "vision-9k"),
+        ("vision-9k", "vision-9k"),
+    ],
+    ids=["correct", "corrected-snapshot", "incorrect-snapshot", "incorrect-throughout"],
+)
+async def test_deepseek_literal_probe_preserves_terminal_text_and_rejects_provider_typos(
+    delta: str, final_text: str
+) -> None:
+    requests: list[dict[str, Any]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        identity = {"item_id": "msg_1", "output_index": 1, "content_index": 0}
+        reasoning = {
+            "type": "reasoning",
+            "id": "reasoning_1",
+            "summary": [],
+            "content": [{"type": "reasoning_text", "text": "Return vision-ok, not vision-9k."}],
+        }
+        item = {
+            "type": "message",
+            "id": "msg_1",
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": final_text, "annotations": []}],
+        }
+        events = [
+            {"type": "response.output_item.done", "output_index": 0, "item": reasoning},
+            {"type": "response.output_text.delta", **identity, "delta": delta},
+            {"type": "response.output_text.done", **identity, "text": final_text},
+            {"type": "response.output_item.done", "output_index": 1, "item": item},
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": "offline-deepseek-literal",
+                    "object": "response",
+                    "model": "deepseek-flash",
+                    "status": "completed",
+                    "output": [reasoning, item],
+                    "usage": {"input_tokens": 10, "output_tokens": 4, "total_tokens": 14},
+                },
+            },
+        ]
+        body = "".join(
+            f"event: {event['type']}\ndata: {json.dumps({**event, 'sequence_number': index})}\n\n"
+            for index, event in enumerate(events)
+        )
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    client = LLMClient(provider="deepseek", api_key="test-placeholder", model="deepseek-flash")
+    assert isinstance(client.provider, ResponsesProviderBase)
+    client.provider.async_client = AsyncOpenAI(
+        api_key="test-placeholder",
+        base_url="https://example.test/beta",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
+    try:
+        if final_text == "vision-ok":
+            await deepseek_responses.test_vision_generate_text_with_thinking(client)
+        else:
+            with pytest.raises(AssertionError, match="vision-9k.*vision-ok"):
+                await deepseek_responses.test_vision_generate_text_with_thinking(client)
+    finally:
+        await client.provider.async_client.close()
+
+    assert len(requests) == 1
+    assert requests[0]["model"] == "deepseek-flash"
+    assert requests[0]["stream"] is True
+    assert requests[0]["reasoning"] == {"effort": "high", "summary": "auto"}
+    assert requests[0]["instructions"] == "Follow the user's instruction exactly."
+    assert requests[0]["input"] == [
+        {"role": "user", "content": [{"type": "input_text", "text": "Reply with exactly: vision-ok"}]}
+    ]
+    assert "temperature" not in requests[0]
 
 
 @pytest.mark.asyncio
