@@ -29,7 +29,7 @@ from kolega_code.services.terminal import build_child_env
 from kolega_code.tools import ToolError
 
 from .bridge import BridgeRegistration, ToolBridge
-from .env import EvalEnvironmentManager, KernelEnvInfo, default_state_dir
+from .env import EvalEnvironmentError, EvalEnvironmentManager, KernelEnvInfo, default_state_dir
 from .protocol import (
     FRAME_DISPLAY,
     FRAME_DONE,
@@ -468,15 +468,18 @@ class EvalKernelManager:
             env_path_raw = _cfg_str(self.config, "eval_env_path")
             self._env_manager = EvalEnvironmentManager(
                 env_path=Path(env_path_raw).expanduser() if env_path_raw else None,
-                python_version=_cfg_str(self.config, "eval_python_version", "3.12") or "3.12",
                 extra_packages=_cfg_str_list(self.config, "eval_kernel_packages"),
                 override_python=_cfg_str(self.config, "eval_python_path"),
+                legacy_python_version=_cfg_str(self.config, "eval_python_version"),
             )
         return self._env_manager
 
     async def _ensure_env(self) -> KernelEnvInfo:
-        if self._env_info is None or self._env_info.degraded:
-            info = await self._env_manager_for_thread().ensure()
+        if self._env_info is None:
+            try:
+                info = await self._env_manager_for_thread().ensure()
+            except EvalEnvironmentError as exc:
+                raise KernelUnavailableError(str(exc)) from exc
             if info.provisioned_now:
                 # The one-time setup note belongs only to the kernel start that
                 # actually provisioned; later starts must reuse the env quietly.
