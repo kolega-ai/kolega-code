@@ -196,9 +196,24 @@ async def test_sdk_retry_sleep_is_inside_setup_deadline(guarded: BaseAgent) -> N
 
 
 @pytest.mark.asyncio
-async def test_create_enter_and_first_read_share_one_deadline(guarded: BaseAgent) -> None:
+async def test_create_enter_and_first_read_share_one_deadline(
+    guarded: BaseAgent, monkeypatch: pytest.MonkeyPatch
+) -> None:
     guarded._stream_first_chunk_timeout = 0.25
     body = _Body()
+    first_chunk_clocks: list[float] = []
+    await_stream_operation = guarded._await_stream_operation
+
+    async def record_first_chunk_clock(
+        pending: asyncio.Future[Any], *, received: int, bytes_received: int, last_data: float
+    ) -> Any:
+        if received == 0:
+            first_chunk_clocks.append(last_data)
+        return await await_stream_operation(
+            pending, received=received, bytes_received=bytes_received, last_data=last_data
+        )
+
+    monkeypatch.setattr(guarded, "_await_stream_operation", record_first_chunk_clock)
 
     async def handler(_: httpx.Request) -> httpx.Response:
         await asyncio.sleep(0.1)
@@ -223,13 +238,15 @@ async def test_create_enter_and_first_read_share_one_deadline(guarded: BaseAgent
             wrapper = await _wrapper(client)
             return DelayedEnter()
 
-        started = time.monotonic()
         with pytest.raises(LLMStreamStalled) as raised:
             await _drain(guarded, setup)
-        elapsed = time.monotonic() - started
 
     assert raised.value.stage == "first_chunk"
-    assert 0.24 <= elapsed < 0.4
+    # The first read has to inherit the clock setup started, not arm a fresh
+    # deadline: both waits start from the same instant, already 0.2 s old.
+    assert len(first_chunk_clocks) >= 2
+    assert first_chunk_clocks[0] == first_chunk_clocks[1]
+    assert time.monotonic() - first_chunk_clocks[1] >= 0.15
     assert body.closed.is_set()
 
 
