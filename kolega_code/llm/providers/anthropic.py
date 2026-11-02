@@ -29,7 +29,6 @@ class AnthropicStreamWrapper:
         self.tool_execution_ids = ToolExecutionIdRegistry()
         self.current_tool_calls = {}  # Maps tool_call_id to accumulated data
         self.tool_call_order = []
-        self.current_block_index = None
 
     async def __aenter__(self):
         self.generator = await self.anthropic_stream.__aenter__()
@@ -63,7 +62,6 @@ class AnthropicStreamWrapper:
                         "execution_id": self.tool_execution_ids.get_or_create(tool_id),
                     }
                     self.tool_call_order.append(tool_id)
-                    self.current_block_index = chunk.index if hasattr(chunk, "index") else None
 
             # Handle content_block_delta events for tool use input
             elif chunk.type == "content_block_delta" and hasattr(chunk, "delta"):

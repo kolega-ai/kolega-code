@@ -37,7 +37,6 @@ from typing import Any, Callable, Optional, Sequence
 
 STREAMING_FINAL_ONLY = "final_only"
 STREAMING_EDIT_IN_PLACE = "edit_in_place"
-STREAMING_DRAFT = "draft"
 
 
 @dataclass(frozen=True)

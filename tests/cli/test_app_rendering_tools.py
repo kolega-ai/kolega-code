@@ -474,7 +474,6 @@ async def test_textual_app_late_tool_result_updates_existing_tool_row(
                 },
             )
         )
-        app._active_progress_entry = None
         app._turn_active = False
 
         app._render_event(
