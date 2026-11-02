@@ -114,7 +114,6 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         }
         self._sub_agent_seq = max((activity.index for activity in running.values()), default=0)
         self._workflow_activities = {}
-        self._active_progress_entry = None
         self._plan_decision_active = False
         self._restore_plan_action_visibility()
         self._cancel_pending_question()
@@ -456,7 +455,6 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         }
         self._sub_agent_seq = max((item.index for item in self._sub_agent_activities.values()), default=0)
         self._workflow_activities = {}
-        self._active_progress_entry = None
         self._turn_active = True
         self._set_chat_enabled(True)
         self._set_composer_status(messages.QUEUE_PLACEHOLDER)
@@ -492,13 +490,6 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
 
     def _finish_turn_progress(self, content: str, state: TurnState = TurnState.IDLE) -> None:
         self._update_progress(content, complete=True, state=state)
-
-    def _persist_agent_into_session(self) -> None:
-        """Capture the agent's message history and compaction boundary into the session."""
-        if self.agent is None:
-            return
-        self.session.history = self.agent.dump_message_history()
-        self.session.compaction = self.agent.dump_compaction_state()
 
     def _restored_tool_subject(self, tool_name: str, tool_input: object) -> str:
         return build_tool_subject(

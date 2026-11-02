@@ -501,25 +501,6 @@ class MCPService:
             self.status_store.update(server.id, status)
             return MCPVerificationResult(server_id=server.id, ok=False, message=message, status=status)
 
-    async def verify_all(
-        self,
-        *,
-        interactive_oauth: bool = False,
-        open_browser: bool = True,
-        output=None,
-    ) -> list[MCPVerificationResult]:
-        results: list[MCPVerificationResult] = []
-        for server in self.config.enabled_servers:
-            results.append(
-                await self.verify_server(
-                    server.id,
-                    interactive_oauth=interactive_oauth,
-                    open_browser=open_browser,
-                    output=output,
-                )
-            )
-        return results
-
     async def call_tool(self, server_id: str, tool_id: str, arguments: dict[str, Any]) -> Any:
         server = self.config.servers.get(server_id)
         if server is None:

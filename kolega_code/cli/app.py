@@ -365,7 +365,6 @@ class KolegaCodeApp(
         self._transcript_sync_pending = False
         self._rendered_entry_count = 0
         self._dirty_entry_ids: set[str] = set()
-        self._active_progress_entry: Optional[tui_state.ConversationEntry] = None
         self._turn_active = False
         self._latest_plan: Optional[str] = self.session.latest_plan_markdown or None
         self._plan_pending: bool = bool(self._latest_plan and self.session.plan_pending)
@@ -3432,7 +3431,6 @@ class KolegaCodeApp(
         self._sub_agent_by_tool_call = {}
         self._sub_agent_seq = 0
         self._workflow_activities = {}
-        self._active_progress_entry = None
         self._clear_queued_messages()
         self._latest_plan = None
         self._plan_pending = False

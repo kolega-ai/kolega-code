@@ -435,7 +435,6 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         # Teardown can yield while an exclusive replacement reserves the slot.
         if self.agent_worker is not owner:
             return
-        self._active_progress_entry = None
         self._turn_active = False
         # The worker honored (or outlived) the stop, so no escalation is needed.
         self._stop_pending = False

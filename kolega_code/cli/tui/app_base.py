@@ -201,7 +201,6 @@ class KolegaAppBase(App):
         _transcript_sync_pending: bool
         _rendered_entry_count: int
         _dirty_entry_ids: set[str]
-        _active_progress_entry: tui_state.ConversationEntry | None
         _turn_active: bool
         _latest_plan: str | None
         _plan_pending: bool
