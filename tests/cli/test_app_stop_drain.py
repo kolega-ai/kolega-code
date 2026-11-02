@@ -304,7 +304,11 @@ async def test_control_request_during_detached_cleanup_defaults_without_opening_
                     "question", {"question": "Late question?", "options": ["Yes", "No"]}, default=default
                 )
             )
-            assert await asyncio.wait_for(asyncio.shield(request_task), 1) == default
+            # A draining turn answers the request without opening a prompt. Poll
+            # so a loaded runner's loop gets turns to run; a 1 s deadline is not
+            # a property of the behaviour, only of an idle machine.
+            await _wait_for(pilot, request_task.done, timeout=10)
+            assert request_task.result() == default
             assert not app.control_channel.pending()
             assert app._pending_question is None
             assert app._pending_approval is None
