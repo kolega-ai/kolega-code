@@ -125,57 +125,7 @@ delete the setting to restore them.
   conversation.
 - **Compaction** — when the conversation is compressed, the editor shows a
   collapsible block with the summary, and restored threads replay the last one.
-- **Usage** — the context-window meter reports the latest root-agent context
-  measurement or estimate, not tokens consumed over the lifetime of a thread.
-  An unmeasured or invalidated context does not appear as a measured zero.
-
-## Consumption and cost
-
-Kolega keeps context occupancy, inference consumption, and cost independent.
-Consumption includes root, delegate, background, and helper inference requests.
-It is cumulative across turns, model changes, context clears, rewinds, and
-resumes. Replaying a transcript does not make inference requests or add usage.
-Internal retries hidden inside a provider SDK cannot be counted separately.
-
-The standard ACP cost is a cumulative **replacement snapshot**, not a charge to
-add to the previous notification. It may include estimates at the published
-catalogue list price, enabled by default. Those estimates are not proof of a
-new account debit: free allowances, included credits, negotiated discounts,
-taxes, and subscription fees are not inferred from a session. Provider-reported
-charges take precedence. See [usage pricing](/configuration/usage-pricing/) for
-rate sources, overrides, schedules, and limitations.
-
-The authoritative detailed extension is `_meta["dev.kolega/usage"]`, schema
-version `1`, on session updates and prompt responses:
-
-- `session` has `scope: "session"`, `semantics: "snapshot"`, `sessionId`, `runId`,
-  and `revision`. Replace an earlier snapshot; compare revisions within a run.
-- `prompt` on a response has the original logical `promptId` and request-owned
-  prompt totals. A child launched by A remains attributed to A if it settles
-  while B is running. Plan approval and its implementation continuation share
-  the originating prompt; unsolicited automatic work has a background scope.
-- `inputTokens` includes cached input, and `outputTokens` includes billed
-  thoughts. `cachedReadTokens`, `cachedWriteTokens`, and `thoughtTokens` are
-  subsets, not extra tokens to add. Unknown fields are `null`; known partial
-  subtotals, request outcomes, outstanding requests, coverage, persistence
-  health, provider/model breakdowns, and cost completeness are separate.
-- Monetary amounts stay separated by currency; provider credits are
-  non-monetary. Incomplete scope or mixed currencies suppress a misleading
-  complete native cost. No zero is sent to clear unknown cost, so an editor
-  may retain an older complete amount after a later incomplete update.
-
-Accounting-only updates use `session_info_update` when context is unmeasured;
-otherwise the extension accompanies `usage_update`. Generic editors may ignore
-the extension and may display an estimate without its provenance. Background
-settlements continue updating the session after a prompt response.
-
-Native `PromptResponse.usage` remains off unless the client advertises
-`_meta["dev.kolega/usage"].endTurnUsage = "disjoint-v1"` in its capabilities.
-For this opt-in, cache reads/writes are subtracted from inclusive input and
-thoughts from inclusive output. Native usage is omitted when those partitions
-are unknown or invalid. Never add the prompt snapshot to the session snapshot.
-The integration remains pinned to `agent-client-protocol==0.12.0`; ACP context
-and cumulative cost are distinct from the draft end-turn token proposal.
+- **Usage** — the context-window meter updates after each turn.
 
 ## Background subagents
 
