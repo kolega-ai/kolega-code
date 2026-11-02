@@ -126,19 +126,8 @@ async def test_together_live_fixture_uses_real_sdk_transport_without_hiding_requ
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "delta,final_text",
-    [
-        ("vision-ok", "vision-ok"),
-        ("vision-9k", "vision-ok"),
-        ("vision-ok", "vision-9k"),
-        ("vision-9k", "vision-9k"),
-    ],
-    ids=["correct", "corrected-snapshot", "incorrect-snapshot", "incorrect-throughout"],
-)
-async def test_deepseek_literal_probe_preserves_terminal_text_and_rejects_provider_typos(
-    delta: str, final_text: str
-) -> None:
+@pytest.mark.parametrize("text", ["vision-ok", "vision-9k"], ids=["correct", "incorrect"])
+async def test_deepseek_literal_probe_requires_exact_text(text: str) -> None:
     requests: list[dict[str, Any]] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -155,12 +144,12 @@ async def test_deepseek_literal_probe_preserves_terminal_text_and_rejects_provid
             "id": "msg_1",
             "role": "assistant",
             "status": "completed",
-            "content": [{"type": "output_text", "text": final_text, "annotations": []}],
+            "content": [{"type": "output_text", "text": text, "annotations": []}],
         }
         events = [
             {"type": "response.output_item.done", "output_index": 0, "item": reasoning},
-            {"type": "response.output_text.delta", **identity, "delta": delta},
-            {"type": "response.output_text.done", **identity, "text": final_text},
+            {"type": "response.output_text.delta", **identity, "delta": text},
+            {"type": "response.output_text.done", **identity, "text": text},
             {"type": "response.output_item.done", "output_index": 1, "item": item},
             {
                 "type": "response.completed",
@@ -189,7 +178,7 @@ async def test_deepseek_literal_probe_preserves_terminal_text_and_rejects_provid
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
     )
     try:
-        if final_text == "vision-ok":
+        if text == "vision-ok":
             await deepseek_responses.test_vision_generate_text_with_thinking(client)
         else:
             with pytest.raises(AssertionError, match="vision-9k.*vision-ok"):

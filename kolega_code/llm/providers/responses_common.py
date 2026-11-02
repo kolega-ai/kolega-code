@@ -489,8 +489,6 @@ class ResponsesStreamWrapper:
         self._iterator: Optional[AsyncIterator[Any]] = None
         self._closed = False
         self._text = ""
-        self._text_parts: Dict[tuple[str | int, int], str] = {}
-        self._text_item_ids: Dict[int, str] = {}
         self._reasoning = ""
         # Responses reasoning summaries are a list of independently streamed
         # ``summary_text`` parts. Keep their display state separate from the raw
@@ -706,42 +704,6 @@ class ResponsesStreamWrapper:
         self._summary_finished_parts.add(key)
         return self._thinking_chunk(display)
 
-    def _text_key(
-        self, item_id: Optional[str], output_index: Optional[int], content_index: int
-    ) -> tuple[str | int, int]:
-        if item_id:
-            if output_index is not None and self._text_item_ids.get(output_index) != item_id:
-                self._text_item_ids[output_index] = item_id
-                self._text_parts = {
-                    (item_id if key[0] == output_index else key[0], key[1]): text
-                    for key, text in self._text_parts.items()
-                }
-            return item_id, content_index
-        index = output_index if output_index is not None else 0
-        return self._text_item_ids.get(index, index), content_index
-
-    def _capture_text_item(self, item: Any, output_index: Optional[int]) -> None:
-        for content_index, part in enumerate(getattr(item, "content", None) or []):
-            text = getattr(part, "text", None)
-            if getattr(part, "type", None) in ("output_text", "text") and isinstance(text, str):
-                key = self._text_key(getattr(item, "id", None), output_index, content_index)
-                self._text_parts[key] = text
-
-    def _reconciled_text(self) -> str:
-        item_order: Dict[str | int, int] = {}
-        for item_key, _ in self._text_parts:
-            item_order.setdefault(item_key, len(item_order))
-        output_indices: Dict[str | int, int] = {item_id: index for index, item_id in self._text_item_ids.items()}
-        keys = sorted(
-            self._text_parts,
-            key=lambda key: (
-                output_indices.get(key[0], key[0] if isinstance(key[0], int) else item_order[key[0]]),
-                item_order[key[0]],
-                key[1],
-            ),
-        )
-        return "".join(self._text_parts[key] for key in keys)
-
     def _handle_event(self, event: Any) -> MessageChunk:
         response = getattr(event, "response", None)
         if response is not None and getattr(response, "usage", None) is not None:
@@ -756,26 +718,7 @@ class ResponsesStreamWrapper:
         if event_type == "response.output_text.delta":
             delta = getattr(event, "delta", "") or ""
             self._text += delta
-            key = self._text_key(
-                getattr(event, "item_id", None),
-                getattr(event, "output_index", None),
-                getattr(event, "content_index", 0),
-            )
-            self._text_parts[key] = self._text_parts.get(key, "") + delta
             return MessageChunk(type="text", text=delta)
-        if event_type in ("response.output_text.done", "response.content_part.done"):
-            part = getattr(event, "part", None)
-            text = getattr(event, "text", None) if event_type == "response.output_text.done" else None
-            if part is not None and getattr(part, "type", None) in ("output_text", "text"):
-                text = getattr(part, "text", None)
-            if isinstance(text, str):
-                key = self._text_key(
-                    getattr(event, "item_id", None),
-                    getattr(event, "output_index", None),
-                    getattr(event, "content_index", 0),
-                )
-                self._text_parts[key] = text
-            return MessageChunk(type="ignore", text="")
         if event_type == "response.reasoning_summary_text.delta":
             return self._handle_summary_delta(event)
         if event_type in ("response.reasoning_summary_text.done", "response.reasoning_summary_part.done"):
@@ -788,7 +731,6 @@ class ResponsesStreamWrapper:
             return MessageChunk(type="thinking", thinking=delta)
         if event_type == "response.output_item.added":
             item = getattr(event, "item", None)
-            self._text_key(getattr(item, "id", None), getattr(event, "output_index", None), 0)
             if getattr(item, "type", None) in ("function_call", "custom_tool_call"):
                 # Key accumulators by the stream item id (what argument-delta events
                 # reference); remember the call_id used to link the tool result.
@@ -846,9 +788,7 @@ class ResponsesStreamWrapper:
         elif event_type == "response.output_item.done":
             item = getattr(event, "item", None)
             item_kind = getattr(item, "type", None)
-            if item_kind == "message":
-                self._capture_text_item(item, getattr(event, "output_index", None))
-            elif item_kind == "reasoning":
+            if item_kind == "reasoning":
                 # Capture the completed reasoning item (carries encrypted_content)
                 # so it can be resent next turn for chain-of-thought continuity.
                 captured = self._reasoning_dict(item)
@@ -918,9 +858,6 @@ class ResponsesStreamWrapper:
             # incomplete_details, and usage — so both must be captured, or a
             # truncation loses its usage and degrades to a clean end_turn.
             self._final_response = getattr(event, "response", None)
-            for output_index, item in enumerate(getattr(self._final_response, "output", None) or []):
-                if getattr(item, "type", None) == "message":
-                    self._capture_text_item(item, output_index)
             terminal_chunk = self._thinking_chunk(self._finish_active_summary_part())
             self._tool_calls_validated = (
                 event_type == "response.completed"
@@ -940,11 +877,14 @@ class ResponsesStreamWrapper:
         return MessageChunk(type="ignore", text="")
 
     async def get_final_message(self) -> Message:
+        # Build content from the streamed deltas, NOT response.completed.output:
+        # the ChatGPT/Codex backend sends response.completed with an empty output[]
+        # (the text/tool calls arrive only as deltas), so parsing the final
+        # response there would drop the whole answer.
         if self._final_response is None:
             pending_tool_calls = len(self._function_calls)
-            text = self._reconciled_text()
-            partial_output = bool(self._text or text or self._reasoning or self._prefix_records or pending_tool_calls)
-            partial_content = [TextBlock(text=text)] if text else []
+            partial_output = bool(self._text or self._reasoning or self._prefix_records or pending_tool_calls)
+            partial_content = [TextBlock(text=self._text)] if self._text else []
             prefix_blocks = self._collect_prefix_blocks()
             partial_message = None
             if partial_content or prefix_blocks:
@@ -976,12 +916,6 @@ class ResponsesStreamWrapper:
             # Fallback for backends that only populate the final output (and
             # not deltas) — e.g. a non-streaming-shaped response.
             content_blocks, tool_use_blocks = _blocks_from_response(self._final_response, self._tool_execution_ids)
-        if self._text_parts:
-            # Empty terminal output must not erase text captured earlier in the stream.
-            text = self._reconciled_text()
-            content_blocks = ([TextBlock(text=text)] if text else []) + [
-                block for block in content_blocks if not isinstance(block, TextBlock)
-            ]
         if not self._tool_calls_validated:
             content_blocks = [block for block in content_blocks if not isinstance(block, ToolCall)]
             tool_use_blocks = []
