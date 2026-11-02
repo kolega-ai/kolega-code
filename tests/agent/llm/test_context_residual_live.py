@@ -20,9 +20,10 @@ from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.llm.providers.deepseek_responses import DeepSeekResponsesProvider
 from kolega_code.llm.providers.models import GenerationParams
 
-pytestmark = [pytest.mark.slow, pytest.mark.integration]
+pytestmark = [pytest.mark.slow, pytest.mark.integration, pytest.mark.live_api]
 
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
+MODEL = "deepseek-flash"
 
 
 @pytest.mark.asyncio
@@ -33,11 +34,10 @@ async def test_flash_bills_at_least_the_client_count():
     if not api_key:
         pytest.skip(f"{API_KEY_ENV[ModelProvider.DEEPSEEK]} not set")
     provider = DeepSeekResponsesProvider(api_key=api_key)
-    model = "deepseek-v4-flash"
     history = MessageHistory([Message(role="user", content=[TextBlock(text="Reply with the single word: ok")])])
-    counted = await provider.count_tokens(messages=history, system=None, model=model, tools=[])
+    counted = await provider.count_tokens(messages=history, system=None, model=MODEL, tools=[])
     message = await provider.generate(
-        history, system=None, params=GenerationParams(thinking="high", max_completion_tokens=2000), model=model
+        history, system=None, params=GenerationParams(thinking="high", max_completion_tokens=2000), model=MODEL
     )
     billed = (message.usage_metadata or {}).get("prompt_tokens", 0)
     drift = billed - counted.input_tokens

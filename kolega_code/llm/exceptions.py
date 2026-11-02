@@ -36,6 +36,7 @@ Error Mapping:
 """
 
 import asyncio
+import re
 import sys
 from typing import TYPE_CHECKING, Optional
 
@@ -357,6 +358,53 @@ _CLOUDFLARE_CONTEXT_PHRASES = (
 _CLOUDFLARE_NOT_FOUND_CODES = frozenset({5007})
 
 
+_PERPLEXITY_QUOTA_CODES = frozenset(
+    {"insufficient_quota", "quota_exceeded", "quota_exhausted", "insufficient_credits", "insufficient_balance"}
+)
+_PERPLEXITY_QUOTA_MESSAGE = re.compile(
+    r"^(?:unauthorized:\s*)?(?:"
+    r"you (?:have )?exceeded your (?:api |current )?quota\b|"
+    r"(?:your (?:api |current )?)?quota (?:has been )?(?:exceeded|exhausted)\b|"
+    r"insufficient (?:credits?|balance)\b|"
+    r"your account has run out of credits\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def is_perplexity_quota_error(error: Exception, provider: str | None = None) -> bool:
+    """Recognize explicit quota depletion in raw Perplexity OpenAI-SDK errors, including HTTP 401."""
+    if provider != ModelProvider.PERPLEXITY_AGENT.value:
+        return False
+    from openai import OpenAIError
+
+    if not isinstance(error, OpenAIError):
+        return False
+
+    codes = [getattr(error, "code", None), getattr(error, "type", None)]
+    messages: list[str] = []
+    body = getattr(error, "body", None)
+    if isinstance(body, dict):
+        error_info = body.get("error")
+        for entry in (body, error_info):
+            if isinstance(entry, dict):
+                codes.extend((entry.get("code"), entry.get("type")))
+                message = entry.get("message")
+                if isinstance(message, str):
+                    messages.append(message)
+        if isinstance(error_info, str):
+            messages.append(error_info)
+    elif isinstance(body, str):
+        messages.append(body)
+    if any(isinstance(code, str) and code in _PERPLEXITY_QUOTA_CODES for code in codes):
+        return True
+    if not messages:
+        message = getattr(error, "message", str(error))
+        if isinstance(message, str):
+            messages.append(message)
+    return any(_PERPLEXITY_QUOTA_MESSAGE.match(" ".join(message.split())) is not None for message in messages)
+
+
 def _cloudflare_error_codes(error: Exception) -> set[int]:
     """Workers AI's numeric codes from its ``{"errors": [{"code": ...}]}`` envelope."""
     body = getattr(error, "body", None)
@@ -399,6 +447,8 @@ def map_openai_errors(error: "OpenAIError", provider: str | None = None) -> LLME
 
     # Compatible providers ride the OpenAI SDK; keep their real provider label.
     provider = provider or ModelProvider.OPENAI.value
+    if is_perplexity_quota_error(error, provider):
+        return LLMBillingError(message=f"OpenAI APIError: {str(error)}", provider=provider)
     if provider == ModelProvider.CLOUDFLARE_WORKERS_AI.value:
         cloudflare_error = _map_cloudflare_openai_error(error, provider)
         if cloudflare_error is not None:

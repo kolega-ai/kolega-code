@@ -71,7 +71,7 @@ class TestHostedToolInRequest:
     @pytest.mark.parametrize(
         "provider_cls,model",
         [
-            (DeepSeekResponsesProvider, "deepseek-v4-flash"),
+            (DeepSeekResponsesProvider, "deepseek-v4-pro"),
             (OpenAIResponsesProvider, "gpt-5.6-sol"),
         ],
     )

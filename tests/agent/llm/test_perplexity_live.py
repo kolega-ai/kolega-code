@@ -22,14 +22,16 @@ Hermetic counterpart: tests/agent/llm/test_perplexity_provider.py.
 import os
 
 import pytest
+from openai import OpenAIError
 
 from kolega_code.cli.config import API_KEY_ENV
 from kolega_code.config import ModelProvider
+from kolega_code.llm.exceptions import is_perplexity_quota_error
 from kolega_code.llm.models import Message, MessageHistory, TextBlock, WebSearchCallBlock
 from kolega_code.llm.providers.models import GenerationParams
 from kolega_code.llm.providers.perplexity_responses import PerplexityResponsesProvider
 
-pytestmark = [pytest.mark.slow, pytest.mark.integration]
+pytestmark = [pytest.mark.slow, pytest.mark.integration, pytest.mark.live_api]
 
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
 
@@ -51,6 +53,15 @@ def _provider() -> PerplexityResponsesProvider:
 async def test_live_server_tool_search_results_captured_and_replayable() -> None:
     if SKIP_IN_CI:
         pytest.skip("Skipping live provider call in CI")
+    try:
+        await _probe_server_tool_search_results_and_replay()
+    except OpenAIError as exc:
+        if is_perplexity_quota_error(exc, provider=ModelProvider.PERPLEXITY_AGENT.value):
+            pytest.skip(f"Perplexity quota exhausted for this key: {exc}")
+        raise
+
+
+async def _probe_server_tool_search_results_and_replay() -> None:
     provider = _provider()
     system = Message(role="system", content=[TextBlock(text="You are a terse assistant.")])
 

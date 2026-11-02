@@ -15,21 +15,21 @@ import os
 
 import pytest
 
-from kolega_code.cli.config import API_KEY_ENV, OAUTH_PROVIDERS
-from kolega_code.cli.provider_registry import default_model_for_provider
+from kolega_code.cli.config import API_KEY_ENV
 from kolega_code.config import ModelProvider
 from kolega_code.llm.client import LLMClient
 from kolega_code.llm.exceptions import LLMBillingError, LLMPermissionDeniedError, LLMRateLimitError
 from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.llm.specs import (
-    MODEL_SPECS,
     default_thinking_effort,
     get_model_specs,
     get_thinking_effort_spec,
     thinking_effort_options,
 )
 
-pytestmark = pytest.mark.integration
+from ._live_models import provider_smoke_models
+
+pytestmark = [pytest.mark.integration, pytest.mark.live_api]
 
 # Skip the live calls inside CI, where keys are typically absent and we don't want
 # to spend tokens on every pipeline run.
@@ -40,11 +40,6 @@ SYSTEM = Message(
     content=[TextBlock(text="You are a concise math assistant. Answer with as few tokens as possible.")],
 )
 
-# OpenRouter fronts hundreds of models at wildly different prices. Its default
-# model is chosen for day-to-day use, not for a smoke test, so pin a cheap
-# reasoning- and tool-capable model here instead.
-OPENROUTER_SMOKE_MODEL = "openai/gpt-5.4-mini"
-
 
 def _messages() -> MessageHistory:
     return MessageHistory(
@@ -52,27 +47,7 @@ def _messages() -> MessageHistory:
     )
 
 
-def _provider_smoke_models() -> list[tuple[str, str]]:
-    """One (provider, smoke-model) pair per key-based provider in the catalog."""
-    seen: list[tuple[str, str]] = []
-    added: set[str] = set()
-    for provider_value, _model in MODEL_SPECS:
-        if provider_value in added:
-            continue
-        # OAuth providers authenticate via interactive sign-in, not an env key, so
-        # they can't be driven from this key-based matrix (see test_chatgpt_live.py).
-        if ModelProvider(provider_value) in OAUTH_PROVIDERS:
-            continue
-        added.add(provider_value)
-        if provider_value == ModelProvider.OPENROUTER.value:
-            model = OPENROUTER_SMOKE_MODEL
-        else:
-            model = default_model_for_provider(ModelProvider(provider_value))
-        seen.append((provider_value, model))
-    return seen
-
-
-PROVIDER_SMOKE_MODELS = _provider_smoke_models()
+PROVIDER_SMOKE_MODELS = provider_smoke_models()
 
 # Subset whose smoke model exposes a thinking/reasoning-effort control. Ollama
 # Cloud is intentionally excluded to keep live Ollama coverage to one smoke call.

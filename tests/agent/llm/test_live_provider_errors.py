@@ -1,0 +1,184 @@
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import AsyncMock, Mock
+
+import httpx
+import pytest
+from openai import APIStatusError, AsyncOpenAI, BadRequestError
+
+from kolega_code.llm.client import LLMClient
+from kolega_code.llm.exceptions import LLMAuthenticationError, LLMError, LLMInvalidRequestError, LLMNotFoundError
+from kolega_code.llm.providers.responses_common import ResponsesProviderBase
+
+from . import test_deepseek_output_cap_live as output_cap
+from . import test_live_providers as smoke
+from . import test_normalized_usage_live as usage
+from .test_perplexity_quota_errors import QUOTA_MESSAGE, _FailingStream, _sdk_error
+
+
+_CASES = [
+    (401, {"error": {"message": QUOTA_MESSAGE}}, True),
+    (401, {"error": {"code": "insufficient_quota"}}, True),
+    (401, {"error": {"code": "invalid_api_key", "message": "Invalid API key"}}, False),
+    (401, {"error": {"message": "Unauthorized"}}, False),
+    (401, {"error": {"message": "Check your billing details"}}, False),
+    (400, {"error": {"message": "Malformed request"}}, False),
+    (404, {"error": {"message": "Model not found"}}, False),
+    (418, {"error": {"message": "Unknown failure"}}, False),
+]
+_EXPECTED_ERRORS = {
+    401: LLMAuthenticationError,
+    400: LLMInvalidRequestError,
+    404: LLMNotFoundError,
+    418: LLMError,
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suite", ["smoke", "usage"])
+@pytest.mark.parametrize("stage", ["create", "iterate"])
+@pytest.mark.parametrize("status,body,quota", _CASES)
+async def test_live_generate_guards_skip_only_normalized_quota(
+    monkeypatch: pytest.MonkeyPatch, suite: str, stage: str, status: int, body: dict[str, Any], quota: bool
+) -> None:
+    provider = "perplexity_agent"
+    model = dict(usage.PROVIDER_MODELS)[provider]
+    client = LLMClient(provider=provider, api_key="test-placeholder", model=model)
+    assert isinstance(client.provider, ResponsesProviderBase)
+    error = _sdk_error(status, body)
+    create = AsyncMock(side_effect=error) if stage == "create" else AsyncMock(return_value=_FailingStream(error))
+    client.provider.async_client = cast(AsyncOpenAI, SimpleNamespace(responses=SimpleNamespace(create=create)))
+    monkeypatch.setattr(usage, "_require_key", lambda _: "test-placeholder")
+    monkeypatch.setattr(usage, "LLMClient", lambda **_: client)
+    if quota:
+        with pytest.raises(pytest.skip.Exception, match="quota"):
+            if suite == "smoke":
+                await smoke._live_generate(client, messages=smoke._messages(), model=model)
+            else:
+                await usage.test_live_generate_attaches_reported_usage(provider, model)
+    else:
+        with pytest.raises(_EXPECTED_ERRORS[status]) as caught:
+            if suite == "smoke":
+                await smoke._live_generate(client, messages=smoke._messages(), model=model)
+            else:
+                await usage.test_live_generate_attaches_reported_usage(provider, model)
+        assert caught.value.__cause__ is error
+        assert type(caught.value) is _EXPECTED_ERRORS[status]
+    create.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "message,recognized",
+    [
+        ("The valid range of max_output_tokens is [1, 393216]", True),
+        ("max_tokens must be at most 65536", True),
+        ("max_completion_tokens must be between 1 and 65536", True),
+        ("Model not available", False),
+        ("Invalid max_tokens format", False),
+        ("Invalid billing parameter", False),
+        ("Unknown failure", False),
+    ],
+)
+def test_cap_probe_recognizes_only_explicit_output_limit_rejections(message: str, recognized: bool) -> None:
+    request = httpx.Request("POST", "https://example.test/responses")
+    body = {"error": {"message": message}}
+    bad_request = BadRequestError(message, response=httpx.Response(400, request=request), body=body)
+    assert output_cap._is_output_cap_rejection(bad_request) is recognized
+    for status in (401, 403, 404, 500):
+        other = APIStatusError(message, response=httpx.Response(status, request=request), body=body)
+        assert output_cap._is_output_cap_rejection(other) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suite", ["chat", "responses", "openrouter"])
+@pytest.mark.parametrize(
+    "status,message,cap_rejection",
+    [
+        (400, "max_output_tokens must be at most 65536", True),
+        (400, "max_tokens must be between 1 and 65536", True),
+        (400, "Malformed request", False),
+        (401, "Unauthorized", False),
+        (404, "Model not available", False),
+        (418, "Unknown failure", False),
+    ],
+)
+async def test_cap_probe_records_only_explicit_output_limit_rejections(
+    monkeypatch: pytest.MonkeyPatch, suite: str, status: int, message: str, cap_rejection: bool
+) -> None:
+    error = _sdk_error(status, {"error": {"message": message}})
+    if status == 400:
+        error = BadRequestError(
+            message,
+            response=httpx.Response(400, request=httpx.Request("POST", "https://example.test/responses")),
+            body={"error": {"message": message}},
+        )
+    monkeypatch.setattr(output_cap, "_require_key", lambda _: "test-placeholder")
+    record = Mock()
+    monkeypatch.setattr(output_cap, "_record", record)
+    if suite == "chat":
+        normalized = _EXPECTED_ERRORS[status](message)
+        normalized.__cause__ = error
+        create = AsyncMock(side_effect=normalized)
+        client = SimpleNamespace(generate=create)
+        monkeypatch.setattr(output_cap, "LLMClient", lambda **_: client)
+        probe = output_cap.test_chat_overcap_request_outcome(*output_cap.CHAT_HOSTS[0])
+        expected_error = normalized
+    elif suite == "responses":
+        model = output_cap.RESPONSES_MODELS[0]
+        client = LLMClient(provider="deepseek", api_key="test-placeholder", model=model)
+        assert isinstance(client.provider, ResponsesProviderBase)
+        create = AsyncMock(side_effect=error)
+        client.provider.async_client = cast(AsyncOpenAI, SimpleNamespace(responses=SimpleNamespace(create=create)))
+        monkeypatch.setattr(output_cap, "LLMClient", lambda **_: client)
+        probe = output_cap.test_responses_overcap_request_outcome(model)
+        expected_error = error
+    else:
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="4"), finish_reason="length")],
+            usage=SimpleNamespace(completion_tokens=16),
+        )
+        create = AsyncMock(side_effect=[response, response, error])
+        client = SimpleNamespace(
+            provider=SimpleNamespace(
+                async_client=SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+            )
+        )
+        monkeypatch.setattr(output_cap, "LLMClient", lambda **_: client)
+        probe = output_cap.test_openrouter_deepseek_accepts_clamped_cap(output_cap.OPENROUTER_SLUGS[0])
+        expected_error = error
+    if cap_rejection:
+        await probe
+        label = {"chat": "chat-overcap", "responses": "responses-overcap", "openrouter": "openrouter-overcap"}[suite]
+        assert record.call_args.args == (label,)
+        assert record.call_args.kwargs["outcome"] == "rejected"
+    else:
+        with pytest.raises(type(expected_error)) as caught:
+            await probe
+        assert caught.value is expected_error
+        assert all(call.kwargs.get("outcome") != "rejected" for call in record.call_args_list)
+    assert create.await_count == (3 if suite == "openrouter" else 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["perplexity_agent", "deepseek"])
+@pytest.mark.parametrize("stage", ["create", "iterate"])
+@pytest.mark.parametrize("status,body,quota", _CASES)
+async def test_usage_stream_guard_skips_only_explicit_perplexity_quota(
+    monkeypatch: pytest.MonkeyPatch, provider: str, stage: str, status: int, body: dict[str, Any], quota: bool
+) -> None:
+    model = dict(usage.PROVIDER_MODELS)[provider]
+    client = LLMClient(provider=provider, api_key="test-placeholder", model=model)
+    assert isinstance(client.provider, ResponsesProviderBase)
+    error = _sdk_error(status, body)
+    create = AsyncMock(side_effect=error) if stage == "create" else AsyncMock(return_value=_FailingStream(error))
+    client.provider.async_client = cast(AsyncOpenAI, SimpleNamespace(responses=SimpleNamespace(create=create)))
+    monkeypatch.setattr(usage, "_require_key", lambda _: "test-placeholder")
+    monkeypatch.setattr(usage, "LLMClient", lambda **_: client)
+    if quota and provider == "perplexity_agent":
+        with pytest.raises(pytest.skip.Exception, match="Perplexity quota"):
+            await usage.test_live_stream_attaches_reported_usage_idempotently(provider, model)
+    else:
+        with pytest.raises(type(error)) as caught:
+            await usage.test_live_stream_attaches_reported_usage_idempotently(provider, model)
+        assert caught.value is error
+    create.assert_awaited_once()
