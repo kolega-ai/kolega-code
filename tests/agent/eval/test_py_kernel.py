@@ -14,7 +14,8 @@ from unittest.mock import Mock
 import pytest
 import pytest_asyncio
 
-from kolega_code.agent.eval.kernel import EvalKernelManager
+from kolega_code.agent.eval.env import EvalEnvironmentError, EvalEnvironmentManager
+from kolega_code.agent.eval.kernel import EvalKernelManager, KernelUnavailableError
 from kolega_code.llm.models import ToolResult
 
 pytestmark = pytest.mark.asyncio
@@ -68,6 +69,26 @@ async def manager(tmp_path, config, isolated_cli_env):
     )
     yield instance
     await instance.shutdown()
+
+
+async def test_managed_environment_failure_is_actionable(tmp_path, config, isolated_cli_env, monkeypatch):
+    config.eval_python_path = None
+
+    async def fail_ensure(self):
+        raise EvalEnvironmentError("CPython 3.14 is unavailable")
+
+    monkeypatch.setattr(EvalEnvironmentManager, "ensure", fail_ensure)
+    manager = EvalKernelManager.for_thread(
+        workspace_id="test_ws",
+        thread_id=f"test-{uuid.uuid4().hex}",
+        project_path=tmp_path,
+        config=config,
+    )
+    try:
+        with pytest.raises(KernelUnavailableError, match="CPython 3.14 is unavailable"):
+            await manager.execute(language="py", code="42", agent=FakeAgent(), timeout=30)
+    finally:
+        await manager.shutdown()
 
 
 async def test_result_echo_and_stdout(manager):

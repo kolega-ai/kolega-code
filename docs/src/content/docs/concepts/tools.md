@@ -68,18 +68,28 @@ For raw file contents — CSV loads, JSON handoffs — use the in-kernel
 vision-capable models), `env`, `list_tools()` for tool discovery, `parallel()`
 for concurrent calls, and `pip_install()` / `npm_install()` for adding packages.
 
-The Python kernel runs in a **dedicated managed environment** (not your project
-venv, not the CLI's own interpreter): kolega-code provisions a CPython 3.12 with
-numpy, pandas, matplotlib, and pillow preinstalled on first use, so data and
-charting work everywhere without touching project or CLI dependencies. Executing
-your project's own code with its dependencies stays with `exec_command`, which
-auto-activates the project `.venv`.
+The Python kernel runs in a **dedicated managed CPython 3.14 environment**,
+independent of both your project venv and the CLI's own interpreter. It includes
+numpy, pandas, matplotlib, and pillow, so data and charting work without
+touching project or CLI dependencies. Provisioning uses `uv` or an available
+CPython 3.14 installation; it never silently substitutes another host Python
+version. Executing your project's own code with its dependencies stays with
+`exec_command`, which auto-activates the project `.venv`.
 
-The environment lives at `eval-env/` under the [state directory](../troubleshooting/diagnostics/)
-(override with `KOLEGA_CODE_STATE_DIR`). It upgrades itself: if a Kolega Code
-update changes the bundled packages or Python version, the next `eval` call
-reprovisions automatically. Deleting the directory is always safe — it is simply
-recreated on demand. Updating the CLI with `kolega-code update` never touches it.
+Each Python/bundle combination has its own `eval-env-py3.14-*` directory under
+the [state directory](../troubleshooting/diagnostics/) (override its root with
+`eval_env_path` or the state directory with `KOLEGA_CODE_STATE_DIR`). The first
+eval after an update provisions changed requirements lazily and verifies the
+interpreter and bundled imports. New builds do not modify previous environments,
+so running kernels and failed installations cannot affect a working build.
+Deleting managed environments is safe when no session is using them. Updating
+the CLI with `kolega-code update` never touches them directly.
+
+Packages installed manually with `pip_install()` must be reinstalled after a
+reprovision; packages listed in `eval_kernel_packages` are reinstalled
+automatically. `eval_python_version` is deprecated and ignored. Use
+`eval_python_path` only when you deliberately want an explicit custom
+interpreter without the managed bundle.
 
 Set `reset: true` to wipe a kernel's state; `timeout` bounds a cell (interrupts
 with `KeyboardInterrupt` on Python). Cells run locally with the same trust level

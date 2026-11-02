@@ -345,8 +345,10 @@ class AgentConfig(BaseModel):
     # are additive with defaults that enable the feature; excluded from
     # serialization since they carry local paths (parity with lsp/mcp_config).
     eval_enabled: bool = Field(default=True, exclude=True, description="Enable the eval tool and its kernels")
-    eval_python_version: str = Field(
-        default="3.12", exclude=True, description="Python version requested for the managed eval environment"
+    eval_python_version: Optional[str] = Field(
+        default=None,
+        exclude=True,
+        description="Deprecated: managed eval always uses CPython 3.14; use eval_python_path for a custom interpreter",
     )
     eval_env_path: Optional[str] = Field(
         default=None, exclude=True, description="Override location of the managed eval environment directory"

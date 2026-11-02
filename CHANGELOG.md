@@ -6,6 +6,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Changed
+
+- The managed Python eval kernel now always provisions CPython 3.14, independently
+  of the CLI's Python version, with numpy 2.5.4 and matplotlib 3.11.2. Runtime
+  upgrades use separate version/bundle directories, and failed builds leave
+  previous environments unchanged instead of falling back to an arbitrary host
+  interpreter. The first eval after upgrading may download the new runtime;
+  manually installed eval packages must be reinstalled, while configured
+  `eval_kernel_packages` migrate automatically. `eval_python_version` is
+  deprecated and ignored; `eval_python_path` remains an explicit unbundled override.
+
 ### Security
 
 - Live sharing now requires a token and validates Host and Origin headers for

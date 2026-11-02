@@ -257,9 +257,9 @@ jobs:
           cp kolega_code/agent/eval/bundle-requirements.txt /tmp/eval-bundle-requirements.txt
           uv pip compile \
             --universal \
-            --python-version 3.12 \
+            --python-version 3.14 \
             --custom-compile-command \
-              'uv pip compile --universal --python-version 3.12 bundle-requirements.in -o bundle-requirements.txt' \
+              'uv pip compile --universal --python-version 3.14 bundle-requirements.in -o bundle-requirements.txt' \
             kolega_code/agent/eval/bundle-requirements.in \
             -o /tmp/eval-bundle-requirements.txt \
             --quiet
@@ -269,6 +269,24 @@ jobs:
             --no-deps \
             --disable-pip \
             --progress-spinner off
+
+      - name: Smoke-test the CPython 3.14 eval bundle
+        if: needs.changes.outputs.coverage-badge-only != 'true'
+        run: |
+          uv venv /tmp/kolega-eval-314 --python 3.14
+          uv pip install \
+            --python /tmp/kolega-eval-314/bin/python \
+            --only-binary :all: \
+            -r kolega_code/agent/eval/bundle-requirements.txt
+          /tmp/kolega-eval-314/bin/python - <<'PY'
+          import sys
+          import numpy
+          import pandas
+          import PIL
+          import matplotlib
+
+          assert sys.version_info[:2] == (3, 14)
+          PY
 
       - name: Audit locked dependencies
         if: needs.changes.outputs.coverage-badge-only != 'true'

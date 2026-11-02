@@ -29,7 +29,7 @@ class FakeAgent:
 def config(tmp_path):
     mock = Mock()
     mock.eval_python_path = None
-    mock.eval_python_version = "3.12"
+    mock.eval_python_version = None
     mock.eval_env_path = str(tmp_path / "eval-env")
     mock.eval_kernel_packages = None
     mock.eval_js_runtime = None
@@ -56,8 +56,9 @@ async def test_provisions_real_env_and_runs_cell(tmp_path, config, isolated_cli_
         assert result.status == "ok", result.error
         assert any("one-time setup" in note for note in result.notes)
         version, env_path = result.result_bundle["application/json"]
-        assert version
-        assert env_path == str(tmp_path / "eval-env")
+        assert version.startswith("3.14.")
+        assert env_path.startswith(str(tmp_path / "eval-env" / "eval-env-py3.14-"))
+        assert env_path != str(tmp_path / "eval-env")
 
         # Second cell reuses the env (no provisioning note).
         again = await manager.execute(language="py", code="'warm'", agent=FakeAgent(), timeout=30)

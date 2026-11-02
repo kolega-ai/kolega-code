@@ -1,16 +1,8 @@
-"""Dedicated, kolega-code-managed Python environment for eval kernels.
+"""Dedicated, kolega-code-managed CPython 3.14 environment for eval kernels.
 
-The eval Python kernel deliberately runs neither on the project's venv nor on
-the kolega-code host interpreter. It gets its own managed environment under the
-user state dir so a curated library bundle (numpy/pandas/matplotlib/pillow) is
-always available and agent-driven ``pip_install`` calls can never break the
-CLI's own exactly-pinned dependency closure.
-
-Provisioning is lazy (first ``py`` cell), serialized across processes with a
-file lock, and self-healing: a manifest records the requested Python version
-and bundle hash, and any mismatch triggers a clean reprovision. When
-provisioning fails entirely (offline host, no compilers) the manager degrades
-to the host interpreter with a model-facing note instead of failing the cell.
+Each Python/bundle combination gets its own directory. New versions are built
+and verified without modifying previous environments, so running kernels keep
+working and failed provisioning cannot destroy a working installation.
 """
 
 from __future__ import annotations
@@ -24,17 +16,23 @@ import sys
 from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import filelock
 
+EVAL_PYTHON_VERSION = "3.14"
 BUNDLE_RESOURCE = "bundle-requirements.txt"
-ENV_DIR_NAME = "eval-env"
+ENV_DIR_PREFIX = f"eval-env-py{EVAL_PYTHON_VERSION}"
 LOCK_FILE_NAME = "eval-env.lock"
 MANIFEST_NAME = "kolega-eval-manifest.json"
 
 _INSTALL_TIMEOUT_S = 900
 _VENV_TIMEOUT_S = 300
+_PROBE_TIMEOUT_S = 30
+
+
+class EvalEnvironmentError(RuntimeError):
+    """The fixed-version managed eval environment could not be provisioned."""
 
 
 @dataclass
@@ -44,22 +42,14 @@ class KernelEnvInfo:
     python: str
     env_path: Optional[Path]
     bundled: bool
-    degraded: bool
     provisioned_now: bool
     note: Optional[str] = None
-    # Command prefix for prelude pip_install(); empty when installs are not
-    # possible (degraded host interpreter or uv-managed env without uv).
     pip_install_cmd: List[str] = field(default_factory=list)
     bundle: List[str] = field(default_factory=list)
 
 
 def default_state_dir() -> Path:
-    """User state dir for kolega-code (mirrors cli.session_store.default_state_dir).
-
-    Mirrored here rather than imported so the agent layer does not depend on the
-    CLI layer. Keep the semantics in sync: KOLEGA_CODE_STATE_DIR override, then
-    the per-platform application-state location.
-    """
+    """User state dir for kolega-code (mirrors cli.session_store.default_state_dir)."""
     env = os.environ.get("KOLEGA_CODE_STATE_DIR")
     if env:
         return Path(env).expanduser()
@@ -81,24 +71,29 @@ def _run(cmd: List[str], timeout: int) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
 
 
+def _version_is_target(version: str) -> bool:
+    return version.split(".")[:2] == EVAL_PYTHON_VERSION.split(".")
+
+
 class EvalEnvironmentManager:
-    """Provisions and resolves the dedicated eval Python environment."""
+    """Provisions and resolves the fixed-version eval Python environment."""
 
     def __init__(
         self,
         *,
         state_dir: Optional[Path] = None,
         env_path: Optional[Path] = None,
-        python_version: str = "3.12",
         extra_packages: Optional[List[str]] = None,
         override_python: Optional[str] = None,
+        legacy_python_version: Optional[str] = None,
     ) -> None:
         self._state_dir = Path(state_dir) if state_dir else default_state_dir()
-        self._env_path = Path(env_path) if env_path else self._state_dir / ENV_DIR_NAME
-        self._python_version = python_version
+        self._env_root = Path(env_path) if env_path else self._state_dir
         self._extra_packages = list(extra_packages or [])
         self._override_python = override_python
+        self._legacy_python_version = legacy_python_version
         self._cached: Optional[KernelEnvInfo] = None
+        self._env_path = self._env_root / f"{ENV_DIR_PREFIX}-{self._bundle_hash()[:16]}"
 
     @property
     def env_path(self) -> Path:
@@ -124,7 +119,6 @@ class EvalEnvironmentManager:
         return names + self._extra_packages
 
     def _materialize_bundle_file(self) -> Path:
-        """Write the bundle requirements to a real file installers can read."""
         digest = self._bundle_hash()[:16]
         target = self._state_dir / f"eval-bundle-{digest}.txt"
         if not target.exists():
@@ -137,16 +131,16 @@ class EvalEnvironmentManager:
         return target
 
     def _read_manifest(self) -> Optional[dict]:
-        manifest_path = self._env_path / MANIFEST_NAME
         try:
-            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            data = json.loads((self._env_path / MANIFEST_NAME).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return None
         return data if isinstance(data, dict) else None
 
-    def _write_manifest(self, installer: str) -> None:
+    def _write_manifest(self, installer: str, actual_python_version: str) -> None:
         manifest = {
-            "python_version": self._python_version,
+            "python_version": EVAL_PYTHON_VERSION,
+            "actual_python_version": actual_python_version,
             "bundle_hash": self._bundle_hash(),
             "installer": installer,
         }
@@ -156,18 +150,70 @@ class EvalEnvironmentManager:
         manifest = self._read_manifest()
         if manifest is None:
             return False
-        if manifest.get("bundle_hash") != self._bundle_hash():
-            return False
-        if manifest.get("python_version") != self._python_version:
-            return False
-        return _venv_python(self._env_path).exists()
+        actual = manifest.get("actual_python_version")
+        return (
+            manifest.get("bundle_hash") == self._bundle_hash()
+            and manifest.get("python_version") == EVAL_PYTHON_VERSION
+            and isinstance(actual, str)
+            and _version_is_target(actual)
+            and _venv_python(self._env_path).exists()
+        )
 
     def _pip_install_cmd(self, installer: str, python: str) -> List[str]:
         uv = shutil.which("uv")
         if installer == "uv":
-            # uv-created venvs have no pip module; only uv can install into them.
             return [uv, "pip", "install", "--python", python] if uv else []
         return [python, "-m", "pip", "install"]
+
+    def _with_deprecation_note(self, note: Optional[str]) -> Optional[str]:
+        if self._legacy_python_version is None:
+            return note
+        deprecation = (
+            "eval_python_version is deprecated and ignored; the managed eval environment uses "
+            f"CPython {EVAL_PYTHON_VERSION}. Use eval_python_path for an explicit unbundled interpreter."
+        )
+        return f"{note}\n{deprecation}" if note else deprecation
+
+    def _probe_python(self, python: str) -> str:
+        code = "import json, platform; print(json.dumps([platform.python_implementation(), platform.python_version()]))"
+        try:
+            step = _run([python, "-I", "-c", code], timeout=_PROBE_TIMEOUT_S)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(f"interpreter probe could not run: {exc}") from exc
+        if step.returncode != 0:
+            raise RuntimeError(f"interpreter probe failed: {step.stderr[-500:]}")
+        try:
+            implementation, version = json.loads(step.stdout)
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise RuntimeError(f"interpreter probe returned invalid output: {step.stdout[-500:]}") from exc
+        if implementation != "CPython" or not isinstance(version, str) or not _version_is_target(version):
+            raise RuntimeError(f"expected CPython {EVAL_PYTHON_VERSION}, found {implementation} {version}")
+        return version
+
+    def _verify_bundle(self, python: str) -> None:
+        if not self._bundle_source().strip():
+            return
+        try:
+            step = _run([python, "-I", "-c", "import numpy, pandas, matplotlib, PIL"], timeout=_PROBE_TIMEOUT_S)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(f"bundled-library smoke test could not run: {exc}") from exc
+        if step.returncode != 0:
+            raise RuntimeError(f"bundled-library smoke test failed: {step.stderr[-500:]}")
+
+    def _existing_info(self, manifest: dict) -> KernelEnvInfo:
+        python = str(_venv_python(self._env_path))
+        self._probe_python(python)
+        self._verify_bundle(python)
+        installer = str(manifest.get("installer") or "pip")
+        return KernelEnvInfo(
+            python=python,
+            env_path=self._env_path,
+            bundled=True,
+            provisioned_now=False,
+            note=self._with_deprecation_note(None),
+            pip_install_cmd=self._pip_install_cmd(installer, python),
+            bundle=self._bundle_names(),
+        )
 
     async def ensure(self) -> KernelEnvInfo:
         """Resolve the kernel interpreter, provisioning the env on first use."""
@@ -179,116 +225,119 @@ class EvalEnvironmentManager:
         self._cached = info
         return info
 
+    def _reuse_existing(self) -> Optional[KernelEnvInfo]:
+        manifest = self._read_manifest()
+        if manifest is None or not self._manifest_matches():
+            return None
+        try:
+            return self._existing_info(manifest)
+        except RuntimeError as exc:
+            raise EvalEnvironmentError(
+                f"The managed eval environment at {self._env_path} failed verification: {exc}. "
+                "Close sessions using it and delete that directory to rebuild it."
+            ) from exc
+
     def _ensure_sync(self) -> KernelEnvInfo:
         if self._override_python:
-            probe = _run([self._override_python, "--version"], timeout=30)
-            if probe.returncode == 0:
+            try:
+                probe = _run([self._override_python, "--version"], timeout=_PROBE_TIMEOUT_S)
+            except (OSError, subprocess.SubprocessError):
+                probe = None
+            if probe is not None and probe.returncode == 0:
                 return KernelEnvInfo(
                     python=self._override_python,
                     env_path=None,
                     bundled=False,
-                    degraded=False,
                     provisioned_now=False,
-                    note=(
+                    note=self._with_deprecation_note(
                         "eval kernel is using the configured custom interpreter "
                         f"({self._override_python}); the bundled libraries are not installed there. "
                         "Use pip_install(package) to add packages."
                     ),
                     pip_install_cmd=[self._override_python, "-m", "pip", "install"],
                 )
-            # Fall through to normal provisioning if the override is broken.
 
-        if self._manifest_matches() and self._read_manifest() is not None:
-            python = str(_venv_python(self._env_path))
-            installer = str((self._read_manifest() or {}).get("installer") or "pip")
-            return KernelEnvInfo(
-                python=python,
-                env_path=self._env_path,
-                bundled=True,
-                degraded=False,
-                provisioned_now=False,
-                pip_install_cmd=self._pip_install_cmd(installer, python),
-                bundle=self._bundle_names(),
-            )
+        existing = self._reuse_existing()
+        if existing is not None:
+            return existing
 
         lock_path = self._state_dir / LOCK_FILE_NAME
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with filelock.FileLock(str(lock_path)):
-            # Another process may have provisioned while we waited on the lock.
-            if self._manifest_matches():
-                python = str(_venv_python(self._env_path))
-                installer = str((self._read_manifest() or {}).get("installer") or "pip")
-                return KernelEnvInfo(
-                    python=python,
-                    env_path=self._env_path,
-                    bundled=True,
-                    degraded=False,
-                    provisioned_now=False,
-                    pip_install_cmd=self._pip_install_cmd(installer, python),
-                    bundle=self._bundle_names(),
+            existing = self._reuse_existing()
+            if existing is not None:
+                return existing
+            if self._env_path.exists() and self._read_manifest() is not None:
+                raise EvalEnvironmentError(
+                    f"The managed eval environment at {self._env_path} has an invalid manifest. "
+                    "Close sessions using it and delete that directory to rebuild it."
                 )
             return self._provision_locked()
 
+    def _create_env(self) -> Tuple[str, str]:
+        self._env_path.parent.mkdir(parents=True, exist_ok=True)
+        bundle_file = self._materialize_bundle_file()
+        uv = shutil.which("uv")
+        if uv:
+            step = _run([uv, "venv", str(self._env_path), "--python", EVAL_PYTHON_VERSION], timeout=_VENV_TIMEOUT_S)
+            if step.returncode != 0:
+                raise RuntimeError(f"uv venv failed: {step.stderr[-500:]}")
+            installer = "uv"
+        else:
+            system_python = shutil.which(f"python{EVAL_PYTHON_VERSION}")
+            if system_python is None and sys.version_info[:2] == tuple(map(int, EVAL_PYTHON_VERSION.split("."))):
+                system_python = sys.executable
+            if system_python is not None:
+                venv_cmd = [system_python, "-m", "venv", str(self._env_path)]
+            elif sys.platform == "win32" and shutil.which("py"):
+                venv_cmd = ["py", "-3.14", "-m", "venv", str(self._env_path)]
+            else:
+                raise RuntimeError("uv was not found and no CPython 3.14 executable is available on PATH")
+            step = _run(venv_cmd, timeout=_VENV_TIMEOUT_S)
+            if step.returncode != 0:
+                raise RuntimeError(f"python -m venv failed: {step.stderr[-500:]}")
+            installer = "pip"
+
+        python = str(_venv_python(self._env_path))
+        actual_version = self._probe_python(python)
+        if installer == "uv":
+            assert uv is not None
+            step = _run(
+                [uv, "pip", "install", "--python", python, "-r", str(bundle_file)],
+                timeout=_INSTALL_TIMEOUT_S,
+            )
+        else:
+            step = _run([python, "-m", "pip", "install", "-r", str(bundle_file)], timeout=_INSTALL_TIMEOUT_S)
+        if step.returncode != 0:
+            raise RuntimeError(f"bundle installation failed: {step.stderr[-500:]}")
+
+        self._verify_bundle(python)
+        self._write_manifest(installer, actual_version)
+        return installer, actual_version
+
     def _provision_locked(self) -> KernelEnvInfo:
-        """Create the env and install the bundle. Caller holds the file lock."""
         try:
             if self._env_path.exists():
-                shutil.rmtree(self._env_path, ignore_errors=True)
-            self._env_path.parent.mkdir(parents=True, exist_ok=True)
-            bundle_file = self._materialize_bundle_file()
-            uv = shutil.which("uv")
-            if uv:
-                step = _run(
-                    [uv, "venv", str(self._env_path), "--python", self._python_version], timeout=_VENV_TIMEOUT_S
-                )
-                if step.returncode != 0:
-                    raise RuntimeError(f"uv venv failed: {step.stderr[-500:]}")
-                python = str(_venv_python(self._env_path))
-                step = _run(
-                    [uv, "pip", "install", "--python", python, "-r", str(bundle_file)],
-                    timeout=_INSTALL_TIMEOUT_S,
-                )
-                if step.returncode != 0:
-                    raise RuntimeError(f"uv pip install failed: {step.stderr[-500:]}")
-                installer = "uv"
-            else:
-                step = _run([sys.executable, "-m", "venv", str(self._env_path)], timeout=_VENV_TIMEOUT_S)
-                if step.returncode != 0:
-                    raise RuntimeError(f"python -m venv failed: {step.stderr[-500:]}")
-                python = str(_venv_python(self._env_path))
-                step = _run(
-                    [python, "-m", "pip", "install", "-r", str(bundle_file)],
-                    timeout=_INSTALL_TIMEOUT_S,
-                )
-                if step.returncode != 0:
-                    raise RuntimeError(f"pip install failed: {step.stderr[-500:]}")
-                installer = "pip"
-            self._write_manifest(installer)
-            return KernelEnvInfo(
-                python=python,
-                env_path=self._env_path,
-                bundled=True,
-                degraded=False,
-                provisioned_now=True,
-                note=(
-                    "Provisioned the dedicated eval Python environment on first use "
-                    f"({self._python_version} with the bundled data libraries); this is a one-time setup."
-                ),
-                pip_install_cmd=self._pip_install_cmd(installer, python),
-                bundle=self._bundle_names(),
-            )
-        except Exception as exc:  # degrade rather than fail the cell
+                shutil.rmtree(self._env_path)
+            installer, actual_version = self._create_env()
+        except Exception as exc:
             shutil.rmtree(self._env_path, ignore_errors=True)
-            return KernelEnvInfo(
-                python=sys.executable,
-                env_path=None,
-                bundled=False,
-                degraded=True,
-                provisioned_now=False,
-                note=(
-                    "Could not provision the dedicated eval Python environment "
-                    f"({exc}); running on the host interpreter {sys.executable} without the bundled "
-                    "libraries (numpy/pandas/matplotlib/pillow). pip_install is disabled."
-                ),
-                pip_install_cmd=[],
-            )
+            raise EvalEnvironmentError(
+                f"Could not provision the managed CPython {EVAL_PYTHON_VERSION} eval environment: {exc}. "
+                "Install uv or CPython 3.14 and retry, or set eval_python_path to an explicit unbundled "
+                "interpreter. Previous environments were left unchanged."
+            ) from exc
+
+        python = str(_venv_python(self._env_path))
+        return KernelEnvInfo(
+            python=python,
+            env_path=self._env_path,
+            bundled=True,
+            provisioned_now=True,
+            note=self._with_deprecation_note(
+                f"Provisioned the managed CPython {actual_version} eval environment with the bundled "
+                "data libraries; this is a one-time setup."
+            ),
+            pip_install_cmd=self._pip_install_cmd(installer, python),
+            bundle=self._bundle_names(),
+        )
