@@ -17,7 +17,7 @@ import unicodedata
 from collections.abc import Iterable
 from itertools import islice
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 from kolega_code.security.secrets import SECRET_PLACEHOLDER, redact_secrets
@@ -34,7 +34,11 @@ _ANSI = re.compile(
     r"|(?:\x1b[PX^_]|\x90|\x98|\x9e|\x9f)[^\x1b\x9c]*(?:\x1b\\|\x9c|$)"
     r"|(?:\x1b\[|\x9b)[0-?]*[ -/]*(?:[@-~]|$)|\x1b[@-_]"
 )
-_URL = re.compile(r"(?i)(?:[a-z][a-z0-9+.-]*:)?//[^\s<>\"']+")
+_SCHEME_CHAR = re.compile(r"(?i)[a-z0-9+.\-]\Z")
+_SCHEME_LETTER = re.compile(r"(?i)[a-z]\Z")
+_SCHEME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+.-")
+_SCHEME_LETTERS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+_URL_BODY_STOP = frozenset("<>\"'")
 _PATCH_HEADER = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$", re.MULTILINE)
 _HEREDOC_START = re.compile(r"<<(-?)(?!<)[ \t]*(['\"]?)([A-Za-z0-9_]+)\2(?=[ \t\r\n;&|<>]|$)")
 _SENSITIVE_NAME = re.compile(
@@ -169,6 +173,53 @@ def _clean_preserving_layout(text: str) -> str:
     return "".join(cleaned)
 
 
+def _url_start(text: str) -> Optional[int]:
+    """Start of the first URL-like span, without regex backtracking.
+
+    Equivalent to searching ``(?i)(?:[a-z][a-z0-9+.-]*:)?//[^\\s<>\"']+`` but
+    linear: that pattern re-scanned the whole remaining scheme-character run at
+    every start position, so one long path or argument without spaces cost
+    O(n^2) (16 KB took ~1.7 s on the transcript display path).
+    """
+    start = text.find("//")
+    while start != -1:
+        body = start + 2
+        if body >= len(text) or not _is_url_body_char(text[body]):
+            start = text.find("//", start + 1)
+            continue
+        return _scheme_start(text, start)
+    return None
+
+
+def _is_url_body_char(char: str) -> bool:
+    return not (char.isspace() or char in _URL_BODY_STOP)
+
+
+def _is_scheme_char(char: str) -> bool:
+    if char.isascii():
+        return char in _SCHEME_CHARS
+    return _SCHEME_CHAR.match(char) is not None
+
+
+def _is_scheme_letter(char: str) -> bool:
+    if char.isascii():
+        return char in _SCHEME_LETTERS
+    return _SCHEME_LETTER.match(char) is not None
+
+
+def _scheme_start(text: str, slash: int) -> int:
+    """Widen ``//`` left over a ``scheme:`` prefix, or return the ``//`` itself."""
+    if slash < 2 or text[slash - 1] != ":" or not _is_scheme_char(text[slash - 2]):
+        return slash
+    run_start = slash - 2
+    while run_start > 0 and _is_scheme_char(text[run_start - 1]):
+        run_start -= 1
+    for index in range(run_start, slash - 1):
+        if _is_scheme_letter(text[index]):
+            return index
+    return slash
+
+
 def _safe_url(value: str) -> str:
     """Keep only the URL location; query/fragment payloads are not subjects."""
     try:
@@ -206,9 +257,9 @@ def _safe_command_parts(text: str, values: tuple[str, ...]) -> str:
         arguments = shlex.split(text)
         safe_arguments: list[str] = []
         for argument in arguments:
-            match = _URL.search(argument)
-            if match:
-                argument = argument[: match.start()] + (_safe_url(argument[match.start() :]) or SECRET_PLACEHOLDER)
+            start = _url_start(argument)
+            if start is not None:
+                argument = argument[:start] + (_safe_url(argument[start:]) or SECRET_PLACEHOLDER)
             safe_arguments.append(argument)
         if safe_arguments != arguments:
             text = shlex.join(safe_arguments)
@@ -304,7 +355,7 @@ def _shorten_path(value: str, project_path: str | Path | None) -> str:
     # Normalizing a URL as a path destroys its :// (or // authority), hiding
     # credentials from later sanitization. Preserve URL/control syntax until
     # the sanitizer has redacted the original text and removed unsafe parts.
-    if _URL.search(value) or _clean(value) != value:
+    if _url_start(value) is not None or _clean(value) != value:
         return value
     path_module = ntpath if ntpath.splitdrive(value)[0] else posixpath
     path = path_module.normpath(value)
@@ -467,11 +518,11 @@ def _token_spans(text: str, tokens: list[str]) -> list[tuple[int, int]] | None:
 
 
 def _sanitize_command_token(token: str) -> str:
-    match = _URL.search(token)
-    if not match:
+    start = _url_start(token)
+    if start is None:
         return token
-    safe_url = _safe_url(token[match.start() :])
-    return token[: match.start()] + (safe_url or SECRET_PLACEHOLDER)
+    safe_url = _safe_url(token[start:])
+    return token[:start] + (safe_url or SECRET_PLACEHOLDER)
 
 
 def _sensitive_command_index(tokens: list[str]) -> int | None:

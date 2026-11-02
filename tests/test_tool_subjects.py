@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import random
+import re
+import time
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -11,6 +14,7 @@ import pytest
 from kolega_code.security.secrets import SECRET_PLACEHOLDER
 from kolega_code.tool_subjects import (
     MAX_SUBJECT_LENGTH,
+    _url_start,
     build_tool_display,
     build_tool_subject,
     sanitize_tool_display,
@@ -577,3 +581,86 @@ def test_tool_display_path_roundtrips_with_absolute_redacted_path() -> None:
     assert built == {"paths": [f"/var/tmp/{SECRET_PLACEHOLDER}/artifact.log"]}
     assert sanitize_tool_display(built, secret_values=[secret]) == built
     assert sanitize_tool_display(sanitize_tool_display(built, secret_values=[secret]), secret_values=[secret]) == built
+
+
+# The pattern this replaced re-scanned the remaining scheme-character run at
+# every start position, so an unbroken token cost O(n^2): 16 KB took ~1.8 s.
+_URL_REFERENCE = re.compile(r"(?i)(?:[a-z][a-z0-9+.-]*:)?//[^\s<>\"']+")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "//",
+        "//x",
+        "///x",
+        "://x",
+        ":://x",
+        "a://x",
+        "1a://x",
+        "a-://x",
+        "K://x",  # KELVIN SIGN, which (?i)[a-z] matches
+        "\u017f://x",  # LONG S
+        "x://",
+        "x:// ",
+        "http://example.test/a?token=b",
+        "see https://example.test for details",
+        "a://b://c",
+        "/a//b",
+        "a" * 64 + "//",
+        "a" * 64 + "//tail",
+        "a" * 64 + "://host",
+        "b\x1c\x00\xdf\x00\xc9-0/+a//x",
+        "\u00a0-\x1f Z\t\r >\x1ba://",
+        "a\ufeff\xdf<h:\u2028\u017f\u00a0z://",
+    ],
+)
+def test_url_start_matches_reference_pattern(text: str) -> None:
+    match = _URL_REFERENCE.search(text)
+    assert _url_start(text) == (match.start() if match else None)
+
+
+def test_url_start_matches_reference_pattern_on_random_input() -> None:
+    pieces = [
+        "a",
+        "Z",
+        "0",
+        "+",
+        ".",
+        "-",
+        ":",
+        "/",
+        "//",
+        "://",
+        "<",
+        ">",
+        '"',
+        "'",
+        " ",
+        "\t",
+        "\n",
+        "\x1c",
+        "\x00",
+        "K",
+        "\u017f",
+        "\u0130",
+        "\u00c9",
+        "\u00a0",
+        "\u2028",
+        "http",
+    ]
+    rng = random.Random(20261102)
+    for _ in range(2_000):
+        text = "".join(rng.choice(pieces) for _ in range(rng.randint(0, 8)))
+        match = _URL_REFERENCE.search(text)
+        assert _url_start(text) == (match.start() if match else None), repr(text)
+
+
+def test_long_unbroken_subject_does_not_backtrack_quadratically() -> None:
+    text = "a" * 16_384
+    sanitize_tool_subject(text)  # warm the regex/encoding caches
+    started = time.perf_counter()
+    for _ in range(3):
+        assert len(sanitize_tool_subject(text)) == MAX_SUBJECT_LENGTH
+    assert time.perf_counter() - started < 3.0
