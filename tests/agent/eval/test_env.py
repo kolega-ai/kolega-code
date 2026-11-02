@@ -120,6 +120,7 @@ def test_windows_python_launcher_fallback(state_dir, monkeypatch):
     calls = []
     manager = EvalEnvironmentManager(state_dir=state_dir)
     monkeypatch.setattr(env_module.sys, "platform", "win32")
+    monkeypatch.setattr(env_module.sys, "version_info", (3, 11, 0))
 
     def run(cmd, timeout):
         calls.append(cmd)
@@ -135,6 +136,7 @@ def test_windows_python_launcher_fallback(state_dir, monkeypatch):
 
 def test_missing_uv_never_provisions_arbitrary_host_python(state_dir, monkeypatch):
     calls = []
+    monkeypatch.setattr(env_module.sys, "version_info", (3, 11, 0))
     monkeypatch.setattr(env_module, "_run", lambda cmd, timeout: calls.append(cmd) or _fail(cmd, timeout))
     monkeypatch.setattr(env_module.shutil, "which", lambda name: None)
 
@@ -145,6 +147,7 @@ def test_missing_uv_never_provisions_arbitrary_host_python(state_dir, monkeypatc
 
 
 def test_failed_first_provision_leaves_legacy_env_untouched(state_dir, monkeypatch):
+    monkeypatch.setattr(env_module.sys, "version_info", (3, 11, 0))
     legacy = state_dir / "eval-env"
     legacy.mkdir(parents=True)
     canary = legacy / "canary.txt"
