@@ -487,12 +487,13 @@ class OpenAIProvider(BaseLLMProvider):
         route to providers that support a response of that length" (their docs,
         verified 2026-08-03). Catalog max_completion_tokens values are largely
         context-window-sized fiction, so sending them would exclude most upstreams
-        for no benefit — the cap is always dropped here. DeepSeek models get an
-        honest, measured cap re-added by _apply_deepseek_request_rules. The
+        for no benefit — non-DeepSeek caps are dropped here. DeepSeek caller caps
+        are retained for _apply_deepseek_request_rules to clamp, never increase. The
         catalog's max_completion_tokens is still used for Kolega Code's own
         context budgeting.
         """
-        generation_params.pop("max_tokens", None)
+        if not is_deepseek_model(str(generation_params.get("model") or "")):
+            generation_params.pop("max_tokens", None)
 
         extra: Dict[str, Any] = {
             # Automatic prompt caching: OpenRouter applies this breakpoint to the

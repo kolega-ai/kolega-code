@@ -54,14 +54,11 @@ CLAMPED_CAP = 64000
 _FLASH = "deepseek-flash"
 RESPONSES_MODELS = [_FLASH, "deepseek-v4-pro"]
 
-# Fireworks mirrors use Chat Completions; both first-party models use Responses.
-CHAT_HOSTS = [
-    ("fireworks", "accounts/fireworks/models/deepseek-v4-pro"),
-    ("fireworks", "accounts/fireworks/models/deepseek-v4-flash"),
-]
-_CHAT_IDS = [f"{p}-{m.rsplit('/', 1)[-1]}" for p, m in CHAT_HOSTS]
-
 OPENROUTER_SLUGS = ["deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash"]
+
+# Fireworks retired these serverless mirrors; use the catalogued chat gateway.
+CHAT_HOSTS = [("openrouter", slug) for slug in OPENROUTER_SLUGS]
+_CHAT_IDS = [f"{p}-{m.rsplit('/', 1)[-1]}" for p, m in CHAT_HOSTS]
 
 CEILING_PROBE_ENABLED = os.getenv("KOLEGA_DEEPSEEK_CEILING_PROBE") == "1"
 
@@ -386,10 +383,7 @@ async def test_uncapped_long_generation_responses_server_ceiling(model: str) -> 
 async def test_openrouter_deepseek_accepts_clamped_cap(slug: str) -> None:
     api_key = _require_key("openrouter")
     client = LLMClient(provider="openrouter", api_key=api_key, model=slug)
-    # Drive the raw SDK client: the gateway rule pops max_tokens at the LLMClient
-    # level (pre-clamp code), and OpenRouter's routing filter is exactly what we
-    # need to observe ("if you set a max_tokens, then OpenRouter will only route
-    # to providers that support a response of that length").
+    # Bypass the client clamp to observe OpenRouter's raw max_tokens routing filter.
     raw = cast(openai.AsyncOpenAI, client.provider.async_client)
 
     def _served_by(resp) -> object:

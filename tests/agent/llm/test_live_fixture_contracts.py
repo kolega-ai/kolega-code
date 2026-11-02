@@ -3,6 +3,7 @@ from collections import Counter
 import pytest
 
 from kolega_code.cli.config import API_KEY_ENV, OAUTH_PROVIDERS
+from kolega_code.cli.provider_registry import default_model_for_provider
 from kolega_code.config import ModelProvider
 from kolega_code.llm.client import LLMClient
 from kolega_code.llm.models import MessageHistory
@@ -27,6 +28,7 @@ from . import (
     test_live_providers as smoke,
     test_normalized_usage_live as usage,
 )
+from ._live_models import smoke_generation_settings
 
 
 @pytest.mark.parametrize(
@@ -66,8 +68,47 @@ def test_smoke_and_usage_suites_share_unique_keyed_provider_coverage() -> None:
         assert len(pairs) == len(set(pairs))
         for provider, model in pairs:
             assert ModelProvider(provider) in API_KEY_ENV
-            assert (provider, model) in MODEL_SPECS
+            if provider == "together":
+                assert model == "openai/gpt-oss-120b"
+                assert smoke_generation_settings(provider, model) == {"temperature": 1.0, "thinking": None}
+            else:
+                assert (provider, model) in MODEL_SPECS
     assert smoke.PROVIDER_SMOKE_MODELS == usage.PROVIDER_MODELS
+
+
+def test_together_smoke_uses_a_current_serverless_model() -> None:
+    assert dict(smoke.PROVIDER_SMOKE_MODELS)["together"] == "openai/gpt-oss-120b"
+    assert dict(usage.PROVIDER_MODELS)["together"] == "openai/gpt-oss-120b"
+    assert default_model_for_provider(ModelProvider.TOGETHER) == "moonshotai/Kimi-K2.7-Code"
+    together_specs = {model: specs for (provider, model), specs in MODEL_SPECS.items() if provider == "together"}
+    assert set(together_specs) == {"moonshotai/Kimi-K2.7-Code", "zai-org/GLM-5.1"}
+    assert all(specs["pricing"]["status"] == "retired" for specs in together_specs.values())
+
+
+@pytest.mark.parametrize("provider", ["together", "fireworks", "openrouter"])
+def test_smoke_settings_do_not_accept_arbitrary_unknown_models(provider: str) -> None:
+    with pytest.raises(ValueError, match="not supported"):
+        smoke_generation_settings(provider, "not-a-smoke-model")
+
+
+def test_smoke_thinking_coverage_preserves_catalog_effort_controls() -> None:
+    expected = {
+        (provider, model)
+        for provider, model in smoke.PROVIDER_SMOKE_MODELS
+        if provider != "ollama_cloud"
+        and (provider, model) in MODEL_SPECS
+        and get_thinking_effort_spec(provider, model) is not None
+    }
+    assert set(smoke.PROVIDER_THINKING_MODELS) == expected
+
+
+def test_chat_cap_fixtures_use_current_deepseek_gateway_routes() -> None:
+    assert output_cap.CHAT_HOSTS == [
+        ("openrouter", "deepseek/deepseek-v4-pro"),
+        ("openrouter", "deepseek/deepseek-v4-flash"),
+    ]
+    for provider, model in output_cap.CHAT_HOSTS:
+        assert get_model_specs(provider, model)["pricing"]["status"] == "priced"
 
 
 @pytest.mark.parametrize(

@@ -21,13 +21,11 @@ from kolega_code.llm.client import LLMClient
 from kolega_code.llm.exceptions import LLMBillingError, LLMPermissionDeniedError, LLMRateLimitError
 from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.llm.specs import (
-    default_thinking_effort,
     get_model_specs,
-    get_thinking_effort_spec,
     thinking_effort_options,
 )
 
-from ._live_models import provider_smoke_models
+from ._live_models import provider_smoke_models, smoke_generation_settings
 
 pytestmark = [pytest.mark.integration, pytest.mark.live_api]
 
@@ -54,7 +52,8 @@ PROVIDER_SMOKE_MODELS = provider_smoke_models()
 PROVIDER_THINKING_MODELS = [
     (provider, model)
     for provider, model in PROVIDER_SMOKE_MODELS
-    if provider != ModelProvider.OLLAMA_CLOUD.value and get_thinking_effort_spec(provider, model) is not None
+    if provider != ModelProvider.OLLAMA_CLOUD.value
+    and smoke_generation_settings(provider, model)["thinking"] is not None
 ]
 
 
@@ -108,8 +107,7 @@ async def test_live_provider_generate(provider_value: str, model: str) -> None:
         system=SYSTEM,
         model=model,
         max_completion_tokens=4096,
-        temperature=get_model_specs(provider_value, model)["default_temperature"],
-        thinking=default_thinking_effort(provider_value, model),
+        **smoke_generation_settings(provider_value, model),
     )
 
     assert response is not None

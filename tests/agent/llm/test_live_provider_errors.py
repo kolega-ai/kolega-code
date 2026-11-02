@@ -1,13 +1,15 @@
+import json
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
-from openai import APIStatusError, AsyncOpenAI, BadRequestError
+from openai import APIStatusError, AsyncOpenAI, BadRequestError, NotFoundError
 
 from kolega_code.llm.client import LLMClient
 from kolega_code.llm.exceptions import LLMAuthenticationError, LLMError, LLMInvalidRequestError, LLMNotFoundError
+from kolega_code.llm.providers.openai import OpenAIProvider
 from kolega_code.llm.providers.responses_common import ResponsesProviderBase
 
 from . import test_deepseek_output_cap_live as output_cap
@@ -32,6 +34,139 @@ _EXPECTED_ERRORS = {
     404: LLMNotFoundError,
     418: LLMError,
 }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suite", ["smoke", "generate_usage", "stream_usage"])
+@pytest.mark.parametrize("status", [200, 400, 404])
+async def test_together_live_fixture_uses_real_sdk_transport_without_hiding_request_errors(
+    monkeypatch: pytest.MonkeyPatch, suite: str, status: int
+) -> None:
+    model = "openai/gpt-oss-120b"
+    requests: list[dict[str, Any]] = []
+    reported_usage = {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        requests.append(payload)
+        if status != 200:
+            return httpx.Response(status, json={"error": {"message": "Unable to access requested model"}})
+        base = {"id": "offline-together", "created": 0, "model": model}
+        if payload.get("stream"):
+            chunks = [
+                {
+                    **base,
+                    "object": "chat.completion.chunk",
+                    "choices": [{"index": 0, "delta": {"reasoning": "Add two and two"}, "finish_reason": None}],
+                },
+                {
+                    **base,
+                    "object": "chat.completion.chunk",
+                    "choices": [{"index": 0, "delta": {"content": "4"}, "finish_reason": "stop"}],
+                },
+                {**base, "object": "chat.completion.chunk", "choices": [], "usage": reported_usage},
+            ]
+            body = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks) + "data: [DONE]\n\n"
+            return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+        return httpx.Response(
+            200,
+            json={
+                **base,
+                "object": "chat.completion",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "4", "reasoning": "Add two and two"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": reported_usage,
+            },
+        )
+
+    client = LLMClient(provider="together", api_key="test-placeholder", model=model)
+    assert isinstance(client.provider, OpenAIProvider)
+    client.provider.async_client = AsyncOpenAI(
+        api_key="test-placeholder",
+        base_url="https://example.test/v1",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
+    for module in (smoke, usage):
+        monkeypatch.setattr(module, "_require_key", lambda _: "test-placeholder")
+        monkeypatch.setattr(module, "LLMClient", lambda **_: client)
+    probe = {
+        "smoke": smoke.test_live_provider_generate,
+        "generate_usage": usage.test_live_generate_attaches_reported_usage,
+        "stream_usage": usage.test_live_stream_attaches_reported_usage_idempotently,
+    }[suite]
+    try:
+        if status == 200:
+            await probe("together", model)
+        else:
+            expected = (
+                {400: BadRequestError, 404: NotFoundError}[status]
+                if suite == "stream_usage"
+                else _EXPECTED_ERRORS[status]
+            )
+            with pytest.raises(expected) as caught:
+                await probe("together", model)
+            assert type(caught.value) is expected
+    finally:
+        await client.provider.async_client.close()
+    assert len(requests) == 1
+    assert requests[0]["model"] == model
+    assert requests[0]["temperature"] == 1.0
+    assert requests[0]["max_tokens"] == 4096
+    assert "reasoning_effort" not in requests[0]
+    assert "thinking" not in requests[0]
+    if suite == "stream_usage":
+        assert requests[0]["stream_options"] == {"include_usage": True}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash"])
+async def test_chat_cap_probe_preserves_tiny_cap_through_the_gateway(
+    monkeypatch: pytest.MonkeyPatch, model: str
+) -> None:
+    requests: list[dict[str, Any]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        chunk = {
+            "id": "offline-tiny-cap",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": model,
+            "choices": [{"index": 0, "delta": {"content": "The ocean"}, "finish_reason": "length"}],
+        }
+        return httpx.Response(
+            200,
+            text=f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n",
+            headers={"content-type": "text/event-stream"},
+        )
+
+    client = LLMClient(provider="openrouter", api_key="test-placeholder", model=model)
+    assert isinstance(client.provider, OpenAIProvider)
+    client.provider.async_client = AsyncOpenAI(
+        api_key="test-placeholder",
+        base_url="https://example.test/v1",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
+    monkeypatch.setattr(output_cap, "_require_key", lambda _: "test-placeholder")
+    monkeypatch.setattr(output_cap, "LLMClient", lambda **_: client)
+    record = Mock()
+    monkeypatch.setattr(output_cap, "_record", record)
+    try:
+        await output_cap.test_chat_tiny_cap_truncation_reporting("openrouter", model)
+    finally:
+        await client.provider.async_client.close()
+    assert len(requests) == 1
+    assert requests[0]["model"] == model
+    assert requests[0]["max_tokens"] == 16
+    assert requests[0]["stream"] is True
+    assert record.call_args.kwargs["stop_reason"] == "max_tokens"
 
 
 @pytest.mark.asyncio

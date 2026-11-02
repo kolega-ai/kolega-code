@@ -24,10 +24,9 @@ from kolega_code.llm.exceptions import (
     is_perplexity_quota_error,
 )
 from kolega_code.llm.models import Message, MessageHistory, TextBlock
-from kolega_code.llm.specs import default_thinking_effort, get_model_specs
 from kolega_code.llm.usage import NormalizedUsage
 
-from ._live_models import provider_smoke_models
+from ._live_models import provider_smoke_models, smoke_generation_settings
 
 pytestmark = [pytest.mark.integration, pytest.mark.live_api]
 
@@ -80,8 +79,7 @@ def _generation_kwargs(provider_value: str, model: str) -> dict:
         system=SYSTEM,
         model=model,
         max_completion_tokens=4096,
-        temperature=get_model_specs(provider_value, model)["default_temperature"],
-        thinking=default_thinking_effort(provider_value, model),
+        **smoke_generation_settings(provider_value, model),
     )
 
 
