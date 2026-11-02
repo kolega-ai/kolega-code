@@ -2,6 +2,7 @@ from typing import Any, Dict, Optional
 
 from .catalog import MODEL_SPECS, WILDCARD_MODEL_SPECS
 from .types import ThinkingEffortSpec
+from .pricing import pricing_to_json
 from .validation import INPUT_BUDGET_CONVENTIONS as INPUT_BUDGET_CONVENTIONS
 from .validation import validate_model_spec
 
@@ -73,6 +74,17 @@ def get_model_specs(provider: str, model_name: str) -> Dict[str, Any]:
         provider_str = _provider_value(provider)
         raise ValueError(f"Model {model_name} from provider {provider_str} is not supported.")
     return specs
+
+
+def get_model_pricing(provider: str, model_name: str) -> Optional[Dict[str, Any]]:
+    spec = MODEL_SPECS.get((_provider_value(provider), model_name))
+    if spec is None or spec.get("pricing") is None:
+        return None
+    try:
+        pricing = pricing_to_json(spec["pricing"])
+        return pricing if (pricing["provider"], pricing["model"]) == (_provider_value(provider), model_name) else None
+    except (ValueError, TypeError, KeyError):
+        return None
 
 
 def model_is_known(provider: Any, model_name: str) -> bool:

@@ -18,7 +18,7 @@ from kolega_code.acp.permissions import AcpPermissionBroker
 from kolega_code.acp.plans import task_entries_from_markdown
 from kolega_code.acp.server import AcpAgent
 from kolega_code.acp.session import AcpSession
-from kolega_code.acp.usage import build_usage_update, context_window_for
+from kolega_code.acp.usage import build_context_usage_update, build_usage_update, context_window_for
 
 __all__ = [
     "ACP_AGENT_MODE",
@@ -33,6 +33,7 @@ __all__ = [
     "AgentFactory",
     "TOOL_KINDS",
     "build_usage_update",
+    "build_context_usage_update",
     "context_window_for",
     "task_entries_from_markdown",
 ]

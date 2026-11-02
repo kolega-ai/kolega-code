@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from typing import TYPE_CHECKING
 
 from acp.helpers import (
     start_tool_call,
@@ -33,11 +34,14 @@ from acp.schema import ToolCallStatus, ToolKind
 
 from kolega_code.acp.diffs import AcpDiffProvider
 from kolega_code.acp.plans import task_entries_from_markdown
-from kolega_code.acp.usage import build_usage_update
+from kolega_code.acp.usage import build_context_usage_update
 from kolega_code.events import AgentEvent
 from kolega_code.session.projection import ConversationItem
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from kolega_code.acp.accounting import AcpUsageAccounting
 
 #: Prefix for synthetic sub-agent session ids Zed loads via session/load to
 #: render a delegated turn as a nested transcript card under the dispatch.
@@ -99,10 +103,17 @@ class AcpBridge:
 
     TERMINAL_BUFFER_MAX_CHARS = 20_000
 
-    def __init__(self, conn: Client, diff_provider: AcpDiffProvider | None = None, agent: Any = None) -> None:
+    def __init__(
+        self,
+        conn: Client,
+        diff_provider: AcpDiffProvider | None = None,
+        agent: Any = None,
+        accounting: AcpUsageAccounting | None = None,
+    ) -> None:
         self._conn = conn
         self._diffs = diff_provider
         self._agent = agent
+        self._accounting = accounting
         self._terminal_text: dict[str, str] = {}
         self._active_execute_tool: str | None = None
         self._latest_context_tokens: int | None = None
@@ -113,6 +124,8 @@ class AcpBridge:
 
     def begin_turn(self, agent: Any, diff_provider: AcpDiffProvider) -> None:
         """Reset turn-only projections, retaining session-lifetime tool maps."""
+        if self._agent is not agent:
+            self._latest_context_tokens = None
         self._agent = agent
         self._diffs = diff_provider
         self._turn_response_parts.clear()
@@ -147,7 +160,10 @@ class AcpBridge:
         return ""
 
     async def emit_usage(self, session_id: str) -> None:
-        update = build_usage_update(self._agent, self._latest_context_tokens)
+        if self._accounting is not None:
+            await self._accounting.publish(force=True)
+            return
+        update = build_context_usage_update(self._agent, self._latest_context_tokens)
         if update is not None:
             await self.send(session_id, update)
 
@@ -231,7 +247,13 @@ class AcpBridge:
             return
         if event.event_type == "llm_context_update" and event.content:
             tokens = event.content.get("input_tokens")
-            if isinstance(tokens, int) and tokens >= 0:
+            if isinstance(tokens, int) and not isinstance(tokens, bool) and tokens >= 0:
+                if self._accounting is not None:
+                    self._accounting.observe_context(tokens, event.content.get("acp_generation"))
+                    return
+                generation = getattr(self._agent, "_acp_generation", None)
+                if generation is not None and event.content.get("acp_generation") != generation:
+                    return
                 self._latest_context_tokens = tokens
             return
         if event.event_type != "chat_message" or not event.content:

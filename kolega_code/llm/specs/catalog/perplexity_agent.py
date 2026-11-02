@@ -24,6 +24,42 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:anthropic/claude-fable-5:2026-11-01:b0cc1dccd30e68d2",
+            "provider": "perplexity_agent",
+            "model": "anthropic/claude-fable-5",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "10.00", "output": "50.00", "cache_read": "1.00"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "anthropic/claude-fable-5",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "anthropic/claude-fable-5",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "source_payload_sha256": "b0cc1dccd30e68d223110b0e74f1e51bd8a53d61f13574da06c0d1d352a2a95c",
+        },
     },
     ("perplexity_agent", "anthropic/claude-fable-5-1"): {
         "context_length": 131072,
@@ -38,6 +74,42 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:anthropic/claude-fable-5-1:2026-11-01:bd6c29a3ed5cd3c3",
+            "provider": "perplexity_agent",
+            "model": "anthropic/claude-fable-5-1",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "10.00", "output": "50.00", "cache_read": "0.25"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "anthropic/claude-fable-5-1",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "anthropic/claude-fable-5-1",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "source_payload_sha256": "bd6c29a3ed5cd3c34bad08f0865043bf8b8ab6148f7ad3cd0a1da51acbe2c0b0",
+        },
     },
     ("perplexity_agent", "anthropic/claude-haiku-4-5"): {
         "context_length": 131072,
@@ -52,6 +124,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:anthropic/claude-haiku-4-5:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "anthropic/claude-haiku-4-5",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "anthropic/claude-haiku-4-5",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "anthropic/claude-haiku-4-5: absent from current public Agent API price tables; authenticated "
+            "/v1/models returned 401 without credentials. No current or historical exact Perplexity-route "
+            "rate verified.",
+        },
     },
     ("perplexity_agent", "anthropic/claude-opus-4-5"): {
         "context_length": 131072,
@@ -66,6 +163,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:anthropic/claude-opus-4-5:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "anthropic/claude-opus-4-5",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "anthropic/claude-opus-4-5",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "anthropic/claude-opus-4-5: absent from current public Agent API price tables; authenticated "
+            "/v1/models returned 401 without credentials. No current or historical exact Perplexity-route "
+            "rate verified.",
+        },
     },
     ("perplexity_agent", "anthropic/claude-opus-4-6"): {
         "context_length": 131072,
@@ -80,6 +202,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:anthropic/claude-opus-4-6:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "anthropic/claude-opus-4-6",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "anthropic/claude-opus-4-6",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "anthropic/claude-opus-4-6: absent from current public Agent API price tables; authenticated "
+            "/v1/models returned 401 without credentials. No current or historical exact Perplexity-route "
+            "rate verified.",
+        },
     },
     ("perplexity_agent", "anthropic/claude-opus-4-7"): {
         "context_length": 131072,
@@ -94,6 +241,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:anthropic/claude-opus-4-7:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "anthropic/claude-opus-4-7",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "anthropic/claude-opus-4-7",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "anthropic/claude-opus-4-7: absent from current public Agent API price tables; authenticated "
+            "/v1/models returned 401 without credentials. No current or historical exact Perplexity-route "
+            "rate verified.",
+        },
     },
     ("perplexity_agent", "anthropic/claude-opus-4-8"): {
         "context_length": 131072,
@@ -108,6 +280,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:anthropic/claude-opus-4-8:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "anthropic/claude-opus-4-8",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "anthropic/claude-opus-4-8",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "anthropic/claude-opus-4-8: absent from current public Agent API price tables; authenticated "
+            "/v1/models returned 401 without credentials. No current or historical exact Perplexity-route "
+            "rate verified.",
+        },
     },
     ("perplexity_agent", "anthropic/claude-opus-5"): {
         "context_length": 131072,
@@ -122,6 +319,42 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:anthropic/claude-opus-5:2026-11-01:fe09f438d232f682",
+            "provider": "perplexity_agent",
+            "model": "anthropic/claude-opus-5",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "5.00", "output": "25.00", "cache_read": "0.50"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "anthropic/claude-opus-5",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "anthropic/claude-opus-5",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "source_payload_sha256": "fe09f438d232f682284a05edc948332211251ae283372c60d535c4753606c329",
+        },
     },
     ("perplexity_agent", "anthropic/claude-opus-5-5"): {
         "context_length": 131072,
@@ -136,6 +369,42 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:anthropic/claude-opus-5-5:2026-11-01:e33ecc2c24caaa04",
+            "provider": "perplexity_agent",
+            "model": "anthropic/claude-opus-5-5",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "4.00", "output": "20.00", "cache_read": "0.20"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "anthropic/claude-opus-5-5",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "anthropic/claude-opus-5-5",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "source_payload_sha256": "e33ecc2c24caaa041c870a145c5bf94493bd37f7b3f363eb721aa7c9bcabb725",
+        },
     },
     ("perplexity_agent", "anthropic/claude-sonnet-4-5"): {
         "context_length": 131072,
@@ -150,6 +419,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:anthropic/claude-sonnet-4-5:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "anthropic/claude-sonnet-4-5",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "anthropic/claude-sonnet-4-5",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "anthropic/claude-sonnet-4-5: absent from current public Agent API price tables; authenticated "
+            "/v1/models returned 401 without credentials. No current or historical exact Perplexity-route "
+            "rate verified.",
+        },
     },
     ("perplexity_agent", "anthropic/claude-sonnet-4-6"): {
         "context_length": 131072,
@@ -164,6 +458,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:anthropic/claude-sonnet-4-6:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "anthropic/claude-sonnet-4-6",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "anthropic/claude-sonnet-4-6",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "anthropic/claude-sonnet-4-6: absent from current public Agent API price tables; authenticated "
+            "/v1/models returned 401 without credentials. No current or historical exact Perplexity-route "
+            "rate verified.",
+        },
     },
     ("perplexity_agent", "anthropic/claude-sonnet-5"): {
         "context_length": 131072,
@@ -178,6 +497,42 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:anthropic/claude-sonnet-5:2026-11-01:1c236c71b8f31aa5",
+            "provider": "perplexity_agent",
+            "model": "anthropic/claude-sonnet-5",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "2.00", "output": "10.00", "cache_read": "0.20"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "anthropic/claude-sonnet-5",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "anthropic/claude-sonnet-5",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "source_payload_sha256": "1c236c71b8f31aa511ddaa19b8e5e77540cbe4c332ae7665946a7ecff432cb5e",
+        },
     },
     ("perplexity_agent", "anthropic/claude-sonnet-5-5"): {
         "context_length": 131072,
@@ -192,6 +547,42 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:anthropic/claude-sonnet-5-5:2026-11-01:ed2c02f6c2be9aa8",
+            "provider": "perplexity_agent",
+            "model": "anthropic/claude-sonnet-5-5",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "2.00", "output": "10.00", "cache_read": "0.10"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "anthropic/claude-sonnet-5-5",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "anthropic/claude-sonnet-5-5",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "source_payload_sha256": "ed2c02f6c2be9aa84d82bfb9bb6f935c998641fa4f52aa163810ba6d4f653880",
+        },
     },
     ("perplexity_agent", "google/gemini-3-flash-preview"): {
         "context_length": 131072,
@@ -206,6 +597,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:google/gemini-3-flash-preview:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "google/gemini-3-flash-preview",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "google/gemini-3-flash-preview",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "google/gemini-3-flash-preview: absent from current public Agent API price tables; "
+            "authenticated /v1/models returned 401 without credentials. No current or historical exact "
+            "Perplexity-route rate verified.",
+        },
     },
     ("perplexity_agent", "google/gemini-3.1-flash-lite"): {
         "context_length": 131072,
@@ -220,6 +636,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:google/gemini-3.1-flash-lite:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "google/gemini-3.1-flash-lite",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "google/gemini-3.1-flash-lite",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "google/gemini-3.1-flash-lite: absent from current public Agent API price tables; authenticated "
+            "/v1/models returned 401 without credentials. No current or historical exact Perplexity-route "
+            "rate verified.",
+        },
     },
     ("perplexity_agent", "google/gemini-3.1-pro-preview"): {
         "context_length": 131072,
@@ -234,6 +675,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:google/gemini-3.1-pro-preview:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "google/gemini-3.1-pro-preview",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "google/gemini-3.1-pro-preview",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "google/gemini-3.1-pro-preview: absent from current public Agent API price tables; "
+            "authenticated /v1/models returned 401 without credentials. No current or historical exact "
+            "Perplexity-route rate verified.",
+        },
     },
     ("perplexity_agent", "google/gemini-3.5-flash"): {
         "context_length": 131072,
@@ -248,6 +714,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:google/gemini-3.5-flash:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "google/gemini-3.5-flash",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "google/gemini-3.5-flash",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "google/gemini-3.5-flash: absent from current public Agent API price tables; authenticated "
+            "/v1/models returned 401 without credentials. No current or historical exact Perplexity-route "
+            "rate verified.",
+        },
     },
     ("perplexity_agent", "google/gemini-3.5-flash-lite"): {
         "context_length": 131072,
@@ -262,6 +753,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:google/gemini-3.5-flash-lite:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "google/gemini-3.5-flash-lite",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "google/gemini-3.5-flash-lite",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "google/gemini-3.5-flash-lite: absent from current public Agent API price tables; authenticated "
+            "/v1/models returned 401 without credentials. No current or historical exact Perplexity-route "
+            "rate verified.",
+        },
     },
     ("perplexity_agent", "google/gemini-3.6-flash"): {
         "context_length": 131072,
@@ -276,6 +792,42 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:google/gemini-3.6-flash:2026-11-01:c3d4091c95bd7f2f",
+            "provider": "perplexity_agent",
+            "model": "google/gemini-3.6-flash",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "1.50", "output": "7.50", "cache_read": "0.15"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "google/gemini-3.6-flash",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "google/gemini-3.6-flash",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "source_payload_sha256": "c3d4091c95bd7f2f57dbf824a362cfb2b1528d13ae07169bde02f4464ac9b309",
+        },
     },
     ("perplexity_agent", "google/gemini-3.7-flash"): {
         "context_length": 131072,
@@ -290,6 +842,42 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:google/gemini-3.7-flash:2026-11-01:54832f61343a1e46",
+            "provider": "perplexity_agent",
+            "model": "google/gemini-3.7-flash",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.75", "output": "3.75", "cache_read": "0.075"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "google/gemini-3.7-flash",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "google/gemini-3.7-flash",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "source_payload_sha256": "54832f61343a1e4654203e6ffe579a5f53cb62246cb8f5546125595441744343",
+        },
     },
     ("perplexity_agent", "google/gemini-3.8-flash"): {
         "context_length": 131072,
@@ -304,6 +892,42 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:google/gemini-3.8-flash:2026-11-01:54832f61343a1e46",
+            "provider": "perplexity_agent",
+            "model": "google/gemini-3.8-flash",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.75", "output": "3.75", "cache_read": "0.075"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "google/gemini-3.8-flash",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "google/gemini-3.8-flash",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "source_payload_sha256": "54832f61343a1e4654203e6ffe579a5f53cb62246cb8f5546125595441744343",
+        },
     },
     ("perplexity_agent", "openai/gpt-5"): {
         "context_length": 131072,
@@ -318,6 +942,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-5:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-5",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-5",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "openai/gpt-5: absent from current public Agent API price tables; authenticated /v1/models "
+            "returned 401 without credentials. No current or historical exact Perplexity-route rate "
+            "verified.",
+        },
     },
     ("perplexity_agent", "openai/gpt-5-mini"): {
         "context_length": 131072,
@@ -332,6 +981,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-5-mini:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-5-mini",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-5-mini",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "openai/gpt-5-mini: absent from current public Agent API price tables; authenticated /v1/models "
+            "returned 401 without credentials. No current or historical exact Perplexity-route rate "
+            "verified.",
+        },
     },
     ("perplexity_agent", "openai/gpt-5-nano"): {
         "context_length": 131072,
@@ -346,6 +1020,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-5-nano:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-5-nano",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-5-nano",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "openai/gpt-5-nano: absent from current public Agent API price tables; authenticated /v1/models "
+            "returned 401 without credentials. No current or historical exact Perplexity-route rate "
+            "verified.",
+        },
     },
     ("perplexity_agent", "openai/gpt-5.1"): {
         "context_length": 131072,
@@ -360,6 +1059,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-5.1:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-5.1",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-5.1",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "openai/gpt-5.1: absent from current public Agent API price tables; authenticated /v1/models "
+            "returned 401 without credentials. No current or historical exact Perplexity-route rate "
+            "verified.",
+        },
     },
     ("perplexity_agent", "openai/gpt-5.2"): {
         "context_length": 131072,
@@ -374,6 +1098,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-5.2:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-5.2",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-5.2",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "openai/gpt-5.2: absent from current public Agent API price tables; authenticated /v1/models "
+            "returned 401 without credentials. No current or historical exact Perplexity-route rate "
+            "verified.",
+        },
     },
     ("perplexity_agent", "openai/gpt-5.3-codex"): {
         "context_length": 131072,
@@ -388,6 +1137,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-5.3-codex:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-5.3-codex",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-5.3-codex",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "openai/gpt-5.3-codex: absent from current public Agent API price tables; authenticated "
+            "/v1/models returned 401 without credentials. No current or historical exact Perplexity-route "
+            "rate verified.",
+        },
     },
     ("perplexity_agent", "openai/gpt-5.4"): {
         "context_length": 131072,
@@ -402,6 +1176,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-5.4:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-5.4",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-5.4",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "openai/gpt-5.4: absent from current public Agent API price tables; authenticated /v1/models "
+            "returned 401 without credentials. No current or historical exact Perplexity-route rate "
+            "verified.",
+        },
     },
     ("perplexity_agent", "openai/gpt-5.4-mini"): {
         "context_length": 131072,
@@ -416,6 +1215,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-5.4-mini:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-5.4-mini",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-5.4-mini",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "openai/gpt-5.4-mini: absent from current public Agent API price tables; authenticated "
+            "/v1/models returned 401 without credentials. No current or historical exact Perplexity-route "
+            "rate verified.",
+        },
     },
     ("perplexity_agent", "openai/gpt-5.4-nano"): {
         "context_length": 131072,
@@ -430,6 +1254,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-5.4-nano:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-5.4-nano",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-5.4-nano",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "openai/gpt-5.4-nano: absent from current public Agent API price tables; authenticated "
+            "/v1/models returned 401 without credentials. No current or historical exact Perplexity-route "
+            "rate verified.",
+        },
     },
     ("perplexity_agent", "openai/gpt-5.5"): {
         "context_length": 131072,
@@ -444,6 +1293,86 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-5.5:2026-11-01:6f16100b353319d4",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-5.5",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "5.00", "output": "30.00", "cache_read": "0.500"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-5.5",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "openai/gpt-5.5",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [
+                {
+                    "id": "short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": ["default", "auto"]},
+                    "rates": {"input": "5.00", "output": "30.00", "cache_read": "0.500"},
+                },
+                {
+                    "id": "long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": ["default", "auto"]},
+                    "rates": {"input": "10.00", "output": "45.00", "cache_read": "1.000"},
+                },
+                {
+                    "id": "flex_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "flex"},
+                    "rates": {"input": "2.500", "output": "15.000", "cache_read": "0.2500"},
+                },
+                {
+                    "id": "flex_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "flex"},
+                    "rates": {"input": "5.000", "output": "22.500", "cache_read": "0.5000"},
+                },
+                {
+                    "id": "priority_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "priority"},
+                    "rates": {"input": "10.00", "output": "60.00", "cache_read": "1.000"},
+                },
+                {
+                    "id": "priority_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "priority"},
+                    "rates": {"input": "20.00", "output": "90.00", "cache_read": "2.000"},
+                },
+                {
+                    "id": "fast_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "fast"},
+                    "rates": {"input": "10.00", "output": "60.00", "cache_read": "1.000"},
+                },
+                {
+                    "id": "fast_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "fast"},
+                    "rates": {"input": "20.00", "output": "90.00", "cache_read": "2.000"},
+                },
+            ],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "requires_schedule": True,
+            "default_context": {"service_tier": "default"},
+            "assumptions": ["Default/auto service tier uses listed rates; tool fees are not tier-multiplied."],
+            "source_payload_sha256": "6f16100b353319d4ae2f47b6c8b938fdb5434891c0121453bd0c98497b4dba32",
+        },
     },
     ("perplexity_agent", "openai/gpt-5.6-luna"): {
         "context_length": 131072,
@@ -458,6 +1387,86 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-5.6-luna:2026-11-01:dbc084652072bfb5",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-5.6-luna",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.20", "output": "1.20", "cache_read": "0.020"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-5.6-luna",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "openai/gpt-5.6-luna",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [
+                {
+                    "id": "short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": ["default", "auto"]},
+                    "rates": {"input": "0.20", "output": "1.20", "cache_read": "0.020"},
+                },
+                {
+                    "id": "long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": ["default", "auto"]},
+                    "rates": {"input": "0.40", "output": "1.80", "cache_read": "0.040"},
+                },
+                {
+                    "id": "flex_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "flex"},
+                    "rates": {"input": "0.100", "output": "0.600", "cache_read": "0.0100"},
+                },
+                {
+                    "id": "flex_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "flex"},
+                    "rates": {"input": "0.200", "output": "0.900", "cache_read": "0.0200"},
+                },
+                {
+                    "id": "priority_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "priority"},
+                    "rates": {"input": "0.40", "output": "2.40", "cache_read": "0.040"},
+                },
+                {
+                    "id": "priority_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "priority"},
+                    "rates": {"input": "0.80", "output": "3.60", "cache_read": "0.080"},
+                },
+                {
+                    "id": "fast_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "fast"},
+                    "rates": {"input": "0.40", "output": "2.40", "cache_read": "0.040"},
+                },
+                {
+                    "id": "fast_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "fast"},
+                    "rates": {"input": "0.80", "output": "3.60", "cache_read": "0.080"},
+                },
+            ],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "requires_schedule": True,
+            "default_context": {"service_tier": "default"},
+            "assumptions": ["Default/auto service tier uses listed rates; tool fees are not tier-multiplied."],
+            "source_payload_sha256": "dbc084652072bfb576cb02436a2e6e51eb5c7e7f0a94f34134a092fd73365590",
+        },
     },
     ("perplexity_agent", "openai/gpt-5.6-sol"): {
         "context_length": 131072,
@@ -472,6 +1481,86 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-5.6-sol:2026-11-01:8f665f92f20f6093",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-5.6-sol",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "4.00", "output": "20.00", "cache_read": "0.400"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-5.6-sol",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "openai/gpt-5.6-sol",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [
+                {
+                    "id": "short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": ["default", "auto"]},
+                    "rates": {"input": "4.00", "output": "20.00", "cache_read": "0.400"},
+                },
+                {
+                    "id": "long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": ["default", "auto"]},
+                    "rates": {"input": "8.00", "output": "30.00", "cache_read": "0.800"},
+                },
+                {
+                    "id": "flex_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "flex"},
+                    "rates": {"input": "2.000", "output": "10.000", "cache_read": "0.2000"},
+                },
+                {
+                    "id": "flex_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "flex"},
+                    "rates": {"input": "4.000", "output": "15.000", "cache_read": "0.4000"},
+                },
+                {
+                    "id": "priority_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "priority"},
+                    "rates": {"input": "8.00", "output": "40.00", "cache_read": "0.800"},
+                },
+                {
+                    "id": "priority_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "priority"},
+                    "rates": {"input": "16.00", "output": "60.00", "cache_read": "1.600"},
+                },
+                {
+                    "id": "fast_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "fast"},
+                    "rates": {"input": "8.00", "output": "40.00", "cache_read": "0.800"},
+                },
+                {
+                    "id": "fast_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "fast"},
+                    "rates": {"input": "16.00", "output": "60.00", "cache_read": "1.600"},
+                },
+            ],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "requires_schedule": True,
+            "default_context": {"service_tier": "default"},
+            "assumptions": ["Default/auto service tier uses listed rates; tool fees are not tier-multiplied."],
+            "source_payload_sha256": "8f665f92f20f6093fee31d394bf64a9133b5d8842c0a45f05ea024cac3e56ac7",
+        },
     },
     ("perplexity_agent", "openai/gpt-5.6-terra"): {
         "context_length": 131072,
@@ -486,6 +1575,86 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-5.6-terra:2026-11-01:1bd29f211167dc77",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-5.6-terra",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "2.00", "output": "12.00", "cache_read": "0.200"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-5.6-terra",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "openai/gpt-5.6-terra",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [
+                {
+                    "id": "short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": ["default", "auto"]},
+                    "rates": {"input": "2.00", "output": "12.00", "cache_read": "0.200"},
+                },
+                {
+                    "id": "long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": ["default", "auto"]},
+                    "rates": {"input": "4.00", "output": "18.00", "cache_read": "0.400"},
+                },
+                {
+                    "id": "flex_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "flex"},
+                    "rates": {"input": "1.000", "output": "6.000", "cache_read": "0.1000"},
+                },
+                {
+                    "id": "flex_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "flex"},
+                    "rates": {"input": "2.000", "output": "9.000", "cache_read": "0.2000"},
+                },
+                {
+                    "id": "priority_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "priority"},
+                    "rates": {"input": "4.00", "output": "24.00", "cache_read": "0.400"},
+                },
+                {
+                    "id": "priority_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "priority"},
+                    "rates": {"input": "8.00", "output": "36.00", "cache_read": "0.800"},
+                },
+                {
+                    "id": "fast_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "fast"},
+                    "rates": {"input": "4.00", "output": "24.00", "cache_read": "0.400"},
+                },
+                {
+                    "id": "fast_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "fast"},
+                    "rates": {"input": "8.00", "output": "36.00", "cache_read": "0.800"},
+                },
+            ],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "requires_schedule": True,
+            "default_context": {"service_tier": "default"},
+            "assumptions": ["Default/auto service tier uses listed rates; tool fees are not tier-multiplied."],
+            "source_payload_sha256": "1bd29f211167dc7786d64fbc8fe0e13d03c43e302ef71e3796f16a50e01d1ad9",
+        },
     },
     ("perplexity_agent", "openai/gpt-6-astra"): {
         "context_length": 131072,
@@ -500,6 +1669,86 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-6-astra:2026-11-01:94682defb714b22f",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-6-astra",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "10.00", "output": "50.00", "cache_read": "1.000"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-6-astra",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "openai/gpt-6-astra",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [
+                {
+                    "id": "short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": ["default", "auto"]},
+                    "rates": {"input": "10.00", "output": "50.00", "cache_read": "1.000"},
+                },
+                {
+                    "id": "long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": ["default", "auto"]},
+                    "rates": {"input": "20.00", "output": "75.00", "cache_read": "2.000"},
+                },
+                {
+                    "id": "flex_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "flex"},
+                    "rates": {"input": "5.000", "output": "25.000", "cache_read": "0.5000"},
+                },
+                {
+                    "id": "flex_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "flex"},
+                    "rates": {"input": "10.000", "output": "37.500", "cache_read": "1.0000"},
+                },
+                {
+                    "id": "priority_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "priority"},
+                    "rates": {"input": "20.00", "output": "100.00", "cache_read": "2.000"},
+                },
+                {
+                    "id": "priority_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "priority"},
+                    "rates": {"input": "40.00", "output": "150.00", "cache_read": "4.000"},
+                },
+                {
+                    "id": "fast_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "fast"},
+                    "rates": {"input": "20.00", "output": "100.00", "cache_read": "2.000"},
+                },
+                {
+                    "id": "fast_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "fast"},
+                    "rates": {"input": "40.00", "output": "150.00", "cache_read": "4.000"},
+                },
+            ],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "requires_schedule": True,
+            "default_context": {"service_tier": "default"},
+            "assumptions": ["Default/auto service tier uses listed rates; tool fees are not tier-multiplied."],
+            "source_payload_sha256": "94682defb714b22f077b4278eef6d6deec4d46cf9ee585b1eb27c97d6b808fb6",
+        },
     },
     ("perplexity_agent", "openai/gpt-6-luna"): {
         "context_length": 131072,
@@ -514,6 +1763,86 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-6-luna:2026-11-01:7bbf733d4f33df1f",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-6-luna",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.10", "output": "0.50", "cache_read": "0.010"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-6-luna",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "openai/gpt-6-luna",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [
+                {
+                    "id": "short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": ["default", "auto"]},
+                    "rates": {"input": "0.10", "output": "0.50", "cache_read": "0.010"},
+                },
+                {
+                    "id": "long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": ["default", "auto"]},
+                    "rates": {"input": "0.20", "output": "0.75", "cache_read": "0.020"},
+                },
+                {
+                    "id": "flex_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "flex"},
+                    "rates": {"input": "0.050", "output": "0.250", "cache_read": "0.0050"},
+                },
+                {
+                    "id": "flex_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "flex"},
+                    "rates": {"input": "0.100", "output": "0.375", "cache_read": "0.0100"},
+                },
+                {
+                    "id": "priority_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "priority"},
+                    "rates": {"input": "0.20", "output": "1.00", "cache_read": "0.020"},
+                },
+                {
+                    "id": "priority_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "priority"},
+                    "rates": {"input": "0.40", "output": "1.50", "cache_read": "0.040"},
+                },
+                {
+                    "id": "fast_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "fast"},
+                    "rates": {"input": "0.20", "output": "1.00", "cache_read": "0.020"},
+                },
+                {
+                    "id": "fast_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "fast"},
+                    "rates": {"input": "0.40", "output": "1.50", "cache_read": "0.040"},
+                },
+            ],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "requires_schedule": True,
+            "default_context": {"service_tier": "default"},
+            "assumptions": ["Default/auto service tier uses listed rates; tool fees are not tier-multiplied."],
+            "source_payload_sha256": "7bbf733d4f33df1fe906031ed0cf78008b1ded0967a35deea100f6fc564ab178",
+        },
     },
     ("perplexity_agent", "openai/gpt-6-sol"): {
         "context_length": 131072,
@@ -528,6 +1857,86 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-6-sol:2026-11-01:527b9a9eecea849a",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-6-sol",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "2.00", "output": "10.00", "cache_read": "0.200"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-6-sol",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "openai/gpt-6-sol",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [
+                {
+                    "id": "short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": ["default", "auto"]},
+                    "rates": {"input": "2.00", "output": "10.00", "cache_read": "0.200"},
+                },
+                {
+                    "id": "long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": ["default", "auto"]},
+                    "rates": {"input": "4.00", "output": "15.00", "cache_read": "0.400"},
+                },
+                {
+                    "id": "flex_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "flex"},
+                    "rates": {"input": "1.000", "output": "5.000", "cache_read": "0.1000"},
+                },
+                {
+                    "id": "flex_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "flex"},
+                    "rates": {"input": "2.000", "output": "7.500", "cache_read": "0.2000"},
+                },
+                {
+                    "id": "priority_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "priority"},
+                    "rates": {"input": "4.00", "output": "20.00", "cache_read": "0.400"},
+                },
+                {
+                    "id": "priority_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "priority"},
+                    "rates": {"input": "8.00", "output": "30.00", "cache_read": "0.800"},
+                },
+                {
+                    "id": "fast_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "fast"},
+                    "rates": {"input": "4.00", "output": "20.00", "cache_read": "0.400"},
+                },
+                {
+                    "id": "fast_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "fast"},
+                    "rates": {"input": "8.00", "output": "30.00", "cache_read": "0.800"},
+                },
+            ],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "requires_schedule": True,
+            "default_context": {"service_tier": "default"},
+            "assumptions": ["Default/auto service tier uses listed rates; tool fees are not tier-multiplied."],
+            "source_payload_sha256": "527b9a9eecea849ab2b21c1ed9292375c59c11357fb8f88cd8bbec8034f97bf8",
+        },
     },
     ("perplexity_agent", "openai/gpt-6.1-sol"): {
         "context_length": 131072,
@@ -542,6 +1951,86 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:openai/gpt-6.1-sol:2026-11-01:3b6506e425d17dfe",
+            "provider": "perplexity_agent",
+            "model": "openai/gpt-6.1-sol",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "2.00", "output": "10.00", "cache_read": "0.1000"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "openai/gpt-6.1-sol",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "openai/gpt-6.1-sol",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [
+                {
+                    "id": "short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": ["default", "auto"]},
+                    "rates": {"input": "2.00", "output": "10.00", "cache_read": "0.1000"},
+                },
+                {
+                    "id": "long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": ["default", "auto"]},
+                    "rates": {"input": "4.00", "output": "15.00", "cache_read": "0.2000"},
+                },
+                {
+                    "id": "flex_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "flex"},
+                    "rates": {"input": "1.000", "output": "5.000", "cache_read": "0.05000"},
+                },
+                {
+                    "id": "flex_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "flex"},
+                    "rates": {"input": "2.000", "output": "7.500", "cache_read": "0.10000"},
+                },
+                {
+                    "id": "priority_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "priority"},
+                    "rates": {"input": "4.00", "output": "20.00", "cache_read": "0.2000"},
+                },
+                {
+                    "id": "priority_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "priority"},
+                    "rates": {"input": "8.00", "output": "30.00", "cache_read": "0.4000"},
+                },
+                {
+                    "id": "fast_short_context",
+                    "when": {"max_input_tokens": 272000, "service_tier": "fast"},
+                    "rates": {"input": "4.00", "output": "20.00", "cache_read": "0.2000"},
+                },
+                {
+                    "id": "fast_long_context",
+                    "when": {"min_input_tokens": 272001, "service_tier": "fast"},
+                    "rates": {"input": "8.00", "output": "30.00", "cache_read": "0.4000"},
+                },
+            ],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "requires_schedule": True,
+            "default_context": {"service_tier": "default"},
+            "assumptions": ["Default/auto service tier uses listed rates; tool fees are not tier-multiplied."],
+            "source_payload_sha256": "3b6506e425d17dfe470d2dcc57e4c54b8b74defb16ba1d64b8308cfb5593dbbb",
+        },
     },
     ("perplexity_agent", "perplexity/deepseek-v4-pro-0813"): {
         "context_length": 131072,
@@ -556,6 +2045,42 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:perplexity/deepseek-v4-pro-0813:2026-11-01:c9f5d93531e5f3bf",
+            "provider": "perplexity_agent",
+            "model": "perplexity/deepseek-v4-pro-0813",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "1.32", "output": "3.96", "cache_read": "0.044"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "perplexity/deepseek-v4-pro-0813",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "perplexity/deepseek-v4-pro-0813",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "source_payload_sha256": "c9f5d93531e5f3bfdfca0652dde6258e0d1973986edc395a9239cc583bd40075",
+        },
     },
     ("perplexity_agent", "perplexity/glm-5.3"): {
         "context_length": 131072,
@@ -570,6 +2095,42 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:perplexity/glm-5.3:2026-11-01:7b394dd734497d99",
+            "provider": "perplexity_agent",
+            "model": "perplexity/glm-5.3",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "1.40", "output": "4.40", "cache_read": "0.26"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "perplexity/glm-5.3",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "perplexity/glm-5.3",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "source_payload_sha256": "7b394dd734497d99cd21d6e6157116bf834ac46afc9a71d32f19a459cb834917",
+        },
     },
     ("perplexity_agent", "perplexity/glm-5.3-flash"): {
         "context_length": 131072,
@@ -584,6 +2145,42 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:perplexity/glm-5.3-flash:2026-11-01:fe2af70fbd68a477",
+            "provider": "perplexity_agent",
+            "model": "perplexity/glm-5.3-flash",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.15", "output": "0.50", "cache_read": "0.03"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "perplexity/glm-5.3-flash",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "perplexity/glm-5.3-flash",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "source_payload_sha256": "fe2af70fbd68a47769c124929ca7226e6dd91808b8b2c767438f5ef2896c1aa5",
+        },
     },
     ("perplexity_agent", "perplexity/kimi-k3"): {
         "context_length": 131072,
@@ -598,6 +2195,42 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:perplexity/kimi-k3:2026-11-01:2692d03c9c36a4de",
+            "provider": "perplexity_agent",
+            "model": "perplexity/kimi-k3",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "3.00", "output": "15.00", "cache_read": "0.30"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "perplexity/kimi-k3",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "perplexity/kimi-k3",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "source_payload_sha256": "2692d03c9c36a4ded095df6abfbdad15c1ab65d954125dc79a1b8f4def9b664b",
+        },
     },
     ("perplexity_agent", "perplexity/nemotron-3-ultra-550b-a55b"): {
         "context_length": 131072,
@@ -612,6 +2245,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:perplexity/nemotron-3-ultra-550b-a55b:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "perplexity/nemotron-3-ultra-550b-a55b",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "perplexity/nemotron-3-ultra-550b-a55b",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "perplexity/nemotron-3-ultra-550b-a55b: absent from current public Agent API price tables; "
+            "authenticated /v1/models returned 401 without credentials. No current or historical exact "
+            "Perplexity-route rate verified.",
+        },
     },
     ("perplexity_agent", "perplexity/sonar"): {
         "context_length": 131072,
@@ -626,6 +2284,42 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:perplexity/sonar:2026-11-01:4af70e9f83f43fa8",
+            "provider": "perplexity_agent",
+            "model": "perplexity/sonar",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.25", "output": "2.50", "cache_read": "0.0625"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "perplexity/sonar",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "perplexity/sonar",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "source_payload_sha256": "4af70e9f83f43fa8ad2e88d25376cfa3528d2682dd0daf213d04e5ce159caddf",
+        },
     },
     ("perplexity_agent", "xai/grok-4.20-multi-agent"): {
         "context_length": 131072,
@@ -640,6 +2334,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:xai/grok-4.20-multi-agent:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "xai/grok-4.20-multi-agent",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "xai/grok-4.20-multi-agent",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "xai/grok-4.20-multi-agent: absent from current public Agent API price tables; authenticated "
+            "/v1/models returned 401 without credentials. No current or historical exact Perplexity-route "
+            "rate verified.",
+        },
     },
     ("perplexity_agent", "xai/grok-4.20-non-reasoning"): {
         "context_length": 131072,
@@ -654,6 +2373,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:xai/grok-4.20-non-reasoning:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "xai/grok-4.20-non-reasoning",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "xai/grok-4.20-non-reasoning",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "xai/grok-4.20-non-reasoning: absent from current public Agent API price tables; authenticated "
+            "/v1/models returned 401 without credentials. No current or historical exact Perplexity-route "
+            "rate verified.",
+        },
     },
     ("perplexity_agent", "xai/grok-4.20-reasoning"): {
         "context_length": 131072,
@@ -668,6 +2412,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:xai/grok-4.20-reasoning:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "xai/grok-4.20-reasoning",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "xai/grok-4.20-reasoning",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "xai/grok-4.20-reasoning: absent from current public Agent API price tables; authenticated "
+            "/v1/models returned 401 without credentials. No current or historical exact Perplexity-route "
+            "rate verified.",
+        },
     },
     ("perplexity_agent", "xai/grok-4.3"): {
         "context_length": 131072,
@@ -682,6 +2451,31 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:xai/grok-4.3:2026-11-01",
+            "provider": "perplexity_agent",
+            "model": "xai/grok-4.3",
+            "status": "unverified",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "xai/grok-4.3",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "xai/grok-4.3: absent from current public Agent API price tables; authenticated /v1/models "
+            "returned 401 without credentials. No current or historical exact Perplexity-route rate "
+            "verified.",
+        },
     },
     ("perplexity_agent", "xai/grok-4.5"): {
         "context_length": 131072,
@@ -696,6 +2490,54 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:xai/grok-4.5:2026-11-01:e899c02d4b24eee5",
+            "provider": "perplexity_agent",
+            "model": "xai/grok-4.5",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "2.00", "output": "6.00", "cache_read": "0.30"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "xai/grok-4.5",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "xai/grok-4.5",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [
+                {
+                    "id": "short_context",
+                    "when": {"max_input_tokens": 199999},
+                    "rates": {"input": "2.00", "output": "6.00", "cache_read": "0.30"},
+                },
+                {
+                    "id": "long_context",
+                    "when": {"min_input_tokens": 200000},
+                    "rates": {"input": "4.00", "output": "12.00", "cache_read": "0.60"},
+                },
+            ],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "requires_schedule": True,
+            "source_payload_sha256": "e899c02d4b24eee51a720da16e3b4b33ca20f26d5bdaac56f35037c8b87888eb",
+        },
     },
     ("perplexity_agent", "xai/grok-4.6"): {
         "context_length": 131072,
@@ -710,6 +2552,54 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:xai/grok-4.6:2026-11-01:ebdacb74250be44f",
+            "provider": "perplexity_agent",
+            "model": "xai/grok-4.6",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "2.00", "output": "6.00", "cache_read": "0.50"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "xai/grok-4.6",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "xai/grok-4.6",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [
+                {
+                    "id": "short_context",
+                    "when": {"max_input_tokens": 199999},
+                    "rates": {"input": "2.00", "output": "6.00", "cache_read": "0.50"},
+                },
+                {
+                    "id": "long_context",
+                    "when": {"min_input_tokens": 200000},
+                    "rates": {"input": "4.00", "output": "12.00", "cache_read": "1.00"},
+                },
+            ],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "requires_schedule": True,
+            "source_payload_sha256": "ebdacb74250be44f97b99738cef1fa7fb8bb7fe3cc6de3d50da8c13b07cfb2e9",
+        },
     },
     ("perplexity_agent", "xai/grok-4.7"): {
         "context_length": 131072,
@@ -724,5 +2614,53 @@ PERPLEXITY_AGENT_SPECS = {
             mode="openai_responses_reasoning",
         ),
         "server_tools": ["web_search", "fetch_url", "finance_search", "people_search"],
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "perplexity_agent:xai/grok-4.7:2026-11-01:ebdacb74250be44f",
+            "provider": "perplexity_agent",
+            "model": "xai/grok-4.7",
+            "status": "priced",
+            "billing_mode": "agent_api",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "2.00", "output": "6.00", "cache_read": "0.50"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://docs.perplexity.ai/docs/agent-api/models",
+                    "model_id": "xai/grok-4.7",
+                    "checked_at": "2026-11-01",
+                },
+                {
+                    "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+                    "model_id": "xai/grok-4.7",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [
+                {
+                    "id": "short_context",
+                    "when": {"max_input_tokens": 199999},
+                    "rates": {"input": "2.00", "output": "6.00", "cache_read": "0.50"},
+                },
+                {
+                    "id": "long_context",
+                    "when": {"min_input_tokens": 200000},
+                    "rates": {"input": "4.00", "output": "12.00", "cache_read": "1.00"},
+                },
+            ],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "components": [
+                {"name": "web_search", "quantity": "web_search", "rate": "0.0025", "unit": "per_request"},
+                {"name": "web_search_fast", "quantity": "web_search_fast", "rate": "0.001", "unit": "per_request"},
+                {"name": "fetch_url", "quantity": "fetch_url", "rate": "0.0005", "unit": "per_request"},
+                {"name": "finance_search", "quantity": "finance_search", "rate": "0.005", "unit": "per_request"},
+                {"name": "people_search", "quantity": "people_search", "rate": "0.005", "unit": "per_request"},
+            ],
+            "cache_policy": {"cache_read": "separate"},
+            "requires_schedule": True,
+            "source_payload_sha256": "ebdacb74250be44f97b99738cef1fa7fb8bb7fe3cc6de3d50da8c13b07cfb2e9",
+        },
     },
 }

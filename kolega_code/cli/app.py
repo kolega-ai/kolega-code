@@ -78,6 +78,7 @@ from .config import CliConfigOverrides, active_model_override_message, key_statu
 from .connection import CliConnectionManager
 from .session_event_store import FileArtifactStore, FileSessionEventStore
 from kolega_code.llm.ledger import UsageLedger
+from kolega_code.llm.pricing import PricingResolver
 
 from .goal import GoalState
 from .session_usage import SessionUsageSink
@@ -376,7 +377,7 @@ class KolegaCodeApp(
         # Process-wide LLM usage accounting; every agent build (including
         # rebuilds on model/settings changes) shares this one ledger. The
         # journal sink is attached in on_mount, once the UI loop exists.
-        self._usage_ledger = UsageLedger()
+        self._usage_ledger = UsageLedger(pricing_resolver=PricingResolver(config.usage_pricing if config else None))
         self._usage_sink: Optional[SessionUsageSink] = None
         self._goal: Optional[GoalState] = GoalState.from_dict(self.session.goal) if self.session.goal else None
         # Checkpoint for goal token accounting: drains advance it, so a resumed
@@ -698,6 +699,9 @@ class KolegaCodeApp(
         # fallback also rearms after any modal/startup blocker is dismissed.
         self.set_interval(0.25, self._maybe_start_background_completion, name="session-input-drain")
         self.settings = self.settings_store.load()
+        self._usage_ledger.pricing_resolver = PricingResolver(
+            self.config.usage_pricing if self.config else self.settings.usage_pricing
+        )
         # Mount is batched by Textual: awaiting agent/tool setup here prevents
         # even a loading screen from painting. Theme the first frame, then return.
         truecolor = theme.supports_truecolor(self.console)

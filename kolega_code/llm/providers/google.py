@@ -6,7 +6,8 @@ from google.genai import types as genai_types
 from ..models import Message, MessageChunk, MessageHistory, ToolDefinition
 from ..specs import build_thinking_request_params, get_model_specs
 from ..tool_execution_ids import ToolExecutionIdRegistry
-from ..usage import attach_normalized_usage
+from ..accounting import UsageObservation, publish_observation
+from ..usage import attach_normalized_usage, google_usage_metadata, observation_from_metadata
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
 
@@ -25,6 +26,10 @@ class GoogleStreamWrapper:
         self.usage_metadata: dict[str, Any] = {}
 
         self._closed = False
+        self._usage_complete = False
+
+    def get_usage_observation(self) -> UsageObservation:
+        return observation_from_metadata(self.usage_metadata, "google", self.model, complete=self._usage_complete)
 
     async def __aenter__(self):
         return self
@@ -46,27 +51,22 @@ class GoogleStreamWrapper:
         try:
             chunk = await self.gemini_stream.__anext__()
 
-            content = chunk.text or ""
-            self.final_content += content
             usage = getattr(chunk, "usage_metadata", None)
             if usage is not None:
-                self.usage_metadata = {
-                    "prompt_token_count": getattr(usage, "prompt_token_count", 0),
-                    "candidates_token_count": getattr(usage, "candidates_token_count", 0),
-                    "total_token_count": getattr(usage, "total_token_count", 0),
-                }
-                for optional_key in (
-                    "cached_content_token_count",
-                    "thoughts_token_count",
-                    "tool_use_prompt_token_count",
-                ):
-                    value = getattr(usage, optional_key, None)
-                    if value is not None:
-                        self.usage_metadata[optional_key] = value
+                self.usage_metadata.update(google_usage_metadata(usage))
+            resolved = getattr(chunk, "model_version", None)
+            if isinstance(resolved, str):
+                self.usage_metadata["resolved_model"] = resolved
+            content = chunk.text or ""
+            self.final_content += content
 
             # Read function calls off the parts so we also capture each part's thought_signature
             # (Gemini 3.x requires it echoed back). Accumulate across chunks with a running index.
+            if not chunk.candidates:
+                return MessageChunk(type="ignore", text="")
             candidate = chunk.candidates[0]
+            if candidate.finish_reason:
+                self._usage_complete = True
             if candidate.content and candidate.content.parts:
                 for part in candidate.content.parts:
                     if part.function_call:
@@ -78,6 +78,7 @@ class GoogleStreamWrapper:
             return MessageChunk.from_google(chunk)
 
         except StopAsyncIteration:
+            self._usage_complete = True
             raise
 
     async def get_final_message(self):
@@ -90,7 +91,7 @@ class GoogleStreamWrapper:
         )
         message.usage_metadata.update(self.usage_metadata)
         message.usage_metadata["provider"] = "google"
-        return attach_normalized_usage(message, "google", self.model)
+        return attach_normalized_usage(message, "google", self.model, complete=self._usage_complete)
 
 
 class GoogleProvider(BaseLLMProvider):
@@ -217,4 +218,11 @@ class GoogleProvider(BaseLLMProvider):
             model=model, contents=messages.to_google(), config=config
         )
 
-        return attach_normalized_usage(Message.from_google(response), "google", str(model))
+        metadata = google_usage_metadata(getattr(response, "usage_metadata", None))
+        resolved = getattr(response, "model_version", None)
+        if isinstance(resolved, str):
+            metadata["resolved_model"] = resolved
+        publish_observation(observation_from_metadata(metadata, "google", str(model), complete=True))
+        message = Message.from_google(response)
+        message.usage_metadata.update(metadata)
+        return attach_normalized_usage(message, "google", str(model))

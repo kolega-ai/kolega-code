@@ -17,6 +17,7 @@ from kolega_code.llm import cloudflare_workers_ai
 
 from .types import ThinkingEffortSpec
 from .validation import validate_model_spec
+from .pricing_feeds import reviewed_pricing, sanitize_spec_pricing
 
 PROVIDER = cloudflare_workers_ai.PROVIDER
 MODELS_URL = cloudflare_workers_ai.models_search_url("{account_id}")
@@ -114,6 +115,7 @@ def _spec_for(identifier: str, item: Mapping[str, Any]) -> dict[str, Any] | None
         spec["thinking_effort"] = thinking
     if identifier.startswith(_CODEX_PATCH_PREFIX):
         spec["preferred_edit_protocol"] = "codex_apply_patch"
+    spec["pricing"] = reviewed_pricing(PROVIDER, identifier)
     return spec
 
 
@@ -181,7 +183,7 @@ def fetch_models(
 
 
 def spec_to_jsonable(spec: Mapping[str, Any]) -> dict[str, Any]:
-    payload = dict(spec)
+    payload = sanitize_spec_pricing(spec)
     thinking = payload.get("thinking_effort")
     if isinstance(thinking, ThinkingEffortSpec):
         payload["thinking_effort"] = {
@@ -193,7 +195,7 @@ def spec_to_jsonable(spec: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def spec_from_jsonable(payload: Mapping[str, Any]) -> dict[str, Any]:
-    spec = dict(payload)
+    spec = sanitize_spec_pricing(payload)
     thinking = spec.get("thinking_effort")
     if isinstance(thinking, Mapping):
         options = tuple(str(option) for option in thinking.get("options") or ())

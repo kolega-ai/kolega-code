@@ -16,6 +16,7 @@ from kolega_code.cli.connection import CliConnectionManager
 from kolega_code.cli.session_store import SessionRecord
 
 if TYPE_CHECKING:
+    from kolega_code.acp.accounting import AcpUsageAccounting
     from kolega_code.acp.control import AcpControlAdapter
     from kolega_code.session.runtime import SessionRuntime
 
@@ -49,6 +50,7 @@ class AcpSession:
     auto_continue_paused: bool = False
     closed: bool = False
     retired_agents: list[Any] = field(default_factory=list, repr=False)
+    accounting: AcpUsageAccounting | None = field(default=None, repr=False)
 
     def idle(self) -> bool:
         return not self.execution_lock.locked() and (self.turn_task is None or self.turn_task.done())

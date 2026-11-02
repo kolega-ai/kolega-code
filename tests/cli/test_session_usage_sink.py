@@ -2,6 +2,9 @@
 
 import asyncio
 from pathlib import Path
+import threading
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -9,9 +12,15 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.session_usage import (
     LLM_MESSAGE_EVENT,
     LLM_REQUEST_FAILED_EVENT,
+    LLM_REQUEST_SETTLED_EVENT,
+    LLM_REQUEST_STARTED_EVENT,
+    LLM_RUN_FINISHED_EVENT,
     LLM_RUN_STARTED_EVENT,
+    LLM_USAGE_OBSERVED_EVENT,
     SessionUsageSink,
+    session_usage_scope,
 )
+from kolega_code.llm.accounting import UsageObservation
 from kolega_code.llm.ledger import (
     HISTORY_ORIGIN,
     LedgerStreamAdapter,
@@ -53,7 +62,7 @@ async def test_marker_written_synchronously_before_any_event(tmp_path):
     types = [e.event_type for e in _events(store, session)]
     assert types[-1] == LLM_RUN_STARTED_EVENT
     marker = _events(store, session)[-1]
-    assert marker.payload == {"run_id": ledger.run_id, "mode": "tui"}
+    assert marker.payload == {"run_id": ledger.run_id, "mode": "tui", "accounting_version": 2}
     await sink.aclose()
 
 
@@ -69,7 +78,12 @@ async def test_settlements_journal_in_fifo_order(tmp_path):
     ledger.record_response(third, _usage(), message=_message(content="three"))
     await sink.aclose()
 
-    tail = [e for e in _events(store, session) if e.event_type.startswith("llm.")]
+    tail = [
+        e
+        for e in _events(store, session)
+        if e.event_type not in (LLM_REQUEST_STARTED_EVENT, LLM_REQUEST_SETTLED_EVENT, LLM_RUN_FINISHED_EVENT)
+        and e.event_type.startswith("llm.")
+    ]
     assert [e.event_type for e in tail] == [
         LLM_RUN_STARTED_EVENT,
         LLM_MESSAGE_EVENT,
@@ -188,9 +202,10 @@ async def test_write_failure_counts_and_drainer_continues(tmp_path, monkeypatch)
     calls = {"n": 0}
 
     def flaky_append(*args, **kwargs):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise OSError("disk full")
+        if args[0] == LLM_MESSAGE_EVENT:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError("disk full")
         return original_append(*args, **kwargs)
 
     monkeypatch.setattr(journal, "append", flaky_append)
@@ -243,3 +258,146 @@ async def test_opaque_provider_fields_externalized_like_assistant_message(tmp_pa
     assert thinking_block["signature"] == ""  # externalized, not inline
     assert "signature" in thinking_block["artifact_fields"]
     assert event.artifacts and event.artifacts[0]["purpose"] == "provider_signature"
+
+
+@pytest.mark.asyncio
+async def test_history_settlements_have_compact_facts_even_without_recorder_response(tmp_path):
+    store, session, _recorder, ledger, sink = await _harness(tmp_path, mode="acp")
+    with llm_call_origin(HISTORY_ORIGIN):
+        request_id = ledger.begin("anthropic", "model")
+    ledger.record_response(request_id, _usage(), _message())
+    assert await sink.flush()
+    facts = [event for event in _events(store, session) if event.event_type == LLM_REQUEST_SETTLED_EVENT]
+    assert len(facts) == 1
+    assert facts[0].payload["usage"]["total_tokens"] == 15
+    assert store.load(session.session_id, live_run_id=ledger.run_id).usage["total_tokens"] == 15
+    await sink.aclose()
+    terminal = _events(store, session)[-1]
+    assert terminal.event_type == LLM_RUN_FINISHED_EVENT
+    assert terminal.payload["counts"]["requests"] == 1
+    assert terminal.payload["persist_failures"] == 0
+
+
+@pytest.mark.asyncio
+async def test_begin_captures_child_recorder_launch_turn_and_epoch_for_late_settlement(tmp_path):
+    store, session, recorder, ledger, sink = await _harness(tmp_path, mode="acp")
+    launch_turn = recorder.start_turn(Message(role="user", content="A"))
+    launch_epoch = recorder.journal.epoch_id
+    child = recorder.scoped_child(
+        agent_id="background-child", agent_name="background", parent_tool_call_id="tool-A", depth=1
+    )
+    with session_usage_scope(child, turn_id=launch_turn):
+        request_id = ledger.begin("anthropic", "model")
+    recorder.finish_turn("completed")
+    recorder.start_epoch("reset")
+    recorder.start_turn(Message(role="user", content="B"))
+    ledger.record_response(request_id, _usage(), _message())
+    recorder.finish_turn("completed")
+    await sink.aclose()
+    events = [event for event in _events(store, session) if event.payload.get("request_id") == request_id]
+    assert {event.event_type for event in events} == {
+        LLM_REQUEST_STARTED_EVENT,
+        LLM_REQUEST_SETTLED_EVENT,
+        LLM_MESSAGE_EVENT,
+    }
+    assert all(event.turn_id == launch_turn for event in events)
+    assert all(event.epoch_id == launch_epoch for event in events)
+    assert all(event.agent_id == "background-child" and event.parent_tool_call_id == "tool-A" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_sink_persists_late_refinement_but_not_interim_observations(tmp_path):
+    store, session, _recorder, ledger, sink = await _harness(tmp_path)
+    request_id = ledger.begin("anthropic", "model")
+    partial = UsageObservation(provider="anthropic", input_tokens=7)
+    ledger.record_observation(request_id, partial)
+    ledger.record_failure(request_id, "cancelled")
+    await sink.flush()
+    assert not any(event.event_type == LLM_USAGE_OBSERVED_EVENT for event in _events(store, session))
+    complete = UsageObservation(provider="anthropic", input_tokens=10, output_tokens=5, complete=True)
+    ledger.record_observation(request_id, complete)
+    ledger.record_observation(request_id, complete)
+    await sink.aclose()
+    observed = [event for event in _events(store, session) if event.event_type == LLM_USAGE_OBSERVED_EVENT]
+    assert len(observed) == 1
+    aggregate = store.load(session.session_id).usage
+    assert aggregate["failed"] == 1
+    assert aggregate["total_tokens"] == 15
+    assert aggregate["partial"] == 0
+
+
+@pytest.mark.asyncio
+async def test_flush_timeout_reports_health_then_can_drain_without_losing_events(tmp_path, monkeypatch):
+    store, session, _recorder, ledger, sink = await _harness(tmp_path)
+    entered = threading.Event()
+    release = threading.Event()
+    write = sink._write
+
+    def blocked_write(item):
+        entered.set()
+        assert release.wait(timeout=10)
+        write(item)
+
+    monkeypatch.setattr(sink, "_write", blocked_write)
+    request_id = ledger.begin("anthropic", "model")
+    ledger.record_response(request_id, _usage(), _message())
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        assert await sink.flush(timeout=0) is False
+        assert ledger.persist_failures == 1
+        assert not any(event.event_type == LLM_RUN_FINISHED_EVENT for event in _events(store, session))
+    finally:
+        release.set()
+        await sink.aclose()
+    terminal = _events(store, session)[-1]
+    assert terminal.event_type == LLM_RUN_FINISHED_EVENT
+    assert terminal.payload["flush_timeouts"] == terminal.payload["persist_failures"] == 1
+    assert store.load(session.session_id).usage["coverage"]["full"] is False
+
+
+@pytest.mark.asyncio
+async def test_old_observer_payload_without_begin_or_additive_fields_is_supported(tmp_path):
+    store, session, _recorder, ledger, sink = await _harness(tmp_path)
+    legacy_request: Any = SimpleNamespace(
+        request_id="old-client",
+        run_id=ledger.run_id,
+        provider="anthropic",
+        model="model",
+        origin=None,
+        usage=_usage(),
+        error=None,
+        revision=0,
+    )
+    sink.on_response(legacy_request, _message())
+    sink.on_response(legacy_request, _message())
+    legacy_request.revision = 1
+    sink.on_observation(legacy_request)
+    await sink.aclose()
+    result = store.load(session.session_id).usage
+    assert result["requests"] == 1
+    assert result["total_tokens"] == 15
+    assert len([event for event in _events(store, session) if event.event_type == LLM_MESSAGE_EVENT]) == 1
+    assert not any(event.event_type == LLM_USAGE_OBSERVED_EVENT for event in _events(store, session))
+
+
+@pytest.mark.asyncio
+async def test_cancelled_close_stops_drainer_without_certifying_run_finished(tmp_path, monkeypatch):
+    store, session, _recorder, ledger, sink = await _harness(tmp_path)
+    entered = asyncio.Event()
+
+    async def blocked_flush(*, timeout=10):
+        entered.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(sink, "flush", blocked_flush)
+    closing = asyncio.create_task(sink.aclose())
+    await entered.wait()
+    closing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+    assert sink._drainer is not None
+    await asyncio.gather(sink._drainer, return_exceptions=True)
+    assert sink._drainer.cancelled()
+    assert not any(event.event_type == LLM_RUN_FINISHED_EVENT for event in _events(store, session))
+    assert store.load(session.session_id).usage["coverage"]["unclosed_runs"] == 1
+    assert ledger.persist_failures == 0

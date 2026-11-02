@@ -26,6 +26,155 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "deepseek/deepseek-v4.1-flash-1017",
+            "pricing_id": "openrouter:deepseek/deepseek-v4.1-flash-1017:2026-11-01:9ae93d6e305c1a43",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.003000000", "input": "0.15000000", "output": "0.6000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "0.003000000", "input": "0.15000000", "output": "0.6000000"},
+                    "when": {"timezone": "UTC", "weekdays": [5, 6]},
+                },
+                {
+                    "id": "upstream_override_1",
+                    "priority": 1,
+                    "rates": {"cache_read": "0.003000000", "input": "0.15000000", "output": "0.6000000"},
+                    "when": {
+                        "end_time": "01:00",
+                        "start_time": "00:00",
+                        "timezone": "UTC",
+                        "weekdays": [0, 1, 2, 3, 4],
+                    },
+                },
+                {
+                    "id": "upstream_override_2",
+                    "priority": 2,
+                    "rates": {"cache_read": "0.006000000", "input": "0.3000000", "output": "1.2000000"},
+                    "when": {
+                        "end_time": "04:00",
+                        "start_time": "01:00",
+                        "timezone": "UTC",
+                        "weekdays": [0, 1, 2, 3, 4],
+                    },
+                },
+                {
+                    "id": "upstream_override_3",
+                    "priority": 3,
+                    "rates": {"cache_read": "0.003000000", "input": "0.15000000", "output": "0.6000000"},
+                    "when": {
+                        "end_time": "06:00",
+                        "start_time": "04:00",
+                        "timezone": "UTC",
+                        "weekdays": [0, 1, 2, 3, 4],
+                    },
+                },
+                {
+                    "id": "upstream_override_4",
+                    "priority": 4,
+                    "rates": {"cache_read": "0.006000000", "input": "0.3000000", "output": "1.2000000"},
+                    "when": {
+                        "end_time": "10:00",
+                        "start_time": "06:00",
+                        "timezone": "UTC",
+                        "weekdays": [0, 1, 2, 3, 4],
+                    },
+                },
+                {
+                    "id": "upstream_override_5",
+                    "priority": 5,
+                    "rates": {"cache_read": "0.003000000", "input": "0.15000000", "output": "0.6000000"},
+                    "when": {
+                        "end_time": "00:00",
+                        "start_time": "10:00",
+                        "timezone": "UTC",
+                        "weekdays": [0, 1, 2, 3, 4],
+                    },
+                },
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "9ae93d6e305c1a43a4f0c2cf820bb5576bd44e2ef399e4dea4eb971e06e5ae65",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "deepseek/deepseek-v4.1-flash-1017",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000006",
+                "input_cache_read": "0.000000003",
+                "overrides": [
+                    {
+                        "completion": "0.0000006",
+                        "input_cache_read": "0.000000003",
+                        "prompt": "0.00000015",
+                        "utc_days": ["saturday", "sunday"],
+                    },
+                    {
+                        "completion": "0.0000006",
+                        "input_cache_read": "0.000000003",
+                        "prompt": "0.00000015",
+                        "utc_days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+                        "utc_end": 100,
+                        "utc_start": 0,
+                    },
+                    {
+                        "completion": "0.0000012",
+                        "input_cache_read": "0.000000006",
+                        "prompt": "0.0000003",
+                        "utc_days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+                        "utc_end": 400,
+                        "utc_start": 100,
+                    },
+                    {
+                        "completion": "0.0000006",
+                        "input_cache_read": "0.000000003",
+                        "prompt": "0.00000015",
+                        "utc_days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+                        "utc_end": 600,
+                        "utc_start": 400,
+                    },
+                    {
+                        "completion": "0.0000012",
+                        "input_cache_read": "0.000000006",
+                        "prompt": "0.0000003",
+                        "utc_days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+                        "utc_end": 1000,
+                        "utc_start": 600,
+                    },
+                    {
+                        "completion": "0.0000006",
+                        "input_cache_read": "0.000000003",
+                        "prompt": "0.00000015",
+                        "utc_days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+                        "utc_end": 0,
+                        "utc_start": 1000,
+                    },
+                ],
+                "prompt": "0.00000015",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "deepseek/deepseek-v4.1-flash"): {
         "context_length": 1048576,
@@ -40,6 +189,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "deepseek/deepseek-v4.1-flash",
+            "pricing_id": "openrouter:deepseek/deepseek-v4.1-flash:2026-11-01:34dbb825afa6f102",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.006000000", "input": "0.045000000", "output": "0.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "34dbb825afa6f102f08b747134a5fb1551bc7ab6e5705520b7a08fe048ece8c6",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "deepseek/deepseek-v4.1-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000005", "input_cache_read": "0.000000006", "prompt": "0.000000045"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "z-ai/glm-5.3-flash"): {
         "context_length": 1048576,
@@ -54,6 +238,45 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "z-ai/glm-5.3-flash",
+            "pricing_id": "openrouter:z-ai/glm-5.3-flash:2026-11-01:893433d4b708f695",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.0285000000", "input": "0.0285000000", "output": "0.0923000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "893433d4b708f695f3f47a32ca24fc584c1210ae0c4df54a12d3f1088c8737e8",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "z-ai/glm-5.3-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000000923",
+                "input_cache_read": "0.0000000285",
+                "prompt": "0.0000000285",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-6-luna"): {
         "context_length": 1050000,
@@ -69,6 +292,75 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-6-luna",
+            "pricing_id": "openrouter:openai/gpt-6-luna:2026-11-01:8691ca4cd82d2876",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.01000000",
+                "cache_write": "0.125000000",
+                "input": "0.1000000",
+                "output": "0.5000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.02000000",
+                        "cache_write": "0.25000000",
+                        "input": "0.2000000",
+                        "output": "0.75000000",
+                    },
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "8691ca4cd82d2876d8ff5f82d3564b14294bcd01d6f4feff74af8162d90e0686",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-6-luna",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000005",
+                "input_cache_read": "0.00000001",
+                "input_cache_write": "0.000000125",
+                "overrides": [
+                    {
+                        "completion": "0.00000075",
+                        "input_cache_read": "0.00000002",
+                        "input_cache_write": "0.00000025",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.0000002",
+                    }
+                ],
+                "prompt": "0.0000001",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "tencent/hy4-preview"): {
         "context_length": 1048576,
@@ -83,6 +375,74 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "tencent/hy4-preview",
+            "pricing_id": "openrouter:tencent/hy4-preview:2026-11-01:bbd4da228cf63086",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.042000000", "input": "0.834000000", "output": "2.501000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "0.042000000", "input": "0.834000000", "output": "2.501000000"},
+                    "when": {"end_time": "16:00", "start_time": "00:00", "timezone": "UTC"},
+                },
+                {
+                    "id": "upstream_override_1",
+                    "priority": 1,
+                    "rates": {"cache_read": "0.0378000000", "input": "0.7506000000", "output": "2.2509000000"},
+                    "when": {"end_time": "00:00", "start_time": "16:00", "timezone": "UTC"},
+                },
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "bbd4da228cf630869a66935e348fcc2a0c2c71deaecd75e76273720872ca7932",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "tencent/hy4-preview",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000002501",
+                "input_cache_read": "0.000000042",
+                "overrides": [
+                    {
+                        "completion": "0.000002501",
+                        "input_cache_read": "0.000000042",
+                        "prompt": "0.000000834",
+                        "utc_end": 1600,
+                        "utc_start": 0,
+                    },
+                    {
+                        "completion": "0.0000022509",
+                        "input_cache_read": "0.0000000378",
+                        "prompt": "0.0000007506",
+                        "utc_end": 0,
+                        "utc_start": 1600,
+                    },
+                ],
+                "prompt": "0.000000834",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "anthropic/claude-opus-5.5"): {
         "context_length": 1000000,
@@ -99,6 +459,56 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "anthropic/claude-opus-5.5",
+            "pricing_id": "openrouter:anthropic/claude-opus-5.5:2026-11-01:13122778163d0858",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.2000000",
+                "cache_write": "5.000000",
+                "cache_write_1h": "8.000000",
+                "input": "4.000000",
+                "output": "20.00000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "13122778163d0858c2e4bc79bbda96e8a72ccb55e764d544d3d909c85b731c08",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "anthropic/claude-opus-5.5",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00002",
+                "input_cache_read": "0.0000002",
+                "input_cache_write": "0.000005",
+                "input_cache_write_1h": "0.000008",
+                "prompt": "0.000004",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "stepfun/step-5-preview"): {
         "context_length": 1000000,
@@ -113,6 +523,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "stepfun/step-5-preview",
+            "pricing_id": "openrouter:stepfun/step-5-preview:2026-11-01:36e064fb583a2e37",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.1000000", "input": "1.000000", "output": "2.7000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "36e064fb583a2e37422a7f508ccd083f8a41f2d659a635ae5a2f8d53ed151ea2",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "stepfun/step-5-preview",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000027", "input_cache_read": "0.0000001", "prompt": "0.000001"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "z-ai/glm-5.3"): {
         "context_length": 1048576,
@@ -127,6 +572,37 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "z-ai/glm-5.3",
+            "pricing_id": "openrouter:z-ai/glm-5.3:2026-11-01:150d239521dadb05",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.076000000", "input": "0.08000000", "output": "3.6000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "150d239521dadb058633af33b1b23518f2461d3f9a4b692ec243674fb4852a05",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "z-ai/glm-5.3", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000036", "input_cache_read": "0.000000076", "prompt": "0.00000008"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free"): {
         "context_length": 1000000,
@@ -141,6 +617,42 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "cache_policy": {"cache_read": "included", "cache_write": "included"},
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+            "pricing_id": "openrouter:nvidia/nemotron-3-ultra-550b-a55b:free:2026-11-01:4e00883b573f5c19",
+            "provider": "openrouter",
+            "rates": {"input": "0", "output": "0"},
+            "routing_variant": "free",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4e00883b573f5c198c8051c7521c8183ae4d381b980ffc93781297cff40c372a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0", "prompt": "0"},
+            "verified_free": True,
+        },
     },
     ("openrouter", "xiaomi/mimo-v2.6-flash"): {
         "context_length": 1050000,
@@ -150,6 +662,45 @@ OPENROUTER_SPECS = {
         "preferred_edit_protocol": "claude_code",
         "featured": True,
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "xiaomi/mimo-v2.6-flash",
+            "pricing_id": "openrouter:xiaomi/mimo-v2.6-flash:2026-11-01:3ca5bf68e51aebe3",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.0028000000", "input": "0.14000000", "output": "0.28000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "3ca5bf68e51aebe3c51c5abd4ea429c1e3d637766f9dbd2d687db4d7c073d70d",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "xiaomi/mimo-v2.6-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00000028",
+                "input_cache_read": "0.0000000028",
+                "prompt": "0.00000014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "deepseek/deepseek-v4-flash-0731"): {
         "context_length": 1048576,
@@ -164,6 +715,45 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "deepseek/deepseek-v4-flash-0731",
+            "pricing_id": "openrouter:deepseek/deepseek-v4-flash-0731:2026-11-01:26fb001d605b3bdb",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.0238000000", "input": "0.119000000", "output": "0.238000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "26fb001d605b3bdbeff65b235d2aff0db69426ead70178d4661415b833b9fb33",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "deepseek/deepseek-v4-flash-0731",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000000238",
+                "input_cache_read": "0.0000000238",
+                "prompt": "0.000000119",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "minimax/minimax-m3.1-flash"): {
         "context_length": 1048576,
@@ -178,6 +768,74 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "minimax/minimax-m3.1-flash",
+            "pricing_id": "openrouter:minimax/minimax-m3.1-flash:2026-11-01:75cd6f6bff8de8ac",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.015000000", "input": "0.15000000", "output": "0.6000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "0.0075000000", "input": "0.075000000", "output": "0.3000000"},
+                    "when": {"end_time": "01:00", "start_time": "15:00", "timezone": "UTC"},
+                },
+                {
+                    "id": "upstream_override_1",
+                    "priority": 1,
+                    "rates": {"cache_read": "0.015000000", "input": "0.15000000", "output": "0.6000000"},
+                    "when": {"end_time": "15:00", "start_time": "01:00", "timezone": "UTC"},
+                },
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "75cd6f6bff8de8acf57fe13f4fc9f76d864b71c16be2eb1beb6046fc1d5b0c21",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "minimax/minimax-m3.1-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000006",
+                "input_cache_read": "0.000000015",
+                "overrides": [
+                    {
+                        "completion": "0.0000003",
+                        "input_cache_read": "0.0000000075",
+                        "prompt": "0.000000075",
+                        "utc_end": 100,
+                        "utc_start": 1500,
+                    },
+                    {
+                        "completion": "0.0000006",
+                        "input_cache_read": "0.000000015",
+                        "prompt": "0.00000015",
+                        "utc_end": 1500,
+                        "utc_start": 100,
+                    },
+                ],
+                "prompt": "0.00000015",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-6.1-sol"): {
         "context_length": 1050000,
@@ -193,6 +851,70 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-6.1-sol",
+            "pricing_id": "openrouter:openai/gpt-6.1-sol:2026-11-01:d0c04ce98c34d12e",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.1000000", "cache_write": "2.5000000", "input": "2.000000", "output": "10.00000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.2000000",
+                        "cache_write": "5.000000",
+                        "input": "4.000000",
+                        "output": "15.000000",
+                    },
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d0c04ce98c34d12e1aa6a83f4adfde918c4f20c9afcbc5e30f28b7b4d4dd3329",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-6.1-sol",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00001",
+                "input_cache_read": "0.0000001",
+                "input_cache_write": "0.0000025",
+                "overrides": [
+                    {
+                        "completion": "0.000015",
+                        "input_cache_read": "0.0000002",
+                        "input_cache_write": "0.000005",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.000004",
+                    }
+                ],
+                "prompt": "0.000002",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "tencent/hy3"): {
         "context_length": 262144,
@@ -207,6 +929,70 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "tencent/hy3",
+            "pricing_id": "openrouter:tencent/hy3:2026-11-01:38b5372844debb9a",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.033000000", "input": "0.132000000", "output": "0.528000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "0.033000000", "input": "0.132000000", "output": "0.528000000"},
+                    "when": {"end_time": "16:00", "start_time": "00:00", "timezone": "UTC"},
+                },
+                {
+                    "id": "upstream_override_1",
+                    "priority": 1,
+                    "rates": {"cache_read": "0.020625000000", "input": "0.0825000000", "output": "0.33000000"},
+                    "when": {"end_time": "00:00", "start_time": "16:00", "timezone": "UTC"},
+                },
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "38b5372844debb9a01cee611c842c34fac407468ae599864e959b9dc763577a4",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "tencent/hy3", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000000528",
+                "input_cache_read": "0.000000033",
+                "overrides": [
+                    {
+                        "completion": "0.000000528",
+                        "input_cache_read": "0.000000033",
+                        "prompt": "0.000000132",
+                        "utc_end": 1600,
+                        "utc_start": 0,
+                    },
+                    {
+                        "completion": "0.00000033",
+                        "input_cache_read": "0.000000020625",
+                        "prompt": "0.0000000825",
+                        "utc_end": 0,
+                        "utc_start": 1600,
+                    },
+                ],
+                "prompt": "0.000000132",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "anthropic/claude-haiku-5.5"): {
         "context_length": 1000000,
@@ -223,6 +1009,79 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "anthropic/claude-haiku-5.5",
+            "pricing_id": "openrouter:anthropic/claude-haiku-5.5:2026-11-01:15fe4ace6460ceff",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.01000000",
+                "cache_write": "0.125000000",
+                "cache_write_1h": "0.2000000",
+                "input": "0.1000000",
+                "output": "0.5000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.05000000",
+                        "cache_write": "0.625000000",
+                        "cache_write_1h": "1.000000",
+                        "input": "0.5000000",
+                        "output": "2.5000000",
+                    },
+                    "when": {"min_input_tokens": 100001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "15fe4ace6460ceff124eb3242520398dcc717dc16667b24e76d4eee9284839d4",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "anthropic/claude-haiku-5.5",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000005",
+                "input_cache_read": "0.00000001",
+                "input_cache_write": "0.000000125",
+                "input_cache_write_1h": "0.0000002",
+                "overrides": [
+                    {
+                        "completion": "0.0000025",
+                        "input_cache_read": "0.00000005",
+                        "input_cache_write": "0.000000625",
+                        "input_cache_write_1h": "0.000001",
+                        "min_prompt_tokens": 100000,
+                        "prompt": "0.0000005",
+                    }
+                ],
+                "prompt": "0.0000001",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "deepseek/deepseek-v4-flash"): {
         "context_length": 1048576,
@@ -237,6 +1096,45 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "deepseek/deepseek-v4-flash",
+            "pricing_id": "openrouter:deepseek/deepseek-v4-flash:2026-11-01:1f2ed71221f5f885",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.0182000000", "input": "0.091000000", "output": "0.182000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "1f2ed71221f5f88562d39c7ea2b9d11aab9753bd42fe4f5a94fc1c003397b889",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "deepseek/deepseek-v4-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000000182",
+                "input_cache_read": "0.0000000182",
+                "prompt": "0.000000091",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "meta/muse-spark-1.3-contributor"): {
         "context_length": 1048576,
@@ -251,6 +1149,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.0025", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "meta/muse-spark-1.3-contributor",
+            "pricing_id": "openrouter:meta/muse-spark-1.3-contributor:2026-11-01:b3a94fceca37b8a8",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.002000000", "input": "0.1000000", "output": "0.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "b3a94fceca37b8a87e7f6669ee4e27c359732095c8c640dbe1c939abaa62f04d",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "meta/muse-spark-1.3-contributor",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000002",
+                "input_cache_read": "0.000000002",
+                "prompt": "0.0000001",
+                "web_search": "0.0025",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "anthropic/claude-sonnet-5.5"): {
         "context_length": 1000000,
@@ -267,6 +1207,56 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "anthropic/claude-sonnet-5.5",
+            "pricing_id": "openrouter:anthropic/claude-sonnet-5.5:2026-11-01:252c4f691e2a6b8b",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.1000000",
+                "cache_write": "2.5000000",
+                "cache_write_1h": "4.000000",
+                "input": "2.000000",
+                "output": "10.00000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "252c4f691e2a6b8b6978de49d415fa4768098592e8ee57970199fac675307ecc",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "anthropic/claude-sonnet-5.5",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00001",
+                "input_cache_read": "0.0000001",
+                "input_cache_write": "0.0000025",
+                "input_cache_write_1h": "0.000004",
+                "prompt": "0.000002",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.6-luna"): {
         "context_length": 1050000,
@@ -282,6 +1272,75 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.6-luna",
+            "pricing_id": "openrouter:openai/gpt-5.6-luna:2026-11-01:b491904a17f44da1",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.02000000",
+                "cache_write": "0.25000000",
+                "input": "0.2000000",
+                "output": "1.2000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.04000000",
+                        "cache_write": "0.5000000",
+                        "input": "0.4000000",
+                        "output": "1.8000000",
+                    },
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "b491904a17f44da1d14354eef3bb8bf803279d4fba49e3432bfda658d61c959b",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.6-luna",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000012",
+                "input_cache_read": "0.00000002",
+                "input_cache_write": "0.00000025",
+                "overrides": [
+                    {
+                        "completion": "0.0000018",
+                        "input_cache_read": "0.00000004",
+                        "input_cache_write": "0.0000005",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.0000004",
+                    }
+                ],
+                "prompt": "0.0000002",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "moonshotai/kimi-k3"): {
         "context_length": 1048576,
@@ -296,6 +1355,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "moonshotai/kimi-k3",
+            "pricing_id": "openrouter:moonshotai/kimi-k3:2026-11-01:a795d06495ca983a",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.13000000", "input": "0.276000000", "output": "9.6000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "a795d06495ca983a5907957b52c653a601087aae82cb31b27e2c078608813fa0",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "moonshotai/kimi-k3",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000096", "input_cache_read": "0.00000013", "prompt": "0.000000276"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "nvidia/nemotron-3.5-super-vl:free"): {
         "context_length": 1000000,
@@ -304,6 +1398,42 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "cache_policy": {"cache_read": "included", "cache_write": "included"},
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "nvidia/nemotron-3.5-super-vl:free",
+            "pricing_id": "openrouter:nvidia/nemotron-3.5-super-vl:free:2026-11-01:4e00883b573f5c19",
+            "provider": "openrouter",
+            "rates": {"input": "0", "output": "0"},
+            "routing_variant": "free",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4e00883b573f5c198c8051c7521c8183ae4d381b980ffc93781297cff40c372a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "nvidia/nemotron-3.5-super-vl:free",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0", "prompt": "0"},
+            "verified_free": True,
+        },
     },
     ("openrouter", "google/gemini-3.8-flash"): {
         "context_length": 1048576,
@@ -317,6 +1447,62 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image: published gateway pricing requires a separately observed billing quantity",
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "input_audio_cache: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "google/gemini-3.8-flash",
+            "pricing_id": "openrouter:google/gemini-3.8-flash:2026-11-01:f9cd1a7b62de9bd5",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.0825000000",
+                "cache_write": "0.0416666666666667000000",
+                "input": "0.825000000",
+                "output": "4.125000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "f9cd1a7b62de9bd56115a68a369234fa61119b61a2d95f9a64e495bcf0fd655f",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-3.8-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.000000825",
+                "completion": "0.000004125",
+                "image": "0.000000825",
+                "input_audio_cache": "0.0000000825",
+                "input_cache_read": "0.0000000825",
+                "input_cache_write": "0.0000000416666666666667",
+                "internal_reasoning": "0.000004125",
+                "prompt": "0.000000825",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "xiaomi/mimo-v2.6-pro"): {
         "context_length": 1050000,
@@ -325,6 +1511,45 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "xiaomi/mimo-v2.6-pro",
+            "pricing_id": "openrouter:xiaomi/mimo-v2.6-pro:2026-11-01:dffb647151cea59d",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.0036000000", "input": "0.435000000", "output": "0.87000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "dffb647151cea59d6c13a9fa32027f1ae5d76c0af1e0e80ddd9e93038a8c84e6",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "xiaomi/mimo-v2.6-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00000087",
+                "input_cache_read": "0.0000000036",
+                "prompt": "0.000000435",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "upstage/solar-mini4"): {
         "context_length": 524288,
@@ -338,6 +1563,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "upstage/solar-mini4",
+            "pricing_id": "openrouter:upstage/solar-mini4:2026-11-01:30a940aa781a61a1",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.005000000", "input": "0.05000000", "output": "0.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "30a940aa781a61a115657e6cf94f0072a16325cec630e38b3f9da36987d980b9",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "upstage/solar-mini4",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000002", "input_cache_read": "0.000000005", "prompt": "0.00000005"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "moonshotai/kimi-k3.1-pro"): {
         "context_length": 1048576,
@@ -352,6 +1612,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "moonshotai/kimi-k3.1-pro",
+            "pricing_id": "openrouter:moonshotai/kimi-k3.1-pro:2026-11-01:ab78312204c2ea6a",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.2000000", "input": "2.000000", "output": "10.00000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "ab78312204c2ea6a35f551d026b0d6d8697b5c50bdbdba5b8f4ea571035be4ca",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "moonshotai/kimi-k3.1-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00001", "input_cache_read": "0.0000002", "prompt": "0.000002"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "minimax/minimax-m3"): {
         "context_length": 1048576,
@@ -360,6 +1655,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "minimax/minimax-m3",
+            "pricing_id": "openrouter:minimax/minimax-m3:2026-11-01:168967a1d0a8e1cf",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.06000000", "input": "0.3000000", "output": "1.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "168967a1d0a8e1cfc4b051ef443a8ef4c4dc0c045772c9d458de64b793994dea",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "minimax/minimax-m3",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000012", "input_cache_read": "0.00000006", "prompt": "0.0000003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "z-ai/glm-5.2"): {
         "context_length": 1048576,
@@ -373,6 +1703,37 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "z-ai/glm-5.2",
+            "pricing_id": "openrouter:z-ai/glm-5.2:2026-11-01:d6aff7b38bb0268e",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.005000000", "input": "0.006000000", "output": "6.8000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d6aff7b38bb0268e7e65a34eb2bc26442648afce48c55a6dbe8250f7f5ad9ba1",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "z-ai/glm-5.2", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000068", "input_cache_read": "0.000000005", "prompt": "0.000000006"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemini-4-argon"): {
         "context_length": 1048576,
@@ -386,6 +1747,62 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image: published gateway pricing requires a separately observed billing quantity",
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "input_audio_cache: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "google/gemini-4-argon",
+            "pricing_id": "openrouter:google/gemini-4-argon:2026-11-01:9d4981e9d299e954",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.1000000",
+                "cache_write": "0.1875000000",
+                "input": "2.000000",
+                "output": "10.00000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "9d4981e9d299e95459c6ca7b0bfd14ef9d006d413e9a2d3a8ce251bb90419b4b",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-4-argon",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.000002",
+                "completion": "0.00001",
+                "image": "0.000002",
+                "input_audio_cache": "0.0000001",
+                "input_cache_read": "0.0000001",
+                "input_cache_write": "0.0000001875",
+                "internal_reasoning": "0.00001",
+                "prompt": "0.000002",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "nvidia/nemotron-3.5-lightning:free"): {
         "context_length": 1000000,
@@ -394,6 +1811,42 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "cache_policy": {"cache_read": "included", "cache_write": "included"},
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "nvidia/nemotron-3.5-lightning:free",
+            "pricing_id": "openrouter:nvidia/nemotron-3.5-lightning:free:2026-11-01:4e00883b573f5c19",
+            "provider": "openrouter",
+            "rates": {"input": "0", "output": "0"},
+            "routing_variant": "free",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4e00883b573f5c198c8051c7521c8183ae4d381b980ffc93781297cff40c372a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "nvidia/nemotron-3.5-lightning:free",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0", "prompt": "0"},
+            "verified_free": True,
+        },
     },
     ("openrouter", "poolside/laguna-s-2.1:free"): {
         "context_length": 262144,
@@ -402,6 +1855,30 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "openrouter:poolside/laguna-s-2.1:free:2026-11-01",
+            "provider": "openrouter",
+            "model": "poolside/laguna-s-2.1:free",
+            "status": "unverified",
+            "billing_mode": "gateway",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://openrouter.ai/api/v1/models",
+                    "model_id": "poolside/laguna-s-2.1:free",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "poolside/laguna-s-2.1:free: absent from the checked public gateway model feed; no current "
+            "exact-variant rate verified.",
+        },
     },
     ("openrouter", "deepseek/deepseek-v4-pro-0813"): {
         "context_length": 1048576,
@@ -415,6 +1892,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "deepseek/deepseek-v4-pro-0813",
+            "pricing_id": "openrouter:deepseek/deepseek-v4-pro-0813:2026-11-01:6455fe378382f5d4",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.11000000", "input": "0.115000000", "output": "4.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "6455fe378382f5d4d8292d928ca04e32a2dfa501d03ff46d84885eedd4f676fa",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "deepseek/deepseek-v4-pro-0813",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000004", "input_cache_read": "0.00000011", "prompt": "0.000000115"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.8-flash"): {
         "context_length": 1000000,
@@ -423,6 +1935,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.8-flash",
+            "pricing_id": "openrouter:qwen/qwen3.8-flash:2026-11-01:1086fd43e19813c7",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.016000000", "input": "0.15000000", "output": "0.47000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "1086fd43e19813c75585a3c585853b48511aef4718151cefc1bb93d8d0c415af",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.8-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000047", "input_cache_read": "0.000000016", "prompt": "0.00000015"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemini-3-flash-preview"): {
         "context_length": 1048576,
@@ -436,6 +1983,62 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image: published gateway pricing requires a separately observed billing quantity",
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "input_audio_cache: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "google/gemini-3-flash-preview",
+            "pricing_id": "openrouter:google/gemini-3-flash-preview:2026-11-01:566052c0634ee5aa",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.05000000",
+                "cache_write": "0.0833333333333333000000",
+                "input": "0.5000000",
+                "output": "3.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "566052c0634ee5aa401fd269baf3c6cf96327e1f306228bbe8e1ac3a6de0c913",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-3-flash-preview",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.000001",
+                "completion": "0.000003",
+                "image": "0.0000005",
+                "input_audio_cache": "0.0000001",
+                "input_cache_read": "0.00000005",
+                "input_cache_write": "0.0000000833333333333333",
+                "internal_reasoning": "0.000003",
+                "prompt": "0.0000005",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "dots-studio/dots-3-note-preview:free"): {
         "context_length": 512000,
@@ -444,6 +2047,42 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "cache_policy": {"cache_read": "included", "cache_write": "included"},
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "dots-studio/dots-3-note-preview:free",
+            "pricing_id": "openrouter:dots-studio/dots-3-note-preview:free:2026-11-01:4e00883b573f5c19",
+            "provider": "openrouter",
+            "rates": {"input": "0", "output": "0"},
+            "routing_variant": "free",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4e00883b573f5c198c8051c7521c8183ae4d381b980ffc93781297cff40c372a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "dots-studio/dots-3-note-preview:free",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0", "prompt": "0"},
+            "verified_free": True,
+        },
     },
     ("openrouter", "google/gemini-3.1-flash-lite"): {
         "context_length": 1048576,
@@ -457,6 +2096,62 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image: published gateway pricing requires a separately observed billing quantity",
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "input_audio_cache: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "google/gemini-3.1-flash-lite",
+            "pricing_id": "openrouter:google/gemini-3.1-flash-lite:2026-11-01:af2fdb05ecb2a81f",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.025000000",
+                "cache_write": "0.0833333333333333000000",
+                "input": "0.25000000",
+                "output": "1.5000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "af2fdb05ecb2a81f5aeffc1b8456bd44f4cc871270c1d9384f1dac641b781400",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-3.1-flash-lite",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.0000005",
+                "completion": "0.0000015",
+                "image": "0.00000025",
+                "input_audio_cache": "0.00000005",
+                "input_cache_read": "0.000000025",
+                "input_cache_write": "0.0000000833333333333333",
+                "internal_reasoning": "0.0000015",
+                "prompt": "0.00000025",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "deepseek/deepseek-v4-pro"): {
         "context_length": 1048576,
@@ -470,6 +2165,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "deepseek/deepseek-v4-pro",
+            "pricing_id": "openrouter:deepseek/deepseek-v4-pro:2026-11-01:56ef9c384c737b56",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.135000000", "input": "1.6000000", "output": "3.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "56ef9c384c737b56f898efb8fadf5dd1a0bf8677d95f369064b570a5d021223a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "deepseek/deepseek-v4-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000032", "input_cache_read": "0.000000135", "prompt": "0.0000016"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.8-27b"): {
         "context_length": 1000000,
@@ -483,6 +2213,45 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.8-27b",
+            "pricing_id": "openrouter:qwen/qwen3.8-27b:2026-11-01:4ed56b3eef6d8e28",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.0375000000", "input": "0.15000000", "output": "1.875000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4ed56b3eef6d8e28518e64cf070d02579ec070ff05a899cbc9b9d8438e8f2742",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.8-27b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000001875",
+                "input_cache_read": "0.0000000375",
+                "prompt": "0.00000015",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "anthropic/claude-sonnet-5"): {
         "context_length": 1000000,
@@ -498,6 +2267,56 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "anthropic/claude-sonnet-5",
+            "pricing_id": "openrouter:anthropic/claude-sonnet-5:2026-11-01:1640d8bb4164e4d6",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.2000000",
+                "cache_write": "2.5000000",
+                "cache_write_1h": "4.000000",
+                "input": "2.000000",
+                "output": "10.00000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "1640d8bb4164e4d6b6b3b0925b5a41753e7c14d405095208f2f38e12be8074b5",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "anthropic/claude-sonnet-5",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00001",
+                "input_cache_read": "0.0000002",
+                "input_cache_write": "0.0000025",
+                "input_cache_write_1h": "0.000004",
+                "prompt": "0.000002",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "x-ai/grok-4.7"): {
         "context_length": 500000,
@@ -511,6 +2330,59 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.005", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "x-ai/grok-4.7",
+            "pricing_id": "openrouter:x-ai/grok-4.7:2026-11-01:4b9d70109eceded4",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.5000000", "input": "2.000000", "output": "6.000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "1.000000", "input": "4.000000", "output": "12.000000"},
+                    "when": {"min_input_tokens": 200001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4b9d70109eceded4838ab9b5bf25cd111da28331f20efd7aa0a966565f7abb48",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "x-ai/grok-4.7", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000006",
+                "input_cache_read": "0.0000005",
+                "overrides": [
+                    {
+                        "completion": "0.000012",
+                        "input_cache_read": "0.000001",
+                        "min_prompt_tokens": 200000,
+                        "prompt": "0.000004",
+                    }
+                ],
+                "prompt": "0.000002",
+                "web_search": "0.005",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-6-luna-pro"): {
         "context_length": 1050000,
@@ -525,6 +2397,75 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-6-luna-pro",
+            "pricing_id": "openrouter:openai/gpt-6-luna-pro:2026-11-01:8691ca4cd82d2876",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.01000000",
+                "cache_write": "0.125000000",
+                "input": "0.1000000",
+                "output": "0.5000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.02000000",
+                        "cache_write": "0.25000000",
+                        "input": "0.2000000",
+                        "output": "0.75000000",
+                    },
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "8691ca4cd82d2876d8ff5f82d3564b14294bcd01d6f4feff74af8162d90e0686",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-6-luna-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000005",
+                "input_cache_read": "0.00000001",
+                "input_cache_write": "0.000000125",
+                "overrides": [
+                    {
+                        "completion": "0.00000075",
+                        "input_cache_read": "0.00000002",
+                        "input_cache_write": "0.00000025",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.0000002",
+                    }
+                ],
+                "prompt": "0.0000001",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "upstage/solar-pro4"): {
         "context_length": 524288,
@@ -538,6 +2479,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "upstage/solar-pro4",
+            "pricing_id": "openrouter:upstage/solar-pro4:2026-11-01:9fcd27089d30fc8e",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.03000000", "input": "0.15000000", "output": "0.6000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "9fcd27089d30fc8e213c2427f35ef182704aa3a67b23a5efdbdad17f32802e4d",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "upstage/solar-pro4",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000006", "input_cache_read": "0.00000003", "prompt": "0.00000015"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-6-astra"): {
         "context_length": 1050000,
@@ -552,6 +2528,70 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-6-astra",
+            "pricing_id": "openrouter:openai/gpt-6-astra:2026-11-01:06d17e1430496b56",
+            "provider": "openrouter",
+            "rates": {"cache_read": "1.000000", "cache_write": "12.5000000", "input": "10.00000", "output": "50.00000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "2.000000",
+                        "cache_write": "25.000000",
+                        "input": "20.00000",
+                        "output": "75.000000",
+                    },
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "06d17e1430496b56d1b1a41b5f06d775fe0e6517c2d08cf7648bb59be585e10b",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-6-astra",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00005",
+                "input_cache_read": "0.000001",
+                "input_cache_write": "0.0000125",
+                "overrides": [
+                    {
+                        "completion": "0.000075",
+                        "input_cache_read": "0.000002",
+                        "input_cache_write": "0.000025",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.00002",
+                    }
+                ],
+                "prompt": "0.00001",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemma-4-31b-it"): {
         "context_length": 262144,
@@ -560,6 +2600,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "google/gemma-4-31b-it",
+            "pricing_id": "openrouter:google/gemma-4-31b-it:2026-11-01:c0ab9713065a797e",
+            "provider": "openrouter",
+            "rates": {"input": "0.2000000", "output": "0.4000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "c0ab9713065a797e6d45a2a5273f97ca377fc4bdd8a653f0f3ecfd304269f583",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemma-4-31b-it",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000004", "prompt": "0.0000002"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "anthropic/claude-opus-5"): {
         "context_length": 1000000,
@@ -575,6 +2650,56 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "anthropic/claude-opus-5",
+            "pricing_id": "openrouter:anthropic/claude-opus-5:2026-11-01:f69975a895756f2c",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.5000000",
+                "cache_write": "6.25000000",
+                "cache_write_1h": "10.00000",
+                "input": "5.000000",
+                "output": "25.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "f69975a895756f2c477b769d1339b8ca4b54aa1fe44e0869fbf107c47e642682",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "anthropic/claude-opus-5",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000025",
+                "input_cache_read": "0.0000005",
+                "input_cache_write": "0.00000625",
+                "input_cache_write_1h": "0.00001",
+                "prompt": "0.000005",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.7-flash"): {
         "context_length": 1000000,
@@ -583,6 +2708,90 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.7-flash",
+            "pricing_id": "openrouter:qwen/qwen3.7-flash:2026-11-01:61c73e8aaab3e2b1",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.006000000",
+                "cache_write": "0.038000000",
+                "input": "0.03000000",
+                "output": "0.13000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.02000000",
+                        "cache_write": "0.125000000",
+                        "input": "0.1000000",
+                        "output": "0.4000000",
+                    },
+                    "when": {"min_input_tokens": 32001},
+                },
+                {
+                    "id": "upstream_override_1",
+                    "priority": 1,
+                    "rates": {
+                        "cache_read": "0.04000000",
+                        "cache_write": "0.25000000",
+                        "input": "0.2000000",
+                        "output": "0.8000000",
+                    },
+                    "when": {"min_input_tokens": 256001},
+                },
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "61c73e8aaab3e2b151d76d8ed68eafae21475418880051b34d1e287168cdfaf2",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.7-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00000013",
+                "input_cache_read": "0.000000006",
+                "input_cache_write": "0.000000038",
+                "overrides": [
+                    {
+                        "completion": "0.0000004",
+                        "input_cache_read": "0.00000002",
+                        "input_cache_write": "0.000000125",
+                        "min_prompt_tokens": 32000,
+                        "prompt": "0.0000001",
+                    },
+                    {
+                        "completion": "0.0000008",
+                        "input_cache_read": "0.00000004",
+                        "input_cache_write": "0.00000025",
+                        "min_prompt_tokens": 256000,
+                        "prompt": "0.0000002",
+                    },
+                ],
+                "prompt": "0.00000003",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-oss-120b"): {
         "context_length": 131072,
@@ -596,6 +2805,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-oss-120b",
+            "pricing_id": "openrouter:openai/gpt-oss-120b:2026-11-01:8af20f2a2c365150",
+            "provider": "openrouter",
+            "rates": {"input": "0.017000000", "output": "0.062000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "8af20f2a2c365150b3ddba3d302e52cdc7e8978770f801c8771844590499d249",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-oss-120b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000000062", "prompt": "0.000000017"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemini-3.7-flash"): {
         "context_length": 1048576,
@@ -609,6 +2853,62 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image: published gateway pricing requires a separately observed billing quantity",
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "input_audio_cache: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "google/gemini-3.7-flash",
+            "pricing_id": "openrouter:google/gemini-3.7-flash:2026-11-01:e2a978f31deb6e87",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.075000000",
+                "cache_write": "0.0416666666666667000000",
+                "input": "0.75000000",
+                "output": "3.75000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "e2a978f31deb6e87afad5719111026606fe4d166c8e63b65122cb3b78aa1622f",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-3.7-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.00000075",
+                "completion": "0.00000375",
+                "image": "0.00000075",
+                "input_audio_cache": "0.000000075",
+                "input_cache_read": "0.000000075",
+                "input_cache_write": "0.0000000416666666666667",
+                "internal_reasoning": "0.00000375",
+                "prompt": "0.00000075",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "anthropic/claude-fable-5.1"): {
         "context_length": 1000000,
@@ -624,6 +2924,56 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "anthropic/claude-fable-5.1",
+            "pricing_id": "openrouter:anthropic/claude-fable-5.1:2026-11-01:a11546e7e1021bb9",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.25000000",
+                "cache_write": "12.5000000",
+                "cache_write_1h": "20.00000",
+                "input": "10.00000",
+                "output": "50.00000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "a11546e7e1021bb994417834c1116c64d6bd2740639f5258b4f6fff36d0220b6",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "anthropic/claude-fable-5.1",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00005",
+                "input_cache_read": "0.00000025",
+                "input_cache_write": "0.0000125",
+                "input_cache_write_1h": "0.00002",
+                "prompt": "0.00001",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemma-4-26b-a4b-it"): {
         "context_length": 262144,
@@ -632,6 +2982,45 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "google/gemma-4-26b-a4b-it",
+            "pricing_id": "openrouter:google/gemma-4-26b-a4b-it:2026-11-01:13e0b79b6ff43fe2",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.0375000000", "input": "0.0675000000", "output": "0.225000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "13e0b79b6ff43fe26e423538630fe66e67f26a6ba436ad8542d41835123ab5ec",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemma-4-26b-a4b-it",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000000225",
+                "input_cache_read": "0.0000000375",
+                "prompt": "0.0000000675",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "thinkingmachines/inkling:free"): {
         "context_length": 1048576,
@@ -645,6 +3034,42 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "cache_policy": {"cache_read": "included", "cache_write": "included"},
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "thinkingmachines/inkling:free",
+            "pricing_id": "openrouter:thinkingmachines/inkling:free:2026-11-01:4e00883b573f5c19",
+            "provider": "openrouter",
+            "rates": {"input": "0", "output": "0"},
+            "routing_variant": "free",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4e00883b573f5c198c8051c7521c8183ae4d381b980ffc93781297cff40c372a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "thinkingmachines/inkling:free",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0", "prompt": "0"},
+            "verified_free": True,
+        },
     },
     ("openrouter", "stepfun/step-3.7-flash"): {
         "context_length": 262144,
@@ -658,6 +3083,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "stepfun/step-3.7-flash",
+            "pricing_id": "openrouter:stepfun/step-3.7-flash:2026-11-01:91337527e573de7c",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.04000000", "input": "0.2000000", "output": "1.15000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "91337527e573de7cabfc825bd31f6e73574b3a6005fd0e9cb7b7d22c98fed071",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "stepfun/step-3.7-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000115", "input_cache_read": "0.00000004", "prompt": "0.0000002"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemini-2.5-flash-lite"): {
         "context_length": 1048576,
@@ -666,6 +3126,62 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image: published gateway pricing requires a separately observed billing quantity",
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "input_audio_cache: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "google/gemini-2.5-flash-lite",
+            "pricing_id": "openrouter:google/gemini-2.5-flash-lite:2026-11-01:f3ed6a35b1bd74f5",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.01000000",
+                "cache_write": "0.0833333333333333000000",
+                "input": "0.1000000",
+                "output": "0.4000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "f3ed6a35b1bd74f564012bf8ca04f1ccb1390767fec53b7a97535f49ed3ec30e",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-2.5-flash-lite",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.0000003",
+                "completion": "0.0000004",
+                "image": "0.0000001",
+                "input_audio_cache": "0.00000003",
+                "input_cache_read": "0.00000001",
+                "input_cache_write": "0.0000000833333333333333",
+                "internal_reasoning": "0.0000004",
+                "prompt": "0.0000001",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.6-sol"): {
         "context_length": 1050000,
@@ -680,6 +3196,70 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.6-sol",
+            "pricing_id": "openrouter:openai/gpt-5.6-sol:2026-11-01:61389757e655d7e9",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.4000000", "cache_write": "5.000000", "input": "4.000000", "output": "20.00000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.8000000",
+                        "cache_write": "10.00000",
+                        "input": "8.000000",
+                        "output": "30.00000",
+                    },
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "61389757e655d7e9dc221a11314c00be80200bb458f1b262cb3f0efa09da8c6f",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.6-sol",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00002",
+                "input_cache_read": "0.0000004",
+                "input_cache_write": "0.000005",
+                "overrides": [
+                    {
+                        "completion": "0.00003",
+                        "input_cache_read": "0.0000008",
+                        "input_cache_write": "0.00001",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.000008",
+                    }
+                ],
+                "prompt": "0.000004",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "deepseek/deepseek-v3.2"): {
         "context_length": 163840,
@@ -688,6 +3268,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "deepseek/deepseek-v3.2",
+            "pricing_id": "openrouter:deepseek/deepseek-v3.2:2026-11-01:efe52822bc60ae3b",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.13000000", "input": "0.26000000", "output": "0.38000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "efe52822bc60ae3bcf67b9ed6ea561037b89ef30e7944c0a3ccf20aefa9ef5ef",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "deepseek/deepseek-v3.2",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000038", "input_cache_read": "0.00000013", "prompt": "0.00000026"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/mistral-nemo"): {
         "context_length": 131072,
@@ -696,6 +3311,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/mistral-nemo",
+            "pricing_id": "openrouter:mistralai/mistral-nemo:2026-11-01:7d412502388b26ab",
+            "provider": "openrouter",
+            "rates": {"input": "0.029000000", "output": "0.03000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "7d412502388b26ab8263f915edf1c31d104892acaebcb7bd2c1b3037b1ed13f4",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/mistral-nemo",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000003", "prompt": "0.000000029"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-6-sol"): {
         "context_length": 1050000,
@@ -710,6 +3360,70 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-6-sol",
+            "pricing_id": "openrouter:openai/gpt-6-sol:2026-11-01:a21da5d76caa0cda",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.2000000", "cache_write": "2.5000000", "input": "2.000000", "output": "10.00000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.4000000",
+                        "cache_write": "5.000000",
+                        "input": "4.000000",
+                        "output": "15.000000",
+                    },
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "a21da5d76caa0cdabc9f6c9a0e4ff0e08c4f06b78f2969528bceec434435cd6f",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-6-sol",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00001",
+                "input_cache_read": "0.0000002",
+                "input_cache_write": "0.0000025",
+                "overrides": [
+                    {
+                        "completion": "0.000015",
+                        "input_cache_read": "0.0000004",
+                        "input_cache_write": "0.000005",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.000004",
+                    }
+                ],
+                "prompt": "0.000002",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "anthropic/claude-sonnet-4.5"): {
         "context_length": 1000000,
@@ -719,6 +3433,79 @@ OPENROUTER_SPECS = {
         "preferred_edit_protocol": "claude_code",
         "drop_prior_reasoning": True,
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "anthropic/claude-sonnet-4.5",
+            "pricing_id": "openrouter:anthropic/claude-sonnet-4.5:2026-11-01:a486580a44c4c3b8",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.3000000",
+                "cache_write": "3.75000000",
+                "cache_write_1h": "6.000000",
+                "input": "3.000000",
+                "output": "15.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.6000000",
+                        "cache_write": "7.5000000",
+                        "cache_write_1h": "12.000000",
+                        "input": "6.000000",
+                        "output": "22.5000000",
+                    },
+                    "when": {"min_input_tokens": 200001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "a486580a44c4c3b85ecfda1aafb359614149de7c39a71e2343c3589f6663164f",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "anthropic/claude-sonnet-4.5",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000015",
+                "input_cache_read": "0.0000003",
+                "input_cache_write": "0.00000375",
+                "input_cache_write_1h": "0.000006",
+                "overrides": [
+                    {
+                        "completion": "0.0000225",
+                        "input_cache_read": "0.0000006",
+                        "input_cache_write": "0.0000075",
+                        "input_cache_write_1h": "0.000012",
+                        "min_prompt_tokens": 200000,
+                        "prompt": "0.000006",
+                    }
+                ],
+                "prompt": "0.000003",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "anthropic/claude-sonnet-4.6"): {
         "context_length": 1000000,
@@ -733,6 +3520,56 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "anthropic/claude-sonnet-4.6",
+            "pricing_id": "openrouter:anthropic/claude-sonnet-4.6:2026-11-01:8fddda8b20ce54eb",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.3000000",
+                "cache_write": "3.75000000",
+                "cache_write_1h": "6.000000",
+                "input": "3.000000",
+                "output": "15.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "8fddda8b20ce54eb967f06c1f1c7a94b673beb4b4fa12ec3d55f72324dd9c691",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "anthropic/claude-sonnet-4.6",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000015",
+                "input_cache_read": "0.0000003",
+                "input_cache_write": "0.00000375",
+                "input_cache_write_1h": "0.000006",
+                "prompt": "0.000003",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemini-2.5-flash"): {
         "context_length": 1048576,
@@ -741,6 +3578,62 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image: published gateway pricing requires a separately observed billing quantity",
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "input_audio_cache: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "google/gemini-2.5-flash",
+            "pricing_id": "openrouter:google/gemini-2.5-flash:2026-11-01:cad16c3dcc288d00",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.03000000",
+                "cache_write": "0.0833333333333333000000",
+                "input": "0.3000000",
+                "output": "2.5000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "cad16c3dcc288d00f8884eb41ddd3b7721c7247853444f11c658109166dc548b",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-2.5-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.000001",
+                "completion": "0.0000025",
+                "image": "0.0000003",
+                "input_audio_cache": "0.0000001",
+                "input_cache_read": "0.00000003",
+                "input_cache_write": "0.0000000833333333333333",
+                "internal_reasoning": "0.0000025",
+                "prompt": "0.0000003",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemini-3.5-flash-lite"): {
         "context_length": 1048576,
@@ -754,6 +3647,62 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image: published gateway pricing requires a separately observed billing quantity",
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "input_audio_cache: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "google/gemini-3.5-flash-lite",
+            "pricing_id": "openrouter:google/gemini-3.5-flash-lite:2026-11-01:2da253e4f60ae17b",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.03000000",
+                "cache_write": "0.0833333333333333000000",
+                "input": "0.3000000",
+                "output": "2.5000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "2da253e4f60ae17be8ce46b0791675b00beacbbe56a5da8d94de67b9ded4bd38",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-3.5-flash-lite",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.0000003",
+                "completion": "0.0000025",
+                "image": "0.0000003",
+                "input_audio_cache": "0.00000003",
+                "input_cache_read": "0.00000003",
+                "input_cache_write": "0.0000000833333333333333",
+                "internal_reasoning": "0.0000025",
+                "prompt": "0.0000003",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.6-terra"): {
         "context_length": 1050000,
@@ -768,6 +3717,75 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.6-terra",
+            "pricing_id": "openrouter:openai/gpt-5.6-terra:2026-11-01:3dd6e5c7f7445321",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.2000000",
+                "cache_write": "2.5000000",
+                "input": "2.000000",
+                "output": "12.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.4000000",
+                        "cache_write": "5.000000",
+                        "input": "4.000000",
+                        "output": "18.000000",
+                    },
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "3dd6e5c7f74453210753ba103a7a73446f643b70601b2d82ae5acd8575c5192e",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.6-terra",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000012",
+                "input_cache_read": "0.0000002",
+                "input_cache_write": "0.0000025",
+                "overrides": [
+                    {
+                        "completion": "0.000018",
+                        "input_cache_read": "0.0000004",
+                        "input_cache_write": "0.000005",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.000004",
+                    }
+                ],
+                "prompt": "0.000002",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "anthropic/claude-opus-4.8"): {
         "context_length": 1000000,
@@ -783,6 +3801,56 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "anthropic/claude-opus-4.8",
+            "pricing_id": "openrouter:anthropic/claude-opus-4.8:2026-11-01:f69975a895756f2c",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.5000000",
+                "cache_write": "6.25000000",
+                "cache_write_1h": "10.00000",
+                "input": "5.000000",
+                "output": "25.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "f69975a895756f2c477b769d1339b8ca4b54aa1fe44e0869fbf107c47e642682",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "anthropic/claude-opus-4.8",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000025",
+                "input_cache_read": "0.0000005",
+                "input_cache_write": "0.00000625",
+                "input_cache_write_1h": "0.00001",
+                "prompt": "0.000005",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "thinkingmachines/inkling-small:free"): {
         "context_length": 1048576,
@@ -796,6 +3864,42 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "cache_policy": {"cache_read": "included", "cache_write": "included"},
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "thinkingmachines/inkling-small:free",
+            "pricing_id": "openrouter:thinkingmachines/inkling-small:free:2026-11-01:4e00883b573f5c19",
+            "provider": "openrouter",
+            "rates": {"input": "0", "output": "0"},
+            "routing_variant": "free",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4e00883b573f5c198c8051c7521c8183ae4d381b980ffc93781297cff40c372a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "thinkingmachines/inkling-small:free",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0", "prompt": "0"},
+            "verified_free": True,
+        },
     },
     ("openrouter", "openai/gpt-4o-mini"): {
         "context_length": 128000,
@@ -804,6 +3908,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-4o-mini",
+            "pricing_id": "openrouter:openai/gpt-4o-mini:2026-11-01:384e71074adaadc6",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.075000000", "input": "0.15000000", "output": "0.6000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "384e71074adaadc6ffe103020eeb4fbef6b7423d47c0bd529321a26537e42a17",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-4o-mini",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000006", "input_cache_read": "0.000000075", "prompt": "0.00000015"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "recursive/flint-v1.0:free"): {
         "context_length": 262144,
@@ -812,6 +3951,42 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "cache_policy": {"cache_read": "included", "cache_write": "included"},
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "recursive/flint-v1.0:free",
+            "pricing_id": "openrouter:recursive/flint-v1.0:free:2026-11-01:4e00883b573f5c19",
+            "provider": "openrouter",
+            "rates": {"input": "0", "output": "0"},
+            "routing_variant": "free",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4e00883b573f5c198c8051c7521c8183ae4d381b980ffc93781297cff40c372a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "recursive/flint-v1.0:free",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0", "prompt": "0"},
+            "verified_free": True,
+        },
     },
     ("openrouter", "openai/gpt-oss-20b"): {
         "context_length": 131072,
@@ -825,6 +4000,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-oss-20b",
+            "pricing_id": "openrouter:openai/gpt-oss-20b:2026-11-01:1d78400f69e54a67",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.03000000", "input": "0.03000000", "output": "0.13000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "1d78400f69e54a675b7590ce757a947490661623d123e53a3558474f7753c5ae",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-oss-20b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000013", "input_cache_read": "0.00000003", "prompt": "0.00000003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "nvidia/nemotron-3.5-super-vl"): {
         "context_length": 1048576,
@@ -833,6 +4043,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "nvidia/nemotron-3.5-super-vl",
+            "pricing_id": "openrouter:nvidia/nemotron-3.5-super-vl:2026-11-01:5145c865ae679643",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.02000000", "input": "0.15000000", "output": "0.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "5145c865ae679643e76b41c4f210df9e927a6e3dcda6c6e19211f2ce3862a6ef",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "nvidia/nemotron-3.5-super-vl",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000005", "input_cache_read": "0.00000002", "prompt": "0.00000015"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-6.1-terra"): {
         "context_length": 1050000,
@@ -847,6 +4092,75 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-6.1-terra",
+            "pricing_id": "openrouter:openai/gpt-6.1-terra:2026-11-01:d629889f06aaddf5",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.05000000",
+                "cache_write": "1.25000000",
+                "input": "1.000000",
+                "output": "5.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.1000000",
+                        "cache_write": "2.5000000",
+                        "input": "2.000000",
+                        "output": "7.5000000",
+                    },
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d629889f06aaddf5ae8e0afe67fe71f32031fa1aa4b3f46669a1ef6c7222ff04",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-6.1-terra",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000005",
+                "input_cache_read": "0.00000005",
+                "input_cache_write": "0.00000125",
+                "overrides": [
+                    {
+                        "completion": "0.0000075",
+                        "input_cache_read": "0.0000001",
+                        "input_cache_write": "0.0000025",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.000002",
+                    }
+                ],
+                "prompt": "0.000001",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/mistral-large-4-0"): {
         "context_length": 1048576,
@@ -860,6 +4174,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/mistral-large-4-0",
+            "pricing_id": "openrouter:mistralai/mistral-large-4-0:2026-11-01:ceca9702784de588",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.07000000", "input": "0.7000000", "output": "2.1000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "ceca9702784de588a36e12feb87e3ba20e2bf63e989566e0c2c05967fff78e53",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/mistral-large-4-0",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000021", "input_cache_read": "0.00000007", "prompt": "0.0000007"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "cohere/north-mini-code:free"): {
         "context_length": 256000,
@@ -868,6 +4217,42 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "cache_policy": {"cache_read": "included", "cache_write": "included"},
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "cohere/north-mini-code:free",
+            "pricing_id": "openrouter:cohere/north-mini-code:free:2026-11-01:4e00883b573f5c19",
+            "provider": "openrouter",
+            "rates": {"input": "0", "output": "0"},
+            "routing_variant": "free",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4e00883b573f5c198c8051c7521c8183ae4d381b980ffc93781297cff40c372a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "cohere/north-mini-code:free",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0", "prompt": "0"},
+            "verified_free": True,
+        },
     },
     ("openrouter", "anthropic/claude-haiku-4.5"): {
         "context_length": 200000,
@@ -877,6 +4262,56 @@ OPENROUTER_SPECS = {
         "preferred_edit_protocol": "claude_code",
         "drop_prior_reasoning": True,
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "anthropic/claude-haiku-4.5",
+            "pricing_id": "openrouter:anthropic/claude-haiku-4.5:2026-11-01:ddf7450b7270c2f8",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.1000000",
+                "cache_write": "1.25000000",
+                "cache_write_1h": "2.000000",
+                "input": "1.000000",
+                "output": "5.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "ddf7450b7270c2f8f4bf1f5506b0372d5122351f1b07c0a420f4f902d2eb569f",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "anthropic/claude-haiku-4.5",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000005",
+                "input_cache_read": "0.0000001",
+                "input_cache_write": "0.00000125",
+                "input_cache_write_1h": "0.000002",
+                "prompt": "0.000001",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.8-max-0902"): {
         "context_length": 1000000,
@@ -890,6 +4325,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.8-max-0902",
+            "pricing_id": "openrouter:qwen/qwen3.8-max-0902:2026-11-01:73b9b5f3171d1660",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.25000000", "input": "2.000000", "output": "6.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "73b9b5f3171d1660e6c635080001142accbf0abae0cafe81da5a25061b31db29",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.8-max-0902",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000006", "input_cache_read": "0.00000025", "prompt": "0.000002"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "z-ai/glm-5.3-flashx"): {
         "context_length": 1048576,
@@ -903,6 +4373,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "z-ai/glm-5.3-flashx",
+            "pricing_id": "openrouter:z-ai/glm-5.3-flashx:2026-11-01:530bd0bd6040d3a9",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.09000000", "input": "0.37000000", "output": "1.25000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "530bd0bd6040d3a98b6a5f59753f957a28b54840cacfe624c5428d129066856c",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "z-ai/glm-5.3-flashx",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000125", "input_cache_read": "0.00000009", "prompt": "0.00000037"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.4-mini"): {
         "context_length": 400000,
@@ -917,6 +4422,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.4-mini",
+            "pricing_id": "openrouter:openai/gpt-5.4-mini:2026-11-01:d20546101ad13fe3",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.075000000", "input": "0.75000000", "output": "4.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d20546101ad13fe3d2e4a2156047ff68dd18fc14a1c0419ee70a03c387c28afd",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.4-mini",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000045",
+                "input_cache_read": "0.000000075",
+                "prompt": "0.00000075",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "moonshotai/kimi-k2.6"): {
         "context_length": 262144,
@@ -925,6 +4472,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "moonshotai/kimi-k2.6",
+            "pricing_id": "openrouter:moonshotai/kimi-k2.6:2026-11-01:61800979b92d1e4b",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.15000000", "input": "0.65000000", "output": "3.41000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "61800979b92d1e4b8f765daad078c79d7185bf2def1159648596bc1695c15ca4",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "moonshotai/kimi-k2.6",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000341", "input_cache_read": "0.00000015", "prompt": "0.00000065"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "inclusionai/ling-3.0-flash"): {
         "context_length": 262144,
@@ -933,6 +4515,45 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "inclusionai/ling-3.0-flash",
+            "pricing_id": "openrouter:inclusionai/ling-3.0-flash:2026-11-01:8372565cc061a9d6",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.0042000000", "input": "0.021000000", "output": "0.063000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "8372565cc061a9d625d4b3e615772cc2b0a322882ae47d8134cd0f1e1040b01f",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "inclusionai/ling-3.0-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000000063",
+                "input_cache_read": "0.0000000042",
+                "prompt": "0.000000021",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemini-3.6-flash"): {
         "context_length": 1048576,
@@ -946,6 +4567,62 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image: published gateway pricing requires a separately observed billing quantity",
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "input_audio_cache: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "google/gemini-3.6-flash",
+            "pricing_id": "openrouter:google/gemini-3.6-flash:2026-11-01:e2a978f31deb6e87",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.075000000",
+                "cache_write": "0.0416666666666667000000",
+                "input": "0.75000000",
+                "output": "3.75000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "e2a978f31deb6e87afad5719111026606fe4d166c8e63b65122cb3b78aa1622f",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-3.6-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.00000075",
+                "completion": "0.00000375",
+                "image": "0.00000075",
+                "input_audio_cache": "0.000000075",
+                "input_cache_read": "0.000000075",
+                "input_cache_write": "0.0000000416666666666667",
+                "internal_reasoning": "0.00000375",
+                "prompt": "0.00000075",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.7-plus"): {
         "context_length": 1000000,
@@ -954,6 +4631,72 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.7-plus",
+            "pricing_id": "openrouter:qwen/qwen3.7-plus:2026-11-01:3eac5d9a106cef6f",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.064000000",
+                "cache_write": "0.4000000",
+                "input": "0.32000000",
+                "output": "1.28000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.192000000",
+                        "cache_write": "1.2000000",
+                        "input": "0.96000000",
+                        "output": "3.84000000",
+                    },
+                    "when": {"min_input_tokens": 256001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "3eac5d9a106cef6f09a2716e5a48b9e858284a71c8e05c3dddde60b665681a80",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.7-plus",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00000128",
+                "input_cache_read": "0.000000064",
+                "input_cache_write": "0.0000004",
+                "overrides": [
+                    {
+                        "completion": "0.00000384",
+                        "input_cache_read": "0.000000192",
+                        "input_cache_write": "0.0000012",
+                        "min_prompt_tokens": 256000,
+                        "prompt": "0.00000096",
+                    }
+                ],
+                "prompt": "0.00000032",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "inception/mercury-3"): {
         "context_length": 1000000,
@@ -967,6 +4710,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "inception/mercury-3",
+            "pricing_id": "openrouter:inception/mercury-3:2026-11-01:a004e5465c67f8cb",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.01000000", "input": "0.1000000", "output": "0.35000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "a004e5465c67f8cb845ad8ea3d8c0fe59907f211943ae0dbebf00f707f1d9d45",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "inception/mercury-3",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000035", "input_cache_read": "0.00000001", "prompt": "0.0000001"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.6-35b-a3b"): {
         "context_length": 262144,
@@ -975,6 +4753,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.6-35b-a3b",
+            "pricing_id": "openrouter:qwen/qwen3.6-35b-a3b:2026-11-01:7ec16009fe899232",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.025000000", "input": "0.1000000", "output": "0.9000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "7ec16009fe8992326c8ccc1773d86870387885f980ee80224291a9a2f1a455f7",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.6-35b-a3b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000009", "input_cache_read": "0.000000025", "prompt": "0.0000001"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemini-3.1-flash-lite-preview"): {
         "context_length": 1048576,
@@ -988,6 +4801,62 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image: published gateway pricing requires a separately observed billing quantity",
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "input_audio_cache: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "google/gemini-3.1-flash-lite-preview",
+            "pricing_id": "openrouter:google/gemini-3.1-flash-lite-preview:2026-11-01:af2fdb05ecb2a81f",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.025000000",
+                "cache_write": "0.0833333333333333000000",
+                "input": "0.25000000",
+                "output": "1.5000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "af2fdb05ecb2a81f5aeffc1b8456bd44f4cc871270c1d9384f1dac641b781400",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-3.1-flash-lite-preview",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.0000005",
+                "completion": "0.0000015",
+                "image": "0.00000025",
+                "input_audio_cache": "0.00000005",
+                "input_cache_read": "0.000000025",
+                "input_cache_write": "0.0000000833333333333333",
+                "internal_reasoning": "0.0000015",
+                "prompt": "0.00000025",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemini-3.1-pro-preview"): {
         "context_length": 1048576,
@@ -1001,6 +4870,79 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image: published gateway pricing requires a separately observed billing quantity",
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "input_audio_cache: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "google/gemini-3.1-pro-preview",
+            "pricing_id": "openrouter:google/gemini-3.1-pro-preview:2026-11-01:9d9ad482a1b1a316",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.2000000",
+                "cache_write": "0.375000000",
+                "input": "2.000000",
+                "output": "12.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "0.4000000", "input": "4.000000", "output": "18.000000"},
+                    "when": {"min_input_tokens": 200001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "9d9ad482a1b1a316872efe1f1fcb4256ce95719456dd822384c31f72e6b22bb7",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-3.1-pro-preview",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.000002",
+                "completion": "0.000012",
+                "image": "0.000002",
+                "input_audio_cache": "0.0000002",
+                "input_cache_read": "0.0000002",
+                "input_cache_write": "0.000000375",
+                "internal_reasoning": "0.000012",
+                "overrides": [
+                    {
+                        "audio": "0.000004",
+                        "completion": "0.000018",
+                        "input_audio_cache": "0.0000004",
+                        "input_cache_read": "0.0000004",
+                        "min_prompt_tokens": 200000,
+                        "prompt": "0.000004",
+                    }
+                ],
+                "prompt": "0.000002",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "anthropic/claude-opus-4.6"): {
         "context_length": 1000000,
@@ -1015,6 +4957,56 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "anthropic/claude-opus-4.6",
+            "pricing_id": "openrouter:anthropic/claude-opus-4.6:2026-11-01:f69975a895756f2c",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.5000000",
+                "cache_write": "6.25000000",
+                "cache_write_1h": "10.00000",
+                "input": "5.000000",
+                "output": "25.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "f69975a895756f2c477b769d1339b8ca4b54aa1fe44e0869fbf107c47e642682",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "anthropic/claude-opus-4.6",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000025",
+                "input_cache_read": "0.0000005",
+                "input_cache_write": "0.00000625",
+                "input_cache_write_1h": "0.00001",
+                "prompt": "0.000005",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-4.1-mini"): {
         "context_length": 1047576,
@@ -1023,6 +5015,48 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-4.1-mini",
+            "pricing_id": "openrouter:openai/gpt-4.1-mini:2026-11-01:5f9db29e49e60ad0",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.1000000", "input": "0.4000000", "output": "1.6000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "5f9db29e49e60ad0259d52ded6a6a04f3cdb64389c7d31f4f101b92b35077660",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-4.1-mini",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000016",
+                "input_cache_read": "0.0000001",
+                "prompt": "0.0000004",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "x-ai/grok-4.6"): {
         "context_length": 500000,
@@ -1036,6 +5070,59 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.005", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "x-ai/grok-4.6",
+            "pricing_id": "openrouter:x-ai/grok-4.6:2026-11-01:4b9d70109eceded4",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.5000000", "input": "2.000000", "output": "6.000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "1.000000", "input": "4.000000", "output": "12.000000"},
+                    "when": {"min_input_tokens": 200001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4b9d70109eceded4838ab9b5bf25cd111da28331f20efd7aa0a966565f7abb48",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "x-ai/grok-4.6", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000006",
+                "input_cache_read": "0.0000005",
+                "overrides": [
+                    {
+                        "completion": "0.000012",
+                        "input_cache_read": "0.000001",
+                        "min_prompt_tokens": 200000,
+                        "prompt": "0.000004",
+                    }
+                ],
+                "prompt": "0.000002",
+                "web_search": "0.005",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "meta/muse-wonder"): {
         "context_length": 1048576,
@@ -1049,6 +5136,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.0025", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "meta/muse-wonder",
+            "pricing_id": "openrouter:meta/muse-wonder:2026-11-01:a85ba84127e1269e",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.2000000", "input": "4.000000", "output": "20.00000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "a85ba84127e1269eb532f5921e138b60ea286736635bfbe14d9f909f25046628",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "meta/muse-wonder",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00002",
+                "input_cache_read": "0.0000002",
+                "prompt": "0.000004",
+                "web_search": "0.0025",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.5-9b"): {
         "context_length": 262144,
@@ -1057,6 +5186,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.5-9b",
+            "pricing_id": "openrouter:qwen/qwen3.5-9b:2026-11-01:5673c0a332c01566",
+            "provider": "openrouter",
+            "rates": {"input": "0.17000000", "output": "0.25000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "5673c0a332c015662a5ee4fa6bb35093efcf537adead23ced91ae28667106269",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.5-9b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000025", "prompt": "0.00000017"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "meta/muse-spark-1.3"): {
         "context_length": 1048576,
@@ -1070,6 +5234,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.0025", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "meta/muse-spark-1.3",
+            "pricing_id": "openrouter:meta/muse-spark-1.3:2026-11-01:2ab3017af6136f42",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.15000000", "input": "1.25000000", "output": "4.25000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "2ab3017af6136f4276823ae5da710b918c25f7bd0f07631bc37eee27c79bcc31",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "meta/muse-spark-1.3",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00000425",
+                "input_cache_read": "0.00000015",
+                "prompt": "0.00000125",
+                "web_search": "0.0025",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "poolside/laguna-xs-2.1:free"): {
         "context_length": 262144,
@@ -1078,6 +5284,30 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "openrouter:poolside/laguna-xs-2.1:free:2026-11-01",
+            "provider": "openrouter",
+            "model": "poolside/laguna-xs-2.1:free",
+            "status": "unverified",
+            "billing_mode": "gateway",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://openrouter.ai/api/v1/models",
+                    "model_id": "poolside/laguna-xs-2.1:free",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "poolside/laguna-xs-2.1:free: absent from the checked public gateway model feed; no current "
+            "exact-variant rate verified.",
+        },
     },
     ("openrouter", "openai/gpt-5.6-luna-pro"): {
         "context_length": 1050000,
@@ -1092,6 +5322,75 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.6-luna-pro",
+            "pricing_id": "openrouter:openai/gpt-5.6-luna-pro:2026-11-01:b491904a17f44da1",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.02000000",
+                "cache_write": "0.25000000",
+                "input": "0.2000000",
+                "output": "1.2000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.04000000",
+                        "cache_write": "0.5000000",
+                        "input": "0.4000000",
+                        "output": "1.8000000",
+                    },
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "b491904a17f44da1d14354eef3bb8bf803279d4fba49e3432bfda658d61c959b",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.6-luna-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000012",
+                "input_cache_read": "0.00000002",
+                "input_cache_write": "0.00000025",
+                "overrides": [
+                    {
+                        "completion": "0.0000018",
+                        "input_cache_read": "0.00000004",
+                        "input_cache_write": "0.0000005",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.0000004",
+                    }
+                ],
+                "prompt": "0.0000002",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "deepseek/deepseek-v4-flash-vision-exp"): {
         "context_length": 1048576,
@@ -1105,6 +5404,45 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "deepseek/deepseek-v4-flash-vision-exp",
+            "pricing_id": "openrouter:deepseek/deepseek-v4-flash-vision-exp:2026-11-01:a1e8bb9adbc5d4a2",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.00686000000", "input": "0.2156000000", "output": "0.6468000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "a1e8bb9adbc5d4a262d953b8d59f82011f6ed8dd57810875a788ab2bb4365986",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "deepseek/deepseek-v4-flash-vision-exp",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000006468",
+                "input_cache_read": "0.00000000686",
+                "prompt": "0.0000002156",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5-mini"): {
         "context_length": 400000,
@@ -1119,6 +5457,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5-mini",
+            "pricing_id": "openrouter:openai/gpt-5-mini:2026-11-01:d78da10fa38b607b",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.025000000", "input": "0.25000000", "output": "2.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d78da10fa38b607b69a371ef7312e9fdc59b2ee0a38fda6a081ce06e8dab508e",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5-mini",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000002",
+                "input_cache_read": "0.000000025",
+                "prompt": "0.00000025",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "reflection/beam-1.0-501b-a23b"): {
         "context_length": 1048576,
@@ -1132,6 +5512,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "reflection/beam-1.0-501b-a23b",
+            "pricing_id": "openrouter:reflection/beam-1.0-501b-a23b:2026-11-01:d4c78854482df15f",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.05000000", "input": "0.25000000", "output": "1.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d4c78854482df15fd2bc2ec0c31631a5669b71d171d7aa5710d53ba20ee7f300",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "reflection/beam-1.0-501b-a23b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000001", "input_cache_read": "0.00000005", "prompt": "0.00000025"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.4-nano"): {
         "context_length": 400000,
@@ -1146,6 +5561,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.4-nano",
+            "pricing_id": "openrouter:openai/gpt-5.4-nano:2026-11-01:cf132e0824a460f5",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.02000000", "input": "0.2000000", "output": "1.25000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "cf132e0824a460f540667c3e9320d84e1517d4a065820c09e644c6064587f13d",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.4-nano",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00000125",
+                "input_cache_read": "0.00000002",
+                "prompt": "0.0000002",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "xingchen-agi/xing4.0-29b-a4b:free"): {
         "context_length": 262144,
@@ -1154,6 +5611,42 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "cache_policy": {"cache_read": "included", "cache_write": "included"},
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "xingchen-agi/xing4.0-29b-a4b:free",
+            "pricing_id": "openrouter:xingchen-agi/xing4.0-29b-a4b:free:2026-11-01:4e00883b573f5c19",
+            "provider": "openrouter",
+            "rates": {"input": "0", "output": "0"},
+            "routing_variant": "free",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4e00883b573f5c198c8051c7521c8183ae4d381b980ffc93781297cff40c372a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "xingchen-agi/xing4.0-29b-a4b:free",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0", "prompt": "0"},
+            "verified_free": True,
+        },
     },
     ("openrouter", "openai/gpt-5.2"): {
         "context_length": 400000,
@@ -1168,6 +5661,44 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.2",
+            "pricing_id": "openrouter:openai/gpt-5.2:2026-11-01:4378c756575ce255",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.175000000", "input": "1.75000000", "output": "14.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4378c756575ce2559be8229b11c695d10474000411151dd3241764353ace4910",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "openai/gpt-5.2", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000014",
+                "input_cache_read": "0.000000175",
+                "prompt": "0.00000175",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemini-3.5-flash"): {
         "context_length": 1048576,
@@ -1181,6 +5712,62 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image: published gateway pricing requires a separately observed billing quantity",
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "input_audio_cache: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "google/gemini-3.5-flash",
+            "pricing_id": "openrouter:google/gemini-3.5-flash:2026-11-01:0195727d529437dd",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.15000000",
+                "cache_write": "0.0833333333333333000000",
+                "input": "1.5000000",
+                "output": "9.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "0195727d529437dd89af0720bebb1efbdea637a8afd629acfa974d8fb7e7dabe",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-3.5-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.000003",
+                "completion": "0.000009",
+                "image": "0.0000015",
+                "input_audio_cache": "0.0000003",
+                "input_cache_read": "0.00000015",
+                "input_cache_write": "0.0000000833333333333333",
+                "internal_reasoning": "0.000009",
+                "prompt": "0.0000015",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "meta/muse-spark-open"): {
         "context_length": 1048576,
@@ -1194,6 +5781,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "meta/muse-spark-open",
+            "pricing_id": "openrouter:meta/muse-spark-open:2026-11-01:8c20d21f616b1b0b",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.15000000", "input": "1.25000000", "output": "4.25000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "8c20d21f616b1b0b12e525de3ea76cac06cd7e985e88e573283e864f1057bc25",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "meta/muse-spark-open",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000425", "input_cache_read": "0.00000015", "prompt": "0.00000125"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.4"): {
         "context_length": 1050000,
@@ -1208,6 +5830,59 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.4",
+            "pricing_id": "openrouter:openai/gpt-5.4:2026-11-01:98ae5368ff7fa5f8",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.25000000", "input": "2.5000000", "output": "15.000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "0.5000000", "input": "5.000000", "output": "22.5000000"},
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "98ae5368ff7fa5f815816d699b018851077d1b986f7cfb995096e4f354880af2",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "openai/gpt-5.4", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000015",
+                "input_cache_read": "0.00000025",
+                "overrides": [
+                    {
+                        "completion": "0.0000225",
+                        "input_cache_read": "0.0000005",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.000005",
+                    }
+                ],
+                "prompt": "0.0000025",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-6.1-sol-pro"): {
         "context_length": 1050000,
@@ -1222,6 +5897,70 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-6.1-sol-pro",
+            "pricing_id": "openrouter:openai/gpt-6.1-sol-pro:2026-11-01:d0c04ce98c34d12e",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.1000000", "cache_write": "2.5000000", "input": "2.000000", "output": "10.00000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.2000000",
+                        "cache_write": "5.000000",
+                        "input": "4.000000",
+                        "output": "15.000000",
+                    },
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d0c04ce98c34d12e1aa6a83f4adfde918c4f20c9afcbc5e30f28b7b4d4dd3329",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-6.1-sol-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00001",
+                "input_cache_read": "0.0000001",
+                "input_cache_write": "0.0000025",
+                "overrides": [
+                    {
+                        "completion": "0.000015",
+                        "input_cache_read": "0.0000002",
+                        "input_cache_write": "0.000005",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.000004",
+                    }
+                ],
+                "prompt": "0.000002",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "x-ai/grok-4.5"): {
         "context_length": 500000,
@@ -1235,6 +5974,59 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.005", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "x-ai/grok-4.5",
+            "pricing_id": "openrouter:x-ai/grok-4.5:2026-11-01:2de533b85ae37a2f",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.3000000", "input": "2.000000", "output": "6.000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "0.6000000", "input": "4.000000", "output": "12.000000"},
+                    "when": {"min_input_tokens": 200001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "2de533b85ae37a2f612862333fade7acf4bc3e30d08c0f516683703f3e0c0031",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "x-ai/grok-4.5", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000006",
+                "input_cache_read": "0.0000003",
+                "overrides": [
+                    {
+                        "completion": "0.000012",
+                        "input_cache_read": "0.0000006",
+                        "min_prompt_tokens": 200000,
+                        "prompt": "0.000004",
+                    }
+                ],
+                "prompt": "0.000002",
+                "web_search": "0.005",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-4.1"): {
         "context_length": 1047576,
@@ -1243,6 +6035,44 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-4.1",
+            "pricing_id": "openrouter:openai/gpt-4.1:2026-11-01:2f914d73f14926e7",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.5000000", "input": "2.000000", "output": "8.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "2f914d73f14926e7c5864fe692f4861b315bdf7d2b9d4ce38fd764e2888ac3b4",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "openai/gpt-4.1", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000008",
+                "input_cache_read": "0.0000005",
+                "prompt": "0.000002",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "deepseek/deepseek-chat-v3.1"): {
         "context_length": 163840,
@@ -1251,6 +6081,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "deepseek/deepseek-chat-v3.1",
+            "pricing_id": "openrouter:deepseek/deepseek-chat-v3.1:2026-11-01:9157bb8f9a7fc754",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.13000000", "input": "0.25000000", "output": "0.95000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "9157bb8f9a7fc754e6d5b2848fad787182b0830fc47c36c9adbfc2e107b95eb5",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "deepseek/deepseek-chat-v3.1",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000095", "input_cache_read": "0.00000013", "prompt": "0.00000025"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3-235b-a22b-2507"): {
         "context_length": 262144,
@@ -1259,6 +6124,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3-235b-a22b-2507",
+            "pricing_id": "openrouter:qwen/qwen3-235b-a22b-2507:2026-11-01:44fc6902d3964420",
+            "provider": "openrouter",
+            "rates": {"input": "0.09000000", "output": "0.55000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "44fc6902d396442020e29d0cfbb35bfe65783d4cb28d6b08c5d537ac685c1271",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3-235b-a22b-2507",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000055", "prompt": "0.00000009"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "xiaomi/mimo-v2.6-pro-ultraspeed"): {
         "context_length": 1048576,
@@ -1267,6 +6167,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "xiaomi/mimo-v2.6-pro-ultraspeed",
+            "pricing_id": "openrouter:xiaomi/mimo-v2.6-pro-ultraspeed:2026-11-01:47ec14fe64ac9257",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.036000000", "input": "4.35000000", "output": "8.7000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "47ec14fe64ac9257ec24bd8d083036f13b4000a56e78b1e959330de4614ea0ee",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "xiaomi/mimo-v2.6-pro-ultraspeed",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000087", "input_cache_read": "0.000000036", "prompt": "0.00000435"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "nvidia/nemotron-3-ultra-550b-a55b"): {
         "context_length": 262144,
@@ -1280,6 +6215,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "nvidia/nemotron-3-ultra-550b-a55b",
+            "pricing_id": "openrouter:nvidia/nemotron-3-ultra-550b-a55b:2026-11-01:be0a696c271c15e8",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.12000000", "input": "0.6000000", "output": "2.4000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "be0a696c271c15e844c6fa32aee9a320f46f4403cf15e9f31b02f4ded110abdd",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "nvidia/nemotron-3-ultra-550b-a55b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000024", "input_cache_read": "0.00000012", "prompt": "0.0000006"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "moonshotai/kimi-k2.7-code"): {
         "context_length": 262144,
@@ -1288,6 +6258,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "moonshotai/kimi-k2.7-code",
+            "pricing_id": "openrouter:moonshotai/kimi-k2.7-code:2026-11-01:95e273ca96c2f1a5",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.15000000", "input": "0.6000000", "output": "3.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "95e273ca96c2f1a5d41860685db3ac1e86c336cec9b2faf6ff801e924b32656c",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "moonshotai/kimi-k2.7-code",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000035", "input_cache_read": "0.00000015", "prompt": "0.0000006"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"): {
         "context_length": 256000,
@@ -1296,6 +6301,42 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "cache_policy": {"cache_read": "included", "cache_write": "included"},
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+            "pricing_id": "openrouter:nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free:2026-11-01:4e00883b573f5c19",
+            "provider": "openrouter",
+            "rates": {"input": "0", "output": "0"},
+            "routing_variant": "free",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4e00883b573f5c198c8051c7521c8183ae4d381b980ffc93781297cff40c372a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0", "prompt": "0"},
+            "verified_free": True,
+        },
     },
     ("openrouter", "openai/gpt-5.5"): {
         "context_length": 1050000,
@@ -1310,6 +6351,59 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.5",
+            "pricing_id": "openrouter:openai/gpt-5.5:2026-11-01:afa4cf0cbfa90fc1",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.5000000", "input": "5.000000", "output": "30.00000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "1.000000", "input": "10.00000", "output": "45.000000"},
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "afa4cf0cbfa90fc167936620eb27caafef51f3e983dba3cfa3d0431a194b9408",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "openai/gpt-5.5", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00003",
+                "input_cache_read": "0.0000005",
+                "overrides": [
+                    {
+                        "completion": "0.000045",
+                        "input_cache_read": "0.000001",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.00001",
+                    }
+                ],
+                "prompt": "0.000005",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "z-ai/glm-5.3-prime"): {
         "context_length": 1000000,
@@ -1323,6 +6417,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "z-ai/glm-5.3-prime",
+            "pricing_id": "openrouter:z-ai/glm-5.3-prime:2026-11-01:cab01f72537d18eb",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.56000000", "input": "2.8000000", "output": "8.8000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "cab01f72537d18eb633be673b1388d6993e7133767459b850090d2101b33de0e",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "z-ai/glm-5.3-prime",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000088", "input_cache_read": "0.00000056", "prompt": "0.0000028"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemma-3-27b-it"): {
         "context_length": 131072,
@@ -1331,6 +6460,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "google/gemma-3-27b-it",
+            "pricing_id": "openrouter:google/gemma-3-27b-it:2026-11-01:6dbbbcaa53f843ce",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.04000000", "input": "0.08000000", "output": "0.35000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "6dbbbcaa53f843ce5f8880a099c3fe2d12c5b3f7f52f41aa7c6e2ee77564645a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemma-3-27b-it",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000035", "input_cache_read": "0.00000004", "prompt": "0.00000008"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "x-ai/grok-4.3"): {
         "context_length": 1000000,
@@ -1344,6 +6508,59 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.005", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "x-ai/grok-4.3",
+            "pricing_id": "openrouter:x-ai/grok-4.3:2026-11-01:d72f92209389adfd",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.2000000", "input": "1.25000000", "output": "2.5000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "0.4000000", "input": "2.5000000", "output": "5.000000"},
+                    "when": {"min_input_tokens": 200001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d72f92209389adfd3c54c36125f299a8bbf60bbacfd0a27faba685bf09c159a6",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "x-ai/grok-4.3", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000025",
+                "input_cache_read": "0.0000002",
+                "overrides": [
+                    {
+                        "completion": "0.000005",
+                        "input_cache_read": "0.0000004",
+                        "min_prompt_tokens": 200000,
+                        "prompt": "0.0000025",
+                    }
+                ],
+                "prompt": "0.00000125",
+                "web_search": "0.005",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "z-ai/glm-5"): {
         "context_length": 204800,
@@ -1352,6 +6569,37 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "z-ai/glm-5",
+            "pricing_id": "openrouter:z-ai/glm-5:2026-11-01:c42c96341d516726",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.2000000", "input": "1.000000", "output": "3.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "c42c96341d516726061f8014b96f1a4d5c9a4770ab22d676499150d6adc9437d",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "z-ai/glm-5", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000032", "input_cache_read": "0.0000002", "prompt": "0.000001"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.5-flash-02-23"): {
         "context_length": 1000000,
@@ -1360,6 +6608,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.5-flash-02-23",
+            "pricing_id": "openrouter:qwen/qwen3.5-flash-02-23:2026-11-01:7f575b8bc837b26b",
+            "provider": "openrouter",
+            "rates": {"input": "0.065000000", "output": "0.26000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "7f575b8bc837b26b7f5883a2c6f40819646040069c18e39f22807da1fc3f7934",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.5-flash-02-23",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000026", "prompt": "0.000000065"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "meta-llama/llama-3.1-8b-instruct"): {
         "context_length": 131072,
@@ -1368,6 +6651,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "meta-llama/llama-3.1-8b-instruct",
+            "pricing_id": "openrouter:meta-llama/llama-3.1-8b-instruct:2026-11-01:1fac312c27b1e119",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.025000000", "input": "0.05000000", "output": "0.08000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "1fac312c27b1e1194110a158344ec8b195b6373216fa632acc948c2d5df4ec42",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "meta-llama/llama-3.1-8b-instruct",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000008", "input_cache_read": "0.000000025", "prompt": "0.00000005"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5-nano"): {
         "context_length": 400000,
@@ -1382,6 +6700,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5-nano",
+            "pricing_id": "openrouter:openai/gpt-5-nano:2026-11-01:aa5539d169d54bbc",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.005000000", "input": "0.05000000", "output": "0.4000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "aa5539d169d54bbc39c6845667d8a2c0aed831e25111fedaea542f856c4d555d",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5-nano",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000004",
+                "input_cache_read": "0.000000005",
+                "prompt": "0.00000005",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "poolside/laguna-s-2.1"): {
         "context_length": 1048576,
@@ -1390,6 +6750,30 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "openrouter:poolside/laguna-s-2.1:2026-11-01",
+            "provider": "openrouter",
+            "model": "poolside/laguna-s-2.1",
+            "status": "unverified",
+            "billing_mode": "gateway",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://openrouter.ai/api/v1/models",
+                    "model_id": "poolside/laguna-s-2.1",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "poolside/laguna-s-2.1: absent from the checked public gateway model feed; no current "
+            "exact-variant rate verified.",
+        },
     },
     ("openrouter", "xiaomi/mimo-v2.5"): {
         "context_length": 1050000,
@@ -1398,6 +6782,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "xiaomi/mimo-v2.5",
+            "pricing_id": "openrouter:xiaomi/mimo-v2.5:2026-11-01:2d06f4ff3b8f66eb",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.08000000", "input": "0.4000000", "output": "2.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "2d06f4ff3b8f66ebc3ff48ac2238f56e56a61d28c4bd4aa52ed5b1633a8a71f7",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "xiaomi/mimo-v2.5",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000002", "input_cache_read": "0.00000008", "prompt": "0.0000004"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.8-omni-flash"): {
         "context_length": 1000000,
@@ -1406,6 +6825,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.8-omni-flash",
+            "pricing_id": "openrouter:qwen/qwen3.8-omni-flash:2026-11-01:1086fd43e19813c7",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.016000000", "input": "0.15000000", "output": "0.47000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "1086fd43e19813c75585a3c585853b48511aef4718151cefc1bb93d8d0c415af",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.8-omni-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000047", "input_cache_read": "0.000000016", "prompt": "0.00000015"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.8-max-prime"): {
         "context_length": 1000000,
@@ -1419,6 +6873,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.8-max-prime",
+            "pricing_id": "openrouter:qwen/qwen3.8-max-prime:2026-11-01:02cbdd988ec08aa6",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.5000000", "input": "4.000000", "output": "12.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "02cbdd988ec08aa6eccabf1c5f8e7da9c95a4c253bfeb6247fd8d2fe4d517d52",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.8-max-prime",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000012", "input_cache_read": "0.0000005", "prompt": "0.000004"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "meta-llama/llama-3.3-70b-instruct"): {
         "context_length": 131072,
@@ -1427,6 +6916,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "meta-llama/llama-3.3-70b-instruct",
+            "pricing_id": "openrouter:meta-llama/llama-3.3-70b-instruct:2026-11-01:25d6bdb4aefcb343",
+            "provider": "openrouter",
+            "rates": {"input": "0.1000000", "output": "0.32000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "25d6bdb4aefcb343b9bc8d4446429a8a33b91c98ae078f00480babd85c5136a8",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "meta-llama/llama-3.3-70b-instruct",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000032", "prompt": "0.0000001"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.1"): {
         "context_length": 400000,
@@ -1441,6 +6965,44 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.1",
+            "pricing_id": "openrouter:openai/gpt-5.1:2026-11-01:3688dfff4deeefa5",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.125000000", "input": "1.25000000", "output": "10.00000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "3688dfff4deeefa5794a7dd2f0ef7d91774d26fed7c7fcf3dfc24001572fe7c9",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "openai/gpt-5.1", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00001",
+                "input_cache_read": "0.000000125",
+                "prompt": "0.00000125",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "nvidia/nemotron-3.5-lightning"): {
         "context_length": 262144,
@@ -1449,6 +7011,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "nvidia/nemotron-3.5-lightning",
+            "pricing_id": "openrouter:nvidia/nemotron-3.5-lightning:2026-11-01:ef9d8be8bf26fc5c",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.04000000", "input": "0.07000000", "output": "0.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "ef9d8be8bf26fc5c13d3e8e12582f305ff4362348ae2c48129e693ca680c6b1c",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "nvidia/nemotron-3.5-lightning",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000002", "input_cache_read": "0.00000004", "prompt": "0.00000007"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "anthropic/claude-fable-5"): {
         "context_length": 1000000,
@@ -1464,6 +7061,56 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "anthropic/claude-fable-5",
+            "pricing_id": "openrouter:anthropic/claude-fable-5:2026-11-01:720abf41fbea2733",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "1.000000",
+                "cache_write": "12.5000000",
+                "cache_write_1h": "20.00000",
+                "input": "10.00000",
+                "output": "50.00000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "720abf41fbea2733bb4bc4b241a7bc261534bcc6bb4272718d0ea8c97183b4fa",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "anthropic/claude-fable-5",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00005",
+                "input_cache_read": "0.000001",
+                "input_cache_write": "0.0000125",
+                "input_cache_write_1h": "0.00002",
+                "prompt": "0.00001",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "anthropic/claude-opus-4.7"): {
         "context_length": 1000000,
@@ -1479,6 +7126,56 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "anthropic/claude-opus-4.7",
+            "pricing_id": "openrouter:anthropic/claude-opus-4.7:2026-11-01:f69975a895756f2c",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.5000000",
+                "cache_write": "6.25000000",
+                "cache_write_1h": "10.00000",
+                "input": "5.000000",
+                "output": "25.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "f69975a895756f2c477b769d1339b8ca4b54aa1fe44e0869fbf107c47e642682",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "anthropic/claude-opus-4.7",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000025",
+                "input_cache_read": "0.0000005",
+                "input_cache_write": "0.00000625",
+                "input_cache_write_1h": "0.00001",
+                "prompt": "0.000005",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3-coder-next"): {
         "context_length": 262144,
@@ -1487,6 +7184,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3-coder-next",
+            "pricing_id": "openrouter:qwen/qwen3-coder-next:2026-11-01:88d1eb8cf0d9f4c9",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.07000000", "input": "0.12000000", "output": "0.8000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "88d1eb8cf0d9f4c9cbc0c7d388825062acfaa9eeeb8ff0339f00d89533d38800",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3-coder-next",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000008", "input_cache_read": "0.00000007", "prompt": "0.00000012"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-6-astra-pro"): {
         "context_length": 1050000,
@@ -1501,6 +7233,70 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-6-astra-pro",
+            "pricing_id": "openrouter:openai/gpt-6-astra-pro:2026-11-01:06d17e1430496b56",
+            "provider": "openrouter",
+            "rates": {"cache_read": "1.000000", "cache_write": "12.5000000", "input": "10.00000", "output": "50.00000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "2.000000",
+                        "cache_write": "25.000000",
+                        "input": "20.00000",
+                        "output": "75.000000",
+                    },
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "06d17e1430496b56d1b1a41b5f06d775fe0e6517c2d08cf7648bb59be585e10b",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-6-astra-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00005",
+                "input_cache_read": "0.000001",
+                "input_cache_write": "0.0000125",
+                "overrides": [
+                    {
+                        "completion": "0.000075",
+                        "input_cache_read": "0.000002",
+                        "input_cache_write": "0.000025",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.00002",
+                    }
+                ],
+                "prompt": "0.00001",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "z-ai/glm-4.7"): {
         "context_length": 204800,
@@ -1509,6 +7305,37 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "z-ai/glm-4.7",
+            "pricing_id": "openrouter:z-ai/glm-4.7:2026-11-01:2dc99e19a451f2fa",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.11000000", "input": "0.6000000", "output": "2.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "2dc99e19a451f2faab96fc27d32c189ade8c62d721e94edc82a2e2fdfa25c781",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "z-ai/glm-4.7", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000022", "input_cache_read": "0.00000011", "prompt": "0.0000006"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "xiaomi/mimo-v2.5-pro"): {
         "context_length": 1050000,
@@ -1517,6 +7344,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "xiaomi/mimo-v2.5-pro",
+            "pricing_id": "openrouter:xiaomi/mimo-v2.5-pro:2026-11-01:d8e902bacd8d37c7",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.096000000", "input": "0.48000000", "output": "1.8000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d8e902bacd8d37c7ded8795333ac21250875177d2afef185ea58d3576e49480b",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "xiaomi/mimo-v2.5-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000018", "input_cache_read": "0.000000096", "prompt": "0.00000048"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "inception/mercury-2.5"): {
         "context_length": 260000,
@@ -1530,6 +7392,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "inception/mercury-2.5",
+            "pricing_id": "openrouter:inception/mercury-2.5:2026-11-01:85b44f74c8704239",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.004000000", "input": "0.04000000", "output": "0.15000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "85b44f74c870423978c211464cbb6e33fdcc8baf75afb5b36ff5dd246212772b",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "inception/mercury-2.5",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000015", "input_cache_read": "0.000000004", "prompt": "0.00000004"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "inclusionai/ling-3.1-flash"): {
         "context_length": 1000000,
@@ -1538,6 +7435,45 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "inclusionai/ling-3.1-flash",
+            "pricing_id": "openrouter:inclusionai/ling-3.1-flash:2026-11-01:639115a712686147",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.015000000", "input": "0.075000000", "output": "0.225000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "639115a712686147dc47d20ef2251654c98bebc000377a001c3714a0bf416e2e",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "inclusionai/ling-3.1-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000000225",
+                "input_cache_read": "0.000000015",
+                "prompt": "0.000000075",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.3-codex"): {
         "context_length": 400000,
@@ -1552,6 +7488,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.3-codex",
+            "pricing_id": "openrouter:openai/gpt-5.3-codex:2026-11-01:4378c756575ce255",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.175000000", "input": "1.75000000", "output": "14.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4378c756575ce2559be8229b11c695d10474000411151dd3241764353ace4910",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.3-codex",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000014",
+                "input_cache_read": "0.000000175",
+                "prompt": "0.00000175",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/mistral-small-3.2-24b-instruct"): {
         "context_length": 256000,
@@ -1560,6 +7538,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/mistral-small-3.2-24b-instruct",
+            "pricing_id": "openrouter:mistralai/mistral-small-3.2-24b-instruct:2026-11-01:3426f99bdd6a59d1",
+            "provider": "openrouter",
+            "rates": {"input": "0.075000000", "output": "0.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "3426f99bdd6a59d13e53d74666e8e4d1e59af95e3454d6a61db9157a03913ecd",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/mistral-small-3.2-24b-instruct",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000002", "prompt": "0.000000075"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "moonshotai/kimi-k2.5"): {
         "context_length": 262144,
@@ -1568,6 +7581,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "moonshotai/kimi-k2.5",
+            "pricing_id": "openrouter:moonshotai/kimi-k2.5:2026-11-01:d59eb7c503cde103",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.15000000", "input": "0.5000000", "output": "2.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d59eb7c503cde103b690b58c27c850a9716056d4b6e237a6966946425d12bba1",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "moonshotai/kimi-k2.5",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000025", "input_cache_read": "0.00000015", "prompt": "0.0000005"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.8-2.4t-a95b"): {
         "context_length": 1048576,
@@ -1581,6 +7629,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.8-2.4t-a95b",
+            "pricing_id": "openrouter:qwen/qwen3.8-2.4t-a95b:2026-11-01:73b9b5f3171d1660",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.25000000", "input": "2.000000", "output": "6.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "73b9b5f3171d1660e6c635080001142accbf0abae0cafe81da5a25061b31db29",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.8-2.4t-a95b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000006", "input_cache_read": "0.00000025", "prompt": "0.000002"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.5-35b-a3b"): {
         "context_length": 262144,
@@ -1589,6 +7672,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.5-35b-a3b",
+            "pricing_id": "openrouter:qwen/qwen3.5-35b-a3b:2026-11-01:ba45d2934a2da1c8",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.05000000", "input": "0.14000000", "output": "1.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "ba45d2934a2da1c855131c794df460b65df95974257ad510027137bef903aafa",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.5-35b-a3b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000001", "input_cache_read": "0.00000005", "prompt": "0.00000014"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3-vl-235b-a22b-instruct"): {
         "context_length": 262144,
@@ -1597,6 +7715,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3-vl-235b-a22b-instruct",
+            "pricing_id": "openrouter:qwen/qwen3-vl-235b-a22b-instruct:2026-11-01:fd063cb7f64bcea0",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.1000000", "input": "0.21000000", "output": "1.9000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "fd063cb7f64bcea0700a4ef45185a236d85ec382da17756b9fd2c0b84008f5d4",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3-vl-235b-a22b-instruct",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000019", "input_cache_read": "0.0000001", "prompt": "0.00000021"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "z-ai/glm-5.1"): {
         "context_length": 204800,
@@ -1605,6 +7758,37 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "z-ai/glm-5.1",
+            "pricing_id": "openrouter:z-ai/glm-5.1:2026-11-01:e6961ed9d1fcd787",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.26000000", "input": "1.4000000", "output": "4.4000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "e6961ed9d1fcd7872ac782528c0c0f5c6ef953aa79a6403b221373a1bb0fa19d",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "z-ai/glm-5.1", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000044", "input_cache_read": "0.00000026", "prompt": "0.0000014"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "x-ai/grok-4.20"): {
         "context_length": 2000000,
@@ -1613,6 +7797,59 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.005", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "x-ai/grok-4.20",
+            "pricing_id": "openrouter:x-ai/grok-4.20:2026-11-01:d72f92209389adfd",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.2000000", "input": "1.25000000", "output": "2.5000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "0.4000000", "input": "2.5000000", "output": "5.000000"},
+                    "when": {"min_input_tokens": 200001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d72f92209389adfd3c54c36125f299a8bbf60bbacfd0a27faba685bf09c159a6",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "x-ai/grok-4.20", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000025",
+                "input_cache_read": "0.0000002",
+                "overrides": [
+                    {
+                        "completion": "0.000005",
+                        "input_cache_read": "0.0000004",
+                        "min_prompt_tokens": 200000,
+                        "prompt": "0.0000025",
+                    }
+                ],
+                "prompt": "0.00000125",
+                "web_search": "0.005",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemini-2.5-pro"): {
         "context_length": 1048576,
@@ -1621,6 +7858,79 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image: published gateway pricing requires a separately observed billing quantity",
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "input_audio_cache: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "google/gemini-2.5-pro",
+            "pricing_id": "openrouter:google/gemini-2.5-pro:2026-11-01:854821c719386896",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.125000000",
+                "cache_write": "0.375000000",
+                "input": "1.25000000",
+                "output": "10.00000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "0.25000000", "input": "2.5000000", "output": "15.000000"},
+                    "when": {"min_input_tokens": 200001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "854821c719386896fdf4ba432a1744d02af06e1942f2361f42c97a1e8f0ef243",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-2.5-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.00000125",
+                "completion": "0.00001",
+                "image": "0.00000125",
+                "input_audio_cache": "0.000000125",
+                "input_cache_read": "0.000000125",
+                "input_cache_write": "0.000000375",
+                "internal_reasoning": "0.00001",
+                "overrides": [
+                    {
+                        "audio": "0.0000025",
+                        "completion": "0.000015",
+                        "input_audio_cache": "0.00000025",
+                        "input_cache_read": "0.00000025",
+                        "min_prompt_tokens": 200000,
+                        "prompt": "0.0000025",
+                    }
+                ],
+                "prompt": "0.00000125",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3-30b-a3b-instruct-2507"): {
         "context_length": 262144,
@@ -1629,6 +7939,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3-30b-a3b-instruct-2507",
+            "pricing_id": "openrouter:qwen/qwen3-30b-a3b-instruct-2507:2026-11-01:571c081853ccd714",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.1000000", "input": "0.1000000", "output": "0.3000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "571c081853ccd7146928a3d6c869804036632c2854876565a22249e941db694c",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3-30b-a3b-instruct-2507",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000003", "input_cache_read": "0.0000001", "prompt": "0.0000001"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "deepseek/deepseek-chat-v3-0324"): {
         "context_length": 163840,
@@ -1637,6 +7982,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "deepseek/deepseek-chat-v3-0324",
+            "pricing_id": "openrouter:deepseek/deepseek-chat-v3-0324:2026-11-01:0bfd1b19e98920dd",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.11000000", "input": "0.29000000", "output": "1.14000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "0bfd1b19e98920dd76d8ddd0b67c53b12bc34528e9bb022bf1da4693b30305f5",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "deepseek/deepseek-chat-v3-0324",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000114", "input_cache_read": "0.00000011", "prompt": "0.00000029"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-4.1-nano"): {
         "context_length": 1047576,
@@ -1645,6 +8025,48 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-4.1-nano",
+            "pricing_id": "openrouter:openai/gpt-4.1-nano:2026-11-01:3f2e62fdd49df55a",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.03000000", "input": "0.1000000", "output": "0.4000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "3f2e62fdd49df55a64c9411f0b2b61723c6315b7fed4bd16db92d78ef8483ff1",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-4.1-nano",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000004",
+                "input_cache_read": "0.00000003",
+                "prompt": "0.0000001",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.5-397b-a17b"): {
         "context_length": 262144,
@@ -1653,6 +8075,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.5-397b-a17b",
+            "pricing_id": "openrouter:qwen/qwen3.5-397b-a17b:2026-11-01:3746c65b835ea14a",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.3000000", "input": "0.5000000", "output": "3.6000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "3746c65b835ea14a29e51d571653c7684c083623318c66da7cefa08b4a0e8f56",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.5-397b-a17b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000036", "input_cache_read": "0.0000003", "prompt": "0.0000005"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "deepseek/deepseek-chat"): {
         "context_length": 163840,
@@ -1661,6 +8118,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "deepseek/deepseek-chat",
+            "pricing_id": "openrouter:deepseek/deepseek-chat:2026-11-01:1142c51952b8874e",
+            "provider": "openrouter",
+            "rates": {"input": "0.2574000000", "output": "1.0287000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "1142c51952b8874e44a5fd81d4e8a349b48a87d6279b7de2a6b0340da2283da7",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "deepseek/deepseek-chat",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000010287", "prompt": "0.0000002574"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "meta/muse-glimmer-30b"): {
         "context_length": 131072,
@@ -1674,6 +8166,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "meta/muse-glimmer-30b",
+            "pricing_id": "openrouter:meta/muse-glimmer-30b:2026-11-01:0dbfbaa1c254ae29",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.04000000", "input": "0.3000000", "output": "1.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "0dbfbaa1c254ae29ee2f88138990d5ba5fbb7fee7b4ed27430ed25db39aae430",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "meta/muse-glimmer-30b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000012", "input_cache_read": "0.00000004", "prompt": "0.0000003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "z-ai/glm-4.7-flash"): {
         "context_length": 200000,
@@ -1682,6 +8209,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "z-ai/glm-4.7-flash",
+            "pricing_id": "openrouter:z-ai/glm-4.7-flash:2026-11-01:d54781ee35a132af",
+            "provider": "openrouter",
+            "rates": {"input": "0.0605000000", "output": "0.4000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d54781ee35a132af5e1a5f24a6e3bc2197dd0efbffa7a0a9664f97ef02795216",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "z-ai/glm-4.7-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000004", "prompt": "0.0000000605"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "minimax/minimax-m2.7"): {
         "context_length": 204800,
@@ -1690,6 +8252,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "minimax/minimax-m2.7",
+            "pricing_id": "openrouter:minimax/minimax-m2.7:2026-11-01:168967a1d0a8e1cf",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.06000000", "input": "0.3000000", "output": "1.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "168967a1d0a8e1cfc4b051ef443a8ef4c4dc0c045772c9d458de64b793994dea",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "minimax/minimax-m2.7",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000012", "input_cache_read": "0.00000006", "prompt": "0.0000003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "meta/muse-spark-1.2-contributor"): {
         "context_length": 1048576,
@@ -1703,6 +8300,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.0025", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "meta/muse-spark-1.2-contributor",
+            "pricing_id": "openrouter:meta/muse-spark-1.2-contributor:2026-11-01:b3a94fceca37b8a8",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.002000000", "input": "0.1000000", "output": "0.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "b3a94fceca37b8a87e7f6669ee4e27c359732095c8c640dbe1c939abaa62f04d",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "meta/muse-spark-1.2-contributor",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000002",
+                "input_cache_read": "0.000000002",
+                "prompt": "0.0000001",
+                "web_search": "0.0025",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "amazon/nova-micro-v1"): {
         "context_length": 128000,
@@ -1711,6 +8350,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "amazon/nova-micro-v1",
+            "pricing_id": "openrouter:amazon/nova-micro-v1:2026-11-01:fadb54e70810a2e4",
+            "provider": "openrouter",
+            "rates": {"input": "0.035000000", "output": "0.14000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "fadb54e70810a2e46c243377d56988a10c00549ba131830ff310d04d5802a618",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "amazon/nova-micro-v1",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000014", "prompt": "0.000000035"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "meta-llama/llama-4-maverick"): {
         "context_length": 524288,
@@ -1719,6 +8393,45 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "meta-llama/llama-4-maverick",
+            "pricing_id": "openrouter:meta-llama/llama-4-maverick:2026-11-01:39e7024961535d0e",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.05000000", "input": "0.1875000000", "output": "0.6525000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "39e7024961535d0e813f08f2bfab5b3c36abb6961be4b66c5b16421c7f199869",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "meta-llama/llama-4-maverick",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000006525",
+                "input_cache_read": "0.00000005",
+                "prompt": "0.0000001875",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "thinkingmachines/inkling"): {
         "context_length": 524288,
@@ -1732,6 +8445,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "thinkingmachines/inkling",
+            "pricing_id": "openrouter:thinkingmachines/inkling:2026-11-01:8fd18f10250eaaad",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.17000000", "input": "1.000000", "output": "4.05000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "8fd18f10250eaaadbe0de613292588d71aa973faced07867576842e32a798fcc",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "thinkingmachines/inkling",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000405", "input_cache_read": "0.00000017", "prompt": "0.000001"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3-32b"): {
         "context_length": 131072,
@@ -1740,6 +8488,37 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3-32b",
+            "pricing_id": "openrouter:qwen/qwen3-32b:2026-11-01:ac0aff4dda7d4bdb",
+            "provider": "openrouter",
+            "rates": {"input": "0.08000000", "output": "0.28000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "ac0aff4dda7d4bdb1541ac8700e85d474179a8b82336847a731acd1bcc3ee736",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "qwen/qwen3-32b", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000028", "prompt": "0.00000008"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "meta-llama/llama-4-scout"): {
         "context_length": 1310720,
@@ -1748,6 +8527,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "meta-llama/llama-4-scout",
+            "pricing_id": "openrouter:meta-llama/llama-4-scout:2026-11-01:68010eae296ddcac",
+            "provider": "openrouter",
+            "rates": {"input": "0.1000000", "output": "0.3000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "68010eae296ddcacb24b1c0320d1b183b6bdfb1fd165058030eb8f3d9670d1c7",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "meta-llama/llama-4-scout",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000003", "prompt": "0.0000001"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-4o-mini-2024-07-18"): {
         "context_length": 128000,
@@ -1756,6 +8570,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-4o-mini-2024-07-18",
+            "pricing_id": "openrouter:openai/gpt-4o-mini-2024-07-18:2026-11-01:384e71074adaadc6",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.075000000", "input": "0.15000000", "output": "0.6000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "384e71074adaadc6ffe103020eeb4fbef6b7423d47c0bd529321a26537e42a17",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-4o-mini-2024-07-18",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000006", "input_cache_read": "0.000000075", "prompt": "0.00000015"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "deepseek/deepseek-v3.2-exp"): {
         "context_length": 163840,
@@ -1764,6 +8613,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "deepseek/deepseek-v3.2-exp",
+            "pricing_id": "openrouter:deepseek/deepseek-v3.2-exp:2026-11-01:d83a7c199301cd6d",
+            "provider": "openrouter",
+            "rates": {"input": "0.27000000", "output": "0.41000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d83a7c199301cd6d81499ded385f89b3f1ed71de1c8b2709bb37cc1198bf0bbb",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "deepseek/deepseek-v3.2-exp",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000041", "prompt": "0.00000027"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "deepseek/deepseek-r1-0528"): {
         "context_length": 163840,
@@ -1772,6 +8656,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "deepseek/deepseek-r1-0528",
+            "pricing_id": "openrouter:deepseek/deepseek-r1-0528:2026-11-01:e5db0e17db78253a",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.35000000", "input": "0.5000000", "output": "2.15000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "e5db0e17db78253a948edaa6ce395ed6363b16019c6e1861f86ed492603ec3de",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "deepseek/deepseek-r1-0528",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000215", "input_cache_read": "0.00000035", "prompt": "0.0000005"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-4o"): {
         "context_length": 128000,
@@ -1780,6 +8699,37 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-4o",
+            "pricing_id": "openrouter:openai/gpt-4o:2026-11-01:000bc8377b9210d6",
+            "provider": "openrouter",
+            "rates": {"cache_read": "1.25000000", "input": "2.5000000", "output": "10.00000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "000bc8377b9210d6d3a57c5526fab3dcf6e056cadcb80988b81b35ebcdd0ebf3",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "openai/gpt-4o", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00001", "input_cache_read": "0.00000125", "prompt": "0.0000025"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.7-max"): {
         "context_length": 1000000,
@@ -1788,6 +8738,51 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.7-max",
+            "pricing_id": "openrouter:qwen/qwen3.7-max:2026-11-01:19c585a2362dbaa8",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.295000000",
+                "cache_write": "1.84375000000",
+                "input": "1.475000000",
+                "output": "4.425000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "19c585a2362dbaa8ce2c2b4b661dbbdd48ed90be394d4796165fca4be3a9466d",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.7-max",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000004425",
+                "input_cache_read": "0.000000295",
+                "input_cache_write": "0.00000184375",
+                "prompt": "0.000001475",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5"): {
         "context_length": 400000,
@@ -1802,6 +8797,44 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5",
+            "pricing_id": "openrouter:openai/gpt-5:2026-11-01:3688dfff4deeefa5",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.125000000", "input": "1.25000000", "output": "10.00000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "3688dfff4deeefa5794a7dd2f0ef7d91774d26fed7c7fcf3dfc24001572fe7c9",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "openai/gpt-5", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00001",
+                "input_cache_read": "0.000000125",
+                "prompt": "0.00000125",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.6-flash"): {
         "context_length": 1000000,
@@ -1810,6 +8843,60 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.6-flash",
+            "pricing_id": "openrouter:qwen/qwen3.6-flash:2026-11-01:8619a868affd368e",
+            "provider": "openrouter",
+            "rates": {"cache_write": "0.234375000000", "input": "0.1875000000", "output": "1.125000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_write": "0.9375000000", "input": "0.75000000", "output": "3.000000"},
+                    "when": {"min_input_tokens": 256001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "8619a868affd368eefbe61e5931501ae69cd9684a014f4a12aa468e395a7602b",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.6-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000001125",
+                "input_cache_write": "0.000000234375",
+                "overrides": [
+                    {
+                        "completion": "0.000003",
+                        "input_cache_write": "0.0000009375",
+                        "min_prompt_tokens": 256000,
+                        "prompt": "0.00000075",
+                    }
+                ],
+                "prompt": "0.0000001875",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "anthropic/claude-opus-4.5"): {
         "context_length": 200000,
@@ -1819,6 +8906,56 @@ OPENROUTER_SPECS = {
         "preferred_edit_protocol": "claude_code",
         "drop_prior_reasoning": True,
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "anthropic/claude-opus-4.5",
+            "pricing_id": "openrouter:anthropic/claude-opus-4.5:2026-11-01:f69975a895756f2c",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.5000000",
+                "cache_write": "6.25000000",
+                "cache_write_1h": "10.00000",
+                "input": "5.000000",
+                "output": "25.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "f69975a895756f2c477b769d1339b8ca4b54aa1fe44e0869fbf107c47e642682",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "anthropic/claude-opus-4.5",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000025",
+                "input_cache_read": "0.0000005",
+                "input_cache_write": "0.00000625",
+                "input_cache_write_1h": "0.00001",
+                "prompt": "0.000005",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "z-ai/glm-4.6"): {
         "context_length": 204800,
@@ -1827,6 +8964,37 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "z-ai/glm-4.6",
+            "pricing_id": "openrouter:z-ai/glm-4.6:2026-11-01:ea016ecae91cc628",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.1000000", "input": "0.5000000", "output": "2.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "ea016ecae91cc62836290a2ea33cf6f74da538159b10403ab56dfaddb21c6b89",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "z-ai/glm-4.6", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000002", "input_cache_read": "0.0000001", "prompt": "0.0000005"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3-coder"): {
         "context_length": 262144,
@@ -1835,6 +9003,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3-coder",
+            "pricing_id": "openrouter:qwen/qwen3-coder:2026-11-01:5ddf0f7e7e3dc6a8",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.1000000", "input": "0.3000000", "output": "1.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "5ddf0f7e7e3dc6a8212a6c2087cfbeecbdea0982fae724361f3fafc10d21080a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3-coder",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000001", "input_cache_read": "0.0000001", "prompt": "0.0000003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.6-27b"): {
         "context_length": 262144,
@@ -1843,6 +9046,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.6-27b",
+            "pricing_id": "openrouter:qwen/qwen3.6-27b:2026-11-01:cb9a954c10b2cd94",
+            "provider": "openrouter",
+            "rates": {"input": "0.45000000", "output": "2.7000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "cb9a954c10b2cd941e13f00ec1296f2c699f2e3599ce427b2b5784208a2bb3db",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.6-27b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000027", "prompt": "0.00000045"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemma-3-12b-it"): {
         "context_length": 131072,
@@ -1851,6 +9089,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "google/gemma-3-12b-it",
+            "pricing_id": "openrouter:google/gemma-3-12b-it:2026-11-01:82153920a0b0ee72",
+            "provider": "openrouter",
+            "rates": {"input": "0.05000000", "output": "0.15000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "82153920a0b0ee729b7cf1bf2f0d76c8974acb88a464d48240a6368f982096c0",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemma-3-12b-it",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000015", "prompt": "0.00000005"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "unbiased/pareto-26.10"): {
         "context_length": 1048576,
@@ -1859,6 +9132,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "unbiased/pareto-26.10",
+            "pricing_id": "openrouter:unbiased/pareto-26.10:2026-11-01:d4d3e8e9e668f7fa",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.03000000", "input": "0.8000000", "output": "3.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d4d3e8e9e668f7fa721b7be465e3af476ab961428af78e7c8edfc041648b3887",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "unbiased/pareto-26.10",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000032", "input_cache_read": "0.00000003", "prompt": "0.0000008"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "nvidia/nemotron-3-super-120b-a12b"): {
         "context_length": 1048576,
@@ -1872,6 +9180,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "nvidia/nemotron-3-super-120b-a12b",
+            "pricing_id": "openrouter:nvidia/nemotron-3-super-120b-a12b:2026-11-01:8098e1b95d950c43",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.15000000", "input": "0.3000000", "output": "2.4000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "8098e1b95d950c438706003c46436c9253b9607a9e0672a7902e5d903ba49020",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "nvidia/nemotron-3-super-120b-a12b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000024", "input_cache_read": "0.00000015", "prompt": "0.0000003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.6-plus"): {
         "context_length": 1000000,
@@ -1880,6 +9223,60 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.6-plus",
+            "pricing_id": "openrouter:qwen/qwen3.6-plus:2026-11-01:d911ae3cbb99c566",
+            "provider": "openrouter",
+            "rates": {"cache_write": "0.40625000000", "input": "0.325000000", "output": "1.95000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_write": "1.625000000", "input": "1.3000000", "output": "3.9000000"},
+                    "when": {"min_input_tokens": 256001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d911ae3cbb99c56697ff9b6bdab991704db0b5a929b4204faf98071863ef77c2",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.6-plus",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00000195",
+                "input_cache_write": "0.00000040625",
+                "overrides": [
+                    {
+                        "completion": "0.0000039",
+                        "input_cache_write": "0.000001625",
+                        "min_prompt_tokens": 256000,
+                        "prompt": "0.0000013",
+                    }
+                ],
+                "prompt": "0.000000325",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3-next-80b-a3b-instruct"): {
         "context_length": 262144,
@@ -1888,6 +9285,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3-next-80b-a3b-instruct",
+            "pricing_id": "openrouter:qwen/qwen3-next-80b-a3b-instruct:2026-11-01:65324bc2e10c12dd",
+            "provider": "openrouter",
+            "rates": {"input": "0.09000000", "output": "1.1000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "65324bc2e10c12ddcd1bae02e4cdd1c9e34934428ad2856cb6bd81d264acbfaf",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3-next-80b-a3b-instruct",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000011", "prompt": "0.00000009"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "ibm-granite/granite-4.2-8b"): {
         "context_length": 131072,
@@ -1901,6 +9333,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "ibm-granite/granite-4.2-8b",
+            "pricing_id": "openrouter:ibm-granite/granite-4.2-8b:2026-11-01:ca905f286320099b",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.015000000", "input": "0.06000000", "output": "0.15000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "ca905f286320099b9fae17d17b4426af02cf6dae12e196b2962080516bd8674d",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "ibm-granite/granite-4.2-8b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000015", "input_cache_read": "0.000000015", "prompt": "0.00000006"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "minimax/minimax-m2.5"): {
         "context_length": 204800,
@@ -1909,6 +9376,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "minimax/minimax-m2.5",
+            "pricing_id": "openrouter:minimax/minimax-m2.5:2026-11-01:68ee5267fb7716f5",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.03000000", "input": "0.27000000", "output": "0.95000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "68ee5267fb7716f55fd82f2218b33095a37a8614d030458a4efc14cc121faaa9",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "minimax/minimax-m2.5",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000095", "input_cache_read": "0.00000003", "prompt": "0.00000027"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3-vl-30b-a3b-instruct"): {
         "context_length": 262144,
@@ -1917,6 +9419,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3-vl-30b-a3b-instruct",
+            "pricing_id": "openrouter:qwen/qwen3-vl-30b-a3b-instruct:2026-11-01:b1986931da9fab19",
+            "provider": "openrouter",
+            "rates": {"input": "0.15000000", "output": "0.6000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "b1986931da9fab19846145f0f5e3ff7247cff726efcf8015a6e7b254f0d32b71",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3-vl-30b-a3b-instruct",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000006", "prompt": "0.00000015"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "z-ai/glm-4.5-air"): {
         "context_length": 131072,
@@ -1925,6 +9462,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "z-ai/glm-4.5-air",
+            "pricing_id": "openrouter:z-ai/glm-4.5-air:2026-11-01:72e3a1063de8c20d",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.025000000", "input": "0.13000000", "output": "0.85000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "72e3a1063de8c20d4379723ab8b066910793363cd819132d8f7b88dc8993e8f2",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "z-ai/glm-4.5-air",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000085", "input_cache_read": "0.000000025", "prompt": "0.00000013"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.5-122b-a10b"): {
         "context_length": 262144,
@@ -1933,6 +9505,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.5-122b-a10b",
+            "pricing_id": "openrouter:qwen/qwen3.5-122b-a10b:2026-11-01:ee3aab305bcff83b",
+            "provider": "openrouter",
+            "rates": {"input": "0.26000000", "output": "2.08000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "ee3aab305bcff83b5df3f5d5e26ec420c8320d9495352c3851fa02f16c25eaa9",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.5-122b-a10b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000208", "prompt": "0.00000026"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "liquid/lfm-2.5-2.6b:free"): {
         "context_length": 65536,
@@ -1941,6 +9548,42 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "cache_policy": {"cache_read": "included", "cache_write": "included"},
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "liquid/lfm-2.5-2.6b:free",
+            "pricing_id": "openrouter:liquid/lfm-2.5-2.6b:free:2026-11-01:4e00883b573f5c19",
+            "provider": "openrouter",
+            "rates": {"input": "0", "output": "0"},
+            "routing_variant": "free",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4e00883b573f5c198c8051c7521c8183ae4d381b980ffc93781297cff40c372a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "liquid/lfm-2.5-2.6b:free",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0", "prompt": "0"},
+            "verified_free": True,
+        },
     },
     ("openrouter", "qwen/qwen3-vl-8b-instruct"): {
         "context_length": 262144,
@@ -1949,6 +9592,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3-vl-8b-instruct",
+            "pricing_id": "openrouter:qwen/qwen3-vl-8b-instruct:2026-11-01:9195398506ae3454",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.12000000", "input": "0.25000000", "output": "0.75000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "9195398506ae3454bc40f892c63b3497b6e5fb1f0a5393e29568f6d893ed3e73",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3-vl-8b-instruct",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000075", "input_cache_read": "0.00000012", "prompt": "0.00000025"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-6.1-terra-pro"): {
         "context_length": 1050000,
@@ -1963,6 +9641,75 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-6.1-terra-pro",
+            "pricing_id": "openrouter:openai/gpt-6.1-terra-pro:2026-11-01:d629889f06aaddf5",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.05000000",
+                "cache_write": "1.25000000",
+                "input": "1.000000",
+                "output": "5.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.1000000",
+                        "cache_write": "2.5000000",
+                        "input": "2.000000",
+                        "output": "7.5000000",
+                    },
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d629889f06aaddf5ae8e0afe67fe71f32031fa1aa4b3f46669a1ef6c7222ff04",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-6.1-terra-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000005",
+                "input_cache_read": "0.00000005",
+                "input_cache_write": "0.00000125",
+                "overrides": [
+                    {
+                        "completion": "0.0000075",
+                        "input_cache_read": "0.0000001",
+                        "input_cache_write": "0.0000025",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.000002",
+                    }
+                ],
+                "prompt": "0.000001",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.6-sol-pro"): {
         "context_length": 1050000,
@@ -1977,6 +9724,70 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.6-sol-pro",
+            "pricing_id": "openrouter:openai/gpt-5.6-sol-pro:2026-11-01:61389757e655d7e9",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.4000000", "cache_write": "5.000000", "input": "4.000000", "output": "20.00000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.8000000",
+                        "cache_write": "10.00000",
+                        "input": "8.000000",
+                        "output": "30.00000",
+                    },
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "61389757e655d7e9dc221a11314c00be80200bb458f1b262cb3f0efa09da8c6f",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.6-sol-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00002",
+                "input_cache_read": "0.0000004",
+                "input_cache_write": "0.000005",
+                "overrides": [
+                    {
+                        "completion": "0.00003",
+                        "input_cache_read": "0.0000008",
+                        "input_cache_write": "0.00001",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.000008",
+                    }
+                ],
+                "prompt": "0.000004",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/ministral-8b-2512"): {
         "context_length": 262144,
@@ -1985,6 +9796,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/ministral-8b-2512",
+            "pricing_id": "openrouter:mistralai/ministral-8b-2512:2026-11-01:fab79fcd05027390",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.015000000", "input": "0.15000000", "output": "0.15000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "fab79fcd0502739039b25e1b228f6302a263c868c5bee8531b6cb8e01e4eb15f",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/ministral-8b-2512",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000015", "input_cache_read": "0.000000015", "prompt": "0.00000015"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "meta/muse-spark-1.2"): {
         "context_length": 1048576,
@@ -1998,6 +9844,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.0025", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "meta/muse-spark-1.2",
+            "pricing_id": "openrouter:meta/muse-spark-1.2:2026-11-01:2ab3017af6136f42",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.15000000", "input": "1.25000000", "output": "4.25000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "2ab3017af6136f4276823ae5da710b918c25f7bd0f07631bc37eee27c79bcc31",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "meta/muse-spark-1.2",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00000425",
+                "input_cache_read": "0.00000015",
+                "prompt": "0.00000125",
+                "web_search": "0.0025",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.5-27b"): {
         "context_length": 262144,
@@ -2006,6 +9894,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.5-27b",
+            "pricing_id": "openrouter:qwen/qwen3.5-27b:2026-11-01:4b708c4ec8adcdf6",
+            "provider": "openrouter",
+            "rates": {"input": "0.26000000", "output": "2.6000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4b708c4ec8adcdf6e8dc69fcc7828cef4ce20c017f081b375e8f652691656b14",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.5-27b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000026", "prompt": "0.00000026"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-6-sol-pro"): {
         "context_length": 1050000,
@@ -2020,6 +9943,70 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-6-sol-pro",
+            "pricing_id": "openrouter:openai/gpt-6-sol-pro:2026-11-01:a21da5d76caa0cda",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.2000000", "cache_write": "2.5000000", "input": "2.000000", "output": "10.00000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.4000000",
+                        "cache_write": "5.000000",
+                        "input": "4.000000",
+                        "output": "15.000000",
+                    },
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "a21da5d76caa0cdabc9f6c9a0e4ff0e08c4f06b78f2969528bceec434435cd6f",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-6-sol-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00001",
+                "input_cache_read": "0.0000002",
+                "input_cache_write": "0.0000025",
+                "overrides": [
+                    {
+                        "completion": "0.000015",
+                        "input_cache_read": "0.0000004",
+                        "input_cache_write": "0.000005",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.000004",
+                    }
+                ],
+                "prompt": "0.000002",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "thinkingmachines/inkling-small"): {
         "context_length": 524288,
@@ -2033,6 +10020,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "thinkingmachines/inkling-small",
+            "pricing_id": "openrouter:thinkingmachines/inkling-small:2026-11-01:7c552d53fc309297",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.1000000", "input": "0.45000000", "output": "1.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "7c552d53fc30929744e4cddf02a1a3e97e6ba8789ade03b2b381ff826d5e6328",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "thinkingmachines/inkling-small",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000012", "input_cache_read": "0.0000001", "prompt": "0.00000045"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen-2.5-7b-instruct"): {
         "context_length": 32768,
@@ -2041,6 +10063,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen-2.5-7b-instruct",
+            "pricing_id": "openrouter:qwen/qwen-2.5-7b-instruct:2026-11-01:6c22e2f57c2a7874",
+            "provider": "openrouter",
+            "rates": {"input": "0.1000000", "output": "0.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "6c22e2f57c2a7874ed8a5440e66402786ab94fa93f5e7d289cb6c979c50fc69f",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen-2.5-7b-instruct",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000002", "prompt": "0.0000001"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "meituan/longcat-2.0"): {
         "context_length": 1048756,
@@ -2049,6 +10106,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "meituan/longcat-2.0",
+            "pricing_id": "openrouter:meituan/longcat-2.0:2026-11-01:95f9503e69dfb1bc",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.006000000", "input": "0.3000000", "output": "1.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "95f9503e69dfb1bca6f5fd87cac596faa864d40a0a5b1a3db090f888cdad7fff",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "meituan/longcat-2.0",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000012", "input_cache_read": "0.000000006", "prompt": "0.0000003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "nvidia/nemotron-3-nano-30b-a3b"): {
         "context_length": 262144,
@@ -2057,6 +10149,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "nvidia/nemotron-3-nano-30b-a3b",
+            "pricing_id": "openrouter:nvidia/nemotron-3-nano-30b-a3b:2026-11-01:bfda6af2dd1af5fa",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.012000000", "input": "0.06000000", "output": "0.24000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "bfda6af2dd1af5fa85283f0d75237b0a340d8f5c795c95577c3ef65c5f21dd90",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "nvidia/nemotron-3-nano-30b-a3b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000024", "input_cache_read": "0.000000012", "prompt": "0.00000006"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "deepseek/deepseek-v3.1-terminus"): {
         "context_length": 163840,
@@ -2065,6 +10192,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "deepseek/deepseek-v3.1-terminus",
+            "pricing_id": "openrouter:deepseek/deepseek-v3.1-terminus:2026-11-01:d670a5718d81faf9",
+            "provider": "openrouter",
+            "rates": {"input": "0.27000000", "output": "1.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d670a5718d81faf909bf4fff3ba0f975294bebdf499e8721709e803a7381311a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "deepseek/deepseek-v3.1-terminus",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000001", "prompt": "0.00000027"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/mistral-medium-3-5"): {
         "context_length": 262144,
@@ -2078,6 +10240,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/mistral-medium-3-5",
+            "pricing_id": "openrouter:mistralai/mistral-medium-3-5:2026-11-01:89d3efd5d9920bda",
+            "provider": "openrouter",
+            "rates": {"input": "1.5000000", "output": "7.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "89d3efd5d9920bda127663888ca526d41d42ac312a28b347679a2179af1b4c0f",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/mistral-medium-3-5",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000075", "prompt": "0.0000015"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.6-terra-pro"): {
         "context_length": 1050000,
@@ -2092,6 +10289,75 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.6-terra-pro",
+            "pricing_id": "openrouter:openai/gpt-5.6-terra-pro:2026-11-01:3dd6e5c7f7445321",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.2000000",
+                "cache_write": "2.5000000",
+                "input": "2.000000",
+                "output": "12.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.4000000",
+                        "cache_write": "5.000000",
+                        "input": "4.000000",
+                        "output": "18.000000",
+                    },
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "3dd6e5c7f74453210753ba103a7a73446f643b70601b2d82ae5acd8575c5192e",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.6-terra-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000012",
+                "input_cache_read": "0.0000002",
+                "input_cache_write": "0.0000025",
+                "overrides": [
+                    {
+                        "completion": "0.000018",
+                        "input_cache_read": "0.0000004",
+                        "input_cache_write": "0.000005",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.000004",
+                    }
+                ],
+                "prompt": "0.000002",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/mistral-small-2603"): {
         "context_length": 262144,
@@ -2105,6 +10371,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/mistral-small-2603",
+            "pricing_id": "openrouter:mistralai/mistral-small-2603:2026-11-01:8df1b0e3a33a400f",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.015000000", "input": "0.15000000", "output": "0.6000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "8df1b0e3a33a400fbe80c830621cb8ccfe88c23a7b4427bb6785c1a4e5241a93",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/mistral-small-2603",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000006", "input_cache_read": "0.000000015", "prompt": "0.00000015"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "anthropic/claude-opus-4.1"): {
         "context_length": 200000,
@@ -2114,6 +10415,56 @@ OPENROUTER_SPECS = {
         "preferred_edit_protocol": "claude_code",
         "drop_prior_reasoning": True,
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "anthropic/claude-opus-4.1",
+            "pricing_id": "openrouter:anthropic/claude-opus-4.1:2026-11-01:201f797c9184e31b",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "1.5000000",
+                "cache_write": "18.75000000",
+                "cache_write_1h": "30.00000",
+                "input": "15.000000",
+                "output": "75.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "201f797c9184e31be5bb27a88fd09fcb66d9038afcbe471373bd760555c3a376",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "anthropic/claude-opus-4.1",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000075",
+                "input_cache_read": "0.0000015",
+                "input_cache_write": "0.00001875",
+                "input_cache_write_1h": "0.00003",
+                "prompt": "0.000015",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/ministral-3b-2512"): {
         "context_length": 131072,
@@ -2122,6 +10473,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/ministral-3b-2512",
+            "pricing_id": "openrouter:mistralai/ministral-3b-2512:2026-11-01:0323e55e27450195",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.01000000", "input": "0.1000000", "output": "0.1000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "0323e55e2745019567bd252de93a6d18119b88d5c55323fa71a884e692f4080a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/ministral-3b-2512",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000001", "input_cache_read": "0.00000001", "prompt": "0.0000001"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3-coder-30b-a3b-instruct"): {
         "context_length": 262144,
@@ -2130,6 +10516,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3-coder-30b-a3b-instruct",
+            "pricing_id": "openrouter:qwen/qwen3-coder-30b-a3b-instruct:2026-11-01:659b397c72851384",
+            "provider": "openrouter",
+            "rates": {"input": "0.07000000", "output": "0.28000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "659b397c7285138433853ccf5a02986f10fb6d7600ccca42220b3252916f22a9",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3-coder-30b-a3b-instruct",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000028", "prompt": "0.00000007"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/mistral-medium-3.1"): {
         "context_length": 131072,
@@ -2138,6 +10559,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/mistral-medium-3.1",
+            "pricing_id": "openrouter:mistralai/mistral-medium-3.1:2026-11-01:fac1af8010b71cd5",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.04000000", "input": "0.4000000", "output": "2.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "fac1af8010b71cd58388b9670c445e0c1c6722c45895f3b3e45f57f81ad52bc0",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/mistral-medium-3.1",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000002", "input_cache_read": "0.00000004", "prompt": "0.0000004"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.5-plus-02-15"): {
         "context_length": 1000000,
@@ -2146,6 +10602,52 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.5-plus-02-15",
+            "pricing_id": "openrouter:qwen/qwen3.5-plus-02-15:2026-11-01:98ab33f259ca25c8",
+            "provider": "openrouter",
+            "rates": {"input": "0.26000000", "output": "1.56000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"input": "0.325000000", "output": "1.95000000"},
+                    "when": {"min_input_tokens": 256001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "98ab33f259ca25c8b31290ab666e42b1ef055d0265cd47a90f076ca4ea070ddf",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.5-plus-02-15",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00000156",
+                "overrides": [{"completion": "0.00000195", "min_prompt_tokens": 256000, "prompt": "0.000000325"}],
+                "prompt": "0.00000026",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "moonshotai/kimi-k2-thinking"): {
         "context_length": 262144,
@@ -2154,6 +10656,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "moonshotai/kimi-k2-thinking",
+            "pricing_id": "openrouter:moonshotai/kimi-k2-thinking:2026-11-01:916afb83ecadcd93",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.15000000", "input": "0.6000000", "output": "2.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "916afb83ecadcd93b127c3afac1577caf7e13f5ff485dcdb33c5f15a773acc8f",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "moonshotai/kimi-k2-thinking",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000025", "input_cache_read": "0.00000015", "prompt": "0.0000006"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "bytedance-seed/seed-1.6-flash"): {
         "context_length": 262144,
@@ -2162,6 +10699,52 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "bytedance-seed/seed-1.6-flash",
+            "pricing_id": "openrouter:bytedance-seed/seed-1.6-flash:2026-11-01:72ea29cd29bc70d9",
+            "provider": "openrouter",
+            "rates": {"input": "0.075000000", "output": "0.3000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"input": "0.1000000", "output": "0.8000000"},
+                    "when": {"min_input_tokens": 128001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "72ea29cd29bc70d9788e75f520863d9c6d9366d50397d8844563c24c1fe95166",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "bytedance-seed/seed-1.6-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000003",
+                "overrides": [{"completion": "0.0000008", "min_prompt_tokens": 128000, "prompt": "0.0000001"}],
+                "prompt": "0.000000075",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "tencent/hy3-preview"): {
         "context_length": 262144,
@@ -2175,6 +10758,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "tencent/hy3-preview",
+            "pricing_id": "openrouter:tencent/hy3-preview:2026-11-01:e9107c7ee5c5316e",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.06000000", "input": "0.18000000", "output": "0.6000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "e9107c7ee5c5316efc81e09fe21d6a5e1a0968ec40bb24ca3ee5edd1de6f115f",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "tencent/hy3-preview",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000006", "input_cache_read": "0.00000006", "prompt": "0.00000018"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/ministral-14b-2512"): {
         "context_length": 262144,
@@ -2183,6 +10801,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/ministral-14b-2512",
+            "pricing_id": "openrouter:mistralai/ministral-14b-2512:2026-11-01:3b99847b5cc4ff38",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.02000000", "input": "0.2000000", "output": "0.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "3b99847b5cc4ff386cc41e7f73907956f76acd6d3005bd3932d662fafb896cf1",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/ministral-14b-2512",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000002", "input_cache_read": "0.00000002", "prompt": "0.0000002"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "bytedance-seed/seed-2.0-lite"): {
         "context_length": 262144,
@@ -2196,6 +10849,52 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "bytedance-seed/seed-2.0-lite",
+            "pricing_id": "openrouter:bytedance-seed/seed-2.0-lite:2026-11-01:c29158b1a51e970b",
+            "provider": "openrouter",
+            "rates": {"input": "0.25000000", "output": "2.000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"input": "0.5000000", "output": "4.000000"},
+                    "when": {"min_input_tokens": 128001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "c29158b1a51e970bdb3b87be1b98da7fd7bc50168e0ce300ef5374febf572275",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "bytedance-seed/seed-2.0-lite",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000002",
+                "overrides": [{"completion": "0.000004", "min_prompt_tokens": 128000, "prompt": "0.0000005"}],
+                "prompt": "0.00000025",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-oss-safeguard-20b"): {
         "context_length": 131072,
@@ -2204,6 +10903,45 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-oss-safeguard-20b",
+            "pricing_id": "openrouter:openai/gpt-oss-safeguard-20b:2026-11-01:461d4541c58d7cde",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.0375000000", "input": "0.075000000", "output": "0.3000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "461d4541c58d7cdee831b65d3041fd1feb47579f2d3a28a5ce239938c7379cb4",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-oss-safeguard-20b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000003",
+                "input_cache_read": "0.0000000375",
+                "prompt": "0.000000075",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/devstral-2512"): {
         "context_length": 262144,
@@ -2212,6 +10950,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/devstral-2512",
+            "pricing_id": "openrouter:mistralai/devstral-2512:2026-11-01:fac1af8010b71cd5",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.04000000", "input": "0.4000000", "output": "2.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "fac1af8010b71cd58388b9670c445e0c1c6722c45895f3b3e45f57f81ad52bc0",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/devstral-2512",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000002", "input_cache_read": "0.00000004", "prompt": "0.0000004"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "bytedance-seed/seed-2.0-mini"): {
         "context_length": 262144,
@@ -2225,6 +10998,52 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "bytedance-seed/seed-2.0-mini",
+            "pricing_id": "openrouter:bytedance-seed/seed-2.0-mini:2026-11-01:4fb493fdff1d6c7e",
+            "provider": "openrouter",
+            "rates": {"input": "0.1000000", "output": "0.4000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"input": "0.2000000", "output": "0.8000000"},
+                    "when": {"min_input_tokens": 128001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4fb493fdff1d6c7e237e33ef9900f9afa8d6dcd5d6c067bf63b6e76f567ab628",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "bytedance-seed/seed-2.0-mini",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000004",
+                "overrides": [{"completion": "0.0000008", "min_prompt_tokens": 128000, "prompt": "0.0000002"}],
+                "prompt": "0.0000001",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3-30b-a3b"): {
         "context_length": 40960,
@@ -2233,6 +11052,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3-30b-a3b",
+            "pricing_id": "openrouter:qwen/qwen3-30b-a3b:2026-11-01:f5b678564896e7b0",
+            "provider": "openrouter",
+            "rates": {"input": "0.12000000", "output": "0.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "f5b678564896e7b0b90a28d571b8a35056906cdf2ab13e4b78511a2205cf9d38",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3-30b-a3b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000005", "prompt": "0.00000012"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "moonshotai/kimi-k2-0905"): {
         "context_length": 262144,
@@ -2241,6 +11095,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "moonshotai/kimi-k2-0905",
+            "pricing_id": "openrouter:moonshotai/kimi-k2-0905:2026-11-01:62d7fc9caa91bf66",
+            "provider": "openrouter",
+            "rates": {"input": "0.6000000", "output": "2.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "62d7fc9caa91bf66a4d328e5b6b001eea356e921410db989bb964e55a39a29ba",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "moonshotai/kimi-k2-0905",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000025", "prompt": "0.0000006"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "bytedance-seed/seed-2-1-turbo"): {
         "context_length": 262144,
@@ -2249,6 +11138,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "bytedance-seed/seed-2-1-turbo",
+            "pricing_id": "openrouter:bytedance-seed/seed-2-1-turbo:2026-11-01:02ad927dff22f32c",
+            "provider": "openrouter",
+            "rates": {"input": "0.5000000", "output": "2.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "02ad927dff22f32cd0446a2f07dd64e7f9462056967de40db7939aa68931c70b",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "bytedance-seed/seed-2-1-turbo",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000025", "prompt": "0.0000005"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "fireworks/ember-1"): {
         "context_length": 1048576,
@@ -2262,6 +11186,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "fireworks/ember-1",
+            "pricing_id": "openrouter:fireworks/ember-1:2026-11-01:2b98934c3639ec98",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.3000000", "input": "3.000000", "output": "15.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "2b98934c3639ec98ee6cb52aee05da12b4c4f652918b8f28e9c01be148a04c50",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "fireworks/ember-1",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000015", "input_cache_read": "0.0000003", "prompt": "0.000003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-4o-2024-08-06"): {
         "context_length": 128000,
@@ -2270,6 +11229,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-4o-2024-08-06",
+            "pricing_id": "openrouter:openai/gpt-4o-2024-08-06:2026-11-01:000bc8377b9210d6",
+            "provider": "openrouter",
+            "rates": {"cache_read": "1.25000000", "input": "2.5000000", "output": "10.00000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "000bc8377b9210d6d3a57c5526fab3dcf6e056cadcb80988b81b35ebcdd0ebf3",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-4o-2024-08-06",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00001", "input_cache_read": "0.00000125", "prompt": "0.0000025"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "z-ai/glm-5-turbo"): {
         "context_length": 202752,
@@ -2278,6 +11272,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "z-ai/glm-5-turbo",
+            "pricing_id": "openrouter:z-ai/glm-5-turbo:2026-11-01:f415bc1578e5a3c8",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.24000000", "input": "1.2000000", "output": "4.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "f415bc1578e5a3c8b862fe528d7245e5d734e9b6f25e999be34ce5ba072836ba",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "z-ai/glm-5-turbo",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000004", "input_cache_read": "0.00000024", "prompt": "0.0000012"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3-14b"): {
         "context_length": 40960,
@@ -2286,6 +11315,37 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3-14b",
+            "pricing_id": "openrouter:qwen/qwen3-14b:2026-11-01:adee40dc5c6f5f31",
+            "provider": "openrouter",
+            "rates": {"input": "0.12000000", "output": "0.24000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "adee40dc5c6f5f31fd07fafb2dc145539d2fd1f7f052eda3494c9436ccfa9761",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "qwen/qwen3-14b", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000024", "prompt": "0.00000012"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "x-ai/grok-build-0.1"): {
         "context_length": 256000,
@@ -2294,6 +11354,63 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.005", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "x-ai/grok-build-0.1",
+            "pricing_id": "openrouter:x-ai/grok-build-0.1:2026-11-01:4db67eb43b46fda5",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.2000000", "input": "1.000000", "output": "2.000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "0.4000000", "input": "2.000000", "output": "4.000000"},
+                    "when": {"min_input_tokens": 200001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4db67eb43b46fda5b5a6a6227ec1a0d985f45dffd6a72890755a3531368c54e0",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "x-ai/grok-build-0.1",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000002",
+                "input_cache_read": "0.0000002",
+                "overrides": [
+                    {
+                        "completion": "0.000004",
+                        "input_cache_read": "0.0000004",
+                        "min_prompt_tokens": 200000,
+                        "prompt": "0.000002",
+                    }
+                ],
+                "prompt": "0.000001",
+                "web_search": "0.005",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen-2.5-72b-instruct"): {
         "context_length": 32768,
@@ -2302,6 +11419,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen-2.5-72b-instruct",
+            "pricing_id": "openrouter:qwen/qwen-2.5-72b-instruct:2026-11-01:9b0642b3c5e74edd",
+            "provider": "openrouter",
+            "rates": {"input": "0.36000000", "output": "0.4000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "9b0642b3c5e74edd77b05a9639c2c46dec97abbe63eab6bce9e6ebe29246db56",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen-2.5-72b-instruct",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000004", "prompt": "0.00000036"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "aion-labs/aion-3.5"): {
         "context_length": 262144,
@@ -2315,6 +11467,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "aion-labs/aion-3.5",
+            "pricing_id": "openrouter:aion-labs/aion-3.5:2026-11-01:6f5543c9165693a2",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.75000000", "input": "3.000000", "output": "6.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "6f5543c9165693a2197a3b30fee8a4921e00f2131fe8ef5b1e70c4ff4cdfe43b",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "aion-labs/aion-3.5",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000006", "input_cache_read": "0.00000075", "prompt": "0.000003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "poolside/laguna-xs-2.1"): {
         "context_length": 262144,
@@ -2323,6 +11510,30 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "openrouter:poolside/laguna-xs-2.1:2026-11-01",
+            "provider": "openrouter",
+            "model": "poolside/laguna-xs-2.1",
+            "status": "unverified",
+            "billing_mode": "gateway",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://openrouter.ai/api/v1/models",
+                    "model_id": "poolside/laguna-xs-2.1",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "poolside/laguna-xs-2.1: absent from the checked public gateway model feed; no current "
+            "exact-variant rate verified.",
+        },
     },
     ("openrouter", "moonshotai/kimi-k2"): {
         "context_length": 131072,
@@ -2331,6 +11542,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "moonshotai/kimi-k2",
+            "pricing_id": "openrouter:moonshotai/kimi-k2:2026-11-01:1326be081b4dddbb",
+            "provider": "openrouter",
+            "rates": {"input": "0.57000000", "output": "2.3000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "1326be081b4dddbbf2ae514a7351f0ecf2ea6c23248342db854e3e7abd8832e5",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "moonshotai/kimi-k2",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000023", "prompt": "0.00000057"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemini-nano-banana-2.1"): {
         "context_length": 65536,
@@ -2344,6 +11590,50 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image_output: published gateway pricing requires a separately observed billing quantity"
+            ],
+            "model": "google/gemini-nano-banana-2.1",
+            "pricing_id": "openrouter:google/gemini-nano-banana-2.1:2026-11-01:60702527cab9a86d",
+            "provider": "openrouter",
+            "rates": {"input": "1.5000000", "output": "7.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "60702527cab9a86db56e2a1a83c96ff2736e06ea0c38e82ca4269f0785de1198",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-nano-banana-2.1",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000075",
+                "image_output": "0.00003",
+                "prompt": "0.0000015",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "elorian/glimpse"): {
         "context_length": 262144,
@@ -2352,6 +11642,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "elorian/glimpse",
+            "pricing_id": "openrouter:elorian/glimpse:2026-11-01:c36f20238864a1c9",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.06000000", "input": "0.6000000", "output": "3.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "c36f20238864a1c92e6261977184a512c96306b588e1d56630669a6a5e77e285",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "elorian/glimpse",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000003", "input_cache_read": "0.00000006", "prompt": "0.0000006"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "z-ai/glm-5v-turbo"): {
         "context_length": 202752,
@@ -2360,6 +11685,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "z-ai/glm-5v-turbo",
+            "pricing_id": "openrouter:z-ai/glm-5v-turbo:2026-11-01:f415bc1578e5a3c8",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.24000000", "input": "1.2000000", "output": "4.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "f415bc1578e5a3c8b862fe528d7245e5d734e9b6f25e999be34ce5ba072836ba",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "z-ai/glm-5v-turbo",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000004", "input_cache_read": "0.00000024", "prompt": "0.0000012"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-chat-latest"): {
         "context_length": 400000,
@@ -2369,6 +11729,48 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-chat-latest",
+            "pricing_id": "openrouter:openai/gpt-chat-latest:2026-11-01:ba1e07117572a809",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.5000000", "input": "5.000000", "output": "30.00000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "ba1e07117572a809dad6028009f5bf2cfdd5f67e9188ba0ccaedbec164cd7dd8",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-chat-latest",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00003",
+                "input_cache_read": "0.0000005",
+                "prompt": "0.000005",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "aion-labs/aion-3.0"): {
         "context_length": 131072,
@@ -2377,6 +11779,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "aion-labs/aion-3.0",
+            "pricing_id": "openrouter:aion-labs/aion-3.0:2026-11-01:6f5543c9165693a2",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.75000000", "input": "3.000000", "output": "6.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "6f5543c9165693a2197a3b30fee8a4921e00f2131fe8ef5b1e70c4ff4cdfe43b",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "aion-labs/aion-3.0",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000006", "input_cache_read": "0.00000075", "prompt": "0.000003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3.5-plus-20260420"): {
         "context_length": 1000000,
@@ -2385,6 +11822,60 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3.5-plus-20260420",
+            "pricing_id": "openrouter:qwen/qwen3.5-plus-20260420:2026-11-01:c1528a3fb435bbfc",
+            "provider": "openrouter",
+            "rates": {"cache_write": "0.375000000", "input": "0.3000000", "output": "1.8000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_write": "0.46875000000", "input": "0.375000000", "output": "2.25000000"},
+                    "when": {"min_input_tokens": 256001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "c1528a3fb435bbfcb2deb74c2a2eecbcf2165f41b5511a1a73595cc04d8f0c5c",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3.5-plus-20260420",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000018",
+                "input_cache_write": "0.000000375",
+                "overrides": [
+                    {
+                        "completion": "0.00000225",
+                        "input_cache_write": "0.00000046875",
+                        "min_prompt_tokens": 256000,
+                        "prompt": "0.000000375",
+                    }
+                ],
+                "prompt": "0.0000003",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "stepfun/step-3.5-flash"): {
         "context_length": 262144,
@@ -2393,6 +11884,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "stepfun/step-3.5-flash",
+            "pricing_id": "openrouter:stepfun/step-3.5-flash:2026-11-01:68010eae296ddcac",
+            "provider": "openrouter",
+            "rates": {"input": "0.1000000", "output": "0.3000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "68010eae296ddcacb24b1c0320d1b183b6bdfb1fd165058030eb8f3d9670d1c7",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "stepfun/step-3.5-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000003", "prompt": "0.0000001"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "nex-agi/nex-n2.5-pro"): {
         "context_length": 262144,
@@ -2406,6 +11932,45 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "nex-agi/nex-n2.5-pro",
+            "pricing_id": "openrouter:nex-agi/nex-n2.5-pro:2026-11-01:f8ee834145c21c3b",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.015000000", "input": "0.075000000", "output": "0.25000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "f8ee834145c21c3b4a47f7d251509dd2694cb6a7eae3c832839f1b369f814332",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "nex-agi/nex-n2.5-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00000025",
+                "input_cache_read": "0.000000015",
+                "prompt": "0.000000075",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen-plus"): {
         "context_length": 1000000,
@@ -2414,6 +11979,68 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen-plus",
+            "pricing_id": "openrouter:qwen/qwen-plus:2026-11-01:bcc5ba7f87cac8e3",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.052000000",
+                "cache_write": "0.325000000",
+                "input": "0.26000000",
+                "output": "0.78000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.156000000",
+                        "cache_write": "0.975000000",
+                        "input": "0.78000000",
+                        "output": "2.34000000",
+                    },
+                    "when": {"min_input_tokens": 256001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "bcc5ba7f87cac8e3a8ff7cf448d1603f2f4ee5c55ff62ca4e0d5930900b0cf34",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "qwen/qwen-plus", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00000078",
+                "input_cache_read": "0.000000052",
+                "input_cache_write": "0.000000325",
+                "overrides": [
+                    {
+                        "completion": "0.00000234",
+                        "input_cache_read": "0.000000156",
+                        "input_cache_write": "0.000000975",
+                        "min_prompt_tokens": 256000,
+                        "prompt": "0.00000078",
+                    }
+                ],
+                "prompt": "0.00000026",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "aion-labs/aion-3.5-mini"): {
         "context_length": 262144,
@@ -2427,6 +12054,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "aion-labs/aion-3.5-mini",
+            "pricing_id": "openrouter:aion-labs/aion-3.5-mini:2026-11-01:eb384a8a77c2fc02",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.18000000", "input": "0.7000000", "output": "1.4000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "eb384a8a77c2fc02f2175b234759aa576b59e21ec4dc0d986b04befa42ff3493",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "aion-labs/aion-3.5-mini",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000014", "input_cache_read": "0.00000018", "prompt": "0.0000007"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "meta-llama/llama-3.1-70b-instruct"): {
         "context_length": 131072,
@@ -2435,6 +12097,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "meta-llama/llama-3.1-70b-instruct",
+            "pricing_id": "openrouter:meta-llama/llama-3.1-70b-instruct:2026-11-01:47b69f8204e14031",
+            "provider": "openrouter",
+            "rates": {"input": "0.4000000", "output": "0.4000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "47b69f8204e14031c585706e646462150aea6d23bf5609b6d65354fb4e826c83",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "meta-llama/llama-3.1-70b-instruct",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000004", "prompt": "0.0000004"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "z-ai/glm-4.6v"): {
         "context_length": 131072,
@@ -2443,6 +12140,37 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "z-ai/glm-4.6v",
+            "pricing_id": "openrouter:z-ai/glm-4.6v:2026-11-01:290ce2398ee123df",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.055000000", "input": "0.3000000", "output": "0.9000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "290ce2398ee123dff28698e391466737713d5d56d2cfcd28eaf99dc4cb13862b",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "z-ai/glm-4.6v", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000009", "input_cache_read": "0.000000055", "prompt": "0.0000003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "inception/mercury-2"): {
         "context_length": 128000,
@@ -2456,6 +12184,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "inception/mercury-2",
+            "pricing_id": "openrouter:inception/mercury-2:2026-11-01:7497e00d7b20a01f",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.025000000", "input": "0.25000000", "output": "0.75000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "7497e00d7b20a01f67872a0d3892077a5c31cc4469dca1887021c1038216bc23",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "inception/mercury-2",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000075", "input_cache_read": "0.000000025", "prompt": "0.00000025"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemini-3-pro-image"): {
         "context_length": 131072,
@@ -2464,6 +12227,64 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image: published gateway pricing requires a separately observed billing quantity",
+                "image_output: published gateway pricing requires a separately observed billing quantity",
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "input_audio_cache: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "google/gemini-3-pro-image",
+            "pricing_id": "openrouter:google/gemini-3-pro-image:2026-11-01:804197975d10c095",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.2000000",
+                "cache_write": "0.375000000",
+                "input": "2.000000",
+                "output": "12.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "804197975d10c0950bad7a0d2846458f3629893386877a564af1143bbf007f96",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-3-pro-image",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.000002",
+                "completion": "0.000012",
+                "image": "0.000002",
+                "image_output": "0.00012",
+                "input_audio_cache": "0.0000002",
+                "input_cache_read": "0.0000002",
+                "input_cache_write": "0.000000375",
+                "internal_reasoning": "0.000012",
+                "prompt": "0.000002",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3-coder-flash"): {
         "context_length": 1000000,
@@ -2472,6 +12293,90 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3-coder-flash",
+            "pricing_id": "openrouter:qwen/qwen3-coder-flash:2026-11-01:71a124314529944d",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.039000000",
+                "cache_write": "0.24375000000",
+                "input": "0.195000000",
+                "output": "0.975000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {
+                        "cache_read": "0.065000000",
+                        "cache_write": "0.40625000000",
+                        "input": "0.325000000",
+                        "output": "1.625000000",
+                    },
+                    "when": {"min_input_tokens": 32001},
+                },
+                {
+                    "id": "upstream_override_1",
+                    "priority": 1,
+                    "rates": {
+                        "cache_read": "0.104000000",
+                        "cache_write": "0.65000000",
+                        "input": "0.52000000",
+                        "output": "2.6000000",
+                    },
+                    "when": {"min_input_tokens": 128001},
+                },
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "71a124314529944daffa14b619ac2f66236fc8743fda6c4164a74cbffa162993",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3-coder-flash",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000000975",
+                "input_cache_read": "0.000000039",
+                "input_cache_write": "0.00000024375",
+                "overrides": [
+                    {
+                        "completion": "0.000001625",
+                        "input_cache_read": "0.000000065",
+                        "input_cache_write": "0.00000040625",
+                        "min_prompt_tokens": 32000,
+                        "prompt": "0.000000325",
+                    },
+                    {
+                        "completion": "0.0000026",
+                        "input_cache_read": "0.000000104",
+                        "input_cache_write": "0.00000065",
+                        "min_prompt_tokens": 128000,
+                        "prompt": "0.00000052",
+                    },
+                ],
+                "prompt": "0.000000195",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "z-ai/glm-4.5"): {
         "context_length": 131072,
@@ -2480,6 +12385,37 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "z-ai/glm-4.5",
+            "pricing_id": "openrouter:z-ai/glm-4.5:2026-11-01:2dc99e19a451f2fa",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.11000000", "input": "0.6000000", "output": "2.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "2dc99e19a451f2faab96fc27d32c189ade8c62d721e94edc82a2e2fdfa25c781",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "z-ai/glm-4.5", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000022", "input_cache_read": "0.00000011", "prompt": "0.0000006"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "aion-labs/aion-2.0"): {
         "context_length": 131072,
@@ -2488,6 +12424,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "aion-labs/aion-2.0",
+            "pricing_id": "openrouter:aion-labs/aion-2.0:2026-11-01:66cd349078307f4d",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.2000000", "input": "0.8000000", "output": "1.6000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "66cd349078307f4d0422d8c1c828f52745547027e9c50f6012ce79b26d21b86c",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "aion-labs/aion-2.0",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000016", "input_cache_read": "0.0000002", "prompt": "0.0000008"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemma-4-26b-a4b-it:free"): {
         "context_length": 262144,
@@ -2496,6 +12467,42 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "cache_policy": {"cache_read": "included", "cache_write": "included"},
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "google/gemma-4-26b-a4b-it:free",
+            "pricing_id": "openrouter:google/gemma-4-26b-a4b-it:free:2026-11-01:4e00883b573f5c19",
+            "provider": "openrouter",
+            "rates": {"input": "0", "output": "0"},
+            "routing_variant": "free",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4e00883b573f5c198c8051c7521c8183ae4d381b980ffc93781297cff40c372a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemma-4-26b-a4b-it:free",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0", "prompt": "0"},
+            "verified_free": True,
+        },
     },
     ("openrouter", "openai/gpt-5.1-codex"): {
         "context_length": 400000,
@@ -2510,6 +12517,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.1-codex",
+            "pricing_id": "openrouter:openai/gpt-5.1-codex:2026-11-01:235a179171a2faa7",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.13000000", "input": "1.25000000", "output": "10.00000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "235a179171a2faa7733d46b672ecb64d540c4b6d709234d6e1ee5bf2d0d60139",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.1-codex",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00001",
+                "input_cache_read": "0.00000013",
+                "prompt": "0.00000125",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "amazon/nova-2-lite-v1"): {
         "context_length": 1000000,
@@ -2518,6 +12567,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "amazon/nova-2-lite-v1",
+            "pricing_id": "openrouter:amazon/nova-2-lite-v1:2026-11-01:f465dff8f233913c",
+            "provider": "openrouter",
+            "rates": {"input": "0.3000000", "output": "2.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "f465dff8f233913cbbef70619e30a9198c472cf6bcc6d1c353b30da255bc1da2",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "amazon/nova-2-lite-v1",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000025", "prompt": "0.0000003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "cohere/command-a-plus"): {
         "context_length": 192000,
@@ -2526,6 +12610,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "cohere/command-a-plus",
+            "pricing_id": "openrouter:cohere/command-a-plus:2026-11-01:7a4b71a1c9795dd3",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.15000000", "input": "0.3000000", "output": "1.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "7a4b71a1c9795dd36b54e7ac4742f767d5aedbc617707993f6be8c655d948658",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "cohere/command-a-plus",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000015", "input_cache_read": "0.00000015", "prompt": "0.0000003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "inclusionai/ling-3.0-flash-vl"): {
         "context_length": 131072,
@@ -2534,6 +12653,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "inclusionai/ling-3.0-flash-vl",
+            "pricing_id": "openrouter:inclusionai/ling-3.0-flash-vl:2026-11-01:1223402e2ebae008",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.012000000", "input": "0.06000000", "output": "0.18000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "1223402e2ebae008cac9d0174ab546502101b9a8277b28252178f310c8505ca4",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "inclusionai/ling-3.0-flash-vl",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000018", "input_cache_read": "0.000000012", "prompt": "0.00000006"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.1-codex-mini"): {
         "context_length": 400000,
@@ -2548,6 +12702,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.1-codex-mini",
+            "pricing_id": "openrouter:openai/gpt-5.1-codex-mini:2026-11-01:337aa9b1a85b9c07",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.03000000", "input": "0.25000000", "output": "2.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "337aa9b1a85b9c07dbbafe5f19d573ffe5be1a9b21375773cdc3cb514cd7e2ce",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.1-codex-mini",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000002",
+                "input_cache_read": "0.00000003",
+                "prompt": "0.00000025",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/mistral-large-2512"): {
         "context_length": 262144,
@@ -2556,6 +12752,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/mistral-large-2512",
+            "pricing_id": "openrouter:mistralai/mistral-large-2512:2026-11-01:3711fd633989bae0",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.05000000", "input": "0.5000000", "output": "1.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "3711fd633989bae07da1de6e2838ae56260c457f7c99fdebfe0408ccad6df8e8",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/mistral-large-2512",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000015", "input_cache_read": "0.00000005", "prompt": "0.0000005"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemini-3.1-pro-preview-customtools"): {
         "context_length": 1048576,
@@ -2569,6 +12800,79 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image: published gateway pricing requires a separately observed billing quantity",
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "input_audio_cache: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "google/gemini-3.1-pro-preview-customtools",
+            "pricing_id": "openrouter:google/gemini-3.1-pro-preview-customtools:2026-11-01:9d9ad482a1b1a316",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.2000000",
+                "cache_write": "0.375000000",
+                "input": "2.000000",
+                "output": "12.000000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "0.4000000", "input": "4.000000", "output": "18.000000"},
+                    "when": {"min_input_tokens": 200001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "9d9ad482a1b1a316872efe1f1fcb4256ce95719456dd822384c31f72e6b22bb7",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-3.1-pro-preview-customtools",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.000002",
+                "completion": "0.000012",
+                "image": "0.000002",
+                "input_audio_cache": "0.0000002",
+                "input_cache_read": "0.0000002",
+                "input_cache_write": "0.000000375",
+                "internal_reasoning": "0.000012",
+                "overrides": [
+                    {
+                        "audio": "0.000004",
+                        "completion": "0.000018",
+                        "input_audio_cache": "0.0000004",
+                        "input_cache_read": "0.0000004",
+                        "min_prompt_tokens": 200000,
+                        "prompt": "0.000004",
+                    }
+                ],
+                "prompt": "0.000002",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/o3"): {
         "context_length": 200000,
@@ -2578,6 +12882,44 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/o3",
+            "pricing_id": "openrouter:openai/o3:2026-11-01:2f914d73f14926e7",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.5000000", "input": "2.000000", "output": "8.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "2f914d73f14926e7c5864fe692f4861b315bdf7d2b9d4ce38fd764e2888ac3b4",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "openai/o3", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000008",
+                "input_cache_read": "0.0000005",
+                "prompt": "0.000002",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "aion-labs/aion-3.0-mini"): {
         "context_length": 131072,
@@ -2586,6 +12928,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "aion-labs/aion-3.0-mini",
+            "pricing_id": "openrouter:aion-labs/aion-3.0-mini:2026-11-01:eb384a8a77c2fc02",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.18000000", "input": "0.7000000", "output": "1.4000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "eb384a8a77c2fc02f2175b234759aa576b59e21ec4dc0d986b04befa42ff3493",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "aion-labs/aion-3.0-mini",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000014", "input_cache_read": "0.00000018", "prompt": "0.0000007"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "meta/muse-spark-1.1"): {
         "context_length": 1048576,
@@ -2599,6 +12976,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.0025", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "meta/muse-spark-1.1",
+            "pricing_id": "openrouter:meta/muse-spark-1.1:2026-11-01:2ab3017af6136f42",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.15000000", "input": "1.25000000", "output": "4.25000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "2ab3017af6136f4276823ae5da710b918c25f7bd0f07631bc37eee27c79bcc31",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "meta/muse-spark-1.1",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00000425",
+                "input_cache_read": "0.00000015",
+                "prompt": "0.00000125",
+                "web_search": "0.0025",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3-235b-a22b-thinking-2507"): {
         "context_length": 128000,
@@ -2607,6 +13026,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3-235b-a22b-thinking-2507",
+            "pricing_id": "openrouter:qwen/qwen3-235b-a22b-thinking-2507:2026-11-01:56e78d552ac9ccb2",
+            "provider": "openrouter",
+            "rates": {"input": "0.45000000", "output": "3.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "56e78d552ac9ccb2f6c6fb2d086cfcb940300be3b4331b51c60eb2de623adb79",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3-235b-a22b-thinking-2507",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000035", "prompt": "0.00000045"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "liquid/lfm-2.5-24b-a2b"): {
         "context_length": 128000,
@@ -2615,6 +13069,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "liquid/lfm-2.5-24b-a2b",
+            "pricing_id": "openrouter:liquid/lfm-2.5-24b-a2b:2026-11-01:98467a7c170d5153",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.025000000", "input": "0.05000000", "output": "0.7000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "98467a7c170d5153d0b09f69f9b7806b38795a8db4d0e44578e66ddc7573a2ac",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "liquid/lfm-2.5-24b-a2b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000007", "input_cache_read": "0.000000025", "prompt": "0.00000005"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "particle-ai/particle-1"): {
         "context_length": 1048576,
@@ -2628,6 +13117,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "particle-ai/particle-1",
+            "pricing_id": "openrouter:particle-ai/particle-1:2026-11-01:5291432d2942f261",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.003000000", "input": "0.05000000", "output": "0.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "5291432d2942f261009f0fb2f5b46cb152244a251a85240213457048db1cc259",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "particle-ai/particle-1",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000005", "input_cache_read": "0.000000003", "prompt": "0.00000005"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "amazon/nova-lite-v1"): {
         "context_length": 300000,
@@ -2636,6 +13160,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "amazon/nova-lite-v1",
+            "pricing_id": "openrouter:amazon/nova-lite-v1:2026-11-01:a8fbd35756bebaed",
+            "provider": "openrouter",
+            "rates": {"input": "0.06000000", "output": "0.24000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "a8fbd35756bebaed73161a7428e801cace79aed06027f43b9faa737208376e6f",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "amazon/nova-lite-v1",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000024", "prompt": "0.00000006"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.2-codex"): {
         "context_length": 400000,
@@ -2650,6 +13209,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.2-codex",
+            "pricing_id": "openrouter:openai/gpt-5.2-codex:2026-11-01:4378c756575ce255",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.175000000", "input": "1.75000000", "output": "14.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4378c756575ce2559be8229b11c695d10474000411151dd3241764353ace4910",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.2-codex",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000014",
+                "input_cache_read": "0.000000175",
+                "prompt": "0.00000175",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-4o-2024-11-20"): {
         "context_length": 128000,
@@ -2658,6 +13259,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-4o-2024-11-20",
+            "pricing_id": "openrouter:openai/gpt-4o-2024-11-20:2026-11-01:000bc8377b9210d6",
+            "provider": "openrouter",
+            "rates": {"cache_read": "1.25000000", "input": "2.5000000", "output": "10.00000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "000bc8377b9210d6d3a57c5526fab3dcf6e056cadcb80988b81b35ebcdd0ebf3",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-4o-2024-11-20",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00001", "input_cache_read": "0.00000125", "prompt": "0.0000025"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemma-4-31b-it:free"): {
         "context_length": 262144,
@@ -2666,6 +13302,42 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "cache_policy": {"cache_read": "included", "cache_write": "included"},
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "google/gemma-4-31b-it:free",
+            "pricing_id": "openrouter:google/gemma-4-31b-it:free:2026-11-01:4e00883b573f5c19",
+            "provider": "openrouter",
+            "rates": {"input": "0", "output": "0"},
+            "routing_variant": "free",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4e00883b573f5c198c8051c7521c8183ae4d381b980ffc93781297cff40c372a",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemma-4-31b-it:free",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0", "prompt": "0"},
+            "verified_free": True,
+        },
     },
     ("openrouter", "mistralai/codestral-2508"): {
         "context_length": 256000,
@@ -2674,6 +13346,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/codestral-2508",
+            "pricing_id": "openrouter:mistralai/codestral-2508:2026-11-01:98de383c633ffb75",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.03000000", "input": "0.3000000", "output": "0.9000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "98de383c633ffb75b2256da042d56c12a262165e3fa7592876052690e1886407",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/codestral-2508",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000009", "input_cache_read": "0.00000003", "prompt": "0.0000003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "minimax/minimax-m2.1"): {
         "context_length": 204800,
@@ -2682,6 +13389,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "minimax/minimax-m2.1",
+            "pricing_id": "openrouter:minimax/minimax-m2.1:2026-11-01:73ec978b783e130e",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.03000000", "input": "0.3000000", "output": "1.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "73ec978b783e130eeebd6a80b05e894e5be79192da001e50b50339405b3c33cd",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "minimax/minimax-m2.1",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000012", "input_cache_read": "0.00000003", "prompt": "0.0000003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/mistral-small-3.1-24b-instruct"): {
         "context_length": 128000,
@@ -2690,6 +13432,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/mistral-small-3.1-24b-instruct",
+            "pricing_id": "openrouter:mistralai/mistral-small-3.1-24b-instruct:2026-11-01:e0a93369e54b19d5",
+            "provider": "openrouter",
+            "rates": {"input": "0.351000000", "output": "0.555000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "e0a93369e54b19d5f66d6687ce4e8d5b67c2289507ac3d2af4d8d200306eda18",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/mistral-small-3.1-24b-instruct",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000000555", "prompt": "0.000000351"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-audio-mini"): {
         "context_length": 128000,
@@ -2698,6 +13475,49 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "audio_output: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "openai/gpt-audio-mini",
+            "pricing_id": "openrouter:openai/gpt-audio-mini:2026-11-01:d4e05d12e39d10bd",
+            "provider": "openrouter",
+            "rates": {"input": "0.6000000", "output": "2.4000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "d4e05d12e39d10bd7123777c05c6558c8e2697860d148f607cc8247fce98d278",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-audio-mini",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.0000006",
+                "audio_output": "0.0000024",
+                "completion": "0.0000024",
+                "prompt": "0.0000006",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "sakana/fugu-max"): {
         "context_length": 1000000,
@@ -2712,6 +13532,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "sakana/fugu-max",
+            "pricing_id": "openrouter:sakana/fugu-max:2026-11-01:ba34da34576c0054",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.25000000", "input": "2.000000", "output": "6.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "ba34da34576c00545f18e8a24c842485cd7cf725797ff6403dd087959fc76f52",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "sakana/fugu-max",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000006",
+                "input_cache_read": "0.00000025",
+                "prompt": "0.000002",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/mistral-medium-3"): {
         "context_length": 131072,
@@ -2720,6 +13582,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/mistral-medium-3",
+            "pricing_id": "openrouter:mistralai/mistral-medium-3:2026-11-01:fac1af8010b71cd5",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.04000000", "input": "0.4000000", "output": "2.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "fac1af8010b71cd58388b9670c445e0c1c6722c45895f3b3e45f57f81ad52bc0",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/mistral-medium-3",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000002", "input_cache_read": "0.00000004", "prompt": "0.0000004"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "minimax/minimax-m2"): {
         "context_length": 204800,
@@ -2728,6 +13625,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "minimax/minimax-m2",
+            "pricing_id": "openrouter:minimax/minimax-m2:2026-11-01:ee78385f08d2621c",
+            "provider": "openrouter",
+            "rates": {"input": "0.255000000", "output": "1.02000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "ee78385f08d2621c8bda463ef1a6f551160fc86dd245ce95641a9079fbbcf202",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "minimax/minimax-m2",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000102", "prompt": "0.000000255"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/mistral-large"): {
         "context_length": 128000,
@@ -2736,6 +13668,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/mistral-large",
+            "pricing_id": "openrouter:mistralai/mistral-large:2026-11-01:9bb64eed25b9b9d1",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.2000000", "input": "2.000000", "output": "6.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "9bb64eed25b9b9d18172678cf328c5974e39da74856eaec4d30598fdb565f360",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/mistral-large",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000006", "input_cache_read": "0.0000002", "prompt": "0.000002"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "bytedance-seed/seed-2.0-code"): {
         "context_length": 262144,
@@ -2749,6 +13716,52 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "bytedance-seed/seed-2.0-code",
+            "pricing_id": "openrouter:bytedance-seed/seed-2.0-code:2026-11-01:894a944dfbb7b252",
+            "provider": "openrouter",
+            "rates": {"input": "0.5000000", "output": "3.000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"input": "1.000000", "output": "6.000000"},
+                    "when": {"min_input_tokens": 128001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "894a944dfbb7b252c33935c82135fa8177c0ac6b2afcf88ba1c6dc60cbb10ceb",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "bytedance-seed/seed-2.0-code",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000003",
+                "overrides": [{"completion": "0.000006", "min_prompt_tokens": 128000, "prompt": "0.000001"}],
+                "prompt": "0.0000005",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "amazon/nova-pro-v1"): {
         "context_length": 300000,
@@ -2757,6 +13770,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "amazon/nova-pro-v1",
+            "pricing_id": "openrouter:amazon/nova-pro-v1:2026-11-01:cf036f6c47e81e0c",
+            "provider": "openrouter",
+            "rates": {"input": "0.8000000", "output": "3.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "cf036f6c47e81e0c85d00023af995657f72e8b6049c402c80c1adac32b0f7715",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "amazon/nova-pro-v1",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000032", "prompt": "0.0000008"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "prism-ml/ternary-bonsai-2-27b"): {
         "context_length": 262144,
@@ -2770,6 +13818,45 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "prism-ml/ternary-bonsai-2-27b",
+            "pricing_id": "openrouter:prism-ml/ternary-bonsai-2-27b:2026-11-01:b624d9e896d6df75",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.0375000000", "input": "0.075000000", "output": "0.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "b624d9e896d6df75096f218f7e8b71540cf7144c7cbc646cf9a35e785a06b8ed",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "prism-ml/ternary-bonsai-2-27b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.0000005",
+                "input_cache_read": "0.0000000375",
+                "prompt": "0.000000075",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.1-codex-max"): {
         "context_length": 400000,
@@ -2784,6 +13871,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.1-codex-max",
+            "pricing_id": "openrouter:openai/gpt-5.1-codex-max:2026-11-01:3688dfff4deeefa5",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.125000000", "input": "1.25000000", "output": "10.00000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "3688dfff4deeefa5794a7dd2f0ef7d91774d26fed7c7fcf3dfc24001572fe7c9",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.1-codex-max",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00001",
+                "input_cache_read": "0.000000125",
+                "prompt": "0.00000125",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "perceptron/perceptron-mk1.5"): {
         "context_length": 36864,
@@ -2797,6 +13926,41 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "perceptron/perceptron-mk1.5",
+            "pricing_id": "openrouter:perceptron/perceptron-mk1.5:2026-11-01:5a8355538b4a589b",
+            "provider": "openrouter",
+            "rates": {"input": "0.15000000", "output": "1.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "5a8355538b4a589b4083c97213aecbee9c6854326760b4d078d9dc9d692d4f16",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "perceptron/perceptron-mk1.5",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000015", "prompt": "0.00000015"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "bytedance-seed/seed-1.6"): {
         "context_length": 262144,
@@ -2805,6 +13969,52 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "bytedance-seed/seed-1.6",
+            "pricing_id": "openrouter:bytedance-seed/seed-1.6:2026-11-01:c29158b1a51e970b",
+            "provider": "openrouter",
+            "rates": {"input": "0.25000000", "output": "2.000000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"input": "0.5000000", "output": "4.000000"},
+                    "when": {"min_input_tokens": 128001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "c29158b1a51e970bdb3b87be1b98da7fd7bc50168e0ce300ef5374febf572275",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "bytedance-seed/seed-1.6",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000002",
+                "overrides": [{"completion": "0.000004", "min_prompt_tokens": 128000, "prompt": "0.0000005"}],
+                "prompt": "0.00000025",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-3.5-turbo-0613"): {
         "context_length": 4095,
@@ -2813,6 +14023,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-3.5-turbo-0613",
+            "pricing_id": "openrouter:openai/gpt-3.5-turbo-0613:2026-11-01:38d1d60b1d11bbe1",
+            "provider": "openrouter",
+            "rates": {"input": "1.000000", "output": "2.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "38d1d60b1d11bbe1e04c48754b761241184b320a050dba0bd56730d5c2c92d5c",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-3.5-turbo-0613",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000002", "prompt": "0.000001"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-4o-2024-05-13"): {
         "context_length": 128000,
@@ -2821,6 +14066,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-4o-2024-05-13",
+            "pricing_id": "openrouter:openai/gpt-4o-2024-05-13:2026-11-01:38e73d6bbf133f34",
+            "provider": "openrouter",
+            "rates": {"input": "5.000000", "output": "15.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "38e73d6bbf133f348d6b62204bca799030e3c891c5db0504352c97ef4a6bd2a2",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-4o-2024-05-13",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000015", "prompt": "0.000005"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "sakana/fugu-ultra-v2"): {
         "context_length": 1000000,
@@ -2835,6 +14115,63 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "sakana/fugu-ultra-v2",
+            "pricing_id": "openrouter:sakana/fugu-ultra-v2:2026-11-01:afa4cf0cbfa90fc1",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.5000000", "input": "5.000000", "output": "30.00000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "1.000000", "input": "10.00000", "output": "45.000000"},
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "afa4cf0cbfa90fc167936620eb27caafef51f3e983dba3cfa3d0431a194b9408",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "sakana/fugu-ultra-v2",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00003",
+                "input_cache_read": "0.0000005",
+                "overrides": [
+                    {
+                        "completion": "0.000045",
+                        "input_cache_read": "0.000001",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.00001",
+                    }
+                ],
+                "prompt": "0.000005",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.5-pro"): {
         "context_length": 1050000,
@@ -2849,6 +14186,55 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.5-pro",
+            "pricing_id": "openrouter:openai/gpt-5.5-pro:2026-11-01:cff2c3b43b9fad31",
+            "provider": "openrouter",
+            "rates": {"input": "30.00000", "output": "180.00000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"input": "60.00000", "output": "270.00000"},
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "cff2c3b43b9fad312f86ad739135202cd7fc0e3a15ca6516e2517a11136a9b01",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.5-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00018",
+                "overrides": [{"completion": "0.00027", "min_prompt_tokens": 272000, "prompt": "0.00006"}],
+                "prompt": "0.00003",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/voxtral-small-24b-2507"): {
         "context_length": 32768,
@@ -2857,6 +14243,46 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": ["audio: published gateway pricing requires a separately observed billing quantity"],
+            "model": "mistralai/voxtral-small-24b-2507",
+            "pricing_id": "openrouter:mistralai/voxtral-small-24b-2507:2026-11-01:348e82cced922f8b",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.01000000", "input": "0.1000000", "output": "0.3000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "348e82cced922f8bae1875986cdb05d96073588f229b40dfd543f02c4ce3950d",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/voxtral-small-24b-2507",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.0001",
+                "completion": "0.0000003",
+                "input_cache_read": "0.00000001",
+                "prompt": "0.0000001",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "z-ai/glm-4.5v"): {
         "context_length": 65536,
@@ -2865,6 +14291,37 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "z-ai/glm-4.5v",
+            "pricing_id": "openrouter:z-ai/glm-4.5v:2026-11-01:a587c661acdafe7f",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.11000000", "input": "0.6000000", "output": "1.8000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "a587c661acdafe7f5a690ac0b7e0c59861a0dc0a09120e0c6512872fb4c3f2e1",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "z-ai/glm-4.5v", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000018", "input_cache_read": "0.00000011", "prompt": "0.0000006"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "unbiased/pareto-26.9"): {
         "context_length": 262144,
@@ -2873,6 +14330,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "unbiased/pareto-26.9",
+            "pricing_id": "openrouter:unbiased/pareto-26.9:2026-11-01:9d7d2bfcfdffb2a9",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.25000000", "input": "2.5000000", "output": "7.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "9d7d2bfcfdffb2a9c393648d3659e1099d440eac247ee3e94bfcb9a44eabb21d",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "unbiased/pareto-26.9",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000075", "input_cache_read": "0.00000025", "prompt": "0.0000025"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "sakana/fugu-ultra"): {
         "context_length": 1000000,
@@ -2887,6 +14379,63 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "sakana/fugu-ultra",
+            "pricing_id": "openrouter:sakana/fugu-ultra:2026-11-01:afa4cf0cbfa90fc1",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.5000000", "input": "5.000000", "output": "30.00000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "1.000000", "input": "10.00000", "output": "45.000000"},
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "afa4cf0cbfa90fc167936620eb27caafef51f3e983dba3cfa3d0431a194b9408",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "sakana/fugu-ultra",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00003",
+                "input_cache_read": "0.0000005",
+                "overrides": [
+                    {
+                        "completion": "0.000045",
+                        "input_cache_read": "0.000001",
+                        "min_prompt_tokens": 272000,
+                        "prompt": "0.00001",
+                    }
+                ],
+                "prompt": "0.000005",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "qwen/qwen3-vl-30b-a3b-thinking"): {
         "context_length": 262144,
@@ -2895,6 +14444,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "qwen/qwen3-vl-30b-a3b-thinking",
+            "pricing_id": "openrouter:qwen/qwen3-vl-30b-a3b-thinking:2026-11-01:6cadd600d95373e1",
+            "provider": "openrouter",
+            "rates": {"input": "0.29000000", "output": "1.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "6cadd600d95373e1fa6dd4cee55d89b1e5f5165aabda5e6c2c8c108f0e5bba21",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "qwen/qwen3-vl-30b-a3b-thinking",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000001", "prompt": "0.00000029"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-audio"): {
         "context_length": 128000,
@@ -2903,6 +14487,49 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "audio_output: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "openai/gpt-audio",
+            "pricing_id": "openrouter:openai/gpt-audio:2026-11-01:e1916ff942426529",
+            "provider": "openrouter",
+            "rates": {"input": "2.5000000", "output": "10.00000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "e1916ff942426529aafdcbccbfaed29b44410484fe4bb44982cc025ff16c994d",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-audio",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.000032",
+                "audio_output": "0.000064",
+                "completion": "0.00001",
+                "prompt": "0.0000025",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/mistral-large-2407"): {
         "context_length": 131072,
@@ -2911,6 +14538,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/mistral-large-2407",
+            "pricing_id": "openrouter:mistralai/mistral-large-2407:2026-11-01:9bb64eed25b9b9d1",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.2000000", "input": "2.000000", "output": "6.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "9bb64eed25b9b9d18172678cf328c5974e39da74856eaec4d30598fdb565f360",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/mistral-large-2407",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000006", "input_cache_read": "0.0000002", "prompt": "0.000002"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "cohere/command-r-08-2024"): {
         "context_length": 128000,
@@ -2919,6 +14581,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "cohere/command-r-08-2024",
+            "pricing_id": "openrouter:cohere/command-r-08-2024:2026-11-01:b1986931da9fab19",
+            "provider": "openrouter",
+            "rates": {"input": "0.15000000", "output": "0.6000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "b1986931da9fab19846145f0f5e3ff7247cff726efcf8015a6e7b254f0d32b71",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "cohere/command-r-08-2024",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000006", "prompt": "0.00000015"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "rekaai/reka-edge"): {
         "context_length": 16384,
@@ -2927,6 +14624,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "rekaai/reka-edge",
+            "pricing_id": "openrouter:rekaai/reka-edge:2026-11-01:f628a1d76a9cdf61",
+            "provider": "openrouter",
+            "rates": {"input": "0.1000000", "output": "0.1000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "f628a1d76a9cdf613a0aa93ff8f61dd2e0cd4ac436f04c23143bcecff3864b72",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "rekaai/reka-edge",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000001", "prompt": "0.0000001"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "prism-ml/ternary-bonsai-2-9b"): {
         "context_length": 262144,
@@ -2935,6 +14667,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "prism-ml/ternary-bonsai-2-9b",
+            "pricing_id": "openrouter:prism-ml/ternary-bonsai-2-9b:2026-11-01:16bf560f27866917",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.04000000", "input": "0.08000000", "output": "0.13000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "16bf560f27866917b2a15c9aaba0a7bf0e48e16b5fe566b97ff35c9d5b24d98e",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "prism-ml/ternary-bonsai-2-9b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00000013", "input_cache_read": "0.00000004", "prompt": "0.00000008"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-4"): {
         "context_length": 8191,
@@ -2943,6 +14710,37 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-4",
+            "pricing_id": "openrouter:openai/gpt-4:2026-11-01:86a75b6f80b96e06",
+            "provider": "openrouter",
+            "rates": {"input": "30.00000", "output": "60.00000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "86a75b6f80b96e0646e6347762a9d3c3704a2118ea9ee531eb98c1015fbc5ea8",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "openai/gpt-4", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00006", "prompt": "0.00003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "cohere/command-r-plus-08-2024"): {
         "context_length": 128000,
@@ -2951,6 +14749,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "cohere/command-r-plus-08-2024",
+            "pricing_id": "openrouter:cohere/command-r-plus-08-2024:2026-11-01:0be670e4779d63f0",
+            "provider": "openrouter",
+            "rates": {"input": "2.5000000", "output": "10.00000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "0be670e4779d63f001ee86a49621c45411d62396bc69299cc6bf1f9a6e201309",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "cohere/command-r-plus-08-2024",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00001", "prompt": "0.0000025"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "minimax/minimax-m1"): {
         "context_length": 1000000,
@@ -2959,6 +14792,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "minimax/minimax-m1",
+            "pricing_id": "openrouter:minimax/minimax-m1:2026-11-01:c7809485de2bb531",
+            "provider": "openrouter",
+            "rates": {"input": "0.55000000", "output": "2.2000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "c7809485de2bb5318bd60473c4d7aa7c5d67610a8ee35d3ba974e52924129c40",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "minimax/minimax-m1",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000022", "prompt": "0.00000055"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "upstage/solar-pro-3"): {
         "context_length": 131072,
@@ -2972,6 +14840,30 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "openrouter:upstage/solar-pro-3:2026-11-01",
+            "provider": "openrouter",
+            "model": "upstage/solar-pro-3",
+            "status": "unverified",
+            "billing_mode": "gateway",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {
+                    "url": "https://openrouter.ai/api/v1/models",
+                    "model_id": "upstage/solar-pro-3",
+                    "checked_at": "2026-11-01",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "reason": "upstage/solar-pro-3: absent from the checked public gateway model feed; no current "
+            "exact-variant rate verified.",
+        },
     },
     ("openrouter", "mistralai/mixtral-8x22b-instruct"): {
         "context_length": 65536,
@@ -2980,6 +14872,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/mixtral-8x22b-instruct",
+            "pricing_id": "openrouter:mistralai/mixtral-8x22b-instruct:2026-11-01:9bb64eed25b9b9d1",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.2000000", "input": "2.000000", "output": "6.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "9bb64eed25b9b9d18172678cf328c5974e39da74856eaec4d30598fdb565f360",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/mixtral-8x22b-instruct",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000006", "input_cache_read": "0.0000002", "prompt": "0.000002"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-3.5-turbo-16k"): {
         "context_length": 16385,
@@ -2988,6 +14915,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-3.5-turbo-16k",
+            "pricing_id": "openrouter:openai/gpt-3.5-turbo-16k:2026-11-01:3f44de9e9056412a",
+            "provider": "openrouter",
+            "rates": {"input": "3.000000", "output": "4.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "3f44de9e9056412a2e47b919772745db9b997e9ceb1ca1fb57311914e9d37039",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-3.5-turbo-16k",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000004", "prompt": "0.000003"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "sakana/sakana-namazu"): {
         "context_length": 262144,
@@ -3002,6 +14964,48 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.007", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "sakana/sakana-namazu",
+            "pricing_id": "openrouter:sakana/sakana-namazu:2026-11-01:e60f30eb07f90651",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.15000000", "input": "0.95000000", "output": "4.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "e60f30eb07f90651a53a83ec9e8beedb7ef229a0d152e04346445372108152aa",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "sakana/sakana-namazu",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000004",
+                "input_cache_read": "0.00000015",
+                "prompt": "0.00000095",
+                "web_search": "0.007",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.4-pro"): {
         "context_length": 1050000,
@@ -3016,6 +15020,55 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.4-pro",
+            "pricing_id": "openrouter:openai/gpt-5.4-pro:2026-11-01:cff2c3b43b9fad31",
+            "provider": "openrouter",
+            "rates": {"input": "30.00000", "output": "180.00000"},
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"input": "60.00000", "output": "270.00000"},
+                    "when": {"min_input_tokens": 272001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "cff2c3b43b9fad312f86ad739135202cd7fc0e3a15ca6516e2517a11136a9b01",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.4-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.00018",
+                "overrides": [{"completion": "0.00027", "min_prompt_tokens": 272000, "prompt": "0.00006"}],
+                "prompt": "0.00003",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "liquid/lfm-2.5-2.6b"): {
         "context_length": 128000,
@@ -3024,6 +15077,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "liquid/lfm-2.5-2.6b",
+            "pricing_id": "openrouter:liquid/lfm-2.5-2.6b:2026-11-01:6db0da2a3cc7251e",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.04000000", "input": "0.35000000", "output": "0.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "6db0da2a3cc7251e8dc02571c68bb4506631f43d87e9357beae49d2bfa8cbc13",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "liquid/lfm-2.5-2.6b",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000005", "input_cache_read": "0.00000004", "prompt": "0.00000035"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.2-pro"): {
         "context_length": 400000,
@@ -3038,6 +15126,43 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.2-pro",
+            "pricing_id": "openrouter:openai/gpt-5.2-pro:2026-11-01:5d230944e42170e4",
+            "provider": "openrouter",
+            "rates": {"input": "21.000000", "output": "168.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "5d230944e42170e4eaef8c496afd41530208eeaf4d07aa90f8c4695ce1aea367",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.2-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000168", "prompt": "0.000021", "web_search": "0.01"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "relace/relace-search"): {
         "context_length": 256000,
@@ -3046,6 +15171,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "relace/relace-search",
+            "pricing_id": "openrouter:relace/relace-search:2026-11-01:a142cd855be1f573",
+            "provider": "openrouter",
+            "rates": {"input": "1.000000", "output": "3.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "a142cd855be1f5737152c53f4b8edf6c6575517bd7b2b25e01754d5f768bc3cd",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "relace/relace-search",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.000003", "prompt": "0.000001"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "mistralai/mistral-saba"): {
         "context_length": 32768,
@@ -3054,6 +15214,41 @@ OPENROUTER_SPECS = {
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "mistralai/mistral-saba",
+            "pricing_id": "openrouter:mistralai/mistral-saba:2026-11-01:752f36d5107b0bcc",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.02000000", "input": "0.2000000", "output": "0.6000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "752f36d5107b0bcc9ee987b05f415217e509652e3cf850e6d6ad47a6e2632c36",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "mistralai/mistral-saba",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000006", "input_cache_read": "0.00000002", "prompt": "0.0000002"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5-pro"): {
         "context_length": 400000,
@@ -3068,6 +15263,43 @@ OPENROUTER_SPECS = {
             mode="openrouter_reasoning",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5-pro",
+            "pricing_id": "openrouter:openai/gpt-5-pro:2026-11-01:4e1e0969b37191a4",
+            "provider": "openrouter",
+            "rates": {"input": "15.000000", "output": "120.00000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4e1e0969b37191a404d1c9b58f3f2af1d7738d1320ed1cdeab24a4894778e6a4",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5-pro",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00012", "prompt": "0.000015", "web_search": "0.01"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/o3-pro"): {
         "context_length": 200000,
@@ -3077,6 +15309,39 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/o3-pro",
+            "pricing_id": "openrouter:openai/o3-pro:2026-11-01:e0f0ed9571e28496",
+            "provider": "openrouter",
+            "rates": {"input": "20.00000", "output": "80.00000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "e0f0ed9571e28496792ca38a03e6f2778c09cfe8116a2172fd8e1273b4c3a7a6",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {"checked_at": "2026-11-01", "model_id": "openai/o3-pro", "url": "https://openrouter.ai/api/v1/models"}
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.00008", "prompt": "0.00002", "web_search": "0.01"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "amazon/nova-premier-v1"): {
         "context_length": 1000000,
@@ -3085,6 +15350,41 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "amazon/nova-premier-v1",
+            "pricing_id": "openrouter:amazon/nova-premier-v1:2026-11-01:259be2ad083568ff",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.625000000", "input": "2.5000000", "output": "12.5000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "259be2ad083568ffed45602b37aca7e58a71b119dfb76f0f087212bd08f32df1",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "amazon/nova-premier-v1",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {"completion": "0.0000125", "input_cache_read": "0.000000625", "prompt": "0.0000025"},
+            "verified_free": False,
+        },
     },
     ("openrouter", "google/gemini-2.5-pro-preview"): {
         "context_length": 1048576,
@@ -3093,6 +15393,79 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.014", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [
+                "image: published gateway pricing requires a separately observed billing quantity",
+                "audio: published gateway pricing requires a separately observed billing quantity",
+                "input_audio_cache: published gateway pricing requires a separately observed billing quantity",
+            ],
+            "model": "google/gemini-2.5-pro-preview",
+            "pricing_id": "openrouter:google/gemini-2.5-pro-preview:2026-11-01:854821c719386896",
+            "provider": "openrouter",
+            "rates": {
+                "cache_read": "0.125000000",
+                "cache_write": "0.375000000",
+                "input": "1.25000000",
+                "output": "10.00000",
+            },
+            "routing_variant": "standard",
+            "schedules": [
+                {
+                    "id": "upstream_override_0",
+                    "priority": 0,
+                    "rates": {"cache_read": "0.25000000", "input": "2.5000000", "output": "15.000000"},
+                    "when": {"min_input_tokens": 200001},
+                }
+            ],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "854821c719386896fdf4ba432a1744d02af06e1942f2361f42c97a1e8f0ef243",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "google/gemini-2.5-pro-preview",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "audio": "0.00000125",
+                "completion": "0.00001",
+                "image": "0.00000125",
+                "input_audio_cache": "0.000000125",
+                "input_cache_read": "0.000000125",
+                "input_cache_write": "0.000000375",
+                "internal_reasoning": "0.00001",
+                "overrides": [
+                    {
+                        "audio": "0.0000025",
+                        "completion": "0.000015",
+                        "input_audio_cache": "0.00000025",
+                        "input_cache_read": "0.00000025",
+                        "min_prompt_tokens": 200000,
+                        "prompt": "0.0000025",
+                    }
+                ],
+                "prompt": "0.00000125",
+                "web_search": "0.014",
+            },
+            "verified_free": False,
+        },
     },
     ("openrouter", "openai/gpt-5.2-chat"): {
         "context_length": 128000,
@@ -3102,5 +15475,47 @@ OPENROUTER_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "input_budget": "window_minus_output",
+        "pricing": {
+            "assumptions": [
+                "Published OpenRouter model-list rates estimate resource/list value; the routed endpoint, "
+                "service tier and BYOK arrangement may change the actual charge. Provider-reported "
+                "usage.cost takes precedence."
+            ],
+            "billing_mode": "gateway",
+            "checked_at": "2026-11-01",
+            "components": [
+                {"name": "web_search", "quantity": "web_search_calls", "rate": "0.01", "unit": "per_request"}
+            ],
+            "conditions": {},
+            "currency": "USD",
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "missing_components": [],
+            "model": "openai/gpt-5.2-chat",
+            "pricing_id": "openrouter:openai/gpt-5.2-chat:2026-11-01:4378c756575ce255",
+            "provider": "openrouter",
+            "rates": {"cache_read": "0.175000000", "input": "1.75000000", "output": "14.000000"},
+            "routing_variant": "standard",
+            "schedules": [],
+            "schema_version": 1,
+            "scope": "gateway_model_list_rates",
+            "source_payload_sha256": "4378c756575ce2559be8229b11c695d10474000411151dd3241764353ace4910",
+            "source_scope": "Model-level advertised rates; not an endpoint-pinned request charge.",
+            "sources": [
+                {
+                    "checked_at": "2026-11-01",
+                    "model_id": "openai/gpt-5.2-chat",
+                    "url": "https://openrouter.ai/api/v1/models",
+                }
+            ],
+            "status": "priced",
+            "unit": "per_million_tokens",
+            "upstream_pricing": {
+                "completion": "0.000014",
+                "input_cache_read": "0.000000175",
+                "prompt": "0.00000175",
+                "web_search": "0.01",
+            },
+            "verified_free": False,
+        },
     },
 }

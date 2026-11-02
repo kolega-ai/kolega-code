@@ -21,6 +21,32 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:beam:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "beam",
+            "status": "priced",
+            "billing_mode": "limited_time_free_promotion",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0", "output": "0"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {"url": "https://ollama.com/blog/reflection-beam", "model_id": "beam", "checked_at": "2026-11-01"}
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_read": "included", "cache_write": "included"},
+            "promotion": {
+                "description": "Official limited-time free cloud availability.",
+                "expiration": "not published",
+            },
+            "assumptions": [
+                "No published promotion end date or regular paid rate; review before relying on continuing free usage."
+            ],
+        },
     },
     ("ollama_cloud", "deepseek-v4-pro:0813"): {
         "context_length": 1048576,
@@ -33,6 +59,46 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:deepseek-v4-pro:0813:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "deepseek-v4-pro:0813",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.660", "output": "1.980", "cache_read": "0.0220"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {"url": "https://ollama.com/pricing", "model_id": "deepseek-v4-pro", "checked_at": "2026-11-01"},
+                {
+                    "url": "https://ollama.com/library/deepseek-v4-pro:0813",
+                    "model_id": "deepseek-v4-pro:0813",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [
+                {
+                    "id": "ollama_peak",
+                    "when": {
+                        "timezone": "UTC",
+                        "weekdays": [0, 1, 2, 3, 4],
+                        "start_time": "12:00",
+                        "end_time": "18:00",
+                    },
+                    "rates": {"input": "1.32", "output": "3.96", "cache_read": "0.044"},
+                }
+            ],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized.",
+                "Ollama's independent off-peak rule has no Chinese-holiday exception.",
+            ],
+            "billing_alias": {"tag": "deepseek-v4-pro:0813", "price_table_model": "deepseek-v4-pro"},
+        },
     },
     ("ollama_cloud", "deepseek-v4.1-flash"): {
         "context_length": 1048576,
@@ -45,6 +111,40 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:deepseek-v4.1-flash:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "deepseek-v4.1-flash",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.150", "output": "0.600", "cache_read": "0.0030"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {"url": "https://ollama.com/pricing", "model_id": "deepseek-v4.1-flash", "checked_at": "2026-11-01"}
+            ],
+            "conditions": {},
+            "schedules": [
+                {
+                    "id": "ollama_peak",
+                    "when": {
+                        "timezone": "UTC",
+                        "weekdays": [0, 1, 2, 3, 4],
+                        "start_time": "12:00",
+                        "end_time": "18:00",
+                    },
+                    "rates": {"input": "0.30", "output": "1.20", "cache_read": "0.006"},
+                }
+            ],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized.",
+                "Ollama's independent off-peak rule has no Chinese-holiday exception.",
+            ],
+        },
     },
     ("ollama_cloud", "deepseek-v4.1-flash:1017"): {
         "context_length": 1048576,
@@ -57,6 +157,46 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:deepseek-v4.1-flash:1017:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "deepseek-v4.1-flash:1017",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.150", "output": "0.600", "cache_read": "0.0030"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {"url": "https://ollama.com/pricing", "model_id": "deepseek-v4.1-flash", "checked_at": "2026-11-01"},
+                {
+                    "url": "https://ollama.com/library/deepseek-v4.1-flash:1017",
+                    "model_id": "deepseek-v4.1-flash:1017",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [
+                {
+                    "id": "ollama_peak",
+                    "when": {
+                        "timezone": "UTC",
+                        "weekdays": [0, 1, 2, 3, 4],
+                        "start_time": "12:00",
+                        "end_time": "18:00",
+                    },
+                    "rates": {"input": "0.30", "output": "1.20", "cache_read": "0.006"},
+                }
+            ],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized.",
+                "Ollama's independent off-peak rule has no Chinese-holiday exception.",
+            ],
+            "billing_alias": {"tag": "deepseek-v4.1-flash:1017", "price_table_model": "deepseek-v4.1-flash"},
+        },
     },
     ("ollama_cloud", "gemma4:31b"): {
         "context_length": 262144,
@@ -69,6 +209,30 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:gemma4:31b:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "gemma4:31b",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.14", "output": "0.40", "cache_read": "0.05"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {"url": "https://ollama.com/pricing", "model_id": "gemma4", "checked_at": "2026-11-01"},
+                {"url": "https://ollama.com/library/gemma4:31b", "model_id": "gemma4:31b", "checked_at": "2026-11-01"},
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized."
+            ],
+            "billing_alias": {"tag": "gemma4:31b", "price_table_model": "gemma4"},
+        },
     },
     ("ollama_cloud", "glm-5.2"): {
         "context_length": 1048576,
@@ -81,6 +245,26 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:glm-5.2:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "glm-5.2",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "1.40", "output": "4.40", "cache_read": "0.26"},
+            "checked_at": "2026-11-01",
+            "sources": [{"url": "https://ollama.com/pricing", "model_id": "glm-5.2", "checked_at": "2026-11-01"}],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized."
+            ],
+        },
     },
     ("ollama_cloud", "glm-5.3"): {
         "context_length": 1048576,
@@ -93,6 +277,26 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:glm-5.3:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "glm-5.3",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "1.40", "output": "4.40", "cache_read": "0.26"},
+            "checked_at": "2026-11-01",
+            "sources": [{"url": "https://ollama.com/pricing", "model_id": "glm-5.3", "checked_at": "2026-11-01"}],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized."
+            ],
+        },
     },
     ("ollama_cloud", "glm-5.3-flash"): {
         "context_length": 1048576,
@@ -105,6 +309,26 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:glm-5.3-flash:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "glm-5.3-flash",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.15", "output": "0.50", "cache_read": "0.03"},
+            "checked_at": "2026-11-01",
+            "sources": [{"url": "https://ollama.com/pricing", "model_id": "glm-5.3-flash", "checked_at": "2026-11-01"}],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized."
+            ],
+        },
     },
     ("ollama_cloud", "gpt-oss:120b"): {
         "context_length": 131072,
@@ -117,6 +341,26 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:gpt-oss:120b:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "gpt-oss:120b",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.15", "output": "0.60", "cache_read": "0.014"},
+            "checked_at": "2026-11-01",
+            "sources": [{"url": "https://ollama.com/pricing", "model_id": "gpt-oss:120b", "checked_at": "2026-11-01"}],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized."
+            ],
+        },
     },
     ("ollama_cloud", "gpt-oss:20b"): {
         "context_length": 131072,
@@ -129,6 +373,26 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:gpt-oss:20b:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "gpt-oss:20b",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.07", "output": "0.30", "cache_read": "0.035"},
+            "checked_at": "2026-11-01",
+            "sources": [{"url": "https://ollama.com/pricing", "model_id": "gpt-oss:20b", "checked_at": "2026-11-01"}],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized."
+            ],
+        },
     },
     ("ollama_cloud", "kimi-k2.6"): {
         "context_length": 262144,
@@ -141,6 +405,26 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:kimi-k2.6:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "kimi-k2.6",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.95", "output": "4.00", "cache_read": "0.16"},
+            "checked_at": "2026-11-01",
+            "sources": [{"url": "https://ollama.com/pricing", "model_id": "kimi-k2.6", "checked_at": "2026-11-01"}],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized."
+            ],
+        },
     },
     ("ollama_cloud", "kimi-k2.7-code"): {
         "context_length": 262144,
@@ -153,6 +437,28 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:kimi-k2.7-code:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "kimi-k2.7-code",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.95", "output": "4.00", "cache_read": "0.19"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {"url": "https://ollama.com/pricing", "model_id": "kimi-k2.7-code", "checked_at": "2026-11-01"}
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized."
+            ],
+        },
     },
     ("ollama_cloud", "kimi-k3"): {
         "context_length": 1048576,
@@ -165,6 +471,26 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:kimi-k3:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "kimi-k3",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "3.00", "output": "15.00", "cache_read": "0.30"},
+            "checked_at": "2026-11-01",
+            "sources": [{"url": "https://ollama.com/pricing", "model_id": "kimi-k3", "checked_at": "2026-11-01"}],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized."
+            ],
+        },
     },
     ("ollama_cloud", "minimax-m2.7"): {
         "context_length": 196608,
@@ -177,6 +503,26 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:minimax-m2.7:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "minimax-m2.7",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.30", "output": "1.20", "cache_read": "0.06"},
+            "checked_at": "2026-11-01",
+            "sources": [{"url": "https://ollama.com/pricing", "model_id": "minimax-m2.7", "checked_at": "2026-11-01"}],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized."
+            ],
+        },
     },
     ("ollama_cloud", "minimax-m3"): {
         "context_length": 512000,
@@ -189,6 +535,26 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:minimax-m3:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "minimax-m3",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.60", "output": "2.40", "cache_read": "0.12"},
+            "checked_at": "2026-11-01",
+            "sources": [{"url": "https://ollama.com/pricing", "model_id": "minimax-m3", "checked_at": "2026-11-01"}],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized."
+            ],
+        },
     },
     ("ollama_cloud", "minimax-m3.1-flash"): {
         "context_length": 1000000,
@@ -201,6 +567,28 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:minimax-m3.1-flash:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "minimax-m3.1-flash",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.15", "output": "0.60", "cache_read": "0.015"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {"url": "https://ollama.com/pricing", "model_id": "minimax-m3.1-flash", "checked_at": "2026-11-01"}
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized."
+            ],
+        },
     },
     ("ollama_cloud", "mistral-large-3:675b"): {
         "context_length": 262144,
@@ -208,6 +596,35 @@ OLLAMA_CLOUD_SPECS = {
         "default_temperature": 1.0,
         "supports_vision": True,
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:mistral-large-3:675b:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "mistral-large-3:675b",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.50", "output": "1.50"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {"url": "https://ollama.com/pricing", "model_id": "mistral-large-3", "checked_at": "2026-11-01"},
+                {
+                    "url": "https://ollama.com/library/mistral-large-3:675b",
+                    "model_id": "mistral-large-3:675b",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized.",
+                "The source shows '-' for cached input; nonzero or unknown cache reads have no documented rate.",
+            ],
+            "billing_alias": {"tag": "mistral-large-3:675b", "price_table_model": "mistral-large-3"},
+        },
     },
     ("ollama_cloud", "mistral-large-4"): {
         "context_length": 1048576,
@@ -220,6 +637,28 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:mistral-large-4:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "mistral-large-4",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.70", "output": "2.10", "cache_read": "0.07"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {"url": "https://ollama.com/pricing", "model_id": "mistral-large-4", "checked_at": "2026-11-01"}
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized."
+            ],
+        },
     },
     ("ollama_cloud", "muse-spark-open"): {
         "context_length": 1048576,
@@ -232,6 +671,28 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:muse-spark-open:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "muse-spark-open",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "1.25", "output": "4.25", "cache_read": "0.15"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {"url": "https://ollama.com/pricing", "model_id": "muse-spark-open", "checked_at": "2026-11-01"}
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized."
+            ],
+        },
     },
     ("ollama_cloud", "nemotron-3-nano:30b"): {
         "context_length": 262144,
@@ -244,6 +705,35 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:nemotron-3-nano:30b:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "nemotron-3-nano:30b",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.06", "output": "0.24"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {"url": "https://ollama.com/pricing", "model_id": "nemotron-3-nano", "checked_at": "2026-11-01"},
+                {
+                    "url": "https://ollama.com/library/nemotron-3-nano:30b",
+                    "model_id": "nemotron-3-nano:30b",
+                    "checked_at": "2026-11-01",
+                },
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized.",
+                "The source shows '-' for cached input; nonzero or unknown cache reads have no documented rate.",
+            ],
+            "billing_alias": {"tag": "nemotron-3-nano:30b", "price_table_model": "nemotron-3-nano"},
+        },
     },
     ("ollama_cloud", "nemotron-3-super"): {
         "context_length": 262144,
@@ -256,6 +746,28 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:nemotron-3-super:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "nemotron-3-super",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.015", "output": "0.60", "cache_read": "0.015"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {"url": "https://ollama.com/pricing", "model_id": "nemotron-3-super", "checked_at": "2026-11-01"}
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized."
+            ],
+        },
     },
     ("ollama_cloud", "nemotron-3-ultra"): {
         "context_length": 262144,
@@ -268,5 +780,27 @@ OLLAMA_CLOUD_SPECS = {
             mode="openai_reasoning_effort",
         ),
         "input_budget": "window_minus_output",
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "ollama_cloud:nemotron-3-ultra:2026-11-01",
+            "provider": "ollama_cloud",
+            "model": "nemotron-3-ultra",
+            "status": "priced",
+            "billing_mode": "usage_credits_at_usd_list_value",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {"input": "0.10", "output": "3.00", "cache_read": "0.10"},
+            "checked_at": "2026-11-01",
+            "sources": [
+                {"url": "https://ollama.com/pricing", "model_id": "nemotron-3-ultra", "checked_at": "2026-11-01"}
+            ],
+            "conditions": {},
+            "schedules": [],
+            "exclusions": ["Taxes, account credits/free allowances, and negotiated discounts."],
+            "cache_policy": {"cache_write": "included", "cache_read": "separate"},
+            "assumptions": [
+                "Published USD resource value; included/purchased credits and subscription fees are not amortized."
+            ],
+        },
     },
 }

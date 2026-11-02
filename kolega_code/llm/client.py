@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any, AsyncContextManager, Coroutine, Dict, Lis
 from . import cloudflare_workers_ai
 from .exceptions import LLMContextWindowExceededError, map_to_llm_error
 from .ledger import LedgerStreamAdapter, UsageLedger, describe_error
+from .accounting import observe_usage
 from .models import Message, MessageHistory, ToolDefinition
 from .providers.models import GenerationParams, TokenCount
 from .specs import validate_thinking_effort
@@ -475,9 +476,13 @@ class LLMClient:
                 )
             if self._usage_ledger is None:
                 return await self.provider.generate(messages, system, params, **kwargs)
-            request_id = self._usage_ledger.begin(self.provider_name, self._request_model(kwargs))
+            ledger = self._usage_ledger
+            request_id = ledger.begin(
+                self.provider_name, self._request_model(kwargs), self._pricing_context(params, kwargs)
+            )
             try:
-                message = await self.provider.generate(messages, system, params, **kwargs)
+                with observe_usage(lambda evidence: ledger.record_observation(request_id, evidence)):
+                    message = await self.provider.generate(messages, system, params, **kwargs)
             except BaseException as exc:
                 # Includes CancelledError: a cancelled call may already have cost
                 # tokens, so it settles as failed; propagation is unchanged (the
@@ -550,10 +555,14 @@ class LLMClient:
                 return self._budgeted_stream(messages, system, params, kwargs, _precomputed_input_tokens)
 
             # Return the appropriate stream type for the provider
-            inner = self.provider.stream(messages, system, params, **kwargs)
             if self._usage_ledger is None:
-                return inner
-            return self._ledgered_stream(inner, self._request_model(kwargs))
+                return self.provider.stream(messages, system, params, **kwargs)
+            return self._ledgered_stream(
+                lambda: self.provider.stream(messages, system, params, **kwargs),
+                self._request_model(kwargs),
+                params,
+                kwargs,
+            )
         except Exception as e:
             raise map_to_llm_error(e, self.provider_name) from e
 
@@ -571,9 +580,14 @@ class LLMClient:
         so the over-limit error is raised before any provider generation.
         """
         params = await self._enforce_run_context_budget(messages, system, params, kwargs, precomputed_input_tokens)
-        inner = self.provider.stream(messages, system, params, **kwargs)
         if self._usage_ledger is not None:
-            return await self._ledgered_stream(inner, self._request_model(kwargs))
+            return await self._ledgered_stream(
+                lambda: self.provider.stream(messages, system, params, **kwargs),
+                self._request_model(kwargs),
+                params,
+                kwargs,
+            )
+        inner = self.provider.stream(messages, system, params, **kwargs)
         if inspect.iscoroutine(inner):
             return await inner
         return inner
@@ -582,12 +596,32 @@ class LLMClient:
         model = kwargs.get("model")
         return str(model) if model else self._model
 
-    async def _ledgered_stream(self, inner: Any, model: Optional[str]) -> LedgerStreamAdapter:
+    def _pricing_context(self, params: GenerationParams, kwargs: Dict[str, Any]) -> dict[str, Any]:
+        context = {
+            key: kwargs[key]
+            for key in ("service_tier", "region", "route", "billing_surface")
+            if key in kwargs and isinstance(kwargs[key], (str, int, bool))
+        }
+        context["hosted_web_search"] = params.hosted_web_search
+        context["tools"] = list(params.server_tools or [])
+        if params.hosted_web_search and "web_search" not in context["tools"]:
+            context["tools"].append("web_search")
+        base_model = getattr(self.provider, "_base_model", None)
+        if isinstance(base_model, str):
+            context["base_model"] = base_model
+        return context
+
+    async def _ledgered_stream(
+        self, factory: Any, model: Optional[str], params: GenerationParams, kwargs: Dict[str, Any]
+    ) -> LedgerStreamAdapter:
         # Runs when the CALLER awaits the stream — the point the request starts.
         assert self._usage_ledger is not None
-        request_id = self._usage_ledger.begin(self.provider_name, model)
+        ledger = self._usage_ledger
+        request_id = ledger.begin(self.provider_name, model, self._pricing_context(params, kwargs))
         try:
-            wrapper = await inner
+            with observe_usage(lambda evidence: ledger.record_observation(request_id, evidence)):
+                inner = factory()
+                wrapper = await inner if inspect.isawaitable(inner) else inner
         except BaseException as exc:
             # Stream-setup errors propagate unmapped today; that is preserved.
             self._usage_ledger.record_failure(request_id, describe_error(exc))

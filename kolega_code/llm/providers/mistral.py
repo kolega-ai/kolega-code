@@ -43,7 +43,8 @@ from ..models import ToolCall, ToolDefinition
 from ..specs import MODEL_SPECS, build_thinking_request_params
 from ..timeouts import streaming_timeout
 from ..tool_execution_ids import ToolExecutionIdRegistry
-from ..usage import attach_normalized_usage
+from ..accounting import UsageObservation, publish_observation
+from ..usage import attach_normalized_usage, observation_from_metadata
 from ._token_encoding import get_counting_encoding
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
@@ -364,6 +365,9 @@ class MistralStreamWrapper:
         self._closed = False
         self._iterator = self._iterate()
 
+    def get_usage_observation(self) -> UsageObservation:
+        return observation_from_metadata(self._usage, "mistral", self.model, complete=self._final_message is not None)
+
     async def __aenter__(self) -> MistralStreamWrapper:
         return self
 
@@ -468,6 +472,11 @@ class MistralStreamWrapper:
             body = json.loads(data)
             if not isinstance(body, dict):
                 raise _protocol_error("SSE data must be a JSON object")
+            if body.get("usage") is not None:
+                self._usage.update(_usage_metadata(body["usage"]))
+            resolved = body.get("model")
+            if isinstance(resolved, str):
+                self._usage["resolved_model"] = resolved
             if event_name == "error" or "error" in body or body.get("object") == "error":
                 raise _event_error(body)
             choices = body.get("choices")
@@ -475,8 +484,6 @@ class MistralStreamWrapper:
                 raise _protocol_error("SSE requires zero or one completion choices")
             if not choices and body.get("usage") is None:
                 raise _protocol_error("empty SSE event without usage")
-            if body.get("usage") is not None:
-                self._usage = _usage_metadata(body["usage"])
             if not choices:
                 continue
             choice = choices[0]
@@ -736,6 +743,11 @@ class MistralProvider(BaseLLMProvider):
             raise _protocol_error("malformed completion JSON") from error
         if not isinstance(body, dict):
             raise _protocol_error("completion must be an object")
+        metadata = _usage_metadata(body.get("usage"))
+        resolved = body.get("model")
+        if isinstance(resolved, str):
+            metadata["resolved_model"] = resolved
+        publish_observation(observation_from_metadata(metadata, "mistral", model, complete=True))
         if "error" in body or body.get("object") == "error":
             raise _event_error(body)
         choices = body.get("choices")
@@ -761,7 +773,7 @@ class MistralProvider(BaseLLMProvider):
             content=[*accumulator.finish(), *calls],
             tool_calls=calls,
             stop_reason=_stop_reason(choice.get("finish_reason")),
-            usage_metadata=_usage_metadata(body.get("usage")),
+            usage_metadata=metadata,
         )
         return attach_normalized_usage(message, "mistral", model)
 

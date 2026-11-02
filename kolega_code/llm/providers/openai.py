@@ -27,7 +27,8 @@ from ..models import (
 from ..specs import MODEL_SPECS, build_thinking_request_params, deepseek_output_token_cap, is_deepseek_model
 from ..timeouts import streaming_timeout
 from ..tool_execution_ids import ToolExecutionIdRegistry
-from ..usage import attach_normalized_usage, read_detail_int
+from ..accounting import UsageObservation, publish_observation, read_wire
+from ..usage import attach_normalized_usage, observation_from_metadata, read_detail_int
 from ._token_encoding import get_counting_encoding
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
@@ -94,12 +95,12 @@ def _capture_usage_details(usage: Any, target: Dict[str, Any]) -> None:
     ``input_tokens`` exclusive of cache creation, so the write count is subtracted
     here to keep one meaning of "input tokens" across providers.
     """
-    completion_details = getattr(usage, "completion_tokens_details", None)
+    completion_details = read_wire(usage, "completion_tokens_details")
     reasoning = read_detail_int(completion_details, "reasoning_tokens")
     if reasoning is not None:
         target["reasoning_output_tokens"] = reasoning
 
-    details = getattr(usage, "prompt_tokens_details", None)
+    details = read_wire(usage, "prompt_tokens_details")
     if details is None:
         return
 
@@ -108,11 +109,37 @@ def _capture_usage_details(usage: Any, target: Dict[str, Any]) -> None:
         target["cache_read_input_tokens"] = cached
 
     cache_write = read_detail_int(details, "cache_write_tokens")
-    if cache_write:
+    if cache_write is not None:
         target["cache_write_input_tokens"] = cache_write
         prompt_tokens = target.get("prompt_tokens")
-        if isinstance(prompt_tokens, int):
-            target["prompt_tokens"] = max(prompt_tokens - cache_write, 0)
+        if type(prompt_tokens) is int:
+            target["prompt_tokens"] = prompt_tokens - cache_write
+
+
+def _usage_metadata(usage: Any) -> dict[str, Any]:
+    result = {
+        key: read_wire(usage, key)
+        for key in (
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "cost",
+            "cost_details",
+            "cost_in_usd_ticks",
+            "service_tier",
+            "pricing_tier_input_tokens",
+        )
+        if read_wire(usage, key) is not None
+    }
+    _capture_usage_details(usage, result)
+    for key in ("prompt_tokens_details", "completion_tokens_details", "server_tool_use", "tool_calls_details"):
+        details = read_wire(usage, key)
+        dump = getattr(details, "model_dump", None)
+        if isinstance(details, dict):
+            result[key] = details
+        elif callable(dump):
+            result[key] = dump(exclude_none=True)
+    return result
 
 
 class OpenAIStreamWrapper:
@@ -147,6 +174,8 @@ class OpenAIStreamWrapper:
 
         self._closed = False
         self._requested_include_usage = requested_include_usage
+        self._usage_complete = False
+        self._wire_finished = False
 
     @property
     def final_content(self) -> str:
@@ -175,6 +204,26 @@ class OpenAIStreamWrapper:
 
         try:
             chunk = await self.openai_stream.__anext__()
+            usage = getattr(chunk, "usage", None)
+            if usage is not None:
+                incoming = _usage_metadata(usage)
+                resolved = getattr(chunk, "model", None)
+                if isinstance(resolved, str):
+                    incoming["resolved_model"] = resolved
+                choices = getattr(chunk, "choices", None)
+                final = not choices or any(getattr(choice, "finish_reason", None) is not None for choice in choices)
+                if self.provider_name == "cloudflare_workers_ai" and not (not choices or final and self._wire_finished):
+                    previous = self.usage_data or {}
+                    for name in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                        value = incoming.get(name)
+                        prior = previous.get(name)
+                        if type(value) is int and value >= 0 and type(prior) is int and prior >= 0:
+                            incoming[name] = prior + value
+                    self._usage_complete = final and not choices
+                else:
+                    self._usage_complete = final
+                self.usage_data = incoming
+                self._wire_finished = self._wire_finished or final
 
             # Some providers emit usage-only events with no choices; guard accesses
             if hasattr(chunk, "choices") and chunk.choices:
@@ -212,16 +261,6 @@ class OpenAIStreamWrapper:
                 self.stop_reason = getattr(choice0, "finish_reason", self.stop_reason)
 
             # Capture usage data from final chunk
-            if hasattr(chunk, "usage") and chunk.usage:
-                self.usage_data = {
-                    "prompt_tokens": chunk.usage.prompt_tokens,
-                    "completion_tokens": chunk.usage.completion_tokens,
-                    "total_tokens": chunk.usage.total_tokens,
-                }
-                # Cached / cache-written prompt tokens when the provider reports
-                # them (e.g. DashScope/Qwen, OpenRouter).
-                _capture_usage_details(chunk.usage, self.usage_data)
-
             # Return a safe chunk representation; ignore events with no choices
             if hasattr(chunk, "choices") and chunk.choices:
                 return MessageChunk.from_openai(chunk)
@@ -229,7 +268,12 @@ class OpenAIStreamWrapper:
                 return MessageChunk(type="ignore", text="")
 
         except StopAsyncIteration:
+            if self.provider_name != "cloudflare_workers_ai":
+                self._usage_complete = True
             raise
+
+    def get_usage_observation(self) -> UsageObservation:
+        return observation_from_metadata(self.usage_data, self.provider_name, self.model, complete=self._usage_complete)
 
     async def get_final_message(self):
         # Materialize the accumulated tool-call argument fragments into each delta
@@ -266,7 +310,7 @@ class OpenAIStreamWrapper:
                     "OpenAIStreamWrapper: no usage metadata captured from streaming response; billing may be skipped"
                 )
 
-        return attach_normalized_usage(message, self.provider_name, self.model)
+        return attach_normalized_usage(message, self.provider_name, self.model, complete=self._usage_complete)
 
 
 class OpenAIProvider(BaseLLMProvider):
@@ -804,6 +848,13 @@ class OpenAIProvider(BaseLLMProvider):
             **generation_params,
         )
 
+        usage_data = _usage_metadata(getattr(response, "usage", None))
+        resolved = getattr(response, "model", None)
+        if isinstance(resolved, str):
+            usage_data["resolved_model"] = resolved
+        publish_observation(
+            observation_from_metadata(usage_data, self.provider_name, str(generation_params["model"]), complete=True)
+        )
         # Extract message and add usage data. finish_reason lives on the choice,
         # not the message — pass it through or stop_reason is silently None.
         response_message = response.choices[0].message
@@ -819,14 +870,6 @@ class OpenAIProvider(BaseLLMProvider):
 
         # Add usage data from the response
         if hasattr(response, "usage") and response.usage:
-            usage_data: Dict[str, Any] = {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-            }
-            # Cached / cache-written prompt tokens when the provider reports them
-            # (e.g. DashScope/Qwen, OpenRouter).
-            _capture_usage_details(response.usage, usage_data)
             message.usage_metadata.update(usage_data)
         else:
             logging.getLogger(__name__).warning(

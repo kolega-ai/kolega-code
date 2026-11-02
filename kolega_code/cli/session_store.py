@@ -482,7 +482,7 @@ class SessionStore:
                 f"Session project_path is immutable: expected {stored_project_path!r}, got {record.project_path!r}"
             )
 
-    def load(self, session_id: str) -> SessionRecord:
+    def load(self, session_id: str, *, live_run_id: Optional[str] = None) -> SessionRecord:
         self._ensure_migrated(session_id)
         if not self.session_dir_for(session_id).exists():
             raise SessionStoreError(f"Session not found: {session_id}")
@@ -490,7 +490,7 @@ class SessionStore:
             events = self.journal(session_id).read_events(repair_tail=True)
             metadata = self._metadata_projection(session_id, events)
             history, compaction = self._replay(events, self.journal(session_id))
-            usage = derive_session_usage(events)
+            usage = derive_session_usage(events, live_run_id=live_run_id)
             return SessionRecord.from_dict({**metadata, "history": history, "compaction": compaction, "usage": usage})
         except SessionStoreError:
             raise

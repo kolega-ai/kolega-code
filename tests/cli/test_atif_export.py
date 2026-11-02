@@ -18,6 +18,7 @@ from kolega_code.cli.session_journal import (
     SessionRecorder,
     derive_root_agent_id,
 )
+from kolega_code.cli.session_usage import SessionUsageSink
 from kolega_code.llm.ledger import HISTORY_ORIGIN, UsageLedger, llm_call_origin
 from kolega_code.llm.models import (
     ImageBlock,
@@ -71,6 +72,24 @@ def settled(ledger, message):
         request_id = ledger.begin("anthropic", "claude-opus-5")
         ledger.record_response(request_id, message.usage, message)
     return message
+
+
+@pytest.mark.asyncio
+async def test_v2_accounting_facts_do_not_duplicate_history_or_atif_steps(tmp_path):
+    journal = make_journal(tmp_path)
+    recorder = bootstrap(journal)
+    ledger = UsageLedger()
+    sink = SessionUsageSink(journal, recorder, ledger, mode="acp")
+    ledger.observer = sink
+    await sink.start()
+    drive_rich_turn(recorder, ledger)
+    await sink.aclose()
+    doc = convert(journal)
+    assert len([step for step in doc["steps"] if step["source"] == "agent"]) == 2
+    assert len([event for event in journal.read_events() if event.event_type == "assistant.message"]) == 2
+    assert not any(event.event_type == "llm.message" for event in journal.read_events())
+    assert len([event for event in journal.read_events() if event.event_type == "llm.request_settled"]) == 2
+    assert doc.get("subagent_trajectories", []) == []
 
 
 def convert(journal, **overrides):

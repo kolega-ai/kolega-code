@@ -36,6 +36,7 @@ import httpx
 
 from .types import ThinkingEffortSpec
 from .validation import validate_model_spec
+from .pricing_feeds import feed_pricing, sanitize_spec_pricing
 
 AGENT_PROVIDER = "perplexity_agent"
 
@@ -114,8 +115,11 @@ def catalog_entries(payload: Any) -> list[tuple[str, dict[str, Any]]]:
     Every entry gets the same uniform spec. Model order is the payload's own.
     """
     entries: list[tuple[str, dict[str, Any]]] = []
-    for identifier in _model_ids(payload):
+    identifiers = _model_ids(payload)
+    rows = {row["id"].strip(): row for row in payload.get("data", []) if isinstance(row, Mapping)}
+    for identifier in identifiers:
         spec = model_spec()
+        spec["pricing"] = feed_pricing(AGENT_PROVIDER, identifier, rows[identifier])
         validate_model_spec(spec)
         entries.append((identifier, spec))
     if not entries:
@@ -155,7 +159,7 @@ def fetch_models(
 
 def spec_to_jsonable(spec: Mapping[str, Any]) -> dict[str, Any]:
     """Return a JSON-serializable copy of a model spec."""
-    payload = dict(spec)
+    payload = sanitize_spec_pricing(spec)
     thinking = payload.get("thinking_effort")
     if isinstance(thinking, ThinkingEffortSpec):
         payload["thinking_effort"] = {
@@ -168,7 +172,7 @@ def spec_to_jsonable(spec: Mapping[str, Any]) -> dict[str, Any]:
 
 def spec_from_jsonable(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Rebuild and validate a runtime model spec from cached JSON."""
-    spec = dict(payload)
+    spec = sanitize_spec_pricing(payload)
     thinking = spec.get("thinking_effort")
     if thinking is not None:
         if not isinstance(thinking, Mapping):

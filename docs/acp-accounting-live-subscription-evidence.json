@@ -1,0 +1,127 @@
+{
+  "date": "2026-11-01T11:45:49.429163+00:00",
+  "maximum_requests": 18,
+  "budget_usd": "1",
+  "prior_inference_requests": 9,
+  "prior_conservative_list_debit_usd": "0.04294260",
+  "sdk": {
+    "agent-client-protocol": "0.12.0",
+    "openai": "2.46.0",
+    "anthropic": "0.101.0"
+  },
+  "routes": {
+    "zai": {
+      "model": "glm-5.3-flash",
+      "pricing": {
+        "alternative_billing_surface": {
+          "currency": "USD",
+          "model_id": "GLM-5.3-Flash",
+          "product": "Z.AI API, not the configured Coding Plan route",
+          "rates": {
+            "cache_read": "0.03",
+            "input": "0.15",
+            "output": "0.50"
+          },
+          "unit": "per_million_tokens",
+          "url": "https://docs.z.ai/guides/overview/pricing"
+        },
+        "assumptions": [
+          "Credit formula is weighted tokens divided by 10,000; these rates are credits per million tokens.",
+          "Coding Plan credits have no universal monetary conversion; API USD list prices do not apply."
+        ],
+        "billing_mode": "coding_plan",
+        "cache_policy": {
+          "cache_read": "separate",
+          "cache_write": "included"
+        },
+        "checked_at": "2026-11-01",
+        "conditions": {},
+        "currency": null,
+        "denomination": "zai_coding_plan_credit",
+        "exclusions": [
+          "Taxes, account credits/free allowances, and negotiated discounts."
+        ],
+        "model": "glm-5.3-flash",
+        "pricing_id": "zai:glm-5.3-flash:2026-11-01",
+        "provider": "zai",
+        "published_tool_rates": {
+          "web_reader": "1.2",
+          "web_search": "1.2",
+          "zread": "1.2"
+        },
+        "rates": {
+          "cache_read": "28.0",
+          "input": "115.0",
+          "output": "400.0"
+        },
+        "schedules": [
+          {
+            "id": "coding_plan_peak",
+            "rates": {
+              "cache_read": "56",
+              "input": "230",
+              "output": "800"
+            },
+            "when": {
+              "end_time": "18:00",
+              "start_time": "14:00",
+              "timezone": "Asia/Singapore",
+              "weekdays": [
+                0,
+                1,
+                2,
+                3,
+                4
+              ]
+            }
+          }
+        ],
+        "schema_version": 1,
+        "sources": [
+          {
+            "checked_at": "2026-11-01",
+            "model_id": "GLM-5.3-Flash",
+            "url": "https://docs.z.ai/devpack/overview"
+          },
+          {
+            "checked_at": "2026-11-01",
+            "model_id": "GLM-5.3-Flash",
+            "url": "https://docs.z.ai/guides/overview/pricing"
+          }
+        ],
+        "status": "priced",
+        "unit": "per_million_tokens"
+      },
+      "snapshots": [],
+      "error_type": "RequestError"
+    }
+  },
+  "failures": [
+    "zai: RequestError: Internal error"
+  ],
+  "limitations": [
+    "Published list-value estimates are not invoices or account debits.",
+    "Coding Plan credits have no universal USD conversion.",
+    "Cancellation gates a real OpenRouter usage frame before forwarding stream EOF.",
+    "SDK retries cannot reach a provider twice with the identical payload."
+  ],
+  "actual_inference_requests": 0,
+  "campaign_inference_requests": 9,
+  "wire": [],
+  "guard_refusals": [
+    "assert ('CONNECT' == 'CONNECT'\n  \n    CONNECT and '443' == '443'\n  \n    443 and 'openaipublic.blob.core.windows.net' in {'api.deepseek.com', 'api.z.ai', 'openrouter.ai'})"
+  ],
+  "wire_errors": [],
+  "conservative_list_debit_usd": "0.04294260",
+  "outstanding_maximum_reservation_usd": "0",
+  "diagnostics": [
+    "    raise OSError(\n",
+    "OSError",
+    "urllib3.exceptions.ProxyError",
+    "    raise MaxRetryError(_pool, url, reason) from reason  # type",
+    "urllib3.exceptions.MaxRetryError",
+    "    raise ProxyError(e, request=request)\n",
+    "requests.exceptions.ProxyError",
+    "kolega_code.llm.exceptions.LLMError"
+  ]
+}

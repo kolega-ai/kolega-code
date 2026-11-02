@@ -31,6 +31,7 @@ import httpx
 
 from .types import ThinkingEffortSpec
 from .validation import validate_model_spec
+from .pricing_feeds import feed_pricing, sanitize_spec_pricing
 
 PROVIDER = "tinker"
 MODELS_URL = "https://tinker-docs.thinkingmachines.ai/tinker/models.json"
@@ -137,6 +138,7 @@ def catalog_entries(payload: Any) -> list[tuple[str, dict[str, Any]]]:
             "preferred_edit_protocol": PREFERRED_EDIT_PROTOCOL,
         }
         spec.update(_family_spec(str(identifier)))
+        spec["pricing"] = feed_pricing(PROVIDER, str(identifier), item)
         entries.append((str(identifier), spec))
     return entries
 
@@ -150,7 +152,7 @@ def fetch_models(*, timeout: float = 30.0) -> Any:
 
 def spec_to_jsonable(spec: Mapping[str, Any]) -> dict[str, Any]:
     """Return a JSON-serializable copy of a spec (``ThinkingEffortSpec`` expanded)."""
-    payload = dict(spec)
+    payload = sanitize_spec_pricing(spec)
     thinking = payload.get("thinking_effort")
     if isinstance(thinking, ThinkingEffortSpec):
         payload["thinking_effort"] = {
@@ -163,7 +165,7 @@ def spec_to_jsonable(spec: Mapping[str, Any]) -> dict[str, Any]:
 
 def spec_from_jsonable(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Rebuild a runtime spec from ``spec_to_jsonable`` output."""
-    spec = dict(payload)
+    spec = sanitize_spec_pricing(payload)
     spec.setdefault("preferred_edit_protocol", PREFERRED_EDIT_PROTOCOL)
     thinking = spec.get("thinking_effort")
     if isinstance(thinking, Mapping) and thinking.get("mode") == "tinker_native_effort":

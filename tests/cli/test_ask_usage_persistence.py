@@ -2,7 +2,7 @@
 marker and internal llm.* events; without persistence nothing attaches."""
 
 from kolega_code.cli.session_usage import LLM_MESSAGE_EVENT, LLM_RUN_STARTED_EVENT
-from kolega_code.llm.ledger import LlmCallOrigin, llm_call_origin
+from kolega_code.llm.ledger import HISTORY_ORIGIN, LlmCallOrigin, llm_call_origin
 from kolega_code.llm.models import Message
 from kolega_code.llm.usage import normalize_usage
 
@@ -21,12 +21,24 @@ class UsageRecordingAskAgent(FakeCoderAgent):
 
     async def process_message_stream(self, message, attachments=None):
         ledger = self.kwargs["usage_ledger"]
+        self.messages.append(message)
+        self.attachments.append(attachments)
+        user = Message(role="user", content=message)
+        if self.session_recorder is not None:
+            self.session_recorder.start_turn(user)
         usage = normalize_usage({"input_tokens": 10, "output_tokens": 5}, "anthropic", "m")
         with llm_call_origin(LlmCallOrigin(kind="sub_agent", agent_name="Investigator", agent_id="a1")):
             request_id = ledger.begin("anthropic", "m")
         ledger.record_response(request_id, usage, message=Message(role="assistant", content="sub", usage=usage))
-        async for item in FakeCoderAgent.process_message_stream(self, message, attachments):
-            yield item
+        assistant = Message(role="assistant", content="done", stop_reason="end_turn", usage=usage)
+        with llm_call_origin(HISTORY_ORIGIN):
+            root_request = ledger.begin("anthropic", "m")
+        ledger.record_response(root_request, usage, message=assistant)
+        if self.session_recorder is not None:
+            self.session_recorder.record_assistant(assistant)
+            self.session_recorder.finish_turn("completed")
+        self.history.extend([user, assistant])
+        yield {"type": "response", "content": "done", "complete": True, "uuid": "response-1"}
 
     async def fire_hook(self, event, payload):
         class Result:
@@ -71,7 +83,8 @@ def test_ask_with_session_journals_marker_and_internal_events(tmp_path, monkeypa
     assert llm_messages[0].payload["origin"]["agent_name"] == "Investigator"
 
     record = store.load(sessions[0].session_id)
-    assert record.usage["responses"] >= 1
+    assert record.usage["responses"] == 2
+    assert record.usage["total_tokens"] == 30
     assert record.usage["coverage"]["full"] is True
 
 

@@ -30,6 +30,7 @@ from kolega_code.extensions import (
     resolve_extension_selection,
 )
 from kolega_code.llm.ledger import UsageLedger
+from kolega_code.llm.pricing import PricingResolver, usage_cost_summary
 from kolega_code.llm.specs.custom_endpoints import CUSTOM_THINKING_PRESETS
 from kolega_code.llm.specs.thinking import REASONING_REPLAY_VALUES
 
@@ -717,6 +718,7 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         help="popularity keeps catalog order (usage rank for gateways); id sorts alphabetically.",
     )
     models_list.add_argument("--json", action="store_true", help="Emit JSON instead of a table.")
+    models_list.add_argument("--pricing", action="store_true", help="Show pricing rates, conditions and sources.")
     models_list.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
     models_refresh = models_sub.add_parser(
         "refresh",
@@ -1725,6 +1727,19 @@ def _emit_loop_finished(state: LoopState, recorder: SessionRecorder, json_mode: 
         print(f"[loop] finished after {state.iterations} iteration(s): {reason}", file=sys.stderr)
 
 
+def _print_ask_cost_summary(baseline: dict[str, Any] | None, ledger: UsageLedger, *, json_mode: bool) -> None:
+    if json_mode:
+        return
+    try:
+        prior = baseline or {}
+        costs = prior.get("costs") or ({"complete": False} if prior else {})
+        summary = usage_cost_summary(costs, ledger.snapshot().costs)
+        if summary:
+            print(summary, file=sys.stderr)
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to display the usage cost summary")
+
+
 def _record_ask_run_terminal(
     recorder: SessionRecorder,
     *,
@@ -1765,6 +1780,7 @@ def _record_ask_run_terminal(
                 "cache_read_input_tokens": totals.cache_read_input_tokens,
                 "cache_write_input_tokens": totals.cache_write_input_tokens,
                 "reasoning_output_tokens": totals.reasoning_output_tokens,
+                "costs": dict(totals.costs),
             },
         }
         if exit_code is not None:
@@ -2078,7 +2094,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
     # Initialized before the try so the finally can stop the inbox even when an
     # earlier failure skipped its setup.
     peer_inbox = None
-    usage_ledger = UsageLedger()
+    usage_ledger = UsageLedger(pricing_resolver=PricingResolver(config.usage_pricing))
     response_chunks: list[dict] = []
     exit_code = 0
     run_status = "completed"
@@ -2484,6 +2500,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
             provider=str(getattr(config.long_context_config, "provider", None) or "") or None,
             model=config.long_context_config.model,
         )
+        _print_ask_cost_summary(session.usage, usage_ledger, json_mode=args.json)
         if getattr(args, "atif_output", None) is not None:
             # After the run terminal so the trajectory carries the outcome.
             # Synchronous and broadly guarded: this runs inside a finally and

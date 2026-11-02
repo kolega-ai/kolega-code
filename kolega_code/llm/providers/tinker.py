@@ -37,7 +37,8 @@ from ..models import (
     ToolDefinition,
 )
 from ..specs import MODEL_SPECS, get_model_specs
-from ..usage import attach_normalized_usage
+from ..accounting import UsageObservation, publish_observation
+from ..usage import attach_normalized_usage, observation_from_metadata, read_detail_int
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
 from .tinker_trace import TinkerTraceRecord
@@ -302,8 +303,8 @@ class TinkerProvider(BaseLLMProvider):
             self._base_model = await self._sampling_client.get_base_model_async()
         except Exception:  # noqa: BLE001 - base models are known directly
             self._base_model = None
-        if not self._base_model:
-            self._base_model = model if not model.startswith("tinker://") else model
+        if not self._base_model and not model.startswith("tinker://"):
+            self._base_model = model
 
     async def _get_renderer(self, model: str, effort: Optional[str]) -> Any:
         if self._renderer is None:
@@ -327,7 +328,7 @@ class TinkerProvider(BaseLLMProvider):
         system: Optional[Message],
         params: Optional[GenerationParams],
         model: str,
-    ) -> tuple[Any, Any, Any, Any, Dict[str, int]]:
+    ) -> tuple[Any, Any, Any, Any, Dict[str, Any]]:
         """Render and sample one response; returns
         ``(sequence, parsed, termination, model_input, usage)``."""
         await self._ensure_client(model)
@@ -356,12 +357,21 @@ class TinkerProvider(BaseLLMProvider):
             sampling_params=sampling_params,
         )
         sequence = response.sequences[0]
-        parsed, termination = renderer.parse_response(sequence.tokens)
+        cache_hit_tokens = read_detail_int(response, "prompt_cache_hit_tokens")
+        if cache_hit_tokens is not None and cache_hit_tokens > prompt_tokens:
+            cache_hit_tokens = None
         usage = {
             "input_tokens": prompt_tokens,
             "output_tokens": len(sequence.tokens),
-            "prompt_cache_hit_tokens": int(getattr(response, "prompt_cache_hit_tokens", 0) or 0),
+            "prompt_cache_hit_tokens": cache_hit_tokens,
         }
+        metadata = {
+            "input_tokens": prompt_tokens - (cache_hit_tokens or 0),
+            "output_tokens": usage["output_tokens"],
+            "cache_read_input_tokens": usage["prompt_cache_hit_tokens"],
+        }
+        publish_observation(observation_from_metadata(metadata, self.provider_name, model, complete=True))
+        parsed, termination = renderer.parse_response(sequence.tokens)
         return sequence, parsed, termination, prompt, usage
 
     def _emit_trace(
@@ -370,7 +380,7 @@ class TinkerProvider(BaseLLMProvider):
         sequence: Any,
         termination: Any,
         prompt: Any,
-        usage: Dict[str, int],
+        usage: Dict[str, Any],
         temperature: Optional[float],
         max_tokens: Optional[int],
     ) -> None:
@@ -411,7 +421,7 @@ class TinkerProvider(BaseLLMProvider):
         message = _parsed_to_message(parsed, _kolega_stop_reason(str(sequence.stop_reason), termination))
         message.usage_metadata = {
             "provider": self.provider_name,
-            "input_tokens": usage["input_tokens"],
+            "input_tokens": usage["input_tokens"] - (usage["prompt_cache_hit_tokens"] or 0),
             "output_tokens": usage["output_tokens"],
             "cache_read_input_tokens": usage["prompt_cache_hit_tokens"],
         }
@@ -505,7 +515,7 @@ class TinkerStreamWrapper:
         self._final_message = _parsed_to_message(parsed, _kolega_stop_reason(str(sequence.stop_reason), termination))
         self._final_message.usage_metadata = {
             "provider": self.provider.provider_name,
-            "input_tokens": usage["input_tokens"],
+            "input_tokens": usage["input_tokens"] - (usage["prompt_cache_hit_tokens"] or 0),
             "output_tokens": usage["output_tokens"],
             "cache_read_input_tokens": usage["prompt_cache_hit_tokens"],
         }
@@ -527,6 +537,11 @@ class TinkerStreamWrapper:
         )
         self._entered = True
         return self
+
+    def get_usage_observation(self) -> UsageObservation:
+        if self._final_message is not None and self._final_message.usage_observation is not None:
+            return self._final_message.usage_observation
+        return UsageObservation(provider=self.provider.provider_name, model=self.provider.model)
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self._entered = False
