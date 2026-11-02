@@ -327,6 +327,11 @@ async def test_cancellation_resistant_read_does_not_hold_turn_and_is_eventually_
     "event_type", ["response.function_call_arguments.delta", "response.custom_tool_call_input.delta"]
 )
 async def test_tool_only_stream_is_partial_output_not_zero_output(guarded: BaseAgent, event_type: str) -> None:
+    # Building the SDK's model for the 35k delta can outlast the 80 ms
+    # first-chunk deadline on a loaded runner, which reds the stage as
+    # "first_chunk". The test is about the idle stall after the first chunk, so
+    # only that deadline needs to be short.
+    guarded._stream_first_chunk_timeout = 10.0
     payload = "x" * 35_000
     body = _Body(({"type": event_type, "item_id": "tool_1", "delta": payload},))
     async with _client(lambda _: _response(body)) as client:
