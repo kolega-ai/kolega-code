@@ -81,10 +81,16 @@ because those forms can select and recreate the development `.venv`.
      ./run_tests.sh
    UV_PROJECT_ENVIRONMENT="$PWD/.venv-release" \
      uv run pre-commit run --all-files --show-diff-on-failure
+   UV_PROJECT_ENVIRONMENT="$PWD/.venv-release" \
+     uv run --frozen python scripts/check_previous_release_compat.py --install-previous --release-preflight
    ```
 
    `UV_PROJECT_ENVIRONMENT` is inherited by pre-commit's local `pyright` hook,
    including the hook's nested `uv run`.
+
+   The compatibility preflight installs the latest stable PyPI release older
+   than the candidate in an isolated environment. The release workflow runs
+   the same check before publishing.
 
    To reproduce a version-specific CI failure, target the same disposable
    environment explicitly:

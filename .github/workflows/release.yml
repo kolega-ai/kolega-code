@@ -77,6 +77,10 @@ jobs:
               sys.exit(1)
           PY
 
+      - name: Check previous-release state compatibility
+        timeout-minutes: 15
+        run: uv run --frozen python scripts/check_previous_release_compat.py --install-previous --release-preflight
+
       - name: Run tests
         run: ./run_tests.sh
 
