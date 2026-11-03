@@ -71,8 +71,8 @@ because those forms can select and recreate the development `.venv`.
    - Use the release date from the release PR merge.
    - Leave an empty `Unreleased` section above the new release section.
 
-4. Bootstrap the dedicated release environment, run the fast test suite, and
-   run the same pre-commit checks as CI:
+4. Bootstrap the dedicated release environment, run the fast test suite and
+   the same pre-commit checks as CI, and run the compatibility preflight:
 
    ```bash
    UV_PROJECT_ENVIRONMENT="$PWD/.venv-release" \
@@ -81,10 +81,16 @@ because those forms can select and recreate the development `.venv`.
      ./run_tests.sh
    UV_PROJECT_ENVIRONMENT="$PWD/.venv-release" \
      uv run pre-commit run --all-files --show-diff-on-failure
+   UV_PROJECT_ENVIRONMENT="$PWD/.venv-release" \
+     uv run --frozen python scripts/check_previous_release_compat.py --install-previous --release-preflight
    ```
 
    `UV_PROJECT_ENVIRONMENT` is inherited by pre-commit's local `pyright` hook,
    including the hook's nested `uv run`.
+
+   The compatibility preflight installs the latest stable PyPI release older
+   than the candidate in an isolated environment. Run it before opening the
+   release PR; it is not run by CI or the release workflow.
 
    To reproduce a version-specific CI failure, target the same disposable
    environment explicitly:

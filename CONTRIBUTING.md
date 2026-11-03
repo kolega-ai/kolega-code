@@ -120,6 +120,19 @@ You can pass additional pytest arguments through the wrapper:
 ./run_tests.sh tests/test_git_env.py -ra
 ```
 
+When changing persisted settings or session event formats, also run the
+previous-release compatibility check. It downloads the latest published
+release and its dependencies from PyPI:
+
+```bash
+uv run --frozen python scripts/check_previous_release_compat.py --install-previous
+```
+
+The check covers one old-writer settings save and an ordinary append to a
+complete journal, not general mixed-version concurrency, repeated old-writer
+saves, or journal repair. It verifies the downloaded wheel's SHA-256; its
+dependencies are resolved from PyPI without pinned hashes.
+
 ## Comments
 
 Comments are rare here. Write one only where the code cannot say it: a non-obvious
