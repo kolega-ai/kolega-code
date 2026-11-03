@@ -99,7 +99,8 @@ Run the fast test suite before opening a pull request:
 ./run_tests.sh
 ```
 
-The wrapper runs tests in parallel using the available CPU cores. Set
+The wrapper runs tests in parallel using the available CPU cores; xdist's
+work-stealing scheduler keeps a worker from idling behind a long test. Set
 `PYTEST_WORKERS` to cap concurrency, or set it to `0` for a serial debugging
 run:
 

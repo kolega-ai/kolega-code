@@ -32,7 +32,7 @@ Multi-agent terminal coding agent: Python 3.11+ package `kolega_code/` (hatchlin
 
 ## Testing Guidelines
 
-- pytest with `asyncio_mode = "strict"`; the wrapper adds `--import-mode=importlib` and deselects `slow` only. Markers: `slow`, `integration`, `live_api`, `e2e`.
+- pytest with `asyncio_mode = "strict"`; the wrapper adds `--import-mode=importlib`, load-balances with `--dist=worksteal`, and deselects `slow` only. Markers: `slow`, `integration`, `live_api`, `e2e`.
 - Unit tests use the `isolated_cli_env` fixture (`tests/conftest.py`) so they don't see a developer's env; slow/integration tests read provider keys from repo-root `.env` (copy `.env.example`).
 - Tests that build an app or Settings and assert an exact status line must take `isolated_cli_env`: an exported `KOLEGA_CODE_PROVIDER`/`_MODEL` turns `Settings saved.` into the override warning (#788, #797). Assert argparse help on collapsed whitespace — it wraps to `COLUMNS`, and a contiguous-substring assertion fails at 100–120 columns (#788, #796). A result that changes with the developer's env or terminal width is a test bug: fix it instead of documenting it per PR (#787, #789, #798).
 - Don't assert a tight upper bound on elapsed wall-clock time (`elapsed < 0.3`), and don't leave a 1 s deadline where "it can never fire": a coverage-instrumented runner on a loaded box overruns both and reds a required check (#785, #799). Assert the observable outcome — the timeout raised, the stream closed — with headroom the test is not expected to reach.

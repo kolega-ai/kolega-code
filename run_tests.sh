@@ -42,7 +42,10 @@ fi
 
 echo "Running tests with ${NUM_CPUS} parallel workers"
 
-PYTEST_BASE_ARGS=(-ra --durations=50 --import-mode=importlib -n "$NUM_CPUS")
+# Work-stealing lets an idle worker take tests from a peer still queued behind a
+# long one; plain load scheduling can leave both cores waiting at the tail of the
+# TUI suite. `-n 0` stays serial and ignores the scheduler.
+PYTEST_BASE_ARGS=(-ra --durations=50 --import-mode=importlib -n "$NUM_CPUS" --dist=worksteal)
 
 if [ "$RUN_COVERAGE" = true ]; then
   # coverage.py's sysmon core (Python 3.12+) records the same lines as the C
