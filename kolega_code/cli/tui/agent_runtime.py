@@ -22,13 +22,12 @@ from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.tool_definitions import tool_description_asset
 from kolega_code.agent.volatile_context import VolatileSection
 from kolega_code.extensions import (
-    KolegaExtensionHost,
+    KolegaExtensionBundle,
     KolegaExtensionLoadError,
     bind_extension_agent,
     cleanup_extension_bundle,
-    create_extension_bundle,
 )
-from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
+from kolega_code.agent.custom_agents import CustomAgentCatalog
 from kolega_code.agent.prompts import (
     build_current_plan_artifact_prompt,
     build_scratchpad_prompt,
@@ -48,6 +47,14 @@ from kolega_code.session.inbox import (
 )
 from kolega_code.session.runtime import deserialize_permission_request, deserialize_permission_rule_options
 from kolega_code.session.background import BackgroundAgentManager
+from kolega_code.session.composition import (
+    CompositionHost,
+    CompositionRequest,
+    HostExtensions,
+    construct_agent,
+    prepare_composition,
+    select_agent_class,
+)
 from kolega_code.tools import ToolError
 from textual.widgets import Static
 
@@ -64,10 +71,6 @@ from ..goal import (
 from ..plan_artifacts import write_current_plan_artifact
 from ..skills import (
     SkillCatalog,
-    build_skill_prompt_extension,
-    build_skill_tool_extension,
-    context_window_tokens_for_skill_budget,
-    discover_skills,
 )
 from . import app_base as tui_app_base
 from . import constants as tui_constants
@@ -1974,6 +1977,51 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             propagate_to_sub_agents=True,
         )
 
+    def _composition_extensions(self) -> HostExtensions:
+        prompts: list[PromptExtension] = []
+        tools: list[ToolExtension] = []
+        if self.interaction_mode == tui_constants.BUILD_INTERACTION_MODE:
+            prompts.append(self._shared_task_list_prompt_extension())
+            tools.append(self._shared_task_list_tool_extension())
+            plan_artifact = self._current_plan_artifact_prompt_extension()
+            if plan_artifact is not None:
+                prompts.append(plan_artifact)
+        else:
+            prompts.append(self._shared_task_list_readonly_prompt_extension())
+            tools.append(self._shared_task_list_readonly_tool_extension())
+        prompts.append(self._worktree_control_prompt_extension())
+        tools.append(self._worktree_control_tool_extension())
+        prompts.append(self._goal_control_prompt_extension())
+        tools.append(self._goal_control_tool_extension())
+        tools.append(self._peer_messaging_tool_extension())
+        scratchpad = self._scratchpad_prompt_extension()
+        if scratchpad is not None:
+            prompts.append(scratchpad)
+        return HostExtensions(prompts, tools, scratchpad)
+
+    def _composition_questions(self) -> tuple[PromptExtension, ToolExtension]:
+        prompt = (
+            self._planning_question_prompt_extension()
+            if self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE
+            else self._build_question_prompt_extension()
+        )
+        return prompt, self._planning_question_tool_extension()
+
+    def _composition_additional_prompts(self) -> list[PromptExtension]:
+        prompts: list[PromptExtension] = []
+        if self._gigacode_enabled:
+            prompts.append(self._gigacode_prompt_extension())
+        if self._goal is not None and self._goal.condition:
+            prompts.append(self._goal_prompt_extension())
+        return prompts
+
+    def _set_composition_catalogs(self, skills: SkillCatalog, agents: CustomAgentCatalog) -> None:
+        self.skill_catalog = skills
+        self.custom_agent_catalog = agents
+
+    def _own_composition_bundle(self, bundle: KolegaExtensionBundle) -> None:
+        self._extension_bundle = bundle
+
     async def _build_agent(
         self,
         config: AgentConfig,
@@ -2021,148 +2069,48 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self.session.session_id,
             browser_visible=self.browser_visible,
         )
-        agent_class = PlanningAgent if self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE else CoderAgent
-        self.skills_enabled = config.skills_enabled
-        self.skill_catalog = discover_skills(self.active_project_path) if self.skills_enabled else SkillCatalog()
-        self.custom_agent_catalog = validate_custom_agent_models(
-            discover_custom_agents(self.active_project_path, self.settings_store.root),
-            config,
-        ).for_mode(self.interaction_mode)
-        prompt_extensions: list[PromptExtension] = []
-        tool_extensions: list[ToolExtension] = []
-        # The shared task list is build-mode execution tracking, so only build mode
-        # can write it. Plan mode gets a read-only view so a re-plan started mid-build
-        # can see what has already been completed.
-        if self.interaction_mode == tui_constants.BUILD_INTERACTION_MODE:
-            prompt_extensions.append(self._shared_task_list_prompt_extension())
-            tool_extensions.append(self._shared_task_list_tool_extension())
-            plan_artifact_extension = self._current_plan_artifact_prompt_extension()
-            if plan_artifact_extension is not None:
-                prompt_extensions.append(plan_artifact_extension)
-        else:
-            prompt_extensions.append(self._shared_task_list_readonly_prompt_extension())
-            tool_extensions.append(self._shared_task_list_readonly_tool_extension())
-        # Worktree and goal control belong to the top-level agent and are never
-        # inherited by delegates. Both tool extensions are installed in either
-        # mode; neither tool is declared in ``planning_tools``, so the planning
-        # agent's registry filters both out and its dispatch cannot reach them.
-        # The mode-aware prompts still apply in plan mode. They explicitly mark
-        # both tools as unavailable there while teaching the planner where the
-        # build-mode handoffs belong in an approved plan.
-        prompt_extensions.append(self._worktree_control_prompt_extension())
-        tool_extensions.append(self._worktree_control_tool_extension())
-        prompt_extensions.append(self._goal_control_prompt_extension())
-        tool_extensions.append(self._goal_control_tool_extension())
-        # Cross-session messaging: discovery and plain-text delivery to peer
-        # sessions sharing this process. Top-level only; the planning agent's
-        # read-only registry filters it out of plan mode.
-        tool_extensions.append(self._peer_messaging_tool_extension())
-        # Both interaction modes get the scratchpad: plan-mode research and
-        # build-mode execution both produce throwaway files.
-        scratchpad_extension = self._scratchpad_prompt_extension()
-        if scratchpad_extension is not None:
-            prompt_extensions.append(scratchpad_extension)
-        if self.skills_enabled:
-            skill_prompt_extension = build_skill_prompt_extension(
-                self.skill_catalog,
-                context_window_tokens=context_window_tokens_for_skill_budget(
-                    config,
-                    getattr(agent_class, "agent_name", None),
-                ),
-            )
-            skill_tool_extension = build_skill_tool_extension(
-                self.skill_catalog,
-                lambda: self.agent.history if self.agent is not None else [],
-            )
-            if skill_prompt_extension is not None:
-                prompt_extensions.append(skill_prompt_extension)
-            if skill_tool_extension is not None:
-                tool_extensions.append(skill_tool_extension)
-        # Both modes can ask the user; only the framing differs. Plan mode treats a
-        # question as cheap, build mode reserves it for decisions that are expensive
-        # to get wrong.
-        if self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE:
-            prompt_extensions.append(self._planning_question_prompt_extension())
-        else:
-            prompt_extensions.append(self._build_question_prompt_extension())
-        tool_extensions.append(self._planning_question_tool_extension())
-
-        mcp_config = getattr(config, "mcp_config", None)
-        if mcp_config is not None:
-            for diagnostic in getattr(mcp_config, "diagnostics", []) or []:
-                self._log_status(f"mcp: {diagnostic}", level="warn")
-        mcp_extension = build_mcp_tool_extension(
-            self.active_project_path,
-            self.settings_store.root,
-            project_trusted=self.settings.is_mcp_project_trusted(self.project_path),
-            loaded_config=mcp_config if self.active_project_path == self.project_path else None,
+        agent_class = select_agent_class(
+            self.interaction_mode, build_agent_class=CoderAgent, planning_agent_class=PlanningAgent
         )
-        if mcp_extension is not None:
-            tool_extensions.append(mcp_extension)
-            if mcp_config is not None and self.active_project_path == self.project_path:
-                self._log_mcp_tool_name_warnings(mcp_config)
-
-        # gigacode applies to any top-level agent and is carried across rebuilds.
-        # In plan mode the orchestrating agent is read-only, so its workflow
-        # sub-agents are forced read-only too (enforced in the dispatch adapter).
+        self.skills_enabled = config.skills_enabled
+        request = CompositionRequest(
+            config=config,
+            project_path=self.project_path,
+            active_project_path=self.active_project_path,
+            state_dir=self.settings_store.root,
+            workspace_id=self.session.workspace_id,
+            thread_id=self.session.thread_id,
+            interaction_mode=self.interaction_mode,
+            agent_mode=AgentMode(self.mode),
+            agent_class=agent_class,
+            connection_manager=self.recording_connection_manager,
+            browser_manager=browser_manager,
+            memory_manager=self.memory_manager,
+            permission_mode=self.permission_mode,
+            permission_callback=self.session_runtime.permission_callback,
+            session_recorder=None if restoring_history else self._session_recorder,
+            usage_ledger=self._usage_ledger,
+            extension_selection=self.extension_selection,
+        )
+        host = CompositionHost(
+            extensions=self._composition_extensions,
+            questions=self._composition_questions,
+            additional_prompts=self._composition_additional_prompts,
+            history=lambda: self.agent.history if self.agent is not None else [],
+            set_catalogs=self._set_composition_catalogs,
+            mcp_trusted=lambda: self.settings.is_mcp_project_trusted(self.project_path),
+            mcp_diagnostic=lambda diagnostic: self._log_status(f"mcp: {diagnostic}", level="warn"),
+            mcp_names=self._log_mcp_tool_name_warnings,
+            own_bundle=self._own_composition_bundle,
+            hook_dispatcher=self._session_hook_dispatcher,
+            mcp_builder=build_mcp_tool_extension,
+        )
+        prepared = prepare_composition(request, host)
+        scratchpad_extension = prepared.scratchpad
         gigacode_active = self._gigacode_enabled
-        if gigacode_active:
-            prompt_extensions.append(self._gigacode_prompt_extension())
-
-        # An active autonomous goal is carried across rebuilds so the agent stays
-        # goal-aware after a model switch. Live set/clear uses agent.apply_goal().
-        if self._goal is not None and self._goal.condition:
-            prompt_extensions.append(self._goal_prompt_extension())
 
         try:
-            # Launch-selected extension: a fresh bundle for every agent generation,
-            # from the same factory. Assigned to self immediately so every exit path
-            # cleans up exactly this generation's bundle.
-            extension_bundle = None
-            if self.extension_selection is not None:
-                extension_host = KolegaExtensionHost(
-                    project_path=self.active_project_path,
-                    workspace_id=self.session.workspace_id,
-                    thread_id=self.session.thread_id,
-                    config=config,
-                    agent_mode=AgentMode(self.mode),
-                )
-                extension_bundle = create_extension_bundle(self.extension_selection, extension_host)
-                self._extension_bundle = extension_bundle
-                prompt_extensions.extend(extension_bundle.prompt_extensions)
-                tool_extensions.extend(extension_bundle.tool_extensions)
-
-            try:
-                constructor_recorder = None if restoring_history else self._session_recorder
-                self.agent = agent_class(
-                    project_path=self.active_project_path,
-                    workspace_id=self.session.workspace_id,
-                    thread_id=self.session.thread_id,
-                    connection_manager=self.recording_connection_manager,
-                    config=config,
-                    browser_manager=browser_manager,
-                    agent_mode=AgentMode(self.mode),
-                    prompt_extensions=prompt_extensions,
-                    tool_extensions=tool_extensions,
-                    memory_manager=self.memory_manager,
-                    permission_mode=self.permission_mode,
-                    # Permission policy lives in the session runtime, not the UI: mode
-                    # checks and saved-rule matching are decisions about the session, so
-                    # every frontend gets them and only real questions reach a person.
-                    permission_callback=self.session_runtime.permission_callback,
-                    session_recorder=constructor_recorder,
-                    hook_dispatcher=self._session_hook_dispatcher(),
-                    custom_agent_catalog=self.custom_agent_catalog,
-                    usage_ledger=self._usage_ledger,
-                    llm_trace_sink=extension_bundle.llm_trace_sink if extension_bundle else None,
-                )
-            except ValueError as exc:
-                if extension_bundle is not None:
-                    # With an extension loaded, a tool-name conflict at construction
-                    # refuses the generation rather than continuing without the
-                    # requested extension.
-                    raise KolegaExtensionLoadError(str(exc)) from exc
-                raise
+            self.agent, extension_bundle = construct_agent(request, host, prepared)
             assert self.agent is not None
             # The runtime owns the agent for control purposes while the CLI keeps
             # composing it from settings, skills, hooks, and MCP configuration.

@@ -2,177 +2,71 @@
 
 from __future__ import annotations
 
-import json
 from typing import Optional
 
 from rich.markup import escape
 from textual.widgets.option_list import Option
 
 from kolega_code.agent import PromptExtension, ToolExtension
-from kolega_code.agent.prompt_provider import AgentMode
-from kolega_code.agent.prompts import (
-    BUILD_QUESTION_PROMPT,
-    PLANNING_QUESTION_PROMPT,
-    SHARED_TASK_LIST_PROMPT,
-    SHARED_TASK_LIST_READONLY_PROMPT,
-)
 from kolega_code.permissions import (
     PermissionDecision,
     PermissionRequest,
     PermissionRuleOption,
 )
-from kolega_code.agent.tool_definitions import tool_description_asset
-from kolega_code.tools import ASK_USER_CHOICE_INPUT_SCHEMA, ToolError
+from kolega_code.session.host_extensions import (
+    build_question_prompt_extension,
+    planning_question_prompt_extension,
+    planning_question_tool_extension,
+    shared_task_list_prompt_extension,
+    shared_task_list_readonly_prompt_extension,
+    shared_task_list_readonly_tool_extension,
+    shared_task_list_tool_extension,
+)
+from kolega_code.tools import ToolError
 from kolega_code.tools.ask_user import normalize_choice_questions
 
 from .. import messages, theme
 from . import app_base as tui_app_base
-from .constants import APPROVAL_OPTION_ID_PREFIX, QUESTION_OPTION_ID_PREFIX, QUESTION_TOOL_NAME
+from .constants import APPROVAL_OPTION_ID_PREFIX, QUESTION_OPTION_ID_PREFIX
 from .state import ConversationEntry, PendingApproval, PendingQuestion, TurnState
 from .widgets import PromptPanel
 
 
 class PromptFlowMixin(tui_app_base.KolegaAppBase):
     def _shared_task_list_prompt_extension(self) -> PromptExtension:
-        return PromptExtension(
-            id="cli-shared-task-list",
-            title="Shared Task List",
-            markdown=SHARED_TASK_LIST_PROMPT,
-            modes=[AgentMode.CLI],
-            # The task list is owned by the single top-level build agent; sub-agents
-            # must not get it or they would race on the shared list.
-            propagate_to_sub_agents=False,
-        )
+        return shared_task_list_prompt_extension()
 
     def _shared_task_list_tool_extension(self) -> ToolExtension:
-        async def get_task_list() -> str:
-            return self.session.task_list_markdown or messages.TASK_LIST_EMPTY_MESSAGE
-
-        async def update_task_list(task_list_markdown: str) -> str:
-            self.session.task_list_markdown = task_list_markdown.strip()
-            await self._save_session_async()
-            self._refresh_planning_sidebar()
-            return "Task list updated."
-
-        return ToolExtension(
-            name="cli-shared-task-list",
-            tools={
-                "get_task_list": get_task_list,
-                "update_task_list": update_task_list,
-            },
-            tool_descriptions={
-                "get_task_list": tool_description_asset("get_task_list"),
-                "update_task_list": tool_description_asset("update_task_list"),
-            },
-            tool_schemas={
-                "get_task_list": {"type": "object", "properties": {}, "required": []},
-                "update_task_list": {
-                    "type": "object",
-                    "properties": {
-                        "task_list_markdown": {
-                            "type": "string",
-                            "description": "The full current shared task list as Markdown.",
-                        }
-                    },
-                    "required": ["task_list_markdown"],
-                },
-            },
-            tool_groups={
-                "planning_tools": ["get_task_list", "update_task_list"],
-                "cli_task_list_tools": ["get_task_list", "update_task_list"],
-            },
-            # Single-owner, shared mutable state: never hand it to sub-agents.
-            propagate_to_sub_agents=False,
+        return shared_task_list_tool_extension(
+            get_task_list_markdown=lambda: self.session.task_list_markdown,
+            set_task_list_markdown=lambda markdown: setattr(self.session, "task_list_markdown", markdown),
+            save_session=lambda: self._save_session_async(),
+            refresh_task_list=lambda: self._refresh_planning_sidebar(),
+            empty_message=messages.TASK_LIST_EMPTY_MESSAGE,
         )
 
     def _shared_task_list_readonly_prompt_extension(self) -> PromptExtension:
-        return PromptExtension(
-            id="cli-shared-task-list-readonly",
-            title="Shared Task List (read-only)",
-            markdown=SHARED_TASK_LIST_READONLY_PROMPT,
-            modes=[AgentMode.CLI],
-            # Same single-owner rule as the build-mode extension.
-            propagate_to_sub_agents=False,
-        )
+        return shared_task_list_readonly_prompt_extension()
 
     def _shared_task_list_readonly_tool_extension(self) -> ToolExtension:
-        """Plan-mode task list access: read the build agent's list, never write it.
-
-        Plan mode must not mutate session state, and ``session.task_list_markdown``
-        is cleared only on thread reset — a plan-mode write would silently clobber
-        a build session's in-flight progress. Reading it is what makes re-planning
-        mid-implementation useful, so only the getter is exposed here. Its
-        description asset is deliberately distinct from the build-mode getter's.
-        """
-
-        async def get_task_list() -> str:
-            return self.session.task_list_markdown or messages.TASK_LIST_EMPTY_MESSAGE
-
-        return ToolExtension(
-            name="cli-shared-task-list-readonly",
-            tools={"get_task_list": get_task_list},
-            tool_descriptions={"get_task_list": tool_description_asset("get_task_list_readonly")},
-            tool_schemas={"get_task_list": {"type": "object", "properties": {}, "required": []}},
-            # PlanningAgent only exposes extension tools declared in its
-            # custom_tool_groups, of which planning_tools is one.
-            tool_groups={
-                "planning_tools": ["get_task_list"],
-                "cli_task_list_tools": ["get_task_list"],
-            },
-            propagate_to_sub_agents=False,
+        return shared_task_list_readonly_tool_extension(
+            get_task_list_markdown=lambda: self.session.task_list_markdown,
+            empty_message=messages.TASK_LIST_EMPTY_MESSAGE,
         )
 
     def _planning_question_prompt_extension(self) -> PromptExtension:
-        return PromptExtension(
-            id="cli-planning-questions",
-            title="Planning Questions",
-            markdown=PLANNING_QUESTION_PROMPT,
-            modes=[AgentMode.CLI],
-            # ask_user_choice is a top-level, interactive planning tool; sub-agents
-            # should not prompt the user.
-            propagate_to_sub_agents=False,
-        )
+        return planning_question_prompt_extension()
 
     def _build_question_prompt_extension(self) -> PromptExtension:
-        """Build-mode framing for the same tool.
-
-        Plan mode is a conversation, so asking is cheap there. Implementation is not:
-        the guidance has to push toward deciding and stating the assumption, and
-        reserve a prompt for choices that are expensive to get wrong.
-        """
-        return PromptExtension(
-            id="cli-build-questions",
-            title="Asking the User",
-            markdown=BUILD_QUESTION_PROMPT,
-            modes=[AgentMode.CLI],
-            propagate_to_sub_agents=False,
-        )
+        return build_question_prompt_extension()
 
     def _planning_question_tool_extension(self) -> ToolExtension:
-        async def ask_user_choice(questions: list[dict]) -> str:
-            normalized = self._normalize_choice_questions(questions)
-            if self._pending_question is not None:
-                raise ToolError("A planning question is already waiting for an answer.")
-
-            answers: dict[str, str] = {}
-            for clean_question, header, labels, descriptions in normalized:
-                answer = await self._ask_user_choice(clean_question, labels, descriptions)
-                answers[header or clean_question] = answer
-            return json.dumps(answers)
-
-        return ToolExtension(
-            name="cli-planning-questions",
-            tools={QUESTION_TOOL_NAME: ask_user_choice},
-            tool_descriptions={QUESTION_TOOL_NAME: tool_description_asset("ask_user_choice")},
-            tool_schemas={QUESTION_TOOL_NAME: ASK_USER_CHOICE_INPUT_SCHEMA},
-            # Both top-level agents expose it: PlanningAgent allows planning_tools,
-            # CoderAgent allows coder_agent_tools. Sub-agents get neither group from
-            # a non-propagating extension, so only the agent talking to the user asks.
-            tool_groups={
-                "planning_tools": [QUESTION_TOOL_NAME],
-                "coder_agent_tools": [QUESTION_TOOL_NAME],
-            },
-            propagate_to_sub_agents=False,
+        return planning_question_tool_extension(
+            ask_user_choice=lambda question, options, descriptions: self._ask_user_choice(
+                question, options, descriptions
+            ),
+            has_pending_question=lambda: self._pending_question is not None,
+            normalize_questions=lambda questions: self._normalize_choice_questions(questions),
         )
 
     def _normalize_choice_questions(self, questions: object) -> list[tuple[str, str, list[str], list[str]]]:
