@@ -59,6 +59,7 @@ from ._app_test_utils import (
     question_payload,
     renderable_text,
     wait_for_layout as _wait_for_layout,
+    wait_for_question_prompt,
     wait_for_turn_idle,
 )
 
@@ -800,7 +801,7 @@ async def test_textual_app_queued_messages_hide_during_question_and_restore_afte
         assert [item.text for item in app._queued_messages] == ["second", "third"]
 
         question_task = asyncio.create_task(app._ask_user_choice("Which path?", ["A", "B"]))
-        await pilot.pause()
+        await wait_for_question_prompt(app, pilot)
 
         composer = app.query_one("#composer", ChatComposer)
         question_prompt = app.query_one("#question_prompt", PromptPanel)
