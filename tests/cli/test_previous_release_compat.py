@@ -1,4 +1,4 @@
-"""Offline failure-detection tests for the previous-release CI check."""
+"""Offline failure-detection tests for the previous-release compatibility check."""
 
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ def test_release_discovery_excludes_candidate_and_newer_versions(monkeypatch: py
             "1.11": [_wheel("1.11")],
         },
     )
-    # The candidate may already be on PyPI when a release workflow is rerun.
+    # The candidate may already be on PyPI when a preflight is rerun.
     assert check.discover_release(before=Version("1.10"))[0] == "1.9"
     assert check.discover_release()[0] == "1.11"
 
