@@ -388,3 +388,17 @@ def test_map_to_llm_error_threads_provider_through_google_mapping() -> None:
 def test_map_openai_errors_defaults_to_openai_without_provider() -> None:
     original_error = MockOpenAIError("nope", status_code=401)
     assert map_openai_errors(original_error).provider == ModelProvider.OPENAI.value
+
+
+def test_aiohttp_client_error_maps_to_connection_error() -> None:
+    """A client error is an aiohttp exception the mapper sees on the error path."""
+    aiohttp = pytest.importorskip("aiohttp")
+    mapped = map_to_llm_error(aiohttp.ClientError("connection reset by peer"), "openai")
+    assert isinstance(mapped, LLMConnectionError)
+    assert "HTTP client error" in str(mapped)
+
+
+def test_aiohttp_client_error_subclass_maps_to_connection_error() -> None:
+    aiohttp = pytest.importorskip("aiohttp")
+    mapped = map_to_llm_error(aiohttp.ClientOSError("reset"), "openai")
+    assert isinstance(mapped, LLMConnectionError)
