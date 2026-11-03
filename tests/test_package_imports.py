@@ -40,6 +40,17 @@ heavy = [name for name in ("trafilatura", "readability", "markdownify") if name 
 assert not heavy, f"import kolega_code.cli.main eagerly loaded: {heavy}"
 """
 
+#: aiohttp backs the messaging gateway's Telegram adapter (~110 ms of import
+#: work). The LLM error mapper only needs it to classify an exception that must
+#: already have imported it, so it may not load on a CLI start.
+_AIOHTTP_CHECK = """
+import sys
+import kolega_code.cli.main
+import kolega_code.llm.exceptions
+
+assert "aiohttp" not in sys.modules, "import kolega_code.cli.main eagerly loaded: aiohttp"
+"""
+
 #: firecrawl-py builds its entire pydantic type tree at import time (~205 ms).
 #: Only a keyed Firecrawl search uses the SDK, so it may not load on a CLI start.
 _FIRECRAWL_CHECK = """
@@ -69,6 +80,22 @@ def test_cli_start_does_not_load_the_html_extraction_stack() -> None:
     """
     result = subprocess.run(
         [sys.executable, "-c", _WEB_FETCH_CHECK],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_cli_start_does_not_load_aiohttp() -> None:
+    """aiohttp loads on the gateway's first Telegram call, not on start.
+
+    Importing it costs ~110 ms of aiohttp client/connector construction; the LLM
+    error mapper is the only startup-path importer and classifies aiohttp errors
+    from ``sys.modules`` instead.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", _AIOHTTP_CHECK],
         capture_output=True,
         text=True,
         timeout=120,

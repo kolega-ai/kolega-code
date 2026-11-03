@@ -51,11 +51,6 @@ if TYPE_CHECKING:
 
     from .models import Message
 
-try:
-    import aiohttp
-except ImportError:
-    aiohttp = None  # Handle case where aiohttp not installed
-
 # Handle httpx being optional. If installed, we will map certain httpx errors.
 try:
     import httpx
@@ -613,6 +608,19 @@ def map_tinker_errors(error: Exception, provider: str | None = None) -> Optional
     return None
 
 
+def _is_aiohttp_client_error(error: Exception) -> bool:
+    """True when ``error`` is an ``aiohttp.ClientError``.
+
+    aiohttp only backs the messaging gateway's Telegram adapter, so importing it
+    here loaded ~110 ms of aiohttp into every CLI start for a mapper that runs on
+    the error path. An aiohttp exception cannot exist unless its class was
+    already imported, so resolve it from ``sys.modules`` like the SDK gates below.
+    """
+    module = sys.modules.get("aiohttp")
+    client_error = getattr(module, "ClientError", None)
+    return isinstance(client_error, type) and isinstance(error, client_error)
+
+
 def map_to_llm_error(error: Exception, provider: str | None = None) -> LLMError:
     """Map any exception to a standardized LLM error.
 
@@ -668,7 +676,7 @@ def map_to_llm_error(error: Exception, provider: str | None = None) -> LLMError:
         return LLMTimeout(message=f"Request timeout: {str(error)}", provider=provider)
     elif isinstance(error, ConnectionError):
         return LLMConnectionError(message=f"Connection error: {str(error)}", provider=provider)
-    elif aiohttp and isinstance(error, aiohttp.ClientError):
+    elif _is_aiohttp_client_error(error):
         return LLMConnectionError(message=f"HTTP client error: {str(error)}", provider=provider)
     elif httpx and isinstance(error, httpx.TransportError):
         # Connect/read/protocol/reset errors — transient transport failures (e.g. a dropped
