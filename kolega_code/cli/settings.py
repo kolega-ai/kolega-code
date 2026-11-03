@@ -538,7 +538,9 @@ class SettingsStore:
             write_private_text(self.path, payload + "\n")
         finally:
             lock.release()
-        settings._merge_base = copy.deepcopy(merged)
+        # The writer's next diff must use what it knows, not merged disk fields
+        # or concurrent values that were never incorporated into this object.
+        settings._merge_base = copy.deepcopy(settings.to_dict())
 
     def _merged_document(self, settings: CliSettings) -> dict[str, Any]:
         current = settings.to_dict()
