@@ -1,3 +1,4 @@
+import json
 import os
 import stat
 from pathlib import Path
@@ -253,6 +254,60 @@ def test_settings_save_merges_nested_mappings(tmp_path: Path) -> None:
     store.save(first)
 
     assert store.load().api_keys == {"openai": "sk-openai-updated", "anthropic": "sk-anthropic"}
+
+
+def test_settings_repeated_save_preserves_unknown_fields_and_concurrent_changes(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    store.path.write_text(
+        json.dumps(
+            {
+                "schema_version": SETTINGS_SCHEMA_VERSION,
+                "future_setting": {"enabled": True},
+                "agent_models": {
+                    "building": {"provider": "openai", "model": "old", "future_option": "keep"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    stale = store.load()
+    other = store.load()
+    other.telegram_bot_token = "123:fake-token"
+    other.agent_models["building"]["model"] = "new"
+    store.save(other)
+
+    stale.agent_models["building"]["thinking_effort"] = "low"
+    store.save(stale)
+    stale.agent_models["building"]["thinking_effort"] = "high"
+    stale.active_theme = "Kolega Dark"
+    store.save(stale)
+
+    saved = json.loads(store.path.read_text(encoding="utf-8"))
+    assert saved["future_setting"] == {"enabled": True}
+    assert saved["telegram_bot_token"] == "123:fake-token"
+    assert saved["agent_models"]["building"] == {
+        "provider": "openai",
+        "model": "new",
+        "thinking_effort": "high",
+        "future_option": "keep",
+    }
+    assert saved["active_theme"] == "Kolega Dark"
+
+
+def test_settings_repeated_save_applies_intentional_nested_deletion(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    store.save(CliSettings(api_keys={"openai": "fake-key", "anthropic": "fake-other-key"}))
+    settings = store.load()
+    settings.active_theme = "Kolega Dark"
+    store.save(settings)
+
+    other = store.load()
+    other.api_keys["deepseek"] = "fake-new-key"
+    store.save(other)
+
+    del settings.api_keys["openai"]
+    store.save(settings)
+    assert store.load().api_keys == {"anthropic": "fake-other-key", "deepseek": "fake-new-key"}
 
 
 def test_settings_store_round_trips_agent_models(tmp_path: Path) -> None:
