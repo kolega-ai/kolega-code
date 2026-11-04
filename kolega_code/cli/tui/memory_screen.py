@@ -115,7 +115,7 @@ class MemoryScreen(ModalScreen[None]):
             self._owner._memory_screen = None
 
     def _work_current(self, generation: int) -> bool:
-        """Whether a worker may still render — not superseded, and still attached.
+        """Whether a worker may still render — not superseded, attached, not pruning.
 
         A worker finishes its threaded load asynchronously, by which point the
         screen may have been replaced by a newer refresh or torn down. Rendering
@@ -125,10 +125,15 @@ class MemoryScreen(ModalScreen[None]):
         where child widgets detach before ``on_unmount`` bumps the generation.
         (``is_mounted`` is the wrong signal here: it stays True after the screen
         is popped, while ``is_attached`` flips exactly when ``query_one`` starts
-        raising.) The render after this check is synchronous, so ``is_attached``
-        cannot flip mid-render.
+        raising.)
+
+        ``_pruning`` covers app shutdown: ``App._prune`` flags the screen before
+        detaching its children, and ``run_test`` / ``_shutdown`` never set
+        ``App._exit``, so ``is_attached`` stays True while the children are
+        already gone. The render after this check is synchronous, so none of
+        these flags can flip mid-render.
         """
-        return generation == self._work_generation and self.is_attached
+        return generation == self._work_generation and self.is_attached and not self._pruning
 
     # ---- loading -------------------------------------------------------------
 

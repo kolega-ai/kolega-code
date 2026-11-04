@@ -1,4 +1,6 @@
 # ruff: noqa: F401,F811,E402
+import asyncio
+import threading
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -373,6 +375,58 @@ async def test_memory_screen_refresh_worker_after_teardown_does_not_raise(
         # query_one("#memory_new") on the detached DOM and raised NoMatches; now
         # the worker bails cleanly.
         await screen._refresh(screen._work_generation, None)
+
+
+@pytest.mark.asyncio
+async def test_memory_screen_refresh_worker_bails_when_the_app_prunes_the_screen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refresh worker resuming while the app tears the screen down must not render.
+
+    ``App.run_test`` shuts down through ``App._prune`` without ever setting
+    ``App._exit``: the screen is flagged ``_pruning`` and its children detach
+    while ``is_attached`` still reports True. A worker resuming in that window
+    used to query the detached DOM from ``_refresh``'s ``finally`` block and
+    raise ``NoMatches('#memory_agent_view')``, which surfaced as a
+    ``WorkerFailed`` on a single CI Python version.
+    """
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.memory_screen import MemoryScreen
+    from kolega_code.memory import ProjectMemoryStatus
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    entered = threading.Event()
+    release = threading.Event()
+    original_status = app.memory_manager.status
+
+    def blocking_status() -> ProjectMemoryStatus:
+        entered.set()
+        release.wait(5)
+        return original_status()
+
+    async with app.run_test() as pilot:
+        app.action_open_memory()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, MemoryScreen)
+
+        monkeypatch.setattr(app.memory_manager, "status", blocking_status)
+        screen.action_refresh()
+        worker = next(w for w in reversed(screen.workers) if w.name == "Refresh project memory")
+        assert await asyncio.to_thread(entered.wait, 5), "refresh worker never reached status()"
+
+        # App._prune flags the screen before detaching its children; reproduce that
+        # state while the screen itself is still attached.
+        screen._pruning = True
+        await screen.query_one("#memory_shell").remove()
+        assert screen.is_attached
+
+        release.set()
+        await worker.wait()
+
+    assert app._exception is None
 
 
 @pytest.mark.asyncio
