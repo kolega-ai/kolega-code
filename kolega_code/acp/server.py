@@ -58,6 +58,7 @@ from acp.schema import (
     TextContentBlock,
 )
 
+from kolega_code.acp import agent_factory
 from kolega_code.acp.agent_factory import (
     CONFIG_MODE,
     CONFIG_MODEL,
@@ -117,6 +118,7 @@ class AcpAgent(Agent):
         self._conn: Client
         self._client_capabilities: ClientCapabilities | None = None
         self._native_end_turn_usage = False
+        self._shutdown_task: asyncio.Task[None] | None = None
 
     def on_connect(self, conn: Client) -> None:
         self._conn = conn
@@ -154,6 +156,8 @@ class AcpAgent(Agent):
         mcp_servers: _McpServer = None,
         **kwargs: Any,
     ) -> NewSessionResponse:
+        if self._shutdown_task is not None:
+            raise RequestError.invalid_request({"message": "ACP server is shutting down."})
         logger.info("acp new session (cwd=%s)", cwd)
         session_id = uuid4().hex
         try:
@@ -184,12 +188,15 @@ class AcpAgent(Agent):
         additional_directories: list[str] | None = None,
         **kwargs: Any,
     ) -> LoadSessionResponse | None:
+        if self._shutdown_task is not None:
+            raise RequestError.invalid_request({"message": "ACP server is shutting down."})
         if session_id.startswith(SUB_SESSION_PREFIX):
             # A synthetic sub-agent session Zed loads to render a delegated
             # turn as a nested transcript card under the dispatch tool call.
             return await self._load_sub_session(session_id)
         if session_id in self._sessions:
             existing = self._sessions[session_id]
+            AgentFactory.check_active(existing)
             self._start_session_tasks(existing)
             return LoadSessionResponse(config_options=self._factory.config_options_for(existing))
         try:
@@ -258,33 +265,77 @@ class AcpAgent(Agent):
 
     async def close_session(self, session_id: str, **kwargs: Any) -> None:
         logger.info("acp session/close (session=%s)", session_id)
-        session = self._sessions.pop(session_id, None)
-        if session is not None:
-            session.closed = True
-            session.auto_continue_paused = True
-            if session.turn_task is not None:
-                session.turn_task.cancel()
-                await asyncio.gather(session.turn_task, return_exceptions=True)
-            if session.background_task is not None:
-                session.background_task.cancel()
-                await asyncio.gather(session.background_task, return_exceptions=True)
-            if session.control_adapter is not None:
-                await session.control_adapter.shutdown()
-        if session is not None:
-            async with session.execution_lock:
-                await self._factory.close_session(session_id)
-        else:
+        session = self._sessions.get(session_id)
+        if session is None:
             await self._factory.close_session(session_id)
-        if session is not None and session.event_task is not None:
+            return
+        self._start_close(session)
+        assert session.close_task is not None
+        await agent_factory._finish_cleanup(session.close_task, timeout=agent_factory.CLEANUP_TIMEOUT)
+        if not session.close_task.done():
+            raise RequestError.invalid_request({"message": "Session close is still pending."})
+
+    def _start_close(self, session: AcpSession) -> asyncio.Task[None]:
+        session.closed = True
+        session.auto_continue_paused = True
+        session.approved_plan = None
+        session.plan_approval_generation += 1
+        if session.plan_approval_task is not None:
+            session.plan_approval_task.cancel()
+        session_id = session.session_id
+        if session.close_task is None or (session.close_task.done() and session.close_retryable):
+            session.close_retryable = False
+            session.close_task = asyncio.create_task(self._close_session(session), name=f"acp-close-{session_id}")
+
+            def completed(done: asyncio.Task[None]) -> None:
+                if not done.cancelled() and done.exception() is not None:
+                    logger.error("acp session close incomplete (session=%s)", session_id)
+
+            session.close_task.add_done_callback(completed)
+        return session.close_task
+
+    async def _close_session(self, session: AcpSession) -> None:
+        if session.turn_task is not None:
+            session.turn_task.cancel()
+            await asyncio.gather(session.turn_task, return_exceptions=True)
+        if session.background_task is not None:
+            session.background_task.cancel()
+            await asyncio.gather(session.background_task, return_exceptions=True)
+        async with session.execution_lock:
+            await asyncio.gather(
+                *(asyncio.shield(task) for task in tuple(session.cleanup_tasks.values())),
+                return_exceptions=True,
+            )
+            AgentFactory.check_cleanup(session)
+            if session.control_adapter is not None:
+                try:
+                    await session.control_adapter.shutdown()
+                except Exception:
+                    session.close_retryable = True
+                    raise
+            await self._factory.close_session(session.session_id)
+        if session.event_task is not None:
             session.event_task.cancel()
             await asyncio.gather(session.event_task, return_exceptions=True)
             await self._drain_residual(session, session.bridge)
-        return None
+        self._sessions.pop(session.session_id, None)
 
     async def shutdown(self) -> None:
         """Join session work before the ACP transport and shared services close."""
-        for session_id in list(self._sessions):
-            await self.close_session(session_id)
+        if self._shutdown_task is None:
+            self._shutdown_task = asyncio.create_task(self._shutdown(), name="acp-shutdown")
+        await agent_factory._finish_cleanup(self._shutdown_task)
+
+    async def _shutdown(self) -> None:
+        sessions = list(self._sessions.values())
+        results = await asyncio.gather(*(self._start_close(session) for session in sessions), return_exceptions=True)
+        failures: list[BaseException] = []
+        for session, result in zip(sessions, results):
+            if isinstance(result, BaseException):
+                logger.warning("acp shutdown: session close incomplete (session=%s): %s", session.session_id, result)
+                failures.append(result)
+        if failures:
+            raise RuntimeError("ACP shutdown incomplete") from BaseExceptionGroup("Session close failures", failures)
 
     # -- turns ------------------------------------------------------------
 
@@ -299,6 +350,7 @@ class AcpAgent(Agent):
             raise RequestError.invalid_request({"message": "prompt contains no text or images"})
         self._start_session_tasks(session)
         async with session.execution_lock:
+            AgentFactory.check_active(session)
             session.auto_continue_paused = False
             prompt_id = uuid4().hex
             with logical_prompt_scope(prompt_id):
@@ -322,6 +374,10 @@ class AcpAgent(Agent):
         if session is None:
             return
         session.auto_continue_paused = True
+        session.approved_plan = None
+        session.plan_approval_generation += 1
+        if session.plan_approval_task is not None:
+            session.plan_approval_task.cancel()
         if session.turn_task is None:
             logger.debug("acp session/cancel: nothing to cancel (session=%s)", session_id)
             return
@@ -372,6 +428,8 @@ class AcpAgent(Agent):
         session = self._sessions.get(session_id)
         if session is None:
             raise RequestError.resource_not_found(session_id)
+        if session.closed:
+            raise RequestError.invalid_request({"message": "Session is closing."})
         if config_id == CONFIG_PERMISSION_AUTO:
             # Live flag flip (no rebuild), so it stays settable mid-turn.
             if isinstance(value, str):
@@ -424,7 +482,7 @@ class AcpAgent(Agent):
 
         async def callback(request: PermissionRequest) -> PermissionDecision:
             session = self._sessions.get(session_id)
-            if session is None or session.runtime is None:
+            if session is None or session.closed or session.runtime is None:
                 return PermissionDecision(allowed=False, reason="Session is no longer active.")
             return await session.runtime.permission_callback(request)
 
@@ -596,7 +654,17 @@ class AcpAgent(Agent):
             async with session.execution_lock:
                 if session.closed:
                     return
+                if session.cleanup_tasks:
+                    continue
                 try:
+                    if session.approved_plan is not None:
+                        with logical_prompt_scope(f"plan-{uuid4().hex}"):
+                            await self._resume_approved_plan(session)
+                        self._factory.persist(session)
+                        if session.closed or session.cleanup_tasks:
+                            continue
+                        if jobs is not getattr(session.agent, "background_jobs", None):
+                            return
                     await jobs.deliver(session.agent)
                     # Delivery callbacks also wake the worker for reports
                     # inserted by the running agent. Consume those wakeups now,
@@ -630,9 +698,11 @@ class AcpAgent(Agent):
                     if jobs is not getattr(session.agent, "background_jobs", None):
                         return  # a context reset installed another epoch's owner
                     if not jobs.active_count:
-                        for old in session.retired_agents:
-                            await old.cleanup()
-                        session.retired_agents.clear()
+                        while session.retired_agents and not session.cleanup_tasks:
+                            await agent_factory._finish_cleanup(
+                                AgentFactory.start_retired_cleanup(session, session.retired_agents[0]),
+                                timeout=agent_factory.CLEANUP_TIMEOUT,
+                            )
                 except asyncio.CancelledError:
                     raise
                 except Exception:
@@ -652,6 +722,8 @@ class AcpAgent(Agent):
         The event pump belongs to the session, not this request. It keeps
         rendering child activity after a prompt's response has been returned.
         """
+        if session.closed or session.cleanup_tasks:
+            return "cancelled"
         self._start_session_tasks(session)
         bridge = session.bridge
         bridge.begin_turn(session.agent, AcpDiffProvider.for_session(session))
@@ -686,6 +758,16 @@ class AcpAgent(Agent):
         """Plan approval mirroring the TUI's plan_actions: implement, implement
         with cleared context, or discuss. Approving switches the session to
         build mode and auto-starts the implementation turn."""
+        if (
+            session.closed
+            or session.cleanup_tasks
+            or session.auto_continue_paused
+            or session.approved_plan is not None
+            or session.plan_approval_task is not None
+            or not session.record.plan_pending
+        ):
+            return
+        generation = session.plan_approval_generation
         conn = getattr(self, "_conn", None)
         if conn is None:
             return
@@ -703,14 +785,24 @@ class AcpAgent(Agent):
             ),
             PermissionOption(option_id="discuss_plan", name="Discuss further", kind="reject_once"),
         ]
+        request = session.plan_approval_task = asyncio.create_task(
+            conn.request_permission(session.session_id, tool_call, options)
+        )
         try:
             response = await asyncio.wait_for(
-                conn.request_permission(session.session_id, tool_call, options),
+                request,
                 timeout=DEFAULT_REQUEST_TIMEOUT_SECONDS,
             )
+        except asyncio.CancelledError:
+            if session.closed or generation != session.plan_approval_generation:
+                return
+            raise
         except Exception:  # noqa: BLE001 — approval prompts are best-effort
             logger.exception("acp plan approval prompt failed (session=%s)", session.session_id)
             return
+        finally:
+            if session.plan_approval_task is request:
+                session.plan_approval_task = None
         outcome = getattr(response, "outcome", None)
         if isinstance(outcome, dict):
             selected = outcome.get("outcome") == "selected"
@@ -718,29 +810,53 @@ class AcpAgent(Agent):
         else:
             selected = getattr(outcome, "outcome", None) == "selected"
             option_id = str(getattr(outcome, "option_id", "") or "")
+        if session.closed or session.cleanup_tasks or generation != session.plan_approval_generation:
+            return
         if selected and option_id in ("implement_plan", "implement_plan_clear"):
-            session.record.plan_pending = False
-            session.record.plan_reofferable = False
-            if option_id == "implement_plan_clear":
-                jobs = getattr(session.agent, "background_jobs", None)
-                if jobs is not None:
-                    # The reset starts another epoch. Settle old-context work
-                    # before clearing its history and creating a new owner.
-                    jobs.set_callbacks(on_ready=None, on_delivered=None)
-                    await jobs.close()
-                    await jobs.deliver(session.agent)
-                    session.agent.background_jobs = None
-                    if session.background_task is not None and session.background_task is not asyncio.current_task():
-                        session.background_task.cancel()
-                        await asyncio.gather(session.background_task, return_exceptions=True)
-                    session.background_task = None
-                    session.completions.clear()
-                    session.background_wake.clear()
-                self._clear_agent_context(session)
-            await self._factory.set_interaction_mode(session, MODE_BUILD)
-            await self._emit_current_mode(session)
-            await self._run_turn(session, build_implement_plan_prompt(plan))
-            logger.info("acp plan approved and implementation started (session=%s)", session.session_id)
+            session.approved_plan = plan
+            session.record.latest_plan_markdown = plan
+            previous_agent = session.agent
+            try:
+                if option_id == "implement_plan_clear":
+                    jobs = getattr(session.agent, "background_jobs", None)
+                    if jobs is not None:
+                        # The reset starts another epoch. Settle old-context work
+                        # before clearing its history and creating a new owner.
+                        jobs.set_callbacks(on_ready=None, on_delivered=None)
+                        await jobs.close()
+                        await jobs.deliver(session.agent)
+                        session.agent.background_jobs = None
+                        if (
+                            session.background_task is not None
+                            and session.background_task is not asyncio.current_task()
+                        ):
+                            session.background_task.cancel()
+                            await asyncio.gather(session.background_task, return_exceptions=True)
+                        session.background_task = None
+                        session.completions.clear()
+                        session.background_wake.clear()
+                    if session.closed or generation != session.plan_approval_generation:
+                        return
+                    self._clear_agent_context(session)
+                if (session.record.interaction_mode or MODE_BUILD) != MODE_BUILD:
+                    await self._factory.set_interaction_mode(session, MODE_BUILD)
+                if session.closed or generation != session.plan_approval_generation:
+                    return
+                await self._emit_current_mode(session)
+                await self._resume_approved_plan(session)
+            except asyncio.CancelledError:
+                if generation == session.plan_approval_generation:
+                    session.approved_plan = None
+                    session.plan_approval_generation += 1
+                raise
+            except Exception:
+                if session.agent is previous_agent:
+                    session.approved_plan = None
+                raise
+            finally:
+                if not session.closed and session.approved_plan is not None:
+                    self._start_session_tasks(session)
+                    session.background_wake.set()
             return
         if selected and option_id == "discuss_plan":
             session.record.plan_pending = False
@@ -749,6 +865,22 @@ class AcpAgent(Agent):
             return
         # Unanswered, cancelled, or unknown: keep the plan pending.
         logger.info("acp plan approval pending (session=%s)", session.session_id)
+
+    async def _resume_approved_plan(self, session: AcpSession) -> None:
+        if (
+            session.approved_plan is None
+            or session.closed
+            or session.cleanup_tasks
+            or session.auto_continue_paused
+            or (session.record.interaction_mode or MODE_BUILD) != MODE_BUILD
+        ):
+            return
+        plan = session.approved_plan
+        session.approved_plan = None
+        session.record.plan_pending = False
+        session.record.plan_reofferable = False
+        await self._run_turn(session, build_implement_plan_prompt(plan))
+        logger.info("acp plan approved and implementation started (session=%s)", session.session_id)
 
     def _clear_agent_context(self, session: AcpSession) -> None:
         if session.accounting is not None:
