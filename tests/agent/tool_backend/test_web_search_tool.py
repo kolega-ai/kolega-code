@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -22,6 +24,7 @@ from kolega_code.agent.tool_backend.search_backends import (
 )
 from kolega_code.agent.tool_backend.search_backends.base import clamp_results
 from kolega_code.agent.tool_backend.search_backends.firecrawl import _new_client
+from kolega_code.agent.tool_backend.search_backends.tavily import _new_client as _new_tavily_client
 from kolega_code.agent.tool_backend.web_search_tool import WebSearchTool
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider
 
@@ -124,11 +127,12 @@ async def test_tavily_success_with_answer() -> None:
     }
     client = Mock()
     client.search.return_value = payload
-    with patch(f"{_TAVILY}.TavilyClient", return_value=client):
+    with patch(f"{_TAVILY}._new_client", return_value=client) as new_client:
         response = await build_search_backend("tavily", api_key="k").search("q", max_results=2)
     assert response.answer == "the answer"
     assert [r.url for r in response.results] == ["https://a.test"]
     # Key + count are passed through.
+    assert new_client.call_args.kwargs == {"api_key": "k"}
     _, kwargs = client.search.call_args
     assert kwargs["max_results"] == 2 and kwargs["include_answer"] is True
 
@@ -139,9 +143,51 @@ async def test_tavily_invalid_key_mapped_to_not_configured() -> None:
 
     client = Mock()
     client.search.side_effect = InvalidAPIKeyError("bad key")
-    with patch(f"{_TAVILY}.TavilyClient", return_value=client):
+    with patch(f"{_TAVILY}._new_client", return_value=client):
         with pytest.raises(SearchBackendNotConfigured):
             await build_search_backend("tavily", api_key="bad").search("q")
+
+
+@pytest.mark.asyncio
+async def test_tavily_usage_limit_mapped_to_rate_limited() -> None:
+    from tavily.errors import UsageLimitExceededError
+
+    client = Mock()
+    client.search.side_effect = UsageLimitExceededError("quota gone")
+    with patch(f"{_TAVILY}._new_client", return_value=client):
+        with pytest.raises(SearchBackendRateLimited, match="quota gone"):
+            await build_search_backend("tavily", api_key="k").search("q")
+
+
+def test_tavily_client_is_built_from_the_imported_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The keyed path reaches the real SDK import, not just the patched seam.
+
+    That import is deferred to first keyed search, so this also proves it still
+    resolves tavily-python and passes the credentials through.
+    """
+    import tavily
+
+    created: dict[str, Any] = {}
+
+    class _FakeClient:
+        def __init__(self, **kwargs: Any) -> None:
+            created.update(kwargs)
+
+    monkeypatch.setattr(tavily, "TavilyClient", _FakeClient)
+    assert isinstance(_new_tavily_client(api_key="tvly-obviously-fake"), _FakeClient)
+    assert created == {"api_key": "tvly-obviously-fake"}
+
+
+def test_tavily_sdk_stays_off_the_startup_import_path() -> None:
+    """Importing the backend registry must not import the Tavily SDK.
+
+    That import also pulls ``requests`` (~48 ms), which every CLI start would otherwise
+    pay for a backend most sessions never select. A fresh interpreter is required:
+    other tests import ``tavily`` in this process.
+    """
+    probe = "import sys; import kolega_code.agent.tool_backend.search_backends; print('tavily' in sys.modules)"
+    completed = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)
+    assert completed.stdout.strip() == "False"
 
 
 # --------------------------------------------------------------------------- firecrawl

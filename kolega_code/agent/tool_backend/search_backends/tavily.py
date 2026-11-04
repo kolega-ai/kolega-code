@@ -3,24 +3,45 @@
 from __future__ import annotations
 
 import asyncio
-
-from tavily import TavilyClient
-from tavily.errors import (
-    ForbiddenError,
-    InvalidAPIKeyError,
-    MissingAPIKeyError,
-    UsageLimitExceededError,
-)
+from typing import Any
 
 from ..network_status import looks_like_connect_failure
 from .base import DEFAULT_RESULTS, SearchBackend, clamp_results
 from .errors import (
+    SearchBackendError,
     SearchBackendNotConfigured,
     SearchBackendRateLimited,
     SearchBackendUnavailable,
     SearchBackendUnreachable,
 )
 from .models import SearchResponse, SearchResult
+
+
+def _new_client(*, api_key: str) -> Any:
+    """Construct an SDK client, importing tavily-python on first use.
+
+    The SDK imports ``requests`` and its whole client tree at import time — ~48 ms of
+    every CLI start, paid by every command and TUI launch for a backend most sessions
+    never select. Only a keyed search builds a client, so the import waits until then;
+    the interpreter caches the module for later searches.
+    """
+    from tavily import TavilyClient
+
+    return TavilyClient(api_key=api_key)
+
+
+def _map_sdk_error(exc: Exception) -> SearchBackendError:
+    """Map a ``tavily-python`` exception to this package's typed errors."""
+    from tavily import errors
+
+    message = str(exc) or exc.__class__.__name__
+    if isinstance(exc, (errors.InvalidAPIKeyError, errors.MissingAPIKeyError, errors.ForbiddenError)):
+        return SearchBackendNotConfigured(str(exc) or "Tavily rejected the API key.")
+    if isinstance(exc, errors.UsageLimitExceededError):
+        return SearchBackendRateLimited(str(exc) or "Tavily usage limit exceeded.")
+    if looks_like_connect_failure(message):
+        return SearchBackendUnreachable(message, host="api.tavily.com")
+    return SearchBackendUnavailable(message)
 
 
 class TavilyBackend(SearchBackend):
@@ -40,15 +61,8 @@ class TavilyBackend(SearchBackend):
             payload = await asyncio.wait_for(asyncio.to_thread(self._search, query, count), timeout=self.timeout)
         except asyncio.TimeoutError as exc:
             raise SearchBackendUnavailable(f"timed out after {self.timeout:.0f}s") from exc
-        except (InvalidAPIKeyError, MissingAPIKeyError, ForbiddenError) as exc:
-            raise SearchBackendNotConfigured(str(exc) or "Tavily rejected the API key.") from exc
-        except UsageLimitExceededError as exc:
-            raise SearchBackendRateLimited(str(exc) or "Tavily usage limit exceeded.") from exc
         except Exception as exc:
-            message = str(exc) or exc.__class__.__name__
-            if looks_like_connect_failure(message):
-                raise SearchBackendUnreachable(message, host="api.tavily.com") from exc
-            raise SearchBackendUnavailable(message) from exc
+            raise _map_sdk_error(exc) from exc
 
         rows = payload.get("results") or []
         results = [
@@ -64,7 +78,7 @@ class TavilyBackend(SearchBackend):
         return SearchResponse(query=query, results=results, backend=self.name, answer=answer)
 
     def _search(self, query: str, count: int) -> dict:
-        client = TavilyClient(api_key=self.api_key)
+        client = _new_client(api_key=self.api_key or "")
         return client.search(
             query,
             max_results=count,
