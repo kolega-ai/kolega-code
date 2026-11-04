@@ -25,18 +25,6 @@ class LspTool(BaseTool):
         self._lsp_manager = lsp_manager
 
     _POSITION_OPS = {"definition", "type_definition", "implementation", "references", "hover"}
-    _PATH_OPS = {
-        "diagnostics",
-        "document_symbols",
-        "definition",
-        "type_definition",
-        "implementation",
-        "references",
-        "hover",
-        "call_hierarchy",
-        "code_actions",
-        "capabilities",
-    }
     _ALL_OPS = _POSITION_OPS | {
         "call_hierarchy",
         "code_actions",
