@@ -1,6 +1,6 @@
 import inspect
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, List, Optional, Sequence, Union
 
 from .common import LogMixin
@@ -74,6 +74,11 @@ class ToolExtension:
     ``exclusive_tools`` declares session-control callbacks that must be the
     sole tool call in a model response. If one is batched with another call,
     the complete batch is rejected before any callback executes.
+
+    ``agent_tool_factories`` opts individual tools into per-agent binding.
+    Factories run after BaseAgent initializes its state, before subclass tool
+    collections exist, and are retained for rebinding by descendants. Direct
+    calls to ``tools`` use the original callbacks.
     """
 
     name: str
@@ -99,6 +104,19 @@ class ToolExtension:
     # one appears in a larger batch, BaseAgent rejects the whole batch before
     # any callback runs.
     exclusive_tools: frozenset[str] = field(default_factory=frozenset)
+    # Factories replace only the corresponding callbacks for each agent.
+    agent_tool_factories: dict[str, Callable[[Any], Callable[..., Any]]] = field(default_factory=dict)
+
+    def for_agent(self, agent: Any) -> "ToolExtension":
+        if not self.agent_tool_factories:
+            return self
+        unknown = self.agent_tool_factories.keys() - self.tools.keys()
+        if unknown:
+            raise ValueError(f"Tool extension '{self.name}' has factories for undeclared tools: {sorted(unknown)}")
+        return replace(
+            self,
+            tools={**self.tools, **{name: factory(agent) for name, factory in self.agent_tool_factories.items()}},
+        )
 
 
 class ToolCollectionConfig:

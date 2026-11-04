@@ -16,6 +16,8 @@ from kolega_code.agent.investigationagent import InvestigationAgent
 from kolega_code.agent.planningagent import PlanningAgent
 from kolega_code.agent.prompt_provider import AgentMode, PromptProvider
 from kolega_code.agent.tools import ToolCollection, ToolExtension
+from kolega_code.cli.skills import build_skill_tool_extension, discover_skills
+from kolega_code.llm.models import Message, TextBlock
 from kolega_code.llm.specs import MODEL_SPECS
 from tests.agent._terminal_manager_stub import SandboxCarryingTerminalManager
 
@@ -72,6 +74,114 @@ def hosted_prompt_provider(project_path):
     agents_dir.mkdir(parents=True, exist_ok=True)
     (agents_dir / "coder_code.md.j2").write_text("Private hosted test prompt.", encoding="utf-8")
     return PromptProvider(template_dirs=[template_dir])
+
+
+@pytest.mark.asyncio
+async def test_skill_extension_binds_each_agent_and_workflow_descendant(
+    project_path, mock_connection_manager, agent_config, tmp_path
+):
+    skill_dir = Path(project_path) / ".agents" / "skills" / "demo"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: Demo skill.\n---\n\nUnique demo body.\n", encoding="utf-8"
+    )
+    catalog = discover_skills(Path(project_path), user_home=tmp_path / "home", bundled_root=None)
+    host_history = [Message("user", [TextBlock('<skill_content name="demo">host</skill_content>')])]
+    extension = build_skill_tool_extension(catalog, lambda: host_history)
+    assert extension is not None
+    local_extension = ToolExtension(
+        name="local-only",
+        tools={"local_only": lambda: "local"},
+        tool_descriptions={"local_only": "Local only."},
+        tool_schemas={"local_only": {"type": "object", "properties": {}}},
+        propagate_to_sub_agents=False,
+    )
+    parent = CoderAgent(
+        project_path=project_path,
+        workspace_id="workspace",
+        thread_id="thread",
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+        tool_extensions=[extension, local_extension],
+        memory_enabled=False,
+    )
+    dispatcher = parent.tool_collection.agent_tool
+    child = dispatcher._construct_workflow_sub_agent(GeneralAgent, agent_config, None)
+    sibling = dispatcher._construct_workflow_sub_agent(GeneralAgent, agent_config, None)
+    nested = child.tool_collection.agent_tool._construct_workflow_sub_agent(GeneralAgent, agent_config, None)
+
+    assert [ext.name for ext in child.tool_extensions] == ["cli-agent-skills"]
+    assert [ext.name for ext in nested.tool_extensions] == ["cli-agent-skills"]
+    assert extension is not parent.tool_extensions[0]
+    assert parent.tool_extensions[0] is not child.tool_extensions[0]
+    assert extension.tool_schemas == child.tool_extensions[0].tool_schemas
+    definition = next(tool for tool in child.tool_collection.get_tool_list() if tool.name == "skill")
+    assert definition.input_schema == extension.tool_schemas["skill"]
+    assert "already active" in await extension.tools["skill"](name="demo")
+    parent.history = [Message("user", [TextBlock('<skill_content name="demo">parent</skill_content>')])]
+    sibling.history = [Message("user", [TextBlock('<skill_content name="demo">sibling</skill_content>')])]
+
+    results = await asyncio.gather(
+        *(agent.tool_collection.call("skill", name="demo") for agent in (parent, child, sibling, nested))
+    )
+    assert "already active" in results[0]
+    assert "Unique demo body." in results[1]
+    assert "already active" in results[2]
+    assert "Unique demo body." in results[3]
+
+    child.history = [Message("user", [TextBlock(results[1])])]
+    assert "already active" in await child.tool_collection.call("skill", name="demo")
+    assert "Unique demo body." in await nested.tool_collection.call("skill", name="demo")
+
+
+@pytest.mark.asyncio
+async def test_agent_extension_factory_preserves_metadata_cleanup_and_plain_callbacks(
+    project_path, mock_connection_manager, agent_config
+):
+    cleanup = AsyncMock()
+    plain = lambda: "plain"  # noqa: E731
+    schema = {"type": "object", "properties": {}}
+    seen = []
+
+    def bind(agent):
+        seen.append((agent.sub_agent, list(agent.history)))
+        return lambda: agent.thread_id
+
+    extension = ToolExtension(
+        name="bound",
+        tools={"bound_tool": lambda: "fallback", "plain_tool": plain},
+        tool_descriptions={"bound_tool": "Bound.", "plain_tool": "Plain."},
+        tool_schemas={"bound_tool": schema, "plain_tool": schema},
+        tool_groups={"host_tools": ["bound_tool", "plain_tool"]},
+        cleanup=cleanup,
+        exclusive_tools=frozenset({"bound_tool"}),
+        agent_tool_factories={"bound_tool": bind},
+    )
+    agent = GeneralAgent(
+        project_path=project_path,
+        workspace_id="workspace",
+        thread_id="child-thread",
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        tool_extensions=[extension],
+    )
+    bound = agent.tool_extensions[0]
+    assert seen and seen[0][0] is True and seen[0][1]
+    assert extension.tools["bound_tool"]() == "fallback"
+    assert bound.tools["bound_tool"]() == "child-thread"
+    assert bound.tools["plain_tool"] is plain
+    assert bound.cleanup is cleanup
+    assert bound.tool_schemas is extension.tool_schemas
+    assert bound.tool_groups is extension.tool_groups
+    assert bound.exclusive_tools == extension.exclusive_tools
+    assert agent.tool_collection is not None
+    await agent.tool_collection.cleanup_tool_extensions([bound])
+    cleanup.assert_awaited_once()
+
+    invalid = ToolExtension(name="invalid", tools={}, agent_tool_factories={"missing": bind})
+    with pytest.raises(ValueError, match="undeclared tools.*missing"):
+        invalid.for_agent(agent)
 
 
 def test_browser_agent_tools(project_path, mock_connection_manager, agent_config):
