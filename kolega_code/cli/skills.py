@@ -6,7 +6,7 @@ import difflib
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Sequence
+from typing import Any, Callable, Iterable, Optional, Sequence
 
 import yaml
 
@@ -433,15 +433,19 @@ def build_skill_tool_extension(
     if not catalog.has_skills():
         return None
 
-    async def skill(name: str) -> str:
-        try:
-            return catalog.activation_content(name, active_names=activated_skill_names(history_provider()))
-        except ValueError as exc:
-            raise ToolError(str(exc)) from None
+    def make_skill(provider: Callable[[], Iterable[Message]]) -> Callable[..., Any]:
+        async def skill(name: str) -> str:
+            try:
+                return catalog.activation_content(name, active_names=activated_skill_names(provider()))
+            except ValueError as exc:
+                raise ToolError(str(exc)) from None
+
+        return skill
 
     return ToolExtension(
         name="cli-agent-skills",
-        tools={"skill": skill},
+        tools={"skill": make_skill(history_provider)},
+        agent_tool_factories={"skill": lambda agent: make_skill(lambda: agent.history)},
         tool_descriptions={"skill": tool_description_asset("skill")},
         tool_schemas={
             "skill": {

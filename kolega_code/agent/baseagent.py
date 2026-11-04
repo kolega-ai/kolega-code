@@ -641,6 +641,7 @@ class BaseAgent(LogMixin):
         # Hosts use this to distinguish an inserted result already consumed by
         # this turn from one that still needs an idle continuation.
         self.background_needs_turn: bool = False
+        self.tool_extensions = [extension.for_agent(self) for extension in self.tool_extensions]
 
     # ------------------------------------------------------------------
     # Conversation delegation
