@@ -5,13 +5,6 @@ from typing import Any, Mapping
 INPUT_BUDGET_CONVENTIONS = ("window_minus_output", "separate_output_limit", "output_shares_window")
 
 
-def validate_model_pricing(specs: Mapping[str, Any]) -> None:
-    from .pricing import validate_pricing
-
-    if "pricing" in specs:
-        validate_pricing(specs["pricing"])
-
-
 def validate_model_spec(specs: Mapping[str, Any]) -> None:
     """Raise ``ValueError`` when a model spec cannot support context budgeting."""
     for key in ("context_length", "max_completion_tokens"):

@@ -543,26 +543,6 @@ class TerminalTool(BaseTool):
         ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
         return ansi_escape.sub("", text)
 
-    def configure(
-        self, auto_activate_venv: Optional[bool] = None, security_check_enabled: Optional[bool] = None
-    ) -> None:
-        """
-        Configure the terminal tool settings.
-
-        Args:
-            auto_activate_venv: Whether to automatically detect and activate virtual environments
-            security_check_enabled: Whether to perform security checks on commands before execution
-        """
-        if auto_activate_venv is not None:
-            self.auto_activate_venv = auto_activate_venv
-            # Reset initialization state if configuration changes
-            if not auto_activate_venv:
-                self.venv_activation_command = None
-            self.initialized = False
-
-        if security_check_enabled is not None:
-            self.security_check_enabled = security_check_enabled
-
     async def detect_venv(self) -> str:
         """
         Detect if a Python virtual environment exists in the project directory.
