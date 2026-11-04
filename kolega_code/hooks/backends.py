@@ -12,7 +12,9 @@ import asyncio
 import importlib
 import inspect
 import json
+import os
 import shlex
+import signal
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
@@ -61,6 +63,49 @@ async def run_hook(event: LifecycleEvent, spec: HookSpec, caps: HookCapabilities
 # command
 # --------------------------------------------------------------------------- #
 
+_COMMAND_CLEANUP_TIMEOUT = 5.0
+
+
+async def _cleanup_command(proc: asyncio.subprocess.Process, communication: asyncio.Task[tuple[bytes, bytes]]) -> None:
+    try:
+        if os.name == "posix":
+            # The group can outlive its leader, including while descendants hold our pipes.
+            os.killpg(proc.pid, signal.SIGKILL)
+        elif proc.returncode is None:
+            # Windows needs Job Objects to reliably terminate descendants after the launcher exits.
+            proc.kill()
+    except ProcessLookupError:
+        pass
+
+    try:
+        await asyncio.wait_for(asyncio.shield(communication), timeout=_COMMAND_CLEANUP_TIMEOUT)
+    except (Exception, asyncio.CancelledError):
+        pass
+    finally:
+        # Process exposes no public close API; escaped descendants may keep its pipes open indefinitely.
+        transport: asyncio.SubprocessTransport = getattr(proc, "_transport")
+        transport.close()
+        communication.cancel()
+        await asyncio.gather(communication, return_exceptions=True)
+
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=_COMMAND_CLEANUP_TIMEOUT)
+    except asyncio.TimeoutError:
+        pass
+
+
+async def _stop_command(proc: asyncio.subprocess.Process, communication: asyncio.Task[tuple[bytes, bytes]]) -> None:
+    cleanup = asyncio.create_task(_cleanup_command(proc, communication))
+    cancelled = False
+    while not cleanup.done():
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            cancelled = True
+    cleanup.result()
+    if cancelled:
+        raise asyncio.CancelledError
+
 
 async def _run_command(event: LifecycleEvent, spec: HookSpec, caps: HookCapabilities) -> HookOutcome:
     if not spec.command:
@@ -73,13 +118,20 @@ async def _run_command(event: LifecycleEvent, spec: HookSpec, caps: HookCapabili
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=str(caps.project_path) if caps.project_path else None,
+        start_new_session=os.name == "posix",
     )
+    communication = asyncio.create_task(proc.communicate(payload))
     try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(payload), timeout=spec.timeout)
+        stdout, stderr = await asyncio.wait_for(asyncio.shield(communication), timeout=spec.timeout)
+    except asyncio.CancelledError:
+        await _stop_command(proc, communication)
+        raise
     except asyncio.TimeoutError as exc:
-        proc.kill()
-        await proc.wait()
+        await _stop_command(proc, communication)
         raise HookExecutionError(f"command hook timed out after {spec.timeout}s") from exc
+    except BaseException:
+        await _stop_command(proc, communication)
+        raise
 
     code = proc.returncode
     if code == 0:
