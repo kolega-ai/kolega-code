@@ -7,6 +7,9 @@ import hashlib
 import json
 import logging
 import re
+import secrets
+import threading
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -22,6 +25,15 @@ from .transport import open_mcp_session
 
 MCP_TOOL_PREFIX = "mcp__"
 MCP_TOOL_SEPARATOR = "__"
+_MCP_MAX_TOOL_PAGES = 100
+_MCP_MAX_DISCOVERED_TOOLS = 10_000
+# Ambiguous server IDs need process-local permission identities: a predictable
+# alias could inherit a saved grant belonging to an unrelated server.
+_MCP_ALIAS_SALT = secrets.token_bytes(32)
+_mcp_log_lock = threading.Lock()
+_mcp_log_suppression_count = 0
+_mcp_log_previous_propagate = True
+_mcp_null_handler = logging.NullHandler()
 
 MCP_FAILURE_MESSAGE_GENERIC = "Verification failed. Check the MCP server configuration and try again."
 MCP_FAILURE_MESSAGE_GITHUB_COPILOT_OAUTH = (
@@ -171,21 +183,26 @@ def exposed_tool_names_for(server_id: str, tools: list[MCPToolStatus]) -> list[t
     candidates: list[tuple[str, str]] = []
     for tool in tools:
         raw = mcp_tool_name(server_id, tool.id)
-        candidates.append((raw, sanitize_mcp_tool_name(raw)))
+        # An empty tool segment would not parse as an MCP permission request.
+        candidate = mcp_tool_name(server_id, "_") if not tool.id else raw
+        candidates.append((raw, sanitize_mcp_tool_name(candidate)))
     counts: dict[str, int] = {}
     for _, sanitized in candidates:
         counts[sanitized] = counts.get(sanitized, 0) + 1
 
-    pairs: list[tuple[str, str]] = []
-    taken: set[str] = set()
-    for raw, sanitized in candidates:
-        final = sanitized
-        if counts[sanitized] > 1:
-            digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
-            suffix = f"_{digest}"
-            final = f"{sanitized[: MCP_TOOL_NAME_MAX_LENGTH - len(suffix)]}{suffix}"
-        # Identical raw names (the server listed a tool twice) would collide
-        # even after hashing; disambiguate by position.
+    pairs = list(candidates)
+    # Reserve every natural name before assigning generated suffixes, so a
+    # colliding tool cannot take another tool's unchanged permission identity.
+    taken = set(counts)
+    collision_indices = sorted(
+        (index for index, (_, sanitized) in enumerate(candidates) if counts[sanitized] > 1),
+        key=lambda index: (candidates[index][0], index),
+    )
+    for index in collision_indices:
+        raw, sanitized = candidates[index]
+        digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
+        suffix = f"_{digest}"
+        final = f"{sanitized[: MCP_TOOL_NAME_MAX_LENGTH - len(suffix)]}{suffix}"
         counter = 2
         base = final
         while final in taken:
@@ -193,7 +210,66 @@ def exposed_tool_names_for(server_id: str, tools: list[MCPToolStatus]) -> list[t
             final = f"{base[: MCP_TOOL_NAME_MAX_LENGTH - len(position_suffix)]}{position_suffix}"
             counter += 1
         taken.add(final)
-        pairs.append((raw, final))
+        pairs[index] = (raw, final)
+    return pairs
+
+
+def exposed_tool_names(exposed: list[MCPExposedTool]) -> list[tuple[str, str]]:
+    """Generate unique wire names with unambiguous permission identities."""
+    by_server: dict[str, list[int]] = {}
+    for index, tool in enumerate(exposed):
+        by_server.setdefault(tool.server.id, []).append(index)
+
+    # Permission rules parse the first "__" as the server/tool separator.
+    # IDs containing the separator or ending in "_" can otherwise inherit
+    # another server's grants. Their aliases are stable only within this process,
+    # preventing predictable collisions with grants persisted by earlier runs.
+    aliases = {
+        server_id: server_id
+        for server_id in by_server
+        if MCP_TOOL_SEPARATOR not in server_id and not server_id.endswith("_")
+    }
+    used = set(aliases.values())
+    for server_id in sorted(by_server):
+        if server_id in aliases:
+            continue
+        digest = hashlib.sha256(_MCP_ALIAS_SALT + server_id.encode("utf-8")).hexdigest()
+        alias = f"s{digest[:24]}"
+        counter = 2
+        while alias in used:
+            alias = f"s{digest[:24]}-{counter}"
+            counter += 1
+        aliases[server_id] = alias
+        used.add(alias)
+
+    pairs = [("", "")] * len(exposed)
+    for server_id, indices in by_server.items():
+        server_pairs = exposed_tool_names_for(aliases[server_id], [exposed[index].tool for index in indices])
+        for index, (_, final) in zip(indices, server_pairs):
+            pairs[index] = (mcp_tool_name(server_id, exposed[index].tool.id), final)
+
+    counts = Counter(final for _, final in pairs)
+    taken = set(counts)
+    collisions = sorted(
+        (index for index, (_, final) in enumerate(pairs) if counts[final] > 1),
+        key=lambda index: (exposed[index].server.id, exposed[index].tool.id),
+    )
+    for index in collisions:
+        raw, candidate = pairs[index]
+        tool = exposed[index]
+        identity = json.dumps([tool.server.id, tool.tool.id])
+        digest = hashlib.sha1(identity.encode("utf-8")).hexdigest()[:8]
+        suffix = f"_{digest}"
+        base = f"{candidate[: MCP_TOOL_NAME_MAX_LENGTH - len(suffix)]}{suffix}"
+        final = base
+        counter = 2
+        # Reserve unchanged wire names, including names that resemble generated suffixes.
+        while final in taken:
+            suffix = f"_{counter}"
+            final = f"{base[: MCP_TOOL_NAME_MAX_LENGTH - len(suffix)]}{suffix}"
+            counter += 1
+        taken.add(final)
+        pairs[index] = (raw, final)
     return pairs
 
 
@@ -226,16 +302,22 @@ def _suppress_mcp_sdk_terminal_logs():
     service catches those errors and writes a concise MCP status, so the raw
     logger output is duplicate noise and can corrupt the Textual UI.
     """
+    global _mcp_log_suppression_count, _mcp_log_previous_propagate
     logger = logging.getLogger("mcp")
-    null_handler = logging.NullHandler()
-    old_propagate = logger.propagate
-    logger.addHandler(null_handler)
-    logger.propagate = False
+    with _mcp_log_lock:
+        if _mcp_log_suppression_count == 0:
+            _mcp_log_previous_propagate = logger.propagate
+            logger.addHandler(_mcp_null_handler)
+            logger.propagate = False
+        _mcp_log_suppression_count += 1
     try:
         yield
     finally:
-        logger.propagate = old_propagate
-        logger.removeHandler(null_handler)
+        with _mcp_log_lock:
+            _mcp_log_suppression_count -= 1
+            if _mcp_log_suppression_count == 0:
+                logger.propagate = _mcp_log_previous_propagate
+                logger.removeHandler(_mcp_null_handler)
 
 
 def _mcp_failure_message(server: MCPServerConfig, exc: BaseException) -> str:
@@ -507,8 +589,11 @@ class MCPService:
             raise ToolError(f"Unknown MCP server: {server_id}")
         if not server.enabled:
             raise ToolError(f"MCP server '{server_id}' is disabled")
-        if not self.is_verified(server):
+        status = self.server_status(server)
+        if not status or status.status != "verified" or status.fingerprint != server_fingerprint(server):
             raise ToolError(f"MCP server '{server_id}' is not verified for its current configuration")
+        if not any(tool.id == tool_id for tool in status.tools):
+            raise ToolError(f"MCP tool '{tool_id}' is not in the verified inventory for server '{server_id}'")
         try:
             with _suppress_mcp_sdk_terminal_logs():
                 async with open_mcp_session(
@@ -546,16 +631,24 @@ class MCPService:
 
         tools: list[Any] = []
         cursor: Optional[str] = None
-        while True:
+        seen_cursors: set[str] = set()
+        for _ in range(_MCP_MAX_TOOL_PAGES):
             if cursor and PaginatedRequestParams is not None:
                 result = await session.list_tools(params=PaginatedRequestParams(cursor=cursor))
             else:
                 result = await session.list_tools()
             tools.extend(list(getattr(result, "tools", []) or []))
+            if len(tools) > _MCP_MAX_DISCOVERED_TOOLS:
+                raise ToolError("MCP server exceeded the tool discovery limit")
             cursor = getattr(result, "next_cursor", None) or getattr(result, "nextCursor", None)
             if not cursor:
-                break
-        return tools
+                return tools
+            if cursor in seen_cursors:
+                raise ToolError("MCP server repeated a tool discovery cursor")
+            seen_cursors.add(cursor)
+            if PaginatedRequestParams is None:
+                raise ToolError("MCP tool pagination is not supported by the installed SDK")
+        raise ToolError("MCP server exceeded the tool discovery page limit")
 
 
 def _tool_status_from_mcp_tool(tool: Any) -> MCPToolStatus:

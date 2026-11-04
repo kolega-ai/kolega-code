@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from kolega_code.agent.tools import ToolExtension
 
 from .config import LoadedMCPConfig, load_mcp_config
-from .service import MCPExposedTool, MCPService, exposed_tool_names_for
+from .service import MCPService, exposed_tool_names
 
 
 def build_mcp_tool_extension(
@@ -34,31 +35,23 @@ def build_mcp_tool_extension(
     schemas = {}
     tool_names = []
 
-    # Wire names are sanitized and deduped per server (names embed the server id,
-    # so cross-server collisions are impossible). Dispatch is unaffected: the
-    # callback closure captures the original server/tool ids, so renaming is
-    # model-facing only.
-    exposed_by_server: dict[str, list[MCPExposedTool]] = {}
-    for exposed_tool in exposed:
-        exposed_by_server.setdefault(exposed_tool.server.id, []).append(exposed_tool)
+    def make_callback(server_id: str, tool_id: str) -> Callable[..., Awaitable[Any]]:
+        async def call_mcp_tool(**inputs: Any) -> Any:
+            return await service.call_tool(server_id, tool_id, inputs)
 
-    for server_id, server_tools in exposed_by_server.items():
-        name_pairs = exposed_tool_names_for(server_id, [exposed_tool.tool for exposed_tool in server_tools])
-        for exposed_tool, (raw_name, tool_name) in zip(server_tools, name_pairs):
-            tool_id = exposed_tool.tool.id
+        return call_mcp_tool
 
-            async def _call_mcp_tool(_server_id=server_id, _tool_id=tool_id, **inputs):
-                return await service.call_tool(_server_id, _tool_id, inputs)
-
-            callbacks[tool_name] = _call_mcp_tool
-            description = exposed_tool.description
-            if raw_name != tool_name:
-                description = (
-                    f"{description}\n\nThe server-side tool name is `{tool_id}`; it is exposed here as `{tool_name}`."
-                )
-            descriptions[tool_name] = description
-            schemas[tool_name] = exposed_tool.tool.input_schema
-            tool_names.append(tool_name)
+    for exposed_tool, (raw_name, tool_name) in zip(exposed, exposed_tool_names(exposed)):
+        tool_id = exposed_tool.tool.id
+        callbacks[tool_name] = make_callback(exposed_tool.server.id, tool_id)
+        description = exposed_tool.description
+        if raw_name != tool_name:
+            description = (
+                f"{description}\n\nThe server-side tool name is `{tool_id}`; it is exposed here as `{tool_name}`."
+            )
+        descriptions[tool_name] = description
+        schemas[tool_name] = exposed_tool.tool.input_schema
+        tool_names.append(tool_name)
 
     return ToolExtension(
         name="mcp",

@@ -25,7 +25,7 @@ from kolega_code.mcp.service import (
     MCP_TOOL_FAILURE_MESSAGE_TIMEOUT,
     _is_github_copilot_api_url,
 )
-from kolega_code.mcp.state import MCPServerStatus, MCPOAuthTokenStore
+from kolega_code.mcp.state import MCPServerStatus, MCPToolStatus, MCPOAuthTokenStore
 from kolega_code.mcp.transport import open_mcp_session
 from kolega_code.tools import ToolError
 
@@ -99,7 +99,7 @@ def _verified_service(tmp_path: Path, server: MCPServerConfig) -> MCPService:
             fingerprint=server_fingerprint(server),
             transport=server.transport,
             source=server.source,
-            tools=[],
+            tools=[MCPToolStatus(id="ping"), MCPToolStatus(id="read_docs")],
             oauth=server.oauth.enabled,
         ),
     )
