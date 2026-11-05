@@ -8,9 +8,16 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
+from textual import _wait as textual_wait
 from textual.pilot import Pilot
 
 from kolega_code.cli.app import KolegaCodeApp
+
+
+# Pilot.pause() waits for CPU idle in SLEEP_GRANULARITY sleeps. TUI tests pause
+# thousands of times, so the stock 20 ms interval is a large share of a fast
+# test's cost; 5 ms keeps the CPU-idle check with a quarter of that overhead.
+textual_wait.SLEEP_GRANULARITY = 0.005
 
 
 @pytest.fixture(autouse=True)
