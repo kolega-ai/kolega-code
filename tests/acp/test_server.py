@@ -118,6 +118,7 @@ class _FakeFactory:
         *,
         session_id: str | None = None,
         permission_callback: Any = None,
+        mcp_servers: Any = None,
     ) -> AcpSession:
         resolved_id = session_id or self._session.session_id
         return AcpSession(
@@ -332,6 +333,7 @@ async def test_new_session_converts_config_errors_to_protocol_errors(tmp_path: P
             *,
             session_id: str | None = None,
             permission_callback: Any = None,
+            mcp_servers: Any = None,
         ) -> AcpSession:
             raise CliConfigError("no model configured")
 
@@ -418,7 +420,9 @@ async def test_load_session_replays_transcript(tmp_path: Path) -> None:
     factory = _FakeFactory(session)
     factory.event_store = lambda session_id: store  # type: ignore[method-assign]
 
-    async def _load(cwd: str, session_id: str, *, permission_callback: Any = None) -> AcpSession:
+    async def _load(
+        cwd: str, session_id: str, *, permission_callback: Any = None, mcp_servers: Any = None
+    ) -> AcpSession:
         return session
 
     factory.load_session = _load  # type: ignore[method-assign]

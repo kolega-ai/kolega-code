@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Awaitable, Callable, cast
 from uuid import uuid4
@@ -35,6 +36,12 @@ from acp.schema import (
 
 from kolega_code.acp.questions import build_question_extension
 from kolega_code.acp.accounting import AcpUsageAccounting
+from kolega_code.acp.mcp import (
+    ClientMCPServer,
+    build_session_mcp_extension,
+    merge_mcp_config,
+    normalize_client_servers,
+)
 from kolega_code.acp.session import AcpSession
 from kolega_code.agent import CoderAgent, PromptExtension, ToolExtension
 from kolega_code.agent.planningagent import PlanningAgent
@@ -50,10 +57,21 @@ from kolega_code.cli.session_store import SessionRecord, SessionStore, SessionSt
 from kolega_code.cli.settings import CliSettings, SettingsStore
 from kolega_code.cli.session_usage import SessionUsageSink
 from kolega_code.events import AgentEvent
+from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config
 from kolega_code.llm.ledger import UsageLedger
+from kolega_code.llm.models import Message, TextBlock
 from kolega_code.llm.pricing import PricingResolver
+from kolega_code.mcp.config import MCPServerConfig, load_mcp_config
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest, normalize_permission_mode
 from kolega_code.session.recording import RecordingConnectionManager
+from kolega_code.session.composition import (
+    CompositionHost,
+    CompositionRequest,
+    HostExtensions,
+    construct_agent,
+    prepare_composition,
+    select_agent_class,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +121,9 @@ async def _finish_cleanup(cleanup: Awaitable[None], *, timeout: float | None = N
 
 
 def agent_class_for(mode: str) -> type[CoderAgent]:
-    return PlanningAgent if mode == MODE_PLAN else CoderAgent
+    return cast(
+        type[CoderAgent], select_agent_class(mode, build_agent_class=CoderAgent, planning_agent_class=PlanningAgent)
+    )
 
 
 class _AcpRecordingConnectionManager(RecordingConnectionManager):
@@ -131,14 +151,19 @@ class AgentFactory:
         *,
         session_id: str | None = None,
         permission_callback: PermissionCallback | None = None,
+        mcp_servers: Sequence[ClientMCPServer | dict[str, Any]] | None = None,
     ) -> AcpSession:
         if session_id is not None and (existing := self._acp_sessions.get(session_id)) is not None:
             self.check_active(existing)
         project_path = Path(cwd).resolve()
         self._load_settings()
         config = self._config_for(project_path)
+        clients = normalize_client_servers(mcp_servers, project_path)
+        config.mcp_config = merge_mcp_config(config.mcp_config, clients)
         record = self._store.create(project_path, ACP_AGENT_MODE.value, config_summary(config), session_id=session_id)
-        return await self._build_session(record, config, restore=False, permission_callback=permission_callback)
+        return await self._build_session(
+            record, config, restore=False, permission_callback=permission_callback, client_mcp_servers=clients
+        )
 
     async def load_session(
         self,
@@ -146,10 +171,13 @@ class AgentFactory:
         session_id: str,
         *,
         permission_callback: PermissionCallback | None = None,
+        mcp_servers: Sequence[ClientMCPServer | dict[str, Any]] | None = None,
     ) -> AcpSession | None:
         existing = self._acp_sessions.get(session_id)
         if existing is not None:
             self.check_active(existing)
+            if mcp_servers is not None:
+                await self.update_client_servers(existing, mcp_servers)
             return existing
         try:
             record = self._store.load(session_id)
@@ -158,7 +186,37 @@ class AgentFactory:
             return None
         self._load_settings()
         config = self._config_for(Path(record.project_path))
-        return await self._build_session(record, config, restore=True, permission_callback=permission_callback)
+        clients = normalize_client_servers(mcp_servers, Path(record.project_path))
+        config.mcp_config = merge_mcp_config(config.mcp_config, clients)
+        return await self._build_session(
+            record, config, restore=True, permission_callback=permission_callback, client_mcp_servers=clients
+        )
+
+    async def update_client_servers(
+        self, session: AcpSession, servers: Sequence[ClientMCPServer | dict[str, Any]]
+    ) -> None:
+        self.check_active(session)
+        clients = normalize_client_servers(servers, Path(session.record.project_path))
+        if session.execution_lock.locked():
+            raise RequestError.invalid_request({"message": "MCP configuration applies between turns only."})
+        async with session.execution_lock:
+            self.check_active(session)
+            for name, client in clients.items():
+                previous = session.client_mcp_servers.get(name)
+                if previous is not None and previous.model_dump(exclude={"id"}) == client.model_dump(exclude={"id"}):
+                    clients[name] = previous
+            if clients == session.client_mcp_servers:
+                return
+            if session.approved_plan is not None or (session.turn_task is not None and not session.turn_task.done()):
+                raise RequestError.invalid_request({"message": "MCP configuration applies between turns only."})
+            assert self._settings is not None and self._settings_store is not None
+            configured = load_mcp_config(
+                Path(session.record.project_path),
+                self._settings_store.root,
+                project_trusted=self._settings.is_mcp_project_trusted(Path(session.record.project_path)),
+            )
+            config = session.config.model_copy(update={"mcp_config": merge_mcp_config(configured, clients)})
+            await self._rebuild_agent(session, config, client_mcp_servers=clients)
 
     # -- session config options -------------------------------------------
 
@@ -189,6 +247,7 @@ class AgentFactory:
 
     async def apply_model(self, session: AcpSession, provider: str, model: str) -> None:
         config = self._config_for(Path(session.record.project_path), provider=provider, model=model)
+        config.mcp_config = merge_mcp_config(config.mcp_config, session.client_mcp_servers)
         await self._rebuild_agent(session, config)
 
     # -- persistence --------------------------------------------------------
@@ -216,6 +275,7 @@ class AgentFactory:
                 await jobs.close()
                 await jobs.deliver(session.agent)
             self.persist(session)
+            await session.agent.fire_hook(HookEvent.SESSION_END, {"reason": "session_close"})
         except Exception:  # noqa: BLE001 — closing must not mask the primary outcome
             logger.exception("acp session close: agent cleanup failed (session=%s)", session_id)
         finally:
@@ -229,6 +289,8 @@ class AgentFactory:
             finally:
                 if session.accounting is not None:
                     await session.accounting.aclose()
+                session.client_mcp_servers.clear()
+                session.config = None
                 self._acp_sessions.pop(session_id, None)
 
     def list_sessions(self, cwd: str | None) -> list[SessionInfo]:
@@ -429,7 +491,9 @@ class AgentFactory:
             ],
         )
 
-    async def _rebuild_agent(self, session: AcpSession, config: Any) -> None:
+    async def _rebuild_agent(
+        self, session: AcpSession, config: Any, *, client_mcp_servers: dict[str, MCPServerConfig] | None = None
+    ) -> None:
         """Replace the session's agent with a rebuild carrying the same history.
 
         Config options apply between turns, so the persisted record is the
@@ -459,6 +523,8 @@ class AgentFactory:
             raise RuntimeError("ACP rebuild must preserve the session connection manager")
         session.agent = agent
         session.config = config
+        if client_mcp_servers is not None:
+            session.client_mcp_servers = client_mcp_servers
         if session.accounting is not None:
             session.accounting.rebind(agent)
         if session.runtime is not None:
@@ -490,8 +556,8 @@ class AgentFactory:
         *,
         restore: bool,
         permission_callback: PermissionCallback | None,
+        client_mcp_servers: dict[str, MCPServerConfig] | None = None,
     ) -> AcpSession:
-        """Compose the durable agent stack for one session (the ``ask`` recipe + recording)."""
         permission_mode = (
             normalize_permission_mode(record.permission_mode, default=self._permission_mode)
             if restore
@@ -534,6 +600,7 @@ class AgentFactory:
             config=config,
             question_state=question_state,
             accounting=accounting,
+            client_mcp_servers=client_mcp_servers or {},
         )
         self._acp_sessions[record.session_id] = session
         return session
@@ -564,38 +631,66 @@ class AgentFactory:
         agent_class = agent_class_for(interaction_mode)
         agent_holder: dict[str, Any] = {}
         question_markdown = PLANNING_QUESTION_PROMPT if interaction_mode == MODE_PLAN else BUILD_QUESTION_PROMPT
-        prompt_extensions = [
-            PromptExtension(
-                id="acp-questions",
-                title="Asking the User",
-                markdown=question_markdown,
-                modes=[ACP_AGENT_MODE],
-                propagate_to_sub_agents=False,
-            ),
-        ]
-        agent = agent_class(
-            project_path=Path(record.project_path),
+        question_prompt = PromptExtension(
+            id="acp-questions",
+            title="Asking the User",
+            markdown=question_markdown,
+            modes=[ACP_AGENT_MODE],
+            propagate_to_sub_agents=False,
+        )
+        assert self._settings is not None and self._settings_store is not None
+        project_path = Path(record.project_path)
+        hook_config = load_hook_config(
+            project_path,
+            self._settings_store.root,
+            project_trusted=self._settings.is_hook_project_trusted(project_path),
+        )
+        for _diagnostic in hook_config.diagnostics:
+            logger.warning("ACP hook configuration warning; check saved hooks and project trust.")
+        hooks = HookDispatcher(hook_config)
+        mcp_extension = await build_session_mcp_extension(config.mcp_config, project_path, self._settings_store.root)
+        request = CompositionRequest(
+            config=config,
+            project_path=project_path,
+            active_project_path=project_path,
+            state_dir=self._settings_store.root,
+            interaction_mode=interaction_mode,
+            agent_class=agent_class,
             workspace_id=record.workspace_id,
             thread_id=record.thread_id,
             connection_manager=recording,
-            config=config,
             agent_mode=ACP_AGENT_MODE,
             permission_mode=permission_mode or self._permission_mode,
             permission_callback=permission_callback,
-            prompt_extensions=prompt_extensions,
-            tool_extensions=[
-                self._task_list_extension(record, agent_holder, interaction_mode),
-                build_question_extension(question_state if question_state is not None else {}),
-            ],
             # Mirror the ask path: a resumed session hands the recorder over after
             # restoring history, so construction never double-records a resumed turn.
             session_recorder=None if restore else recorder,
             usage_ledger=accounting.ledger if accounting is not None else None,
         )
-        setattr(agent, "_acp_generation", recording.generation)
-        agent_holder["agent"] = agent
-        agent.add_volatile_section(self._task_list_volatile_section(record))
+        host = CompositionHost(
+            extensions=lambda: HostExtensions([], [self._task_list_extension(record, agent_holder, interaction_mode)]),
+            questions=lambda: (
+                question_prompt,
+                build_question_extension(question_state if question_state is not None else {}),
+            ),
+            additional_prompts=lambda: [],
+            history=lambda: agent_holder["agent"].history if "agent" in agent_holder else [],
+            set_catalogs=lambda skills, agents: None,
+            mcp_trusted=lambda: self._settings.is_mcp_project_trusted(project_path) if self._settings else False,
+            mcp_diagnostic=lambda diagnostic: logger.warning("ACP MCP: %s", diagnostic),
+            mcp_names=lambda loaded: None,
+            own_bundle=lambda bundle: None,
+            hook_dispatcher=lambda: hooks,
+            mcp_builder=lambda project_path, state_dir, **kwargs: mcp_extension,
+        )
+        agent = None
         try:
+            prepared = prepare_composition(request, host)
+            composed, _bundle = construct_agent(request, host, prepared)
+            agent = cast(CoderAgent, composed)
+            setattr(agent, "_acp_generation", recording.generation)
+            agent_holder["agent"] = agent
+            agent.add_volatile_section(self._task_list_volatile_section(record))
             lsp_messages = await agent.tool_collection.initialize()
             for message in lsp_messages:
                 logger.debug("acp lsp: %s", message)
@@ -603,9 +698,20 @@ class AgentFactory:
                 agent.restore_message_history(record.history)
                 agent.restore_compaction_state(record.compaction)
                 agent.session_recorder = recorder
+            if existing is None:
+                outcome = await agent.fire_hook(HookEvent.SESSION_START, {"source": "resume" if restore else "startup"})
+                if outcome.additional_context:
+                    if recorder is not None:
+                        recorder.record_context_message(
+                            Message(role="user", content=[TextBlock(text=outcome.additional_context)])
+                        )
+                    agent.append_user_message([TextBlock(text=outcome.additional_context)])
         except BaseException:
             try:
-                await _finish_cleanup(agent.cleanup())
+                if agent is not None:
+                    await _finish_cleanup(agent.cleanup())
+                elif mcp_extension is not None and mcp_extension.cleanup is not None:
+                    await _finish_cleanup(mcp_extension.cleanup())
             except Exception:  # noqa: BLE001
                 logger.exception("acp partial agent cleanup failed")
             raise

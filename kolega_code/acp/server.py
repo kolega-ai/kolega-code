@@ -44,6 +44,7 @@ from acp.schema import (
     Implementation,
     ListSessionsResponse,
     LoadSessionResponse,
+    McpCapabilities,
     McpServerStdio,
     PermissionOption,
     PromptCapabilities,
@@ -140,6 +141,7 @@ class AcpAgent(Agent):
             agent_capabilities=AgentCapabilities(
                 load_session=True,
                 prompt_capabilities=PromptCapabilities(image=True),
+                mcp_capabilities=McpCapabilities(http=True, sse=True),
                 session_capabilities=SessionCapabilities(
                     list=SessionListCapabilities(),
                     close=SessionCloseCapabilities(),
@@ -165,6 +167,7 @@ class AcpAgent(Agent):
                 cwd,
                 session_id=session_id,
                 permission_callback=self._permission_callback_for(session_id),
+                mcp_servers=mcp_servers,
             )
         except _HANDLED_CONFIG_ERRORS as exc:
             raise AgentFactory.protocol_error(exc) from exc
@@ -197,6 +200,8 @@ class AcpAgent(Agent):
         if session_id in self._sessions:
             existing = self._sessions[session_id]
             AgentFactory.check_active(existing)
+            if mcp_servers is not None:
+                await self._factory.update_client_servers(existing, mcp_servers)
             self._start_session_tasks(existing)
             return LoadSessionResponse(config_options=self._factory.config_options_for(existing))
         try:
@@ -204,6 +209,7 @@ class AcpAgent(Agent):
                 cwd,
                 session_id,
                 permission_callback=self._permission_callback_for(session_id),
+                mcp_servers=mcp_servers,
             )
         except _HANDLED_CONFIG_ERRORS as exc:
             raise AgentFactory.protocol_error(exc) from exc
