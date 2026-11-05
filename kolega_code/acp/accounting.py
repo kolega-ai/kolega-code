@@ -158,6 +158,13 @@ def _combine(parts: list[dict[str, Any]]) -> dict[str, Any]:
     for field in _TOKEN_FIELDS.values():
         result[field] = sum(_count(part.get(field)) for part in parts)
     result["persist_failures"] = sum(_count(part.get("persist_failures")) for part in parts)
+    result["io_errors"] = sum(
+        _count(part.get("io_errors", part.get("persistence", {}).get("io_errors"))) for part in parts
+    )
+    statuses = [part.get("close_status") for part in parts]
+    result["close_status"] = next(
+        (status for status in ("unknown", "not_committed", "pending", "committed") if status in statuses), None
+    )
     result["known_requests"] = {
         name: sum(_count(part.get("known_requests", part.get("known_fields", {})).get(name)) for part in parts)
         for name in _TOKEN_FIELDS.values()
@@ -210,6 +217,8 @@ def _combine(parts: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _public_totals(payload: dict[str, Any]) -> dict[str, Any]:
     counts = {name: _count(payload.get(name)) for name in _COUNTS}
+    close_status = payload.get("close_status")
+    close_settled = close_status in (None, "committed")
     known_requests = payload.get("known_requests", {})
     tokens = {
         name: _count(payload.get(field)) if known_requests.get(field) or counts["requests"] == 0 else None
@@ -227,6 +236,7 @@ def _public_totals(payload: dict[str, Any]) -> dict[str, Any]:
         counts["open"] == counts["partial"] == counts["missing"] == 0
         and (counts["requests"] == known_requests.get("total_tokens", 0))
         and payload.get("coverage", {}).get("full", True)
+        and close_settled
     )
     persistence_gaps = {
         name: _count(payload.get("coverage", {}).get(name))
@@ -243,8 +253,10 @@ def _public_totals(payload: dict[str, Any]) -> dict[str, Any]:
         "coverage": payload.get("coverage", {}),
         "persistence": {
             "failures": _count(payload.get("persist_failures")),
+            "ioErrors": _count(payload.get("io_errors")),
+            "closeStatus": close_status,
             **persistence_gaps,
-            "healthy": not payload.get("persist_failures") and not any(persistence_gaps.values()),
+            "healthy": close_settled and not payload.get("persist_failures") and not any(persistence_gaps.values()),
         },
         "detail": detail,
         "breakdown": payload.get("breakdown", []),
@@ -271,6 +283,8 @@ class AcpUsageAccounting:
         self._wake = asyncio.Event()
         self._dirty = True
         self._closed = False
+        self._close_task: asyncio.Task[None] | None = None
+        self._close_status: str | None = None
         self._publisher: asyncio.Task[None] | None = None
         self._send: Callable[[Any], Awaitable[None]] | None = None
         self._publish_lock = asyncio.Lock()
@@ -304,7 +318,7 @@ class AcpUsageAccounting:
 
     def start_publisher(self, send: Callable[[Any], Awaitable[None]]) -> None:
         self._send = send
-        if self._publisher is None and not self._closed:
+        if self._publisher is None and self._close_task is None and not self._closed:
             self._publisher = asyncio.create_task(self._publish_loop(), name=f"acp-usage-{self.session_id}")
         self._wake.set()
 
@@ -321,6 +335,13 @@ class AcpUsageAccounting:
                     "reported_missing_reasoning",
                 )
             }
+        if prompt_id is None and self.sink is not None:
+            payload["persist_failures"] = max(
+                _count(payload.get("persist_failures")), _count(getattr(self.sink, "persistence_failures", 0))
+            )
+            payload["io_errors"] = _count(getattr(self.sink, "io_errors", 0))
+            result = getattr(self.sink, "close_result", None)
+            payload["close_status"] = getattr(result, "status", None) or self._close_status
         return payload
 
     def extension(self, prompt_id: str | None = None) -> UsageExtension:
@@ -426,17 +447,38 @@ class AcpUsageAccounting:
         return self.extension(prompt_id)
 
     async def aclose(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
+        # Returning transfers ownership to callers that unregister the session.
+        while not self._closed:
+            if self._close_task is None or self._close_task.cancelled():
+                self._close_status = "pending"
+                self._close_task = asyncio.create_task(self._close(), name=f"acp-usage-close-{self.session_id}")
+            try:
+                await asyncio.shield(self._close_task)
+            except asyncio.CancelledError:
+                continue
+            self._close_task.result()
+
+    async def _close(self) -> None:
         try:
-            if self.sink is not None:
-                try:
-                    async with asyncio.timeout(_FLUSH_TIMEOUT):
-                        await self.sink.aclose()
-                except Exception:
-                    self._flush_failures += 1
-                    logger.warning("ACP usage close failed (session=%s)", self.session_id, exc_info=True)
+            try:
+                if self._publisher is not None:
+                    self._publisher.cancel()
+                    await asyncio.gather(self._publisher, return_exceptions=True)
+                    self._publisher = None
+            finally:
+                if self.sink is not None:
+                    try:
+                        if callable(getattr(self.sink, "wait_closed", None)):
+                            result = await self.sink.wait_closed()
+                        else:
+                            result = await self.sink.aclose()
+                        self._close_status = getattr(result, "status", "committed")
+                    except Exception:
+                        self._close_status = "unknown"
+                        self._flush_failures += 1
+                        logger.warning("ACP usage close failed (session=%s)", self.session_id, exc_info=True)
+                else:
+                    self._close_status = None
             self.changed()
             try:
                 async with asyncio.timeout(_FLUSH_TIMEOUT):
@@ -451,6 +493,7 @@ class AcpUsageAccounting:
                 self._publisher.cancel()
                 await asyncio.gather(self._publisher, return_exceptions=True)
                 self._publisher = None
+            self._closed = True
 
 
 def native_prompt_usage(extension: UsageExtension, *, enabled: bool) -> Usage | None:

@@ -3,7 +3,6 @@ from collections.abc import Callable
 from pathlib import Path
 import asyncio
 import json
-import time
 
 import pytest
 
@@ -42,6 +41,7 @@ from ._app_test_utils import (
     first_text_styles,
     question_payload,
     renderable_text,
+    wait_for_layout,
 )
 
 
@@ -137,9 +137,9 @@ async def test_terminal_output_preserves_scrollback_when_user_scrolls_up(
         app.query_one("#events", TabbedContent).active = "terminal_pane"
 
         terminal = app._terminal
-        await _wait_for_layout(pilot, lambda: terminal._size_known and terminal.region.height > 0)
+        await wait_for_layout(pilot, lambda: terminal._size_known and terminal.region.height > 0)
         terminal.write_terminal("".join(f"line {index}\n" for index in range(120)))
-        await _wait_for_layout(
+        await wait_for_layout(
             pilot,
             lambda: (
                 terminal.max_scroll_y > 0
@@ -150,12 +150,12 @@ async def test_terminal_output_preserves_scrollback_when_user_scrolls_up(
         )
 
         terminal.scroll_to(y=0, animate=False, immediate=True)
-        await _wait_for_layout(pilot, lambda: terminal.scroll_y == 0 and not terminal.auto_follow_bottom)
+        await wait_for_layout(pilot, lambda: terminal.scroll_y == 0 and not terminal.auto_follow_bottom)
         scroll_y = terminal.scroll_y
 
         app._render_event(AgentEvent(event_type="terminal_output", sender="coder", content={"output": "new line\n"}))
         app._flush_terminal_output()
-        await _wait_for_layout(
+        await wait_for_layout(
             pilot,
             lambda: "new line" in "\n".join(strip.text for strip in terminal.lines),
         )
@@ -164,10 +164,10 @@ async def test_terminal_output_preserves_scrollback_when_user_scrolls_up(
         assert terminal.auto_follow_bottom is False
 
         terminal.scroll_end(animate=False, immediate=True)
-        await _wait_for_layout(pilot, terminal.is_at_bottom)
+        await wait_for_layout(pilot, terminal.is_at_bottom)
         app._render_event(AgentEvent(event_type="terminal_output", sender="coder", content={"output": "tail line\n"}))
         app._flush_terminal_output()
-        await _wait_for_layout(
+        await wait_for_layout(
             pilot,
             lambda: (
                 "tail line" in "\n".join(strip.text for strip in terminal.lines)
@@ -199,7 +199,7 @@ async def test_terminal_output_written_while_hidden_follows_when_shown(
         assert terminal._follow_bottom_pending is True
 
         tabs.active = "terminal_pane"
-        await _wait_for_layout(
+        await wait_for_layout(
             pilot,
             lambda: (
                 "hidden line 119" in "\n".join(strip.text for strip in terminal.lines)
@@ -224,7 +224,7 @@ async def test_terminal_clear_cancels_pending_follow_and_restores_following(
     async with app.run_test(size=(100, 30)) as pilot:
         app.query_one("#events", TabbedContent).active = "terminal_pane"
         terminal = app._terminal
-        await _wait_for_layout(pilot, lambda: terminal._size_known and terminal.region.height > 0)
+        await wait_for_layout(pilot, lambda: terminal._size_known and terminal.region.height > 0)
 
         scheduled_follow_count = 0
         call_after_refresh = terminal.call_after_refresh
@@ -244,12 +244,12 @@ async def test_terminal_clear_cancels_pending_follow_and_restores_following(
 
         assert terminal._follow_bottom_pending is False
         assert terminal.auto_follow_bottom is True
-        await _wait_for_layout(pilot, lambda: not terminal._follow_bottom_callback_scheduled)
+        await wait_for_layout(pilot, lambda: not terminal._follow_bottom_callback_scheduled)
         assert terminal.lines == []
         assert terminal.scroll_y == 0
 
         terminal.write_terminal("".join(f"fresh line {index}\n" for index in range(120)))
-        await _wait_for_layout(
+        await wait_for_layout(
             pilot,
             lambda: (
                 "fresh line 119" in "\n".join(strip.text for strip in terminal.lines)
@@ -474,29 +474,44 @@ async def test_logs_output_preserves_scrollback_when_user_scrolls_up(
 
     async with app.run_test(size=(100, 30)) as pilot:
         app.query_one("#events", TabbedContent).active = "logs_pane"
-        await pilot.pause()
 
         logs = app._logs
+        await wait_for_layout(pilot, lambda: logs._size_known and logs.region.height > 0)
         logs.write_log("".join(f"line {index}\n" for index in range(120)))
-        await pilot.pause()
-        logs.scroll_end(animate=False, immediate=True)
-        await pilot.pause()
-        assert logs.max_scroll_y > 0
+        await wait_for_layout(
+            pilot,
+            lambda: (
+                logs.max_scroll_y > 0
+                and logs.is_at_bottom()
+                and not logs._follow_bottom_pending
+                and not logs._follow_bottom_callback_scheduled
+            ),
+        )
 
         logs.scroll_to(y=0, animate=False, immediate=True)
-        await pilot.pause()
+        await wait_for_layout(pilot, lambda: logs.scroll_y == 0 and not logs.auto_follow_bottom)
         scroll_y = logs.scroll_y
-        assert logs.auto_follow_bottom is False
 
         app._write_log("new line")
-        await pilot.pause()
+        app._flush_log_output()
+        await wait_for_layout(pilot, lambda: "new line" in "\n".join(strip.text for strip in logs.lines))
 
         assert logs.scroll_y == scroll_y
+        assert logs.auto_follow_bottom is False
 
         logs.scroll_end(animate=False, immediate=True)
-        await pilot.pause()
+        await wait_for_layout(pilot, logs.is_at_bottom)
         app._write_log("tail line")
-        await pilot.pause()
+        app._flush_log_output()
+        await wait_for_layout(
+            pilot,
+            lambda: (
+                "tail line" in "\n".join(strip.text for strip in logs.lines)
+                and logs.is_at_bottom()
+                and not logs._follow_bottom_pending
+                and not logs._follow_bottom_callback_scheduled
+            ),
+        )
 
         assert logs.scroll_y >= logs.max_scroll_y - logs.bottom_tolerance
 
@@ -647,16 +662,6 @@ async def test_log_output_is_batched_until_flush(tmp_path: Path, monkeypatch: py
         assert "line 4" in rendered
 
 
-async def _wait_for_layout(pilot, predicate, *, timeout: float = 6.0) -> None:
-    """Poll until ``predicate()`` is truthy or the layout deadline expires."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        await pilot.pause(0.02)
-        if predicate():
-            return
-    raise AssertionError(f"layout did not settle within {timeout}s")
-
-
 @pytest.mark.asyncio
 async def test_terminal_output_extracts_selected_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -759,7 +764,7 @@ async def test_terminal_output_supports_mouse_drag_selection(tmp_path: Path, mon
 
         # The widget can be queryable before the compositor's hit map reflects its
         # region. Mouse selection requires both to agree.
-        await _wait_for_layout(pilot, selection_targets_are_ready)
+        await wait_for_layout(pilot, selection_targets_are_ready)
 
         await pilot.mouse_down(terminal, offset=(0, 0))
         await pilot._post_mouse_events([events.MouseMove], terminal, offset=(24, 0), button=1)
@@ -768,7 +773,7 @@ async def test_terminal_output_supports_mouse_drag_selection(tmp_path: Path, mon
         def selection_copied_text() -> bool:
             return (app.screen.get_selected_text() or "").strip() == "select this terminal text"
 
-        await _wait_for_layout(pilot, selection_copied_text)
+        await wait_for_layout(pilot, selection_copied_text)
         selected_text = app.screen.get_selected_text()
         assert selected_text is not None
         assert selected_text.strip() == "select this terminal text"
@@ -789,12 +794,12 @@ async def test_terminal_selection_offsets_follow_vertical_scroll(
     async with app.run_test(size=(100, 30)) as pilot:
         app.query_one("#events", TabbedContent).active = "terminal_pane"
         terminal = app._terminal
-        await _wait_for_layout(pilot, lambda: terminal._size_known and terminal.region.height > 0)
+        await wait_for_layout(pilot, lambda: terminal._size_known and terminal.region.height > 0)
         terminal.write_terminal("".join(f"scroll line {index}\n" for index in range(120)))
         assert terminal._follow_bottom_pending is True
 
         terminal.scroll_to(y=10, animate=False, immediate=True)
-        await _wait_for_layout(
+        await wait_for_layout(
             pilot,
             lambda: (
                 terminal.max_scroll_y > 10
@@ -843,7 +848,7 @@ async def test_logs_output_supports_mouse_drag_selection(tmp_path: Path, monkeyp
                     return False
             return True
 
-        await _wait_for_layout(pilot, selection_targets_are_ready)
+        await wait_for_layout(pilot, selection_targets_are_ready)
 
         # Startup diagnostics (e.g. the peer-socket degrade notice on long tmp
         # paths) may occupy earlier rows; drag OUR line's row, not row 0.
@@ -859,7 +864,7 @@ async def test_logs_output_supports_mouse_drag_selection(tmp_path: Path, monkeyp
         def selection_copied_text() -> bool:
             return (app.screen.get_selected_text() or "").strip() == "select this log text"
 
-        await _wait_for_layout(pilot, selection_copied_text)
+        await wait_for_layout(pilot, selection_copied_text)
         selected_text = app.screen.get_selected_text()
         assert selected_text is not None
         assert selected_text.strip() == "select this log text"

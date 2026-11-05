@@ -3,6 +3,11 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from decimal import Decimal
+from pathlib import Path
+import subprocess
+import sys
+import textwrap
+import threading
 from types import SimpleNamespace
 from typing import Any
 
@@ -10,6 +15,8 @@ import pytest
 from acp.schema import SessionInfoUpdate, UsageUpdate
 
 from kolega_code.acp.accounting import USAGE_META_KEY, AcpUsageAccounting, native_prompt_usage
+from kolega_code.cli.session_store import SessionLockedError, SessionStore
+from kolega_code.cli.session_usage import LLM_RUN_FINISHED_EVENT, SessionUsageSink
 from kolega_code.llm.accounting import UsageObservation
 from kolega_code.llm.ledger import logical_prompt_scope
 from kolega_code.llm.usage import NormalizedUsage
@@ -309,4 +316,287 @@ async def test_close_failure_remains_observational_and_always_releases_publisher
     assert owner._publisher is None
     assert owner._unsubscribe is None
     assert owner.extension()["session"]["persistence"]["failures"] == 1
+    assert owner.extension()["session"]["persistence"]["closeStatus"] == "unknown"
+    assert not owner.extension()["session"]["complete"]
     await owner.aclose()
+
+
+@pytest.mark.parametrize("status", ["pending", "not_committed", "unknown"])
+def test_unsettled_close_is_not_healthy_completed_accounting(status: str) -> None:
+    owner = AcpUsageAccounting("s")
+    owner.sink = SimpleNamespace(  # type: ignore[assignment]
+        close_result=SimpleNamespace(status=status), persistence_failures=0, io_errors=1
+    )
+    metadata = owner.extension()["session"]
+    assert not metadata["complete"]
+    assert not metadata["persistence"]["healthy"]
+    assert metadata["persistence"]["ioErrors"] == 1
+    assert metadata["persistence"]["closeStatus"] == status
+    assert metadata["coverage"]["full"]
+
+
+@pytest.mark.parametrize("baseline", [{"io_errors": 2}, {"persistence": {"io_errors": 2}}])
+def test_committed_io_diagnostics_combine_with_baseline_without_becoming_persistence_failures(
+    baseline: dict[str, Any],
+) -> None:
+    owner = AcpUsageAccounting("s", baseline=baseline)
+    owner.sink = SimpleNamespace(  # type: ignore[assignment]
+        close_result=SimpleNamespace(status="committed"), persistence_failures=0, io_errors=1
+    )
+    metadata = owner.extension()["session"]
+    assert metadata["complete"]
+    assert metadata["persistence"]["healthy"]
+    assert metadata["persistence"]["failures"] == 0
+    assert metadata["persistence"]["ioErrors"] == 3
+    assert metadata["persistence"]["closeStatus"] == "committed"
+
+
+@pytest.mark.asyncio
+async def test_repeated_cancelled_close_holds_real_writer_ownership_until_thread_returns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SessionStore(tmp_path / "state")
+    contender = SessionStore(tmp_path / "state")
+    session = store.create(tmp_path / "project", "code", {})
+    store.claim_for_resume(session.session_id, tmp_path / "project")
+    owner = AcpUsageAccounting(session.session_id)
+    journal = store.journal(session.session_id)
+    sink = SessionUsageSink(journal, store.recorder(session.session_id), owner.ledger, mode="acp")
+    owner.sink = sink
+    owner.ledger.observer = sink
+    await sink.start()
+    entered, release = threading.Event(), threading.Event()
+    original_append = journal.append
+
+    def append(event_type: str, **kwargs: Any) -> Any:
+        if event_type == LLM_RUN_FINISHED_EVENT:
+            entered.set()
+            if not release.wait(20):
+                raise AssertionError("test did not release finish writer")
+        return original_append(event_type, **kwargs)
+
+    monkeypatch.setattr(journal, "append", append)
+    notifications: list[Any] = []
+    published = asyncio.Event()
+
+    async def send(update: Any) -> None:
+        notifications.append(update)
+        published.set()
+
+    owner.start_publisher(send)
+    await published.wait()
+    notifications.clear()
+    started = [asyncio.Event(), asyncio.Event()]
+    released: list[int] = []
+
+    async def close_and_release(index: int) -> None:
+        started[index].set()
+        await owner.aclose()
+        released.append(index)
+        store.release_session_locks()
+
+    tasks = [asyncio.create_task(close_and_release(0))]
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        tasks.append(asyncio.create_task(close_and_release(1)))
+        await started[1].wait()
+        tasks[0].cancel()
+        await asyncio.sleep(0)
+        tasks[0].cancel()
+        await asyncio.sleep(0)
+        owner.start_publisher(send)
+        assert not any(task.done() for task in tasks)
+        assert released == []
+        assert not owner._closed
+        assert owner._unsubscribe is not None
+        assert owner._publisher is None
+        assert notifications == []
+        metadata = owner.extension()["session"]
+        assert metadata["persistence"]["closeStatus"] == "pending"
+        assert not metadata["persistence"]["healthy"]
+        assert not metadata["complete"]
+        with pytest.raises(SessionLockedError):
+            contender.claim_for_resume(session.session_id, tmp_path / "project")
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*tasks), 10)
+        await owner.aclose()
+        assert sorted(released) == [0, 1]
+        assert owner._closed
+        assert owner._publisher is None and owner._unsubscribe is None
+        assert len(notifications) == 1
+        assert owner.extension()["session"]["persistence"]["closeStatus"] == "committed"
+        assert sum(event.event_type == LLM_RUN_FINISHED_EVENT for event in journal.read_events()) == 1
+        contender.claim_for_resume(session.session_id, tmp_path / "project")
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await owner.aclose()
+        store.release_session_locks()
+        contender.release_session_locks()
+
+
+@pytest.mark.asyncio
+async def test_reconciled_finish_io_error_is_diagnostic_not_unhealthy_live_or_reopened(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SessionStore(tmp_path / "state")
+    session = store.create(tmp_path / "project", "code", {})
+    owner = AcpUsageAccounting(session.session_id)
+    journal = store.journal(session.session_id)
+    sink = SessionUsageSink(journal, store.recorder(session.session_id), owner.ledger, mode="acp")
+    owner.sink = sink
+    owner.ledger.observer = sink
+    await sink.start()
+    original_append = journal.append
+
+    def append(event_type: str, **kwargs: Any) -> Any:
+        result = original_append(event_type, **kwargs)
+        if event_type == LLM_RUN_FINISHED_EVENT:
+            raise OSError("finish committed before caller observed failure")
+        return result
+
+    monkeypatch.setattr(journal, "append", append)
+    request = owner.ledger.begin("openrouter", "example/model")
+    owner.ledger.record_response(request, _usage(100, 10))
+    await owner.aclose()
+    reopened = AcpUsageAccounting("reopened", baseline=store.load(session.session_id).usage)
+    live = owner.extension()["session"]
+    restored = reopened.extension()["session"]
+    for metadata in (live, restored):
+        assert metadata["totalTokens"] == 110
+        assert metadata["complete"]
+        assert metadata["coverage"]["full"]
+        assert metadata["persistence"]["failures"] == 0
+        assert metadata["persistence"]["healthy"]
+    assert live["persistence"]["ioErrors"] == 1
+    assert restored["persistence"]["ioErrors"] == 0
+    assert live["persistence"]["closeStatus"] == "committed"
+
+
+@pytest.mark.asyncio
+async def test_finish_preparation_failure_publishes_terminal_unknown_after_stopping_drainer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SessionStore(tmp_path / "state")
+    session = store.create(tmp_path / "project", "code", {})
+    owner = AcpUsageAccounting(session.session_id)
+    journal = store.journal(session.session_id)
+    sink = SessionUsageSink(journal, store.recorder(session.session_id), owner.ledger, mode="acp")
+    owner.sink = sink
+    owner.ledger.observer = sink
+    await sink.start()
+
+    def failed_reload(*, repair_tail: bool) -> Any:
+        raise OSError("journal reload failed")
+
+    journal._loaded = False
+    monkeypatch.setattr(journal, "_read_events_locked", failed_reload)
+    await owner.aclose()
+    assert owner._closed
+    assert sink._drainer is not None and sink._drainer.done()
+    metadata = owner.extension()["session"]
+    assert metadata["persistence"]["closeStatus"] == "unknown"
+    assert metadata["persistence"]["failures"] == 1
+    assert not metadata["persistence"]["healthy"]
+    assert not metadata["complete"]
+
+
+@pytest.mark.parametrize("cancel_before_close_starts", [False, True])
+def test_runner_teardown_cannot_release_acp_owner_before_request_writer_returns(
+    tmp_path: Path, cancel_before_close_starts: bool
+) -> None:
+    code = textwrap.dedent(
+        """
+        import asyncio
+        from pathlib import Path
+        import sys
+        import threading
+
+        from kolega_code.acp.accounting import AcpUsageAccounting
+        from kolega_code.cli.session_store import SessionStore
+        from kolega_code.cli.session_usage import LLM_REQUEST_STARTED_EVENT, SessionUsageSink
+
+        root = Path(sys.argv[1])
+        early_cancel = sys.argv[2] == "True"
+        entered, release, returned = threading.Event(), threading.Event(), threading.Event()
+        closed = []
+
+        async def main():
+            store = SessionStore(root / "state")
+            session = store.create(root / "project", "code", {})
+            store.claim_for_resume(session.session_id, root / "project")
+            owner = AcpUsageAccounting(session.session_id)
+            journal = store.journal(session.session_id)
+            sink = SessionUsageSink(journal, store.recorder(session.session_id), owner.ledger, mode="acp")
+            owner.sink = sink
+            owner.ledger.observer = sink
+            await sink.start()
+            append = journal.append
+
+            def blocked(event_type, **kwargs):
+                if event_type != LLM_REQUEST_STARTED_EVENT:
+                    return append(event_type, **kwargs)
+                entered.set()
+                try:
+                    assert release.wait(10)
+                    return append(event_type, **kwargs)
+                finally:
+                    returned.set()
+
+            journal.append = blocked
+            owner.ledger.begin("openrouter", "example/model")
+            assert await asyncio.to_thread(entered.wait, 5)
+            sending, stopping = asyncio.Event(), asyncio.Event()
+            calls = 0
+
+            async def send(update):
+                nonlocal calls
+                calls += 1
+                if calls > 1:
+                    return
+                sending.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    stopping.set()
+                    await asyncio.Event().wait()
+
+            if not early_cancel:
+                owner.start_publisher(send)
+                await sending.wait()
+
+            async def close():
+                try:
+                    await owner.aclose()
+                finally:
+                    assert returned.is_set(), "ACP released ownership before the writer returned"
+                    assert sink.close_result is not None
+                    assert sink.close_result.status != "pending"
+                    assert sink._drainer.done()
+                    assert owner._closed
+                    store.release_session_locks()
+                    closed.append(sink.close_result.status)
+
+            asyncio.create_task(close())
+            if early_cancel:
+                await asyncio.sleep(0)
+                assert owner._close_task is not None
+                owner._close_task.cancel()
+            else:
+                await stopping.wait()
+            threading.Timer(0.5, release.set).start()
+
+        asyncio.run(main())
+        assert len(closed) == 1, closed
+        print("SETTLED", closed[0])
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path), str(cancel_before_close_starts)],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "SETTLED" in result.stdout

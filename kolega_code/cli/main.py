@@ -1342,7 +1342,11 @@ def _run_tui(args: argparse.Namespace) -> int:
             usage_sink = getattr(app, "_usage_sink", None)
             if usage_sink is not None:
                 try:
-                    await usage_sink.aclose()
+                    wait_closed = getattr(usage_sink, "wait_closed", None)
+                    if callable(wait_closed):
+                        await cast(Any, wait_closed)()
+                    else:
+                        await usage_sink.aclose()
                 except Exception as exc:  # noqa: BLE001 — reported, never masks the primary exception
                     print(f"Warning: usage sink close failed: {exc}", file=sys.stderr)
             if cleanup_error is not None:
@@ -2458,7 +2462,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
             _print_ask_event(event, args.json)
         if usage_sink is not None:
             try:
-                await usage_sink.aclose()
+                await usage_sink.wait_closed()
             except Exception as exc:  # noqa: BLE001 — reported, never masks the primary exception
                 print(f"Warning: usage sink close failed: {exc}", file=sys.stderr)
         if persist_failed_goal_after_cleanup and goal_state is not None:

@@ -289,14 +289,14 @@ async def test_shared_builder_failures_close_sink_record_terminal_and_release_ow
     failure: str,
 ) -> None:
     sink_close = Mock()
-    original_close = main_module.SessionUsageSink.aclose
+    original_close = main_module.SessionUsageSink.wait_closed
 
-    async def close(sink: Any) -> None:
+    async def close(sink: Any) -> Any:
         _AskAgent.events.append("sink-close")
         sink_close()
-        await original_close(sink)
+        return await original_close(sink)
 
-    monkeypatch.setattr(main_module.SessionUsageSink, "aclose", close)
+    monkeypatch.setattr(main_module.SessionUsageSink, "wait_closed", close)
 
     class FailingAgent(_AskAgent):
         def __init__(self, **kwargs: Any) -> None:

@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import copy
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from decimal import Decimal, InvalidOperation
 import logging
 from dataclasses import dataclass
-from typing import Any, Generator, Iterable, Optional
+from typing import Any, Callable, Generator, Iterable, Literal, Optional, TypeVar
+import uuid
 
 from kolega_code.llm.ledger import SettledRequest, UsageLedger
 
@@ -37,6 +38,43 @@ _TOKEN_SUM_FIELDS = (
 )
 
 
+CloseStatus = Literal["pending", "committed", "not_committed", "unknown"]
+_T = TypeVar("_T")
+
+
+async def _wait_for_owned(future: asyncio.Future[_T]) -> _T:
+    while not future.done():
+        try:
+            await asyncio.shield(future)
+        except asyncio.CancelledError:
+            continue
+    return future.result()
+
+
+async def _run_owned_io(function: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
+    # Executor futures survive runner-wide Task cancellation, unlike to_thread Tasks.
+    context = copy_context()
+
+    def run() -> _T:
+        return context.run(function, *args, **kwargs)
+
+    future = asyncio.get_running_loop().run_in_executor(None, run)
+    return await _wait_for_owned(future)
+
+
+@dataclass(frozen=True, slots=True)
+class UsageCloseResult:
+    """A settled append receipt, independently of observed I/O diagnostics."""
+
+    status: CloseStatus
+    io_errors: int = 0
+    close_wait_timeouts: int = 0
+
+    @property
+    def committed(self) -> bool:
+        return self.status == "committed"
+
+
 @dataclass(frozen=True, slots=True)
 class _PendingEvent:
     kind: str
@@ -45,6 +83,7 @@ class _PendingEvent:
     epoch_id: str
     payload: dict[str, Any]
     message_dict: Optional[dict[str, Any]] = None
+    receipt: Optional[asyncio.Future[CloseStatus]] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +133,7 @@ class SessionUsageSink:
     Notification is synchronous on the event loop and does only cheap work: a
     ``message.to_dict()`` snapshot (the agent mutates the Message object after
     settlement) plus a queue put. A single drainer task performs the blocking
-    journal writes via ``asyncio.to_thread`` in FIFO order, so journal order
+    journal writes in the executor in FIFO order, so journal order
     matches settlement order and the journal's lock serializes us against the
     session recorder.
     """
@@ -115,7 +154,16 @@ class SessionUsageSink:
         self._run_metadata = run_metadata
         self._queue: asyncio.Queue[Optional[_PendingEvent]] = asyncio.Queue()
         self._drainer: Optional[asyncio.Task[None]] = None
+        self._start_task: Optional[asyncio.Task[None]] = None
+        self._start_ready: Optional[asyncio.Future[None]] = None
         self._closed = False
+        self._sink_id = uuid.uuid4().hex
+        self._close_task: Optional[asyncio.Task[UsageCloseResult]] = None
+        self._close_result: Optional[UsageCloseResult] = None
+        self._stop_queued = False
+        self._io_errors = 0
+        self._close_wait_timeouts = 0
+        self._requests: dict[tuple[str, str], dict[str, Any]] = {}
         self._owners: dict[tuple[str, str], _RequestOwner] = {}
         self._revisions: dict[tuple[str, str], int] = {}
         self._evidence: dict[tuple[str, str], dict[str, Any]] = {}
@@ -130,24 +178,42 @@ class SessionUsageSink:
         failure is counted but does not prevent attaching: missing coverage
         only ever under-reports, never fabricates.
         """
-        if self._drainer is not None or self._closed:
+        if self._closed:
             return
+        if self._start_task is None:
+            self._start_ready = asyncio.get_running_loop().create_future()
+            self._start_task = asyncio.create_task(self._start())
+            self._start_task.add_done_callback(self._mark_started)
+        await asyncio.shield(self._start_task)
+
+    def _mark_started(self, _task: Optional[asyncio.Future[None]] = None) -> None:
+        # Cancelled startup owns finalization, so closers must not await its Task.
+        if self._start_ready is not None and not self._start_ready.done():
+            self._start_ready.set_result(None)
+
+    async def _start(self) -> None:
         try:
-            await asyncio.to_thread(
+            await _run_owned_io(
                 self._journal.append,
                 LLM_RUN_STARTED_EVENT,
                 actor="system",
                 payload={
                     **(self._run_metadata or {}),
                     "run_id": self._ledger.run_id,
+                    "sink_id": self._sink_id,
                     "mode": self._mode,
                     "accounting_version": 2,
                 },
             )
         except Exception:
+            self._io_errors += 1
             self._ledger.note_persist_failure()
             logger.exception("Failed to write the usage accounting-start marker")
         self._drainer = asyncio.create_task(self._drain())
+        self._mark_started()
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            await self.wait_closed()
 
     def on_begin(self, request: SettledRequest) -> None:
         if self._closed:
@@ -207,53 +273,148 @@ class SessionUsageSink:
             self._ledger.note_persist_failure()
             return False
 
-    async def aclose(self) -> None:
-        """Call after request producers drain; leave an unclosed marker on timeout."""
-        if self._closed:
-            return
-        self._closed = True
-        if self._drainer is None:
-            return
-        try:
-            await self._finish_run()
-        finally:
-            if not self._drainer.done():
-                self._drainer.cancel()
+    @property
+    def persistence_failures(self) -> int:
+        return self._ledger.persist_failures
 
-    async def _finish_run(self) -> None:
-        assert self._drainer is not None
-        if not await self.flush():
-            self._drainer.cancel()
-            return
-        snapshot = self._ledger.snapshot()
-        payload = {
-            "run_id": self._ledger.run_id,
-            "accounting_version": 2,
-            "mode": self._mode,
-            "counts": {
-                name: getattr(snapshot, name, 0)
-                for name in ("requests", "responses", "failed", "open", "abandoned", "partial", "missing")
-            },
-            "persist_failures": self._ledger.persist_failures,
-            "flush_timeouts": self._flush_timeouts,
-        }
-        self._queue.put_nowait(
-            _PendingEvent(
-                LLM_RUN_FINISHED_EVENT,
-                self._recorder,
-                None,
-                self._journal.epoch_id,
-                payload,
-            )
-        )
-        if not await self.flush():
-            self._drainer.cancel()
-            return
-        self._queue.put_nowait(None)
+    @property
+    def io_errors(self) -> int:
+        return self._io_errors
+
+    @property
+    def close_result(self) -> Optional[UsageCloseResult]:
+        return self._close_result
+
+    def _begin_close(self) -> asyncio.Task[UsageCloseResult]:
+        if self._close_task is None:
+            self._closed = True
+            self._close_result = UsageCloseResult("pending", self._io_errors, self._close_wait_timeouts)
+            self._close_task = asyncio.create_task(self._finish_run())
+        return self._close_task
+
+    async def aclose(self, *, timeout: Optional[float] = _CLOSE_TIMEOUT_SECONDS) -> UsageCloseResult:
+        """Bound a wait, never the writer. Repeated calls share one final append.
+
+        A pending receipt does not permit ownership release or session rebind.
+        Those callers must use ``wait_closed`` before releasing resources.
+        """
+        close_task = self._begin_close()
+        if self._close_result is not None and self._close_result.status != "pending":
+            return self._close_result
         try:
-            await asyncio.wait_for(asyncio.shield(self._drainer), timeout=_CLOSE_TIMEOUT_SECONDS)
-        except asyncio.TimeoutError:
-            self._drainer.cancel()
+            return await asyncio.wait_for(asyncio.shield(close_task), timeout=timeout)
+        except TimeoutError:
+            if close_task.done():
+                return close_task.result()
+            self._close_wait_timeouts += 1
+            self._close_result = UsageCloseResult("pending", self._io_errors, self._close_wait_timeouts)
+            return self._close_result
+
+    async def wait_closed(self) -> UsageCloseResult:
+        """Cancellation-resistant ownership barrier, not a bounded client wait.
+
+        Shutdown/handoff must not release the journal while a thread can still
+        append. A caller needing interruptible waiting should use ``aclose``.
+        """
+        while True:
+            try:
+                return await self.aclose(timeout=None)
+            except asyncio.CancelledError:
+                if self._close_task is not None and self._close_task.cancelled():
+                    await self._stop_drainer()
+                    if self._close_result is None or self._close_result.status == "pending":
+                        self._ledger.note_persist_failure()
+                        self._close_result = UsageCloseResult("unknown", self._io_errors, self._close_wait_timeouts)
+                    return self._close_result
+
+    async def _finish_run(self) -> UsageCloseResult:
+        status: CloseStatus = "unknown"
+        receipt: Optional[asyncio.Future[CloseStatus]] = None
+        try:
+            if self._start_ready is not None:
+                await asyncio.shield(self._start_ready)
+            if self._drainer is None:
+                status = "not_committed"
+            else:
+                # join only establishes FIFO quiescence, never successful persistence.
+                await self._queue.join()
+                counts = {
+                    name: 0 for name in ("requests", "responses", "failed", "open", "abandoned", "partial", "missing")
+                }
+                for request in self._requests.values():
+                    counts["requests"] += 1
+                    state = _state(request.get("state"))
+                    counts[{"responded": "responses", "cancelled": "failed"}.get(state, state)] += 1
+                    tokens, raw = _token_evidence(request)
+                    complete = raw.get("complete") is not False and all(
+                        tokens[name] is not None for name in ("input_tokens", "output_tokens", "total_tokens")
+                    )
+                    partial = not complete and any(value is not None for value in tokens.values())
+                    counts["partial"] += int(partial)
+                    counts["missing"] += int(not complete and not partial)
+                payload = {
+                    "run_id": self._ledger.run_id,
+                    "sink_id": self._sink_id,
+                    "accounting_version": 2,
+                    "mode": self._mode,
+                    "counts": counts,
+                    "persist_failures": self._ledger.persist_failures,
+                    "flush_timeouts": self._flush_timeouts,
+                    "io_errors": self._io_errors,
+                }
+                receipt = asyncio.get_running_loop().create_future()
+                self._queue.put_nowait(
+                    _PendingEvent(
+                        LLM_RUN_FINISHED_EVENT,
+                        self._recorder,
+                        None,
+                        self._journal.epoch_id,
+                        payload,
+                        receipt=receipt,
+                    )
+                )
+                status = await asyncio.shield(receipt)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("Could not prepare the usage finish receipt")
+        finally:
+            await self._stop_drainer()
+            if receipt is not None and receipt.done() and not receipt.cancelled():
+                status = receipt.result()
+            elif status == "unknown":
+                self._ledger.note_persist_failure()
+            self._close_result = UsageCloseResult(status, self._io_errors, self._close_wait_timeouts)
+        return self._close_result
+
+    async def _stop_drainer(self) -> None:
+        if self._start_ready is not None:
+            await _wait_for_owned(self._start_ready)
+        if self._drainer is not None:
+            if not self._stop_queued:
+                self._stop_queued = True
+                self._queue.put_nowait(None)
+            try:
+                await _wait_for_owned(self._drainer)
+            except asyncio.CancelledError:
+                pass
+
+    def _reconcile_finish(self, item: _PendingEvent) -> CloseStatus:
+        """Only inspect after the actual append settled; never repair evidence."""
+        journal = item.recorder.journal
+        events = journal.read_events(repair_tail=False)
+        if journal.tail_requires_recovery:
+            return "unknown"
+        finishes = [
+            event.payload
+            for event in events
+            if event.event_type == LLM_RUN_FINISHED_EVENT
+            and event.payload.get("run_id") == item.payload["run_id"]
+            and event.payload.get("sink_id") == self._sink_id
+        ]
+        if not finishes:
+            return "not_committed"
+        return "committed" if all(payload == item.payload for payload in finishes) else "unknown"
 
     def _capture_owner(self) -> _RequestOwner:
         scope = current_session_usage_scope()
@@ -297,6 +458,7 @@ class SessionUsageSink:
             {
                 "request_id": settled.request_id,
                 "run_id": settled.run_id,
+                "sink_id": self._sink_id,
                 "provider": settled.provider,
                 "model": settled.model,
                 "origin": origin,
@@ -310,20 +472,40 @@ class SessionUsageSink:
         payload.setdefault("revision", 0)
         if "usage" not in payload:
             payload["usage"] = settled.usage.to_dict() if settled.usage is not None else None
+        self._requests[(settled.run_id, settled.request_id)] = copy.deepcopy(payload)
         return payload
 
     async def _drain(self) -> None:
         while True:
-            item = await self._queue.get()
+            try:
+                item = await self._queue.get()
+            except asyncio.CancelledError:
+                self._begin_close()
+                continue
+            status: CloseStatus = "committed"
             try:
                 if item is None:
                     return
-                await asyncio.to_thread(self._write, item)
+                await _run_owned_io(self._write, item)
             except Exception:
-                self._ledger.note_persist_failure()
+                self._io_errors += 1
+                status = "unknown"
+                if item is not None and item.receipt is not None:
+                    try:
+                        status = await _run_owned_io(self._reconcile_finish, item)
+                    except Exception:
+                        logger.exception("Could not reconcile the usage finish receipt")
+                if status != "committed":
+                    self._ledger.note_persist_failure()
                 logger.exception("Failed to journal a usage event; continuing")
             finally:
+                if item is not None and item.receipt is not None:
+                    item.receipt.set_result(status)
                 self._queue.task_done()
+            # Deferred writer cancellation must finalize, not wait on an idle queue.
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                self._begin_close()
 
     def _write(self, item: _PendingEvent) -> None:
         if item.kind == LLM_MESSAGE_EVENT:
@@ -379,6 +561,16 @@ def _identity(payload: dict[str, Any]) -> Optional[tuple[str, str]]:
     return run_id, request_id
 
 
+def _boundary(payload: dict[str, Any]) -> Optional[tuple[str, str]]:
+    run_id = payload.get("run_id")
+    sink_id = payload.get("sink_id", "")
+    if not isinstance(run_id, str) or not run_id or not isinstance(sink_id, str):
+        return None
+    if "sink_id" in payload and not sink_id:
+        return None
+    return run_id, sink_id
+
+
 def _token_evidence(payload: dict[str, Any]) -> tuple[dict[str, Optional[int]], dict[str, Any]]:
     observation = payload.get("observation")
     message = payload.get("message")
@@ -421,16 +613,20 @@ def derive_session_usage(events: Iterable[SessionEvent], *, live_run_id: Optiona
     """Fold immutable recorded evidence, never current prices or replayed history."""
     event_list = list({event.event_id: event for event in events}.values())
     facts: dict[tuple[str, str], _FoldedRequest] = {}
-    runs: dict[str, dict[str, Any]] = {}
-    finished: dict[str, dict[str, Any]] = {}
+    runs: dict[tuple[str, str], dict[str, Any]] = {}
+    finished: dict[tuple[str, str], dict[str, Any]] = {}
+    boundary_facts: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    finish_failures: dict[tuple[str, str], int] = {}
+    finish_expected: dict[tuple[str, str], int] = {}
+    conflicts: set[tuple[str, str]] = set()
     malformed = 0
     fact_types = (LLM_REQUEST_STARTED_EVENT, LLM_REQUEST_SETTLED_EVENT, LLM_USAGE_OBSERVED_EVENT)
     fact_turns: set[tuple[str, Optional[str]]] = set()
     for event in event_list:
         payload = event.payload
         if event.event_type in (LLM_RUN_STARTED_EVENT, LLM_RUN_FINISHED_EVENT):
-            run_id = payload.get("run_id")
-            if not isinstance(run_id, str) or not run_id:
+            boundary = _boundary(payload)
+            if boundary is None:
                 malformed += 1
                 continue
             if event.event_type == LLM_RUN_FINISHED_EVENT:
@@ -440,14 +636,20 @@ def derive_session_usage(events: Iterable[SessionEvent], *, live_run_id: Optiona
                 if type(expected) is not int or expected < 0 or type(failures) is not int or failures < 0:
                     malformed += 1
                     continue
+                finish_failures[boundary] = max(finish_failures.get(boundary, 0), failures)
+                finish_expected[boundary] = max(finish_expected.get(boundary, 0), expected)
             target = runs if event.event_type == LLM_RUN_STARTED_EVENT else finished
-            target[run_id] = payload
+            if boundary in target and target[boundary] != payload:
+                conflicts.add(boundary)
+            target.setdefault(boundary, payload)
         elif event.event_type in fact_types:
             key = _identity(payload)
+            boundary = _boundary(payload)
             revision = _revision(payload)
-            if key is None or not key[0] or revision < 0:
+            if key is None or boundary is None or revision < 0:
                 malformed += 1
                 continue
+            boundary_facts.setdefault(boundary, set()).add(key)
             fact_turns.add((event.epoch_id, event.turn_id))
             request = facts.setdefault(key, _FoldedRequest(payload))
             if event.event_type == LLM_REQUEST_SETTLED_EVENT and not request.terminal:
@@ -654,20 +856,20 @@ def derive_session_usage(events: Iterable[SessionEvent], *, live_run_id: Optiona
     for request in legacy.values():
         fold(request.payload, request.state)
 
-    active_run: Optional[str] = None
+    active_run: Optional[tuple[str, str]] = None
     pre_accounting_turns = 0
     uninstrumented_turns = 0
     legacy_turns = 0
     seen_marker = False
     for event in event_list:
         if event.event_type == LLM_RUN_STARTED_EVENT:
-            run_id = event.payload.get("run_id")
-            active_run = run_id if isinstance(run_id, str) and run_id in runs else None
+            boundary = _boundary(event.payload)
+            active_run = boundary if boundary in runs else None
             seen_marker = True
         elif (
             event.event_type == LLM_RUN_FINISHED_EVENT
             and active_run in finished
-            and event.payload.get("run_id") == active_run
+            and _boundary(event.payload) == active_run
         ):
             active_run = None
         elif event.event_type == "turn.started":
@@ -677,21 +879,28 @@ def derive_session_usage(events: Iterable[SessionEvent], *, live_run_id: Optiona
                 uninstrumented_turns += 1
             elif runs[active_run].get("accounting_version") != 2:
                 legacy_turns += 1
+    live_boundary = next((key for key in reversed(runs) if key[0] == live_run_id), None)
     unclosed_runs = sum(
-        payload.get("accounting_version") == 2 and run_id not in finished and run_id != live_run_id
-        for run_id, payload in runs.items()
+        payload.get("accounting_version") == 2 and boundary not in finished and boundary != live_boundary
+        for boundary, payload in runs.items()
     )
-    orphan_runs = len({run_id for run_id, _ in facts}.difference(runs))
-    persist_failures = sum(
-        value for payload in finished.values() if type(value := payload.get("persist_failures")) is int and value > 0
-    )
+    orphan_runs = len(set(boundary_facts).union(finished).difference(runs))
+    run_failures: dict[str, int] = {}
+    for (run_id, _), failures in finish_failures.items():
+        run_failures[run_id] = max(run_failures.get(run_id, 0), failures)
+    persist_failures = sum(run_failures.values())
     lost_requests = 0
-    for run_id, payload in finished.items():
-        run_counts = payload.get("counts")
-        expected = run_counts.get("requests") if isinstance(run_counts, dict) else None
-        if type(expected) is int:
-            actual = sum(key[0] == run_id for key in facts)
-            lost_requests += max(0, expected - actual)
+    count_mismatches = 0
+    for boundary, expected in finish_expected.items():
+        actual = len(boundary_facts.get(boundary, ()))
+        lost_requests += max(0, expected - actual)
+        count_mismatches += int(actual > expected)
+    # A request cannot be certified by two sink-local boundaries.
+    request_boundaries: dict[tuple[str, str], int] = {}
+    for identities in boundary_facts.values():
+        for identity in identities:
+            request_boundaries[identity] = request_boundaries.get(identity, 0) + 1
+    malformed += len(conflicts) + count_mismatches + sum(count > 1 for count in request_boundaries.values())
     coverage = {
         "accounted_runs": len(runs),
         "pre_accounting_turns": pre_accounting_turns,

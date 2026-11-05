@@ -62,7 +62,12 @@ async def test_marker_written_synchronously_before_any_event(tmp_path):
     types = [e.event_type for e in _events(store, session)]
     assert types[-1] == LLM_RUN_STARTED_EVENT
     marker = _events(store, session)[-1]
-    assert marker.payload == {"run_id": ledger.run_id, "mode": "tui", "accounting_version": 2}
+    assert {key: value for key, value in marker.payload.items() if key != "sink_id"} == {
+        "run_id": ledger.run_id,
+        "mode": "tui",
+        "accounting_version": 2,
+    }
+    assert isinstance(marker.payload["sink_id"], str) and marker.payload["sink_id"]
     await sink.aclose()
 
 
@@ -381,23 +386,29 @@ async def test_old_observer_payload_without_begin_or_additive_fields_is_supporte
 
 
 @pytest.mark.asyncio
-async def test_cancelled_close_stops_drainer_without_certifying_run_finished(tmp_path, monkeypatch):
+async def test_cancelled_close_retains_drainer_until_actual_write_settles(tmp_path, monkeypatch):
     store, session, _recorder, ledger, sink = await _harness(tmp_path)
-    entered = asyncio.Event()
+    entered, release = threading.Event(), threading.Event()
+    write = sink._write
 
-    async def blocked_flush(*, timeout=10):
+    def blocked_write(item):
         entered.set()
-        await asyncio.Future()
+        assert release.wait(10)
+        write(item)
 
-    monkeypatch.setattr(sink, "flush", blocked_flush)
+    monkeypatch.setattr(sink, "_write", blocked_write)
     closing = asyncio.create_task(sink.aclose())
-    await entered.wait()
-    closing.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await closing
-    assert sink._drainer is not None
-    await asyncio.gather(sink._drainer, return_exceptions=True)
-    assert sink._drainer.cancelled()
-    assert not any(event.event_type == LLM_RUN_FINISHED_EVENT for event in _events(store, session))
-    assert store.load(session.session_id).usage["coverage"]["unclosed_runs"] == 1
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        closing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        assert sink._drainer is not None and not sink._drainer.done()
+        assert not any(event.event_type == LLM_RUN_FINISHED_EVENT for event in _events(store, session))
+        assert store.load(session.session_id).usage["coverage"]["unclosed_runs"] == 1
+    finally:
+        release.set()
+        result = await sink.wait_closed()
+    assert result.committed
+    assert store.load(session.session_id).usage["coverage"]["unclosed_runs"] == 0
     assert ledger.persist_failures == 0

@@ -338,6 +338,12 @@ class SessionJournal:
             self._set_state_from_events_locked(events)
             return events
 
+    @property
+    def tail_requires_recovery(self) -> bool:
+        """Whether the last non-repairing read excluded an incomplete tail."""
+        with self._lock:
+            return self._tail_requires_recovery
+
     def raw_events(self) -> str:
         with self._lock:
             raw = self._read_event_bytes_with_recovery_locked(repair_tail=True)
@@ -428,7 +434,12 @@ class SessionJournal:
             parent_tool_call_id=stamp.parent_tool_call_id,
             depth=stamp.depth,
         )
-        self._write_event_locked(event)
+        try:
+            self._write_event_locked(event)
+        except BaseException:
+            # A failed close can leave a complete event on disk without advancing our state.
+            self._loaded = False
+            raise
         self._next_seq += 1
         if event_type == "context.epoch_started":
             self._epoch_id = resolved_epoch
