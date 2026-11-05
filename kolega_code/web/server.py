@@ -18,6 +18,7 @@ require explicitly allowed origins.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import secrets
 from dataclasses import dataclass
@@ -243,13 +244,33 @@ def create_app(config: ServerConfig) -> FastAPI:
 
         await websocket.accept()
         store = _event_store(config, record.session_id)
+
+        async def follow() -> None:
+            try:
+                async for event in store.tail(record.session_id, from_seq=from_seq):
+                    await websocket.send_text(json.dumps(event.model_dump(mode="json"), separators=(",", ":")))
+            except (WebSocketDisconnect, asyncio.CancelledError):
+                return
+            except SessionStoreError as exc:
+                await websocket.close(code=4400, reason=str(exc)[:120])
+
+        async def watch_disconnect() -> None:
+            while (await websocket.receive())["type"] != "websocket.disconnect":
+                pass
+
+        # The follow loop blocks on the journal, not on the socket, so a viewer
+        # that leaves is only visible to a reader. Without one the follow task
+        # outlives its client and keeps polling until the server shuts down.
+        follower = asyncio.create_task(follow())
+        watcher = asyncio.create_task(watch_disconnect())
         try:
-            async for event in store.tail(record.session_id, from_seq=from_seq):
-                await websocket.send_text(json.dumps(event.model_dump(mode="json"), separators=(",", ":")))
-        except (WebSocketDisconnect, asyncio.CancelledError):
-            return
-        except SessionStoreError as exc:
-            await websocket.close(code=4400, reason=str(exc)[:120])
+            await asyncio.wait({follower, watcher}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (follower, watcher):
+                task.cancel()
+            for task in (follower, watcher):
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
     # -- Artifacts ---------------------------------------------------------
 

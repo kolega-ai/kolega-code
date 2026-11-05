@@ -7,8 +7,11 @@ sequence and receiving events appended after the socket was already open.
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -261,6 +264,47 @@ async def test_stream_resumes_at_a_given_sequence(store: SessionStore, tmp_path:
     seen = [item["seq"] for item in first + rest]
     assert len(seen) == len(set(seen)), f"resume delivered a duplicate: {seen}"
     assert seen == sorted(seen)
+
+
+@pytest.mark.asyncio
+async def test_a_disconnected_viewer_stops_the_follow(
+    store: SessionStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A viewer that leaves must not leave a journal follower polling behind it.
+
+    The follow loop blocks on the journal, not on the socket, so the handler has
+    to watch for the disconnect itself. A follower that outlives its viewer keeps
+    scanning the session file and holds up the server's graceful shutdown.
+    """
+    from websockets.asyncio.client import connect
+
+    from kolega_code.web.hosting import ShareServer
+
+    record = await _seed(store, tmp_path)
+    stopped = asyncio.Event()
+    original = FileSessionEventStore.tail
+
+    def watched_tail(self: FileSessionEventStore, *args: Any, **kwargs: Any) -> AsyncIterator[AgentEvent]:
+        async def watched() -> AsyncIterator[AgentEvent]:
+            try:
+                async for event in original(self, *args, **kwargs):
+                    yield event
+            finally:
+                stopped.set()
+
+        return watched()
+
+    monkeypatch.setattr(FileSessionEventStore, "tail", watched_tail)
+
+    server = ShareServer(store, session_id=record.session_id)
+    handle = await server.start()
+    try:
+        stream = f"ws://{handle.host}:{handle.port}/api/sessions/{record.session_id}/stream?token={handle.token}"
+        async with connect(stream, proxy=None) as socket:
+            assert json.loads(await socket.recv())["event_type"] == KnownEventType.TURN_STARTED
+        await asyncio.wait_for(stopped.wait(), timeout=5)
+    finally:
+        await server.stop()
 
 
 @pytest.mark.asyncio
