@@ -126,7 +126,10 @@ async def _bind_loopback(
     for port in ports:
         try:
             server = await asyncio.start_server(handler, "127.0.0.1", port)
-            return server, port
+            # Port 0 asks the OS for a free port; report the port it chose so the
+            # redirect URI matches the listening socket.
+            sockets = server.sockets
+            return server, int(sockets[0].getsockname()[1]) if sockets else port
         except OSError as exc:
             last_exc = exc
     raise LoginError(f"Could not bind a loopback port {ports} for sign-in (is another login in progress?): {last_exc}")

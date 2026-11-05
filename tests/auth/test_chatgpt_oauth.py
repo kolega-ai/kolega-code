@@ -73,12 +73,23 @@ async def test_exchange_code_without_access_token_raises() -> None:
     await client.aclose()
 
 
-async def _drive_browser_callback(captured: dict, code: str = "the-code", state: str | None = None) -> None:
-    """Simulate the browser redirect by GETing the loopback callback once it's up."""
+async def _drive_browser_callback(
+    captured: dict, login: asyncio.Task, code: str = "the-code", state: str | None = None
+) -> None:
+    """Simulate the browser redirect by GETing the loopback callback once it's up.
+
+    A flow that fails before publishing its URL (for example a port that cannot be
+    bound) must raise its own error: waiting on the captured URL alone turned that
+    into ``KeyError: 'url'``.
+    """
     for _ in range(500):
         if "url" in captured:
             break
+        if login.done():
+            await login
         await asyncio.sleep(0.01)
+    if "url" not in captured:
+        raise AssertionError("the login flow never published an authorize URL")
     qs = parse_qs(urlsplit(captured["url"]).query)
     redirect = qs["redirect_uri"][0]
     use_state = state if state is not None else qs["state"][0]
@@ -106,13 +117,13 @@ async def test_run_login_flow_end_to_end() -> None:
 
     login = asyncio.create_task(
         flow.run_login_flow(
-            ports=(54551, 54552),
+            ports=(0,),
             open_browser=False,
             on_url=lambda u: captured.__setitem__("url", u),
             http_client=token_client,
         )
     )
-    await _drive_browser_callback(captured)
+    await _drive_browser_callback(captured, login)
     tokens = await login
 
     assert tokens.access_token == "live-at"
@@ -128,13 +139,13 @@ async def test_run_login_flow_rejects_state_mismatch() -> None:
 
     login = asyncio.create_task(
         flow.run_login_flow(
-            ports=(54553,),
+            ports=(0,),
             open_browser=False,
             on_url=lambda u: captured.__setitem__("url", u),
             http_client=token_client,
         )
     )
-    await _drive_browser_callback(captured, state="wrong-state")
+    await _drive_browser_callback(captured, login, state="wrong-state")
     with pytest.raises(flow.LoginError):
         await login
     assert captured["callback_status"] == 400
@@ -160,13 +171,13 @@ async def test_run_login_flow_rejects_free_plan() -> None:
 
     login = asyncio.create_task(
         flow.run_login_flow(
-            ports=(54554,),
+            ports=(0,),
             open_browser=False,
             on_url=lambda u: captured.__setitem__("url", u),
             http_client=token_client,
         )
     )
-    await _drive_browser_callback(captured)
+    await _drive_browser_callback(captured, login)
     with pytest.raises(flow.LoginError, match="free"):
         await login
     await token_client.aclose()
