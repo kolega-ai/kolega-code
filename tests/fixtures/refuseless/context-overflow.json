@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "This conversation is about 1048565 tokens, at or over this model's context window of 1048576 tokens. Compact or shorten it, or start a new one.",
+    "type": "invalid_request_error",
+    "code": "context_length_exceeded",
+    "param": "messages"
+  }
+}

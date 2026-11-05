@@ -21,6 +21,7 @@ from .tinker import TINKER_SPECS, TINKER_WILDCARD_SPECS
 from .perplexity_agent import PERPLEXITY_AGENT_SPECS
 from .cloudflare_workers_ai import CLOUDFLARE_WORKERS_AI_SPECS
 from .openrouter import OPENROUTER_SPECS
+from .refuseless import REFUSELESS_SPECS
 
 # Dictionary mapping (provider, model_name) to model specifications.
 # Each entry contains context_length (maximum input tokens), max_completion_tokens,
@@ -54,6 +55,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
     # Generated Perplexity Agent API catalog; see specs/perplexity_catalog.py.
     **PERPLEXITY_AGENT_SPECS,
     **CLOUDFLARE_WORKERS_AI_SPECS,
+    **REFUSELESS_SPECS,
     # The OpenRouter gateway catalog is generated and merged last so it can
     # never shadow a hand-maintained direct-provider entry. Its insertion order
     # is OpenRouter's own usage ranking, and its leading entries carry

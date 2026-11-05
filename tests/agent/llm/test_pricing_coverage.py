@@ -13,7 +13,7 @@ from scripts.check_pricing_catalog import pricing_coverage
 
 def test_every_bundled_route_has_valid_exact_pricing_or_a_sourced_exception() -> None:
     report = pricing_coverage(now=datetime(2026, 11, 1, tzinfo=timezone.utc))
-    assert report["provider_count"] == 22
+    assert report["provider_count"] == 23
     assert report["model_count"] == len(MODEL_SPECS)
     assert report["errors"] == []
     assert report["valid"]

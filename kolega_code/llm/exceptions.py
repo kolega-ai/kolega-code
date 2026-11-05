@@ -204,6 +204,7 @@ def _provider_display_name(provider: str | None) -> str:
         ModelProvider.CLOUDFLARE_WORKERS_AI.value: "Cloudflare Workers AI",
         ModelProvider.OPENROUTER.value: "OpenRouter",
         ModelProvider.PERPLEXITY_AGENT.value: "Perplexity",
+        ModelProvider.REFUSELESS.value: "Refuseless",
     }
     if not provider:
         return "The selected provider"
@@ -434,6 +435,18 @@ def _map_cloudflare_openai_error(error: "OpenAIError", provider: str) -> Optiona
     return None
 
 
+def _is_refuseless_billing_error(error: "OpenAIError") -> bool:
+    if _is_billing_status(error):
+        return True
+    codes = [getattr(error, "code", None), getattr(error, "type", None)]
+    body = getattr(error, "body", None)
+    if isinstance(body, dict):
+        for entry in (body, body.get("error")):
+            if isinstance(entry, dict):
+                codes.extend((entry.get("code"), entry.get("type")))
+    return any(isinstance(code, str) and code == "insufficient_credits" for code in codes)
+
+
 def map_openai_errors(error: "OpenAIError", provider: str | None = None) -> LLMError:
     from openai import (
         APIConnectionError as OpenAIAPIConnectionError,
@@ -442,6 +455,8 @@ def map_openai_errors(error: "OpenAIError", provider: str | None = None) -> LLME
 
     # Compatible providers ride the OpenAI SDK; keep their real provider label.
     provider = provider or ModelProvider.OPENAI.value
+    if provider == ModelProvider.REFUSELESS.value and _is_refuseless_billing_error(error):
+        return LLMBillingError(message=f"OpenAI APIError: {str(error)}", provider=provider)
     if is_perplexity_quota_error(error, provider):
         return LLMBillingError(message=f"OpenAI APIError: {str(error)}", provider=provider)
     if provider == ModelProvider.CLOUDFLARE_WORKERS_AI.value:

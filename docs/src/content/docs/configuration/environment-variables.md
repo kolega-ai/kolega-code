@@ -57,6 +57,7 @@ provider or model.
 | `OPENROUTER_API_KEY` | OpenRouter |
 | `TINKER_API_KEY` | Thinking Machines — both the `thinking_machines` (Anthropic-compatible) and `tinker` (native SDK) providers |
 | `PERPLEXITY_API_KEY` | Perplexity Agent API |
+| `REFUSELESS_API_KEY` | Refuseless |
 
 The local `llama` provider needs no key. The `zai` key authenticates against Z.AI's
 Anthropic-compatible endpoint (it is the key Z.AI also documents as `ANTHROPIC_AUTH_TOKEN`).
@@ -66,6 +67,9 @@ standard Moonshot API used by the `moonshot` provider.
 The `OLLAMA_API_KEY` key authenticates against Ollama Cloud's direct API (`https://ollama.com/v1` for OpenAI-compatible requests).
 The `OPENROUTER_API_KEY` key authenticates against the OpenRouter gateway (`https://openrouter.ai/api/v1`).
 The `PERPLEXITY_API_KEY` key authenticates against the Perplexity Agent API (`https://api.perplexity.ai/v1`).
+The `REFUSELESS_API_KEY` key authenticates Refuseless Chat Completions requests
+at `https://api.refuseless.com/v1`. An exported key overrides the Refuseless key
+saved in Settings; it does not select a provider or model.
 The `MISTRAL_API_KEY` key authenticates against Mistral's own native Chat
 Completions API (`https://api.mistral.ai/v1`). Select `mistral` together with a
 model such as `mistral-medium-3-5`; the key alone does not select a model.

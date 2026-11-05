@@ -9,9 +9,9 @@ import pytest
 
 from kolega_code.llm.pricing import PricingResolver
 from kolega_code.llm.specs.catalog import MODEL_SPECS, WILDCARD_MODEL_SPECS
+from kolega_code.llm.specs.catalog.pricing_sources import PROVIDER_SOURCES
 from kolega_code.llm.specs.mistral_catalog import catalog_entries, spec_from_jsonable, spec_to_jsonable
 from kolega_code.llm.specs.pricing import validate_pricing
-from kolega_code.llm.specs.pricing_feeds import CHECKED_AT
 from kolega_code.llm.usage import NormalizedUsage
 
 PRICING = {key: spec["pricing"] for key, spec in {**MODEL_SPECS, **WILDCARD_MODEL_SPECS}.items()}
@@ -60,7 +60,7 @@ def test_catalogue_pricing_has_exact_identity_and_json_decimal_rates() -> None:
         # OpenRouter pricing is rebuilt from the model list on every catalog
         # refresh, so its cards carry that snapshot's date instead.
         if provider != "openrouter":
-            assert card["checked_at"] == CHECKED_AT
+            assert card["checked_at"] == PROVIDER_SOURCES[provider]["checked_at"]
         assert json.loads(json.dumps(card)) == card
         for row in [card, *card["schedules"]]:
             for rate in row.get("rates", {}).values():

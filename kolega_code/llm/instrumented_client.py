@@ -2,6 +2,7 @@
 Instrumented LLM client that adds Langfuse tracing to all LLM operations.
 """
 
+import asyncio
 import os
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Optional, List, Dict, Union, AsyncContextManager, Coroutine
@@ -19,9 +20,38 @@ from .providers.models import GenerationParams
 
 # The provider-family vocabulary lives in kolega_code/llm/usage.py, shared with
 # normalized usage attachment so both consumers stay covered by one guard test.
-from .usage import usage_token_fields as _usage_token_fields
+from .usage import normalize_usage, usage_token_fields as _usage_token_fields
 
 logger = logging.getLogger(__name__)
+
+
+def _end_observations(generation: Any, trace: Any, **updates: Any) -> None:
+    trace_updates = {key: updates[key] for key in ("level", "status_message") if key in updates}
+    for observation, values in ((generation, updates), (trace, trace_updates)):
+        try:
+            observation.update(**values)
+        except Exception:
+            logger.debug("Error updating Langfuse observation", exc_info=True)
+        try:
+            observation.end()
+        except Exception:
+            logger.debug("Error ending Langfuse observation", exc_info=True)
+
+
+def _normalized_langfuse_usage(usage_metadata: Mapping[str, Any], provider: str) -> Optional[Dict[str, Any]]:
+    usage = normalize_usage(usage_metadata, provider, None)
+    if not usage.reported:
+        return None
+    details = {"input": usage.input_tokens, "output": usage.output_tokens, "total": usage.total_tokens}
+    for source, target in (
+        ("cache_read_input_tokens", "cache_read_input_tokens"),
+        ("cache_write_input_tokens", "cache_creation_input_tokens"),
+        ("reasoning_output_tokens", "reasoning_output_tokens"),
+    ):
+        value = getattr(usage, source)
+        if value is not None:
+            details[target] = value
+    return details
 
 
 def get_output_tokens(usage_metadata: Optional[Mapping[str, Any]], provider: Optional[str] = None) -> int:
@@ -304,7 +334,9 @@ class InstrumentedLLMClient(LLMClient):
             normalized_usage = None
             if usage_details:
                 provider = usage_details.get("provider", self.provider_name)
-                if provider in ["anthropic", "moonshot", "minimax", "kimi_coding", "thinking_machines", "tinker"]:
+                if provider == "refuseless":
+                    normalized_usage = _normalized_langfuse_usage(usage_details, provider)
+                elif provider in ["anthropic", "moonshot", "minimax", "kimi_coding", "thinking_machines", "tinker"]:
                     normalized_usage = {
                         "input": usage_details.get("input_tokens", 0),
                         "output": usage_details.get("output_tokens", 0),
@@ -450,25 +482,27 @@ class InstrumentedLLMClient(LLMClient):
                         metadata=metadata,
                     )
 
-            # Get stream from underlying client
-            stream = LLMClient.stream(
-                self,
-                messages,
-                system,
-                temperature,
-                max_completion_tokens,
-                tools,
-                thinking,
-                params,
-                _precomputed_input_tokens=_precomputed_input_tokens,
-                **kwargs,
-            )
+            try:
+                stream = LLMClient.stream(
+                    self,
+                    messages,
+                    system,
+                    temperature,
+                    max_completion_tokens,
+                    tools,
+                    thinking,
+                    params,
+                    _precomputed_input_tokens=_precomputed_input_tokens,
+                    **kwargs,
+                )
 
-            # Check if stream is a coroutine (needs to be awaited)
-            import inspect
+                import inspect
 
-            if inspect.iscoroutine(stream):
-                stream = await stream
+                if inspect.iscoroutine(stream):
+                    stream = await stream
+            except BaseException as error:
+                _end_observations(generation, trace, level="ERROR", status_message=str(error) or type(error).__name__)
+                raise
 
             # Wrap with minimal instrumented wrapper
             return MinimalLangfuseStreamWrapper(stream, generation, trace, self, model)
@@ -485,17 +519,34 @@ class MinimalLangfuseStreamWrapper:
         self.trace = trace
         self.instrumented_client = instrumented_client
         self.model = model
+        self._exited: bool = False
 
     async def __aenter__(self):
-        # Enter the underlying stream's context
-        await self.stream.__aenter__()
+        try:
+            await self.stream.__aenter__()
+        except BaseException as error:
+            await self.__aexit__(type(error), error, error.__traceback__)
+            raise
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        # Let stream clean up first
-        await self.stream.__aexit__(exc_type, exc_val, exc_tb)
+        if self._exited:
+            return False
+        self._exited = True
+        try:
+            await self.stream.__aexit__(exc_type, exc_val, exc_tb)
+        except BaseException as error:
+            if exc_val is not None and not isinstance(error, asyncio.CancelledError):
+                logger.debug("Stream cleanup failed while handling an exception", exc_info=True)
+                await self._finalize(exc_type, exc_val)
+            else:
+                await self._finalize(type(error), error)
+                raise
+        else:
+            await self._finalize(exc_type, exc_val)
+        return False
 
-        # Try to get final message for usage data
+    async def _finalize(self, exc_type: Optional[type[BaseException]], exc_val: Optional[BaseException]) -> None:
         output = None
         usage = None
 
@@ -506,13 +557,18 @@ class MinimalLangfuseStreamWrapper:
                 # The Message already has usage_metadata populated by from_anthropic/from_openai
                 output = final_message.get_text_content() if hasattr(final_message, "get_text_content") else None
                 usage = self._extract_langfuse_usage(final_message)
+        except asyncio.CancelledError as error:
+            _end_observations(
+                self.generation, self.trace, level="ERROR", status_message=str(error) or type(error).__name__
+            )
+            raise
         except Exception as e:
             logger.debug(f"Error getting final message: {e}")
 
         # Update generation with available data
         gen_update_kwargs: Dict[str, Any] = {
             "level": "ERROR" if exc_type else "DEFAULT",
-            "status_message": str(exc_val) if exc_val else "Success",
+            "status_message": (str(exc_val) or type(exc_val).__name__) if exc_val is not None else "Success",
         }
 
         if output is not None:
@@ -520,18 +576,7 @@ class MinimalLangfuseStreamWrapper:
         if usage is not None:
             gen_update_kwargs["usage_details"] = usage
 
-        try:
-            self.generation.update(**gen_update_kwargs)
-            self.generation.end()
-
-            # Update and end trace
-            self.trace.update(
-                level="ERROR" if exc_type else "DEFAULT",
-                status_message=str(exc_val) if exc_val else "Success",
-            )
-            self.trace.end()
-        except Exception as ex:
-            logger.debug(f"Error updating langfuse generation: {ex}")
+        _end_observations(self.generation, self.trace, **gen_update_kwargs)
 
         # Record usage for streaming response
         try:
@@ -544,12 +589,10 @@ class MinimalLangfuseStreamWrapper:
                         usage_metadata,
                         self.model,
                         success=(exc_type is None),
-                        error_message=str(exc_val) if exc_val else None,
+                        error_message=(str(exc_val) or type(exc_val).__name__) if exc_val is not None else None,
                     )
         except Exception as e:
             logger.debug(f"Error recording usage for stream: {e}")
-
-        return False  # Don't suppress exceptions
 
     def __aiter__(self):
         return self
@@ -576,7 +619,9 @@ class MinimalLangfuseStreamWrapper:
         usage_metadata = message.usage_metadata
         provider = usage_metadata.get("provider", "")
 
-        if provider in ["anthropic", "moonshot", "minimax", "kimi_coding"]:
+        if provider == "refuseless":
+            return _normalized_langfuse_usage(usage_metadata, provider)
+        elif provider in ["anthropic", "moonshot", "minimax", "kimi_coding"]:
             return {
                 "input": usage_metadata.get("input_tokens", 0),
                 "output": usage_metadata.get("output_tokens", 0),

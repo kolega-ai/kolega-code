@@ -235,12 +235,13 @@ def catalog_rows(
 
     rows: list[dict[str, Any]] = []
     ranks: dict[str, int] = {}
+    featured_providers = {key[0] for key, spec in MODEL_SPECS.items() if spec.get("featured", False)}
     for provider_value, model in MODEL_SPECS:
         ranks[provider_value] = ranks.get(provider_value, 0) + 1
         if provider is not None and provider_value != provider:
             continue
         featured = is_featured_model(provider_value, model)
-        if featured_only and not featured:
+        if featured_only and provider_value in featured_providers and not featured:
             continue
         option = get_ui_model(provider_value, model)
         specs = MODEL_SPECS[(provider_value, model)]

@@ -559,7 +559,8 @@ class BaseAgent(LogMixin):
                 self.primary_model_config.model,
                 self.model_completion_tokens,
             )
-            if is_deepseek_model(self.primary_model_config.model)
+            if self.primary_model_config.provider != ModelProvider.REFUSELESS
+            and is_deepseek_model(self.primary_model_config.model)
             else None
         )
         # Whether this agent's primary model can accept image input. Read by the

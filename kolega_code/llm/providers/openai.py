@@ -189,10 +189,19 @@ class OpenAIStreamWrapper:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if hasattr(self.openai_stream, "aclose"):
-            await self.openai_stream.aclose()
-
-        self._closed = True
+        if self._closed:
+            return False
+        try:
+            if hasattr(self.openai_stream, "aclose"):
+                await self.openai_stream.aclose()
+            elif hasattr(self.openai_stream, "close"):
+                await self.openai_stream.close()
+        except Exception:
+            if exc_type is None:
+                raise
+            logging.getLogger(__name__).debug("Stream cleanup failed while handling an exception", exc_info=True)
+        finally:
+            self._closed = True
         return False
 
     def __aiter__(self):
@@ -270,6 +279,18 @@ class OpenAIStreamWrapper:
         except StopAsyncIteration:
             if self.provider_name != "cloudflare_workers_ai":
                 self._usage_complete = True
+            raise
+        except Exception as error:
+            # The SDK closes in finally, which can replace its read error or cancellation.
+            primary = error.__context__
+            response = getattr(self.openai_stream, "response", None)
+            traceback = error.__traceback__
+            while primary is not None and response is not None and traceback is not None:
+                frame = traceback.tb_frame
+                if frame.f_code.co_name == "aclose" and frame.f_locals.get("self") is response:
+                    logging.getLogger(__name__).debug("SDK response cleanup masked a stream error", exc_info=True)
+                    raise primary from None
+                traceback = traceback.tb_next
             raise
 
     def get_usage_observation(self) -> UsageObservation:
@@ -445,9 +466,8 @@ class OpenAIProvider(BaseLLMProvider):
         if self.provider_name == OPENROUTER_PROVIDER:
             self._apply_openrouter_request_rules(generation_params)
 
-        # Model-scoped (any provider): runs after the OpenRouter rules so it sees
-        # the post-omission state and re-adds the honest cap for DeepSeek models.
-        if is_deepseek_model(model):
+        # Refuseless has independent endpoint limits, not the inherited DeepSeek cap.
+        if self.provider_name != "refuseless" and is_deepseek_model(model):
             self._apply_deepseek_request_rules(generation_params)
 
         # Last, so it renames whatever cap the earlier rules settled on.
