@@ -2812,7 +2812,7 @@ class KolegaCodeApp(
                     # After cleanup: cancelled streams settle their failures into
                     # the ledger first, so the drain below captures them.
                     if turns_settled and self._usage_sink is not None:
-                        await self._usage_sink.aclose()
+                        await self._usage_sink.wait_closed()
                 finally:
                     await self._stop_inbox_socket()
                     self._unregister_from_inbox()
@@ -3516,7 +3516,7 @@ class KolegaCodeApp(
         if self._share_server is not None:
             await self._stop_share_server()
         if self._usage_sink is not None:
-            await self._usage_sink.aclose()
+            await self._usage_sink.wait_closed()
             self._usage_sink = None
         self._unregister_from_inbox()
         await self._stop_inbox_socket()
