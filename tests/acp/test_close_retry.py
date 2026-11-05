@@ -17,6 +17,7 @@ from kolega_code.acp import agent_factory
 from kolega_code.acp.agent_factory import AgentFactory
 from kolega_code.acp.server import AcpAgent
 from kolega_code.acp.session import AcpSession
+from kolega_code.hooks import HookEvent
 from tests.acp.test_cleanup_lifecycle import configured_factory as configured_factory
 from tests.acp.test_server import _FakeConn
 
@@ -127,7 +128,7 @@ def _assert_released(opened: Opened) -> None:
     opened.factory_close.assert_awaited_once_with(session.session_id)
     opened.cleanup.assert_awaited_once()
     opened.accounting.assert_awaited_once()
-    opened.hook.assert_not_awaited()
+    opened.hook.assert_awaited_once_with(HookEvent.SESSION_END, {"reason": "session_close"})
     assert session.session_id not in opened.server._sessions
     assert session.session_id not in opened.factory._acp_sessions
     assert session.event_task is not None and session.event_task.done()
@@ -268,7 +269,7 @@ async def test_later_factory_failure_never_replays_cleanup_or_hooks(opened: Open
     factory_hook.assert_awaited_once()
     opened.cleanup.assert_awaited_once()
     opened.accounting.assert_awaited_once()
-    opened.hook.assert_not_awaited()
+    opened.hook.assert_awaited_once_with(HookEvent.SESSION_END, {"reason": "session_close"})
     assert opened.session.session_id in opened.server._sessions
     assert opened.session.session_id in opened.factory._acp_sessions
 

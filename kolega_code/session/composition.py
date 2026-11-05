@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from kolega_code.agent import AgentConfig, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
 from kolega_code.agent.baseagent import BaseAgent
@@ -66,7 +66,7 @@ class CompositionHost:
     """Host-specific capabilities and lifecycle ownership for composition."""
 
     extensions: Callable[[], HostExtensions]
-    questions: Callable[[], tuple[PromptExtension, ToolExtension]]
+    questions: Callable[[], tuple[PromptExtension, ToolExtension]] | None
     additional_prompts: Callable[[], list[PromptExtension]]
     history: Callable[[], Iterable[Message]]
     set_catalogs: Callable[[SkillCatalog, CustomAgentCatalog], None]
@@ -90,13 +90,16 @@ class CompositionRequest:
     agent_mode: AgentMode
     agent_class: type[BaseAgent]
     connection_manager: AgentConnectionManager
-    browser_manager: BrowserManager
-    memory_manager: ProjectMemoryManager
     permission_mode: PermissionMode
-    permission_callback: Callable[[PermissionRequest], Awaitable[PermissionDecision]]
-    session_recorder: SessionRecorder | None
-    usage_ledger: UsageLedger
-    extension_selection: ExtensionSelection | None
+    browser_manager: BrowserManager | None = None
+    memory_manager: ProjectMemoryManager | None = None
+    permission_callback: Callable[[PermissionRequest], Awaitable[PermissionDecision]] | None = None
+    session_recorder: SessionRecorder | None = None
+    usage_ledger: UsageLedger | None = None
+    extension_selection: ExtensionSelection | None = None
+    preloaded_skills: SkillCatalog | None = None
+    memory_project_path: Path | None = None
+    memory_enabled: bool = True
 
 
 @dataclass
@@ -117,7 +120,13 @@ def select_agent_class(
 
 
 def prepare_composition(request: CompositionRequest, host: CompositionHost) -> PreparedComposition:
-    skills = discover_skills(request.active_project_path) if request.config.skills_enabled else SkillCatalog()
+    skills = SkillCatalog()
+    if request.config.skills_enabled:
+        skills = (
+            request.preloaded_skills
+            if request.preloaded_skills is not None
+            else discover_skills(request.active_project_path)
+        )
     custom_agents = validate_custom_agent_models(
         discover_custom_agents(request.active_project_path, request.state_dir),
         request.config,
@@ -137,9 +146,10 @@ def prepare_composition(request: CompositionRequest, host: CompositionHost) -> P
             prompts.append(skill_prompt)
         if skill_tool is not None:
             tools.append(skill_tool)
-    question_prompt, question_tool = host.questions()
-    prompts.append(question_prompt)
-    tools.append(question_tool)
+    if host.questions is not None:
+        question_prompt, question_tool = host.questions()
+        prompts.append(question_prompt)
+        tools.append(question_tool)
 
     mcp_config = getattr(request.config, "mcp_config", None)
     if mcp_config is not None:
@@ -165,6 +175,13 @@ def construct_agent(
     bundle = None
     prompts = list(prepared.prompts)
     tools = list(prepared.tools)
+    memory_options: dict[str, Any] = {}
+    # PlanningAgent does not accept memory overrides.
+    if request.memory_project_path is not None or not request.memory_enabled:
+        memory_options = {
+            "memory_project_path": request.memory_project_path,
+            "memory_enabled": request.memory_enabled,
+        }
     if request.extension_selection is not None:
         extension_host = KolegaExtensionHost(
             project_path=request.active_project_path,
@@ -196,6 +213,7 @@ def construct_agent(
             custom_agent_catalog=prepared.custom_agents,
             usage_ledger=request.usage_ledger,
             llm_trace_sink=bundle.llm_trace_sink if bundle else None,
+            **memory_options,
         )
         return agent, bundle
     except ValueError as exc:

@@ -55,6 +55,33 @@ def test_select_agent_class_preserves_mode_selection() -> None:
     assert select_agent_class("plan", build_agent_class=_RecordingAgent, planning_agent_class=PlanAgent) is PlanAgent
 
 
+def test_headless_request_defaults_preserve_agent_owned_services(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(composition, "discover_custom_agents", Mock(return_value=CustomAgentCatalog()))
+    request = CompositionRequest(
+        config=AgentConfig(skills_enabled=False, anthropic_api_key="fake-composition-test-key"),
+        project_path=tmp_path,
+        active_project_path=tmp_path,
+        state_dir=tmp_path / "state",
+        workspace_id="workspace",
+        thread_id="thread",
+        interaction_mode="build",
+        agent_mode=AgentMode.CLI,
+        agent_class=_RecordingAgent,
+        connection_manager=Mock(),
+        permission_mode=PermissionMode.ASK,
+    )
+    host = _make_host()
+    agent, bundle = construct_agent(request, host, prepare_composition(request, host))
+    assert isinstance(agent, _RecordingAgent)
+    assert bundle is None
+    for name in ("browser_manager", "memory_manager", "permission_callback", "session_recorder", "usage_ledger"):
+        assert agent.kwargs[name] is None
+    assert "memory_project_path" not in agent.kwargs
+    assert "memory_enabled" not in agent.kwargs
+
+
 def _prompt(name: str) -> PromptExtension:
     return PromptExtension(id=name, title=name, markdown=name)
 
@@ -273,6 +300,67 @@ def test_enabled_but_empty_skills_add_no_extensions(
 
     assert [tool.name for tool in prepared.tools] == ["host-first", "question"]
     assert "cli-agent-skills" not in [prompt.id for prompt in prepared.prompts]
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("populated", [False, True], ids=["empty", "populated"])
+def test_preloaded_skills_are_reused_without_discovery_and_respect_disabled_config(
+    composition_request: CompositionRequest,
+    host: CompositionHost,
+    monkeypatch: pytest.MonkeyPatch,
+    enabled: bool,
+    populated: bool,
+) -> None:
+    request = composition_request
+    request.config.skills_enabled = enabled
+    catalog = SkillCatalog()
+    if populated:
+        catalog.skills["demo"] = SkillRecord("demo", "Demo skill.", request.project_path, Path("SKILL.md"), "project")
+    request.preloaded_skills = catalog
+    discover = Mock(side_effect=AssertionError("preloaded skills must not be rediscovered"))
+    monkeypatch.setattr(composition, "discover_skills", discover)
+
+    prepared = prepare_composition(request, host)
+
+    discover.assert_not_called()
+    effective = cast(Mock, host.set_catalogs).call_args.args[0]
+    if enabled:
+        assert effective is catalog
+    else:
+        assert effective.skills == {}
+    assert ("cli-agent-skills" in [tool.name for tool in prepared.tools]) is (enabled and populated)
+
+
+def test_host_can_omit_question_extensions(composition_request: CompositionRequest, host: CompositionHost) -> None:
+    host.questions = None
+
+    prepared = prepare_composition(composition_request, host)
+
+    assert [prompt.id for prompt in prepared.prompts] == [
+        "host-first",
+        "scratchpad",
+        "additional-first",
+        "additional-last",
+    ]
+    assert [tool.name for tool in prepared.tools] == ["host-first"]
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_construct_forwards_launch_memory_policy_without_creating_a_manager(
+    composition_request: CompositionRequest, host: CompositionHost, enabled: bool
+) -> None:
+    request = composition_request
+    request.memory_manager = None
+    request.memory_project_path = request.project_path
+    request.memory_enabled = enabled
+
+    agent, _ = construct_agent(request, host, prepare_composition(request, host))
+
+    assert isinstance(agent, _RecordingAgent)
+    assert agent.kwargs["project_path"] is request.active_project_path
+    assert agent.kwargs["memory_manager"] is None
+    assert agent.kwargs["memory_project_path"] is request.project_path
+    assert agent.kwargs["memory_enabled"] is enabled
 
 
 @pytest.mark.parametrize("mode", ["build", "plan"])

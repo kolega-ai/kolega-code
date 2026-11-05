@@ -15,8 +15,10 @@ from kolega_code.acp import agent_factory
 from kolega_code.acp.agent_factory import AgentFactory
 from kolega_code.acp.server import AcpAgent
 from kolega_code.acp.session import AcpSession
+from kolega_code.agent import CoderAgent
+from kolega_code.agent.tools import ToolCollection
 from kolega_code.llm.models import Message, TextBlock
-from tests.acp.test_cleanup_lifecycle import configured_factory as configured_factory
+from tests.acp.test_composition import configured_factory as configured_factory
 from tests.acp.test_server import _FakeConn
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("isolated_cli_env")]
@@ -242,6 +244,74 @@ async def test_shutdown_drains_healthy_sessions_and_retains_pending_close(
             return_exceptions=True,
         )
         await asyncio.gather(*getattr(session, "cleanup_tasks", {}).values(), return_exceptions=True)
+        await server.shutdown()
+
+
+@pytest.mark.parametrize("option", ["implement_plan", "implement_plan_clear"])
+@pytest.mark.parametrize("failure", ["construct", "initialize", "restore_history", "persist", "invalidate_context"])
+async def test_failed_approval_preparation_preserves_plan_and_allows_public_retries(
+    configured_factory: AgentFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    option: str,
+    failure: str,
+) -> None:
+    server, session, conn = await _open(configured_factory, tmp_path, monkeypatch)
+    await server.set_session_mode(session.session_id, "plan")
+    old = session.agent
+    plan = "## Retry this exact pending plan after preparation fails"
+    modes: list[str] = []
+
+    async def drive(current: AcpSession, bridge: Any, text: str | None, attachments: Any) -> str:
+        mode = current.record.interaction_mode
+        modes.append(mode)
+        if mode == "plan":
+            setattr(current.agent, "_completed_plan", plan)
+        return "end_turn"
+
+    monkeypatch.setattr(server, "_drive_turn", drive)
+    conn.request_permission = AsyncMock(
+        return_value=RequestPermissionResponse.model_validate({"outcome": {"outcome": "selected", "optionId": option}})
+    )
+    try:
+        with monkeypatch.context() as fault:
+            error = RuntimeError(f"failed {failure}")
+            if failure == "construct":
+                fault.setattr(agent_factory, "construct_agent", Mock(side_effect=error))
+            elif failure == "initialize":
+                fault.setattr(ToolCollection, "initialize", AsyncMock(side_effect=error))
+            elif failure == "restore_history":
+                fault.setattr(CoderAgent, "restore_message_history", Mock(side_effect=error))
+            elif failure == "persist":
+                fault.setattr(configured_factory, "persist", Mock(side_effect=error))
+            else:
+                assert session.accounting is not None
+                fault.setattr(session.accounting, "invalidate_context", Mock(side_effect=error))
+            with pytest.raises(RuntimeError, match=f"failed {failure}"):
+                await server.prompt(session.session_id, [TextContentBlock(type="text", text="Make a plan")])
+        assert session.agent is old
+        assert session.record.interaction_mode == "plan"
+        assert session.record.plan_pending
+        assert session.record.latest_plan_markdown == plan
+        assert session.approved_plan is None
+        assert session.plan_approval_task is None
+        assert not session.cleanup_tasks
+        assert session.idle()
+        assert modes == ["plan"]
+        await server.set_session_mode(session.session_id, "plan")
+        await server.set_config_option("mode", session.session_id, "plan")
+        result = await server.prompt(session.session_id, [TextContentBlock(type="text", text="Retry the plan")])
+        assert result.stop_reason == "end_turn"
+        async with asyncio.timeout(5):
+            async with session.execution_lock:
+                pass
+        assert modes == ["plan", "plan", "build"]
+        assert conn.request_permission.await_count == 2
+        assert not session.record.plan_pending
+        assert session.record.latest_plan_markdown == plan
+        assert session.approved_plan is None
+        assert session.idle()
+    finally:
         await server.shutdown()
 
 

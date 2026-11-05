@@ -18,6 +18,7 @@ from kolega_code.cli.session_store import SessionRecord
 if TYPE_CHECKING:
     from kolega_code.acp.accounting import AcpUsageAccounting
     from kolega_code.acp.control import AcpControlAdapter
+    from kolega_code.mcp.config import MCPServerConfig
     from kolega_code.session.runtime import SessionRuntime
 
 
@@ -35,7 +36,8 @@ class AcpSession:
     runtime: SessionRuntime | None = None
     control_adapter: AcpControlAdapter | None = field(default=None, repr=False)
     #: The AgentConfig the agent was built with, reused by mode-switch rebuilds.
-    config: Any = None
+    config: Any = field(default=None, repr=False)
+    client_mcp_servers: dict[str, MCPServerConfig] = field(default_factory=dict, repr=False)
     #: Shared with the ask_user_choice tool extension; the adapter binds the
     #: ``elicit`` callable here so questions survive agent rebuilds.
     question_state: dict[str, Any] = field(default_factory=dict)
