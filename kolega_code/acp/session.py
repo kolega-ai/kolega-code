@@ -44,13 +44,25 @@ class AcpSession:
     execution_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     event_task: asyncio.Task[None] | None = field(default=None, repr=False)
     background_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    close_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    close_retryable: bool = field(default=False, repr=False)
     bridge: Any = field(default=None, repr=False)
     background_wake: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     completions: list[dict[str, Any]] = field(default_factory=list)
     auto_continue_paused: bool = False
+    approved_plan: str | None = field(default=None, repr=False)
+    plan_approval_generation: int = 0
+    plan_approval_task: asyncio.Task[Any] | None = field(default=None, repr=False)
     closed: bool = False
     retired_agents: list[Any] = field(default_factory=list, repr=False)
+    cleanup_tasks: dict[int, asyncio.Task[None]] = field(default_factory=dict, repr=False)
     accounting: AcpUsageAccounting | None = field(default=None, repr=False)
 
     def idle(self) -> bool:
-        return not self.execution_lock.locked() and (self.turn_task is None or self.turn_task.done())
+        return (
+            not self.closed
+            and not self.cleanup_tasks
+            and self.approved_plan is None
+            and not self.execution_lock.locked()
+            and (self.turn_task is None or self.turn_task.done())
+        )

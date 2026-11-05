@@ -17,6 +17,7 @@ the process keeps serving.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -64,9 +65,41 @@ CONFIG_MODE = "mode"
 MODE_BUILD = "build"
 MODE_PLAN = "plan"
 INTERACTION_MODES = {MODE_BUILD, MODE_PLAN}
+CLEANUP_TIMEOUT = 5.0
 
 PermissionCallback = Callable[[PermissionRequest], Awaitable[PermissionDecision]]
 ConfigOption = SessionConfigOptionSelect | SessionConfigOptionBoolean
+
+
+async def _finish_cleanup(cleanup: Awaitable[None], *, timeout: float | None = None) -> None:
+    task = asyncio.ensure_future(cleanup)
+    cancelled: asyncio.CancelledError | None = None
+    deadline = asyncio.get_running_loop().time() + timeout if timeout is not None else None
+    while True:
+        try:
+            if deadline is None:
+                await asyncio.shield(task)
+            else:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    break
+                done, _ = await asyncio.wait({task}, timeout=remaining)
+                if not done:
+                    break
+                task.result()
+            break
+        except asyncio.CancelledError as exc:
+            if task.cancelled():
+                raise
+            if cancelled is None:
+                cancelled = exc
+        except Exception:  # noqa: BLE001
+            if cancelled is None:
+                raise
+            logger.exception("acp cleanup failed while cancellation was pending")
+            break
+    if cancelled is not None:
+        raise cancelled
 
 
 def agent_class_for(mode: str) -> type[CoderAgent]:
@@ -99,6 +132,8 @@ class AgentFactory:
         session_id: str | None = None,
         permission_callback: PermissionCallback | None = None,
     ) -> AcpSession:
+        if session_id is not None and (existing := self._acp_sessions.get(session_id)) is not None:
+            self.check_active(existing)
         project_path = Path(cwd).resolve()
         self._load_settings()
         config = self._config_for(project_path)
@@ -114,6 +149,7 @@ class AgentFactory:
     ) -> AcpSession | None:
         existing = self._acp_sessions.get(session_id)
         if existing is not None:
+            self.check_active(existing)
             return existing
         try:
             record = self._store.load(session_id)
@@ -130,6 +166,7 @@ class AgentFactory:
         return [self._model_option(session), self._permission_option(session), self._mode_option(session)]
 
     async def set_permission_mode(self, session: AcpSession, mode: PermissionMode) -> None:
+        self.check_active(session)
         if session.runtime is not None:
             session.runtime.set_permission_mode(mode)
         else:
@@ -138,12 +175,20 @@ class AgentFactory:
 
     async def set_interaction_mode(self, session: AcpSession, mode: str) -> None:
         """Switch plan/build mode by rebuilding the session agent with the mode's class."""
+        self.check_active(session)
+        previous = session.record.interaction_mode
+        previous_agent = session.agent
         session.record.interaction_mode = mode
-        await self._rebuild_agent(session, session.config)
+        try:
+            await self._rebuild_agent(session, session.config)
+        except BaseException:
+            if session.agent is previous_agent:
+                session.record.interaction_mode = previous
+            self.persist(session)
+            raise
 
     async def apply_model(self, session: AcpSession, provider: str, model: str) -> None:
         config = self._config_for(Path(session.record.project_path), provider=provider, model=model)
-        session.config = config
         await self._rebuild_agent(session, config)
 
     # -- persistence --------------------------------------------------------
@@ -156,9 +201,13 @@ class AgentFactory:
         self._store.save(session.record)
 
     async def close_session(self, session_id: str) -> None:
-        session = self._acp_sessions.pop(session_id, None)
+        existing = self._acp_sessions.get(session_id)
+        if existing is not None:
+            self.check_cleanup(existing)
+        session = self._acp_sessions.get(session_id)
         if session is None:
             return
+        session.closed = True
         try:
             self.persist(session)
             jobs = getattr(session.agent, "background_jobs", None)
@@ -170,16 +219,17 @@ class AgentFactory:
         except Exception:  # noqa: BLE001 — closing must not mask the primary outcome
             logger.exception("acp session close: agent cleanup failed (session=%s)", session_id)
         finally:
+            while session.retired_agents:
+                await _finish_cleanup(self.start_retired_cleanup(session, session.retired_agents[0]))
+            self.check_cleanup(session)
             try:
-                for agent in [*session.retired_agents, session.agent]:
-                    try:
-                        await agent.cleanup()
-                    except Exception:  # noqa: BLE001
-                        logger.exception("acp agent cleanup failed (session=%s)", session_id)
-                session.retired_agents.clear()
+                await session.agent.cleanup()
+            except Exception:  # noqa: BLE001
+                logger.exception("acp agent cleanup failed (session=%s)", session_id)
             finally:
                 if session.accounting is not None:
                     await session.accounting.aclose()
+                self._acp_sessions.pop(session_id, None)
 
     def list_sessions(self, cwd: str | None) -> list[SessionInfo]:
         records = self._store.list(project_path=Path(cwd).resolve() if cwd else None, recover=False)
@@ -195,6 +245,40 @@ class AgentFactory:
         return FileSessionEventStore(self._store.journal(session_id))
 
     # -- internal -----------------------------------------------------------
+
+    @staticmethod
+    def check_cleanup(session: AcpSession) -> None:
+        if session.cleanup_tasks:
+            raise RequestError.invalid_request({"message": "Agent cleanup is incomplete; retry after it finishes."})
+
+    @staticmethod
+    def check_active(session: AcpSession) -> None:
+        if session.closed:
+            raise RequestError.invalid_request({"message": "Session is closing."})
+        AgentFactory.check_cleanup(session)
+
+    @staticmethod
+    def start_retired_cleanup(session: AcpSession, agent: Any) -> asyncio.Task[None]:
+        existing = session.cleanup_tasks.get(id(agent))
+        if existing is not None:
+            return existing
+        if not any(old is agent for old in session.retired_agents):
+            session.retired_agents.append(agent)
+        task = asyncio.create_task(agent.cleanup())
+        session.cleanup_tasks[id(agent)] = task
+
+        def completed(done: asyncio.Task[None]) -> None:
+            if done.cancelled() or done.exception() is not None:
+                # Failure does not prove resources are released; keep the fence rather than retrying cleanup.
+                logger.error("acp old agent cleanup incomplete (session=%s)", session.session_id)
+                return
+            if session.cleanup_tasks.get(id(agent)) is done:
+                session.cleanup_tasks.pop(id(agent))
+                session.retired_agents[:] = [old for old in session.retired_agents if old is not agent]
+                session.background_wake.set()
+
+        task.add_done_callback(completed)
+        return task
 
     @staticmethod
     def _task_list_extension(record: SessionRecord, agent_holder: dict[str, Any], mode: str) -> ToolExtension:
@@ -351,6 +435,7 @@ class AgentFactory:
         Config options apply between turns, so the persisted record is the
         freshest history state; ``restore=True`` loads it into the rebuild.
         """
+        self.check_active(session)
         old = session.agent
         # The approval flow rebuilds mid-turn, before prompt() persists the
         # just-finished plan turn. Dump the live agent into the record first
@@ -373,6 +458,7 @@ class AgentFactory:
         if manager is not session.manager:
             raise RuntimeError("ACP rebuild must preserve the session connection manager")
         session.agent = agent
+        session.config = config
         if session.accounting is not None:
             session.accounting.rebind(agent)
         if session.runtime is not None:
@@ -387,11 +473,15 @@ class AgentFactory:
             # Keep it alive until the supervisor has joined them.
             session.retired_agents.append(old)
             return
+        if agent is old:
+            return
+        task = self.start_retired_cleanup(session, old)
         try:
-            if agent is not old:
-                await old.cleanup()
+            await _finish_cleanup(task, timeout=CLEANUP_TIMEOUT)
         except Exception:  # noqa: BLE001
             logger.exception("acp model switch: old agent cleanup failed (session=%s)", session.session_id)
+        except asyncio.CancelledError:
+            raise
 
     async def _build_session(
         self,
@@ -515,7 +605,7 @@ class AgentFactory:
                 agent.session_recorder = recorder
         except BaseException:
             try:
-                await agent.cleanup()
+                await _finish_cleanup(agent.cleanup())
             except Exception:  # noqa: BLE001
                 logger.exception("acp partial agent cleanup failed")
             raise
