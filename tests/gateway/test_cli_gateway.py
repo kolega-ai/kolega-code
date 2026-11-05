@@ -599,3 +599,130 @@ async def test_foreground_startup_prints_daemon_access_after_start(
     assert "paired users: 2" in output
     assert "configured users: 0" in output
     stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_foreground_incomplete_shutdown_is_not_reported_as_stopped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from kolega_code.cli.gateway import _gateway_run
+    from kolega_code.gateway.daemon import GatewayShutdownIncomplete
+
+    order: list[str] = []
+
+    async def incomplete() -> None:
+        order.append("stop")
+        raise GatewayShutdownIncomplete("cleanup is live")
+
+    daemon = SimpleNamespace(
+        start=AsyncMock(),
+        stop=AsyncMock(side_effect=incomplete),
+        status=lambda: SimpleNamespace(access={}),
+    )
+    monkeypatch.setattr("kolega_code.cli.gateway.build_adapter", lambda config: object())
+    monkeypatch.setattr("kolega_code.cli.gateway._build_turn_handler", lambda *args: object())
+    monkeypatch.setattr("kolega_code.cli.gateway.GatewayDaemon", lambda *args, **kwargs: daemon)
+    monkeypatch.setattr(asyncio.get_running_loop(), "add_signal_handler", lambda sig, callback: callback())
+    config = GatewayConfig(adapter="echo", project_path=tmp_path, state_dir=tmp_path)
+    result = await _gateway_run(config, parse_args(["gateway", "run"]), on_shutdown=lambda: order.append("watchdog"))
+    assert result == 1 and order == ["watchdog", "stop"]
+    output = capsys.readouterr()
+    assert "gateway: stopped" not in output.out
+    assert "shutdown incomplete" in output.err
+
+
+def test_gateway_watchdog_is_armed_once_and_disarmed_after_asyncio_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+    from typing import Any
+    from unittest.mock import Mock
+
+    from kolega_code.cli.gateway import run_gateway
+
+    cancel = threading.Event()
+    arm = Mock(return_value=cancel)
+
+    async def run(args: Any, *, on_shutdown: Any) -> int:
+        assert not cancel.is_set()
+        on_shutdown()
+        on_shutdown()
+        assert not cancel.is_set()
+        return 1
+
+    monkeypatch.setattr("kolega_code.cli.gateway._run_gateway", run)
+    monkeypatch.setattr("kolega_code.cli.main._arm_exit_watchdog", arm)
+    assert run_gateway(parse_args(["gateway", "run"])) == 1
+    arm.assert_called_once()
+    assert arm.call_args.kwargs["seconds"] == 20
+    assert cancel.is_set()
+
+
+def test_foreground_watchdog_covers_cancellation_resistant_asyncio_run_teardown(tmp_path: Path) -> None:
+    import os
+    import subprocess
+    import textwrap
+
+    script = textwrap.dedent(
+        """
+        import argparse
+        import asyncio
+        import sys
+        from kolega_code.cli import gateway, main
+
+        original = main._arm_exit_watchdog
+        def arm(*, seconds, force_exit):
+            return original(seconds=0.1, force_exit=force_exit)
+        main._arm_exit_watchdog = arm
+
+        async def run(args, *, on_shutdown):
+            started = asyncio.Event()
+            async def resistant():
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    print("final-drain-blocked", flush=True)
+                    await asyncio.Event().wait()
+            asyncio.create_task(resistant())
+            await started.wait()
+            on_shutdown()
+            return 1
+        gateway._run_gateway = run
+        sys.exit(gateway.run_gateway(argparse.Namespace()))
+        """
+    )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[2])
+    env["HOME"] = str(tmp_path)
+    env["PYTHON_DOTENV_DISABLED"] = "1"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 1
+    assert "final-drain-blocked" in result.stdout
+    assert "Shutdown is taking too long" in result.stderr
+
+
+@pytest.mark.parametrize("state", ["stopping", "incomplete"])
+def test_status_does_not_claim_incomplete_shutdown_is_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], state: str
+) -> None:
+    import json
+
+    from kolega_code.events import utc_now_iso
+    from kolega_code.gateway.daemon import STATUS_FILE_NAME
+
+    payload = {"pid": 123, "heartbeat_at": utc_now_iso(), "shutdown_state": state, "running": False}
+    (tmp_path / STATUS_FILE_NAME).write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr("kolega_code.cli.gateway._pid_alive", lambda pid: True)
+    config = GatewayConfig(adapter="echo", project_path=tmp_path, state_dir=tmp_path)
+    assert _gateway_status(config) == 1
+    output = capsys.readouterr().out
+    assert f"shutdown {state}" in output
+    assert "gateway: running" not in output

@@ -14,7 +14,7 @@ from kolega_code.gateway.access import ALLOWLIST_FILE_NAME, PAIRING_FILE_NAME, G
 from kolega_code.gateway.adapters.base import ChatRef, GatewayAdapter, InboundMessage
 from kolega_code.gateway.adapters.echo import EchoAdapter
 from kolega_code.gateway.config import GatewayConfig
-from kolega_code.gateway.daemon import ERROR_REPLY, GatewayDaemon, GatewayDaemonError
+from kolega_code.gateway.daemon import ERROR_REPLY, GatewayDaemon, GatewayDaemonError, GatewayShutdownIncomplete
 
 
 class RecordingAdapter(GatewayAdapter):
@@ -97,6 +97,251 @@ async def wait_for(predicate, timeout: float = 2.0) -> bool:
             return True
         await asyncio.sleep(0.01)
     return False
+
+
+@pytest.mark.asyncio
+async def test_stop_retains_cancellation_resistant_dispatch_and_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered, cancelled, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    order: list[str] = []
+
+    class Handler(RecordingHandler):
+        async def handle(self, chat_ref: ChatRef, message: InboundMessage) -> None:
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                await release.wait()
+            finally:
+                order.append("used-after-close" if self.shutdown_calls else "finalized")
+
+        async def shutdown(self) -> None:
+            order.append("closed")
+            await super().shutdown()
+
+    monkeypatch.setattr("kolega_code.gateway.daemon.SHUTDOWN_WAIT_SECONDS", 0.05)
+    adapter, handler = RecordingAdapter(), Handler()
+    daemon = GatewayDaemon(make_config(tmp_path), adapter, handler)
+    await daemon.start()
+    try:
+        await adapter.inbound.put(inbound("blocked"))
+        await asyncio.wait_for(entered.wait(), 10)
+        for _ in range(2):
+            with pytest.raises(GatewayShutdownIncomplete):
+                await daemon.stop()
+        await asyncio.wait_for(cancelled.wait(), 10)
+        owner = daemon._stop_task
+        assert owner is not None and not owner.done()
+        assert not adapter.stopped
+        assert daemon._lock is not None and daemon._lock.is_locked
+        assert not daemon.is_message_allowed(inbound("new"))
+        assert handler.shutdown_calls == 0 and order == []
+        assert daemon.status().shutdown_state == "incomplete"
+        assert daemon._dispatch_task is not None and daemon._dispatch_task.cancelling() == 1
+        lock = daemon._lock
+        with pytest.raises(GatewayDaemonError, match="cannot be restarted"):
+            await daemon.start()
+        assert daemon._lock is lock
+        waiter = asyncio.create_task(daemon.stop())
+        await asyncio.sleep(0)
+        waiter.cancel("stop waiter cancelled")
+        with pytest.raises(asyncio.CancelledError, match="stop waiter cancelled"):
+            await waiter
+        assert daemon._stop_task is owner and not owner.cancelling()
+        release.set()
+        await asyncio.wait_for(daemon.stop(), 10)
+        assert adapter.stopped and handler.shutdown_calls == 1
+        assert order == ["finalized", "closed"]
+        assert daemon._lock is None and daemon.status().shutdown_state == "stopped"
+    finally:
+        release.set()
+        await daemon.stop()
+
+
+@pytest.mark.asyncio
+async def test_split_shutdown_fences_admission_before_dispatch_drains(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered, closing, finalized, release = (asyncio.Event() for _ in range(4))
+    order: list[str] = []
+
+    class Handler(RecordingHandler):
+        def begin_shutdown(self) -> None:
+            order.append("admission-closed")
+
+        async def handle(self, chat_ref: ChatRef, message: InboundMessage) -> None:
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                order.append("dispatch-cancelled")
+                await closing.wait()
+                await release.wait()
+            finally:
+                order.append("finalized")
+                finalized.set()
+
+        async def wait_closed(self) -> None:
+            closing.set()
+            await finalized.wait()
+            order.append("closed")
+
+    monkeypatch.setattr("kolega_code.gateway.daemon.SHUTDOWN_WAIT_SECONDS", 0.05)
+    adapter, handler = RecordingAdapter(), Handler()
+    daemon = GatewayDaemon(make_config(tmp_path), adapter, handler)
+    await daemon.start()
+    try:
+        await adapter.inbound.put(inbound("blocked"))
+        await asyncio.wait_for(entered.wait(), 10)
+        with pytest.raises(GatewayShutdownIncomplete):
+            await daemon.stop()
+        await asyncio.wait_for(closing.wait(), 10)
+        assert order == ["admission-closed", "dispatch-cancelled"]
+        assert not daemon.is_message_allowed(inbound("new"))
+        assert not adapter.stopped and handler.shutdown_calls == 0
+        release.set()
+        await asyncio.wait_for(daemon.stop(), 10)
+        assert order == ["admission-closed", "dispatch-cancelled", "finalized", "closed"]
+        assert adapter.stopped and handler.shutdown_calls == 0
+    finally:
+        closing.set()
+        release.set()
+        await daemon.stop()
+
+
+@pytest.mark.asyncio
+async def test_stopped_daemon_rejects_restart_before_acquiring_resources(tmp_path: Path) -> None:
+    adapter, handler = RecordingAdapter(), RecordingHandler()
+    daemon = GatewayDaemon(make_config(tmp_path), adapter, handler)
+    await daemon.start()
+    await daemon.stop()
+    owner = daemon._stop_task
+    adapter.started = False
+    try:
+        with pytest.raises(GatewayDaemonError, match="cannot be restarted"):
+            await daemon.start()
+        assert not adapter.started
+        assert daemon._stop_task is owner
+        assert daemon._lock is None and daemon._dispatch_task is None and daemon._heartbeat_task is None
+        assert not daemon._status_path.exists() and not daemon._pid_path.exists()
+        await daemon.stop()
+        assert handler.shutdown_calls == 1
+    finally:
+        # Keep the regression probe from leaking tasks if restart is incorrectly accepted.
+        for task in (daemon._dispatch_task, daemon._heartbeat_task):
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        if daemon._lock is not None:
+            await adapter.stop()
+            daemon._remove_status()
+            daemon._remove_pid()
+            daemon._release_lock()
+
+
+@pytest.mark.asyncio
+async def test_running_daemon_rejects_duplicate_start_without_replacing_owners(tmp_path: Path) -> None:
+    daemon = GatewayDaemon(make_config(tmp_path), RecordingAdapter(), RecordingHandler())
+    await daemon.start()
+    try:
+        lock, dispatch, heartbeat = daemon._lock, daemon._dispatch_task, daemon._heartbeat_task
+        with pytest.raises(GatewayDaemonError, match="already started"):
+            await daemon.start()
+        assert daemon._lock is lock and daemon._dispatch_task is dispatch and daemon._heartbeat_task is heartbeat
+        assert lock is not None and lock.is_locked
+        assert daemon.status().running
+    finally:
+        await daemon.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_before_start_leaves_daemon_startable(tmp_path: Path) -> None:
+    adapter, handler = RecordingAdapter(), RecordingHandler()
+    daemon = GatewayDaemon(make_config(tmp_path), adapter, handler)
+    await daemon.stop()
+    await daemon.start()
+    try:
+        assert daemon.status().running
+        await adapter.inbound.put(inbound("hello"))
+        assert await wait_for(lambda: len(handler.handled) == 1, timeout=10)
+    finally:
+        await daemon.stop()
+    assert adapter.stopped and handler.shutdown_calls == 1
+    assert daemon._lock is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_chat_operation_does_not_cancel_dispatch(tmp_path: Path) -> None:
+    class Handler(RecordingHandler):
+        async def handle(self, chat_ref: ChatRef, message: InboundMessage) -> None:
+            if message.text == "cancel":
+                raise asyncio.CancelledError("chat operation stopped")
+            await super().handle(chat_ref, message)
+
+    adapter, handler = RecordingAdapter(), Handler()
+    daemon = GatewayDaemon(make_config(tmp_path), adapter, handler)
+    await daemon.start()
+    try:
+        await adapter.inbound.put(inbound("cancel", "one"))
+        await adapter.inbound.put(inbound("other", "two", chat_id="other"))
+        assert await wait_for(lambda: len(handler.handled) == 1, timeout=10)
+        assert handler.handled[0][1].text == "other"
+        assert daemon._dispatch_task is not None and not daemon._dispatch_task.done()
+    finally:
+        await daemon.stop()
+
+
+@pytest.mark.asyncio
+async def test_lock_loser_stop_does_not_touch_the_owning_daemon_state(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    winner = GatewayDaemon(config, RecordingAdapter(), RecordingHandler())
+    loser_adapter, loser_handler = RecordingAdapter(), RecordingHandler()
+    loser = GatewayDaemon(config, loser_adapter, loser_handler)
+    await winner.start()
+    try:
+        status, pid = winner._status_path.read_bytes(), winner._pid_path.read_bytes()
+        with pytest.raises(GatewayDaemonError, match="Another gateway instance"):
+            await loser.start()
+        await loser.stop()
+        assert winner._status_path.read_bytes() == status
+        assert winner._pid_path.read_bytes() == pid
+        assert winner._lock is not None and winner._lock.is_locked
+        assert not loser_adapter.stopped and loser_handler.shutdown_calls == 0
+    finally:
+        await winner.stop()
+    await loser.start()
+    try:
+        assert loser.status().running
+        assert loser.is_message_allowed(inbound("retry"))
+        await loser_adapter.inbound.put(inbound("retry"))
+        assert await wait_for(lambda: len(loser_handler.handled) == 1, timeout=10)
+    finally:
+        await loser.stop()
+    assert loser_adapter.stopped and loser_handler.shutdown_calls == 1
+    assert loser._lock is None
+    assert not loser._status_path.exists() and not loser._pid_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_waiter_does_not_recreate_status_after_successful_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    daemon = GatewayDaemon(make_config(tmp_path), RecordingAdapter(), RecordingHandler())
+    await daemon.start()
+    await daemon.stop()
+    task = asyncio.current_task()
+    assert task is not None
+
+    async def cancelled_wait(*args: Any, **kwargs: Any) -> Any:
+        raise asyncio.CancelledError("waiter interrupted after cleanup")
+
+    monkeypatch.setattr("kolega_code.gateway.daemon.asyncio.wait", cancelled_wait)
+    with pytest.raises(asyncio.CancelledError, match="waiter interrupted after cleanup"):
+        await daemon.stop()
+    assert daemon.status().shutdown_state == "stopped"
+    assert not daemon._status_path.exists() and not daemon._pid_path.exists()
 
 
 @pytest.mark.asyncio

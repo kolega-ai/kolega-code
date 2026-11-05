@@ -21,7 +21,7 @@ import logging
 import os
 from collections import deque
 from dataclasses import asdict, dataclass
-from typing import Any, Optional, Protocol
+from typing import Any, Awaitable, Callable, Optional, Protocol, cast
 
 from filelock import BaseFileLock, FileLock
 from filelock import Timeout as FileLockTimeout
@@ -45,10 +45,15 @@ STATUS_STALE_SECONDS = 90.0
 ERROR_REPLY = "⚠️ The gateway hit an error handling that message (see the gateway log)."
 #: Bound on remembered message ids for dedup; adapter retries are near-term.
 DEDUP_WINDOW = 1024
+SHUTDOWN_WAIT_SECONDS = 10.0
 
 
 class GatewayDaemonError(RuntimeError):
     """Raised when the daemon cannot start (lock conflict, adapter failure)."""
+
+
+class GatewayShutdownIncomplete(GatewayDaemonError):
+    pass
 
 
 class TurnHandler(Protocol):
@@ -77,6 +82,7 @@ class DaemonStatus:
     started_at: Optional[str]
     recent_errors: int
     access: dict[str, Any]
+    shutdown_state: str = "running"
 
 
 class GatewayDaemon:
@@ -91,6 +97,9 @@ class GatewayDaemon:
         self._lock: Optional[BaseFileLock] = None
         self._dispatch_task: Optional[asyncio.Task[None]] = None
         self._heartbeat_task: Optional[asyncio.Task[None]] = None
+        self._stop_task: asyncio.Task[None] | None = None
+        self._stopping = False
+        self._shutdown_incomplete = False
         self._started_at: Optional[str] = None
         self._recent_errors = 0
         self._seen_message_ids: deque[str] = deque(maxlen=DEDUP_WINDOW)
@@ -109,6 +118,10 @@ class GatewayDaemon:
     # -- Lifecycle ---------------------------------------------------------
 
     async def start(self) -> None:
+        if self._stopping:
+            raise GatewayDaemonError("A stopped gateway daemon cannot be restarted; create a new instance.")
+        if self._lock is not None:
+            raise GatewayDaemonError("This gateway daemon has already started.")
         self._acquire_lock()
         self._config.state_dir.mkdir(parents=True, exist_ok=True)
         # The default project (~/kolega-code-workspace) may not exist yet.
@@ -125,13 +138,55 @@ class GatewayDaemon:
             )
 
     async def stop(self) -> None:
+        if self._stop_task is None:
+            if self._lock is None:
+                return
+            self._stopping = True
+            begin_shutdown = getattr(self._turn_handler, "begin_shutdown", None)
+            if callable(begin_shutdown):
+                begin_shutdown()
+            self._stop_task = asyncio.create_task(self._stop(), name="gateway-stop")
+            self._stop_task.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+            self._write_status()
+        try:
+            done, _ = await asyncio.wait({self._stop_task}, timeout=SHUTDOWN_WAIT_SECONDS)
+        except asyncio.CancelledError:
+            if not (self._stop_task.done() and not self._stop_task.cancelled() and self._stop_task.exception() is None):
+                self._shutdown_incomplete = True
+                self._write_status()
+            raise
+        if not done:
+            self._shutdown_incomplete = True
+            self._write_status()
+            raise GatewayShutdownIncomplete("Shutdown is incomplete; cleanup, dependencies and lock remain owned.")
+        try:
+            self._stop_task.result()
+        except BaseException:
+            self._shutdown_incomplete = True
+            self._write_status()
+            raise
+
+    async def _stop(self) -> None:
         if self._dispatch_task is not None:
             self._dispatch_task.cancel()
-            try:
-                await self._dispatch_task
-            except asyncio.CancelledError:
-                pass
-            self._dispatch_task = None
+        wait_closed = getattr(self._turn_handler, "wait_closed", None)
+        if not callable(wait_closed) and self._dispatch_task is not None:
+            # Fallback shutdown may close dependencies still needed by dispatch finalizers.
+            await asyncio.gather(self._dispatch_task, return_exceptions=True)
+        close_handler = (
+            cast(Callable[[], Awaitable[None]], wait_closed) if callable(wait_closed) else self._turn_handler.shutdown
+        )
+        results = await asyncio.gather(
+            *([self._dispatch_task] if self._dispatch_task is not None else []),
+            close_handler(),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+                raise result
+        if isinstance(results[-1], asyncio.CancelledError):
+            raise GatewayShutdownIncomplete("Session shutdown was cancelled; cleanup is not confirmed.")
+        self._dispatch_task = None
         if self._heartbeat_task is not None:
             self._heartbeat_task.cancel()
             try:
@@ -139,11 +194,11 @@ class GatewayDaemon:
             except asyncio.CancelledError:
                 pass
             self._heartbeat_task = None
-        await self._turn_handler.shutdown()
         await self._adapter.stop()
         self._remove_status()
         self._release_lock()
         self._remove_pid()
+        self._shutdown_incomplete = False
 
     def status(self) -> DaemonStatus:
         handler_status = self._turn_handler.status()
@@ -151,14 +206,23 @@ class GatewayDaemon:
         if self._local_echo:
             access["policy"] = "local-echo"
         return DaemonStatus(
-            running=self._dispatch_task is not None,
+            running=not self._stopping and self._dispatch_task is not None and not self._dispatch_task.done(),
             adapter=self._adapter.name,
             adapter_state=self._adapter.health(),
             active_sessions=int(handler_status.get("active_sessions", 0)),
-            pid=os.getpid() if self._dispatch_task is not None else None,
+            pid=os.getpid() if self._lock is not None else None,
             started_at=self._started_at,
             recent_errors=self._recent_errors,
             access=access,
+            shutdown_state=(
+                "incomplete"
+                if self._shutdown_incomplete
+                else (
+                    "stopping"
+                    if self._stopping and self._lock is not None
+                    else ("stopped" if self._stopping else "running")
+                )
+            ),
         )
 
     # -- Status file -------------------------------------------------------
@@ -192,6 +256,8 @@ class GatewayDaemon:
 
     def is_message_allowed(self, message: InboundMessage) -> bool:
         """Shared preflight/final admission check; never issues pairing codes."""
+        if self._stopping:
+            return False
         if message.is_group and not self._group_allowed(message):
             return False
         if self._local_echo and message.sender_id == DEFAULT_SENDER_ID:
@@ -199,11 +265,13 @@ class GatewayDaemon:
         return self._access.is_allowed(message.sender_id)
 
     async def _dispatch_loop(self) -> None:
-        while True:
+        while not self._stopping:
             message = await self._adapter.inbound.get()
             await self._handle_message(message)
 
     async def _handle_message(self, message: InboundMessage) -> None:
+        if self._stopping:
+            return
         if self._is_duplicate(message):
             logger.info("gateway: dropping duplicate message %s", message.message_id)
             return
@@ -236,7 +304,10 @@ class GatewayDaemon:
         try:
             await self._turn_handler.handle(chat_ref, message)
         except asyncio.CancelledError:
-            raise
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise
+            logger.info("gateway: chat operation stopped for %s", chat_ref.key)
         except Exception:
             self._recent_errors += 1
             logger.exception("gateway: turn failed for chat %s", chat_ref.key)

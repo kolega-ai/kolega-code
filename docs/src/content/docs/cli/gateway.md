@@ -250,6 +250,23 @@ Transcription is remote-only — there is no local Whisper backend.
 
 ## Notes
 
+If session startup or cleanup stalls, the request stops waiting but cleanup
+remains owned. Other chats can continue; the affected chat cannot start a turn,
+reset, or switch models until the cleanup operation returns. `/stop` does not
+cancel cleanup. A cleanup failure reported to the gateway keeps the chat fenced
+and is not automatically retried.
+
+Some lower-level resource managers log or suppress cleanup errors. A successful
+return from cleanup therefore does not prove every underlying resource closed.
+
+Shutdown stops admission before draining sessions. If the bounded graceful wait
+expires, `gateway status` reports shutdown as incomplete, not stopped. The
+process retains its adapter and instance lock while cleanup is live. The
+foreground launcher exits unsuccessfully if shutdown is incomplete and has a
+process watchdog for work that cannot drain; the watchdog forcibly exits and
+can interrupt cleanup or persistence. It never treats a timeout as clean
+shutdown. Inspect the gateway log before restarting after a cleanup failure.
+
 - Groups are mention-gated (`@yourbot`) and optionally restricted to
   `gateway.group_ids`.
 - The echo adapter (`--adapter echo`) drives the full transport pipeline

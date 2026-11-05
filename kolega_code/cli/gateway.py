@@ -8,9 +8,10 @@ import json
 import os
 import signal
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
@@ -23,6 +24,7 @@ from kolega_code.gateway.config import GatewayConfig, GatewayConfigError, load_g
 from kolega_code.gateway.daemon import (
     GatewayDaemon,
     GatewayDaemonError,
+    GatewayShutdownIncomplete,
     LOCK_FILE_NAME,
     PID_FILE_NAME,
     STATUS_FILE_NAME,
@@ -102,14 +104,26 @@ def add_gateway_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
 
 def run_gateway(args: argparse.Namespace) -> int:
     """Dispatch ``kolega-code gateway ...`` (sync entry point for cli/main.py)."""
+    watchdog: threading.Event | None = None
+
+    def arm_shutdown() -> None:
+        nonlocal watchdog
+        from kolega_code.cli.main import _arm_exit_watchdog
+
+        if watchdog is None:
+            watchdog = _arm_exit_watchdog(seconds=20, force_exit=lambda _code: os._exit(1))
+
     try:
-        return asyncio.run(_run_gateway(args))
+        return asyncio.run(_run_gateway(args, on_shutdown=arm_shutdown))
     except (GatewayDaemonError, GatewayConfigError, SettingsStoreError, AccessSettingsError) as exc:
         print(f"gateway: {exc}", file=sys.stderr)
         return 1
+    finally:
+        if watchdog is not None:
+            watchdog.set()
 
 
-async def _run_gateway(args: argparse.Namespace) -> int:
+async def _run_gateway(args: argparse.Namespace, *, on_shutdown: Callable[[], None] | None = None) -> int:
     config = load_gateway_config(
         state_dir=args.state_dir,
         project=getattr(args, "project", None),
@@ -123,7 +137,7 @@ async def _run_gateway(args: argparse.Namespace) -> int:
         return await _gateway_telegram(args, config)
     if args.gateway_command in ("install", "uninstall", "restart"):
         return _gateway_service(args, config)
-    return await _gateway_run(config, args)
+    return await _gateway_run(config, args, on_shutdown=on_shutdown)
 
 
 async def _gateway_telegram(args: argparse.Namespace, config: GatewayConfig) -> int:
@@ -313,6 +327,13 @@ def _gateway_status(config: GatewayConfig) -> int:
         adapter_state_text = adapter_state.get("state", "unknown")
         heartbeat_age = _heartbeat_age_seconds(payload)
         if heartbeat_age is not None and heartbeat_age <= STATUS_STALE_SECONDS:
+            shutdown_state = payload.get("shutdown_state")
+            if shutdown_state in ("stopping", "incomplete"):
+                print(
+                    f"gateway: shutdown {shutdown_state} (pid {payload.get('pid')}); "
+                    "admission stopped, cleanup and instance lock remain owned"
+                )
+                return 1
             started = str(payload.get("started_at") or "")[:19]
             print(
                 f"gateway: running (pid {payload.get('pid')})\n"
@@ -433,7 +454,9 @@ def _build_turn_handler(config: GatewayConfig, adapter: Any, args: argparse.Name
     )
 
 
-async def _gateway_run(config: GatewayConfig, args: argparse.Namespace) -> int:
+async def _gateway_run(
+    config: GatewayConfig, args: argparse.Namespace, *, on_shutdown: Callable[[], None] | None = None
+) -> int:
     adapter = build_adapter(config)
     turn_handler = _build_turn_handler(config, adapter, args)
     daemon = GatewayDaemon(config, adapter, turn_handler=turn_handler)
@@ -447,18 +470,20 @@ async def _gateway_run(config: GatewayConfig, args: argparse.Namespace) -> int:
             # No signal handlers on this loop; Ctrl-C still interrupts the run.
             pass
 
+    exit_status = 0
     try:
         await daemon.start()
         print(f"gateway: {config.adapter} adapter running (project: {config.project_path}, state: {config.state_dir})")
         _print_access_summary(daemon.status().access)
         await stop.wait()
     finally:
+        if on_shutdown is not None:
+            on_shutdown()
         try:
-            # A foreground daemon must always respond to Ctrl-C, even when a
-            # channel teardown stalls; bound the graceful stop and force exit
-            # rather than leaving the user with a wedged process.
+            # The synchronous launcher watchdog also covers asyncio.run's final drain.
             await asyncio.wait_for(daemon.stop(), timeout=15)
             print("gateway: stopped")
-        except asyncio.TimeoutError:
-            print("gateway: shutdown timed out; forcing exit", file=sys.stderr)
-    return 0
+        except (asyncio.TimeoutError, GatewayShutdownIncomplete):
+            print("gateway: shutdown incomplete; cleanup and instance lock remain owned", file=sys.stderr)
+            exit_status = 1
+    return exit_status
