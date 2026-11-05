@@ -40,6 +40,18 @@ heavy = [name for name in ("trafilatura", "readability", "markdownify") if name 
 assert not heavy, f"import kolega_code.cli.main eagerly loaded: {heavy}"
 """
 
+#: bs4 pulls in soupsieve, chardet and lxml's builder (~55 ms). Only decoding a
+#: fetched body or extracting HTML needs it, so it may not load on a CLI start.
+_BS4_CHECK = """
+import sys
+import kolega_code.cli.main
+from kolega_code.agent.tool_backend.web_fetch import extractors, pipeline
+
+heavy = [name for name in ("bs4", "lxml") if name in sys.modules]
+assert not heavy, f"import kolega_code.cli.main eagerly loaded: {heavy}"
+assert extractors.DEFAULT_EXTRACTOR and pipeline.WebContent
+"""
+
 #: aiohttp backs the messaging gateway's Telegram adapter (~110 ms of import
 #: work). The LLM error mapper only needs it to classify an exception that must
 #: already have imported it, so it may not load on a CLI start.
@@ -80,6 +92,21 @@ def test_cli_start_does_not_load_the_html_extraction_stack() -> None:
     """
     result = subprocess.run(
         [sys.executable, "-c", _WEB_FETCH_CHECK],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_cli_start_does_not_load_bs4() -> None:
+    """bs4/lxml load on the first fetched body or extracted page, not on start.
+
+    Importing them costs ~55 ms of parser and encoding-detector setup; every
+    CLI invocation paid it even when the session never fetched a page.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", _BS4_CHECK],
         capture_output=True,
         text=True,
         timeout=120,
