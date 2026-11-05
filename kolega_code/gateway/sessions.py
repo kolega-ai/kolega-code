@@ -1116,9 +1116,6 @@ class AgentTurnHandler:
         owner = self._retain_close(chat_session)
         return self._wait_operation(owner)
 
-    async def _close_entry(self, chat_session: ChatSession) -> None:
-        await self._wait_operation(self._retain_close(chat_session))
-
     def _retain_close(self, chat_session: ChatSession) -> _LifecycleOperation:
         owner = self._start_operation(
             chat_session.chat_ref, "close", lambda op: self._close_entry_owned(chat_session, op), cleaning=True
