@@ -8,10 +8,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from bs4 import BeautifulSoup
-
-# trafilatura, readability and markdownify add ~215 ms of import work to every
-# `kolega-code` start. Only a fetch that extracts HTML needs them, so each
+# bs4, trafilatura, readability and markdownify add ~270 ms of import work to
+# every `kolega-code` start. Only a fetch that extracts HTML needs them, so each
 # extractor imports its own library on first use (the interpreter caches it).
 
 DEFAULT_EXTRACTOR = "auto"
@@ -78,6 +76,8 @@ class HtmlSignals:
 
 def html_signals(html: str) -> HtmlSignals:
     """Measure a document once. Call off the event loop: multi-MB pages take seconds."""
+    from bs4 import BeautifulSoup
+
     lower = html.lower()
     try:
         raw_visible_len = len(BeautifulSoup(html, "lxml").get_text(" ", strip=True))
@@ -202,6 +202,7 @@ class SemanticDomExtractor:
     label = "Semantic DOM"
 
     def extract(self, html: str, url: str) -> str:
+        from bs4 import BeautifulSoup
         from markdownify import markdownify
 
         soup = BeautifulSoup(html, "lxml")
@@ -223,6 +224,8 @@ class FullTextExtractor:
     label = "Full visible text"
 
     def extract(self, html: str, url: str) -> str:
+        from bs4 import BeautifulSoup
+
         del url
         soup = BeautifulSoup(html, "lxml")
         for tag in soup.select("script, style, noscript, template, svg"):

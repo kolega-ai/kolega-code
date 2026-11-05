@@ -14,8 +14,6 @@ from pathlib import PurePosixPath
 from typing import Optional
 from urllib.parse import urlsplit
 
-from bs4 import UnicodeDammit
-
 from .documents import DocumentConversionError, DocumentConverter, SUPPORTED_DOCUMENT_EXTENSIONS
 from .extractors import DEFAULT_EXTRACTOR, ExtractorAttempt, extract_html
 from ..network_status import ConnectFailureTracker
@@ -90,6 +88,8 @@ def _document_extension(resource: FetchedResource) -> str:
 
 
 def _decode(resource: FetchedResource) -> str:
+    from bs4 import UnicodeDammit
+
     encodings = [resource.charset] if resource.charset else None
     decoded = UnicodeDammit(resource.body, known_definite_encodings=encodings).unicode_markup
     return (decoded or resource.body.decode("utf-8", errors="replace")).replace("\x00", "")

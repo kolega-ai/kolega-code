@@ -271,8 +271,9 @@ async def test_extract_html_survives_a_soup_parser_failure() -> None:
     able to produce content.
     """
     html = "<html><body><main><h1>Title</h1><p>" + ("Useful article text. " * 40) + "</p></main></body></html>"
+    # bs4 is imported on first use, so patch the library rather than the extractor module.
     with patch(
-        "kolega_code.agent.tool_backend.web_fetch.extractors.BeautifulSoup",
+        "bs4.BeautifulSoup",
         side_effect=ValueError("parser exploded"),
     ):
         result = await extract_html(html, "https://example.com")
