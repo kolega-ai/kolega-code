@@ -9,7 +9,6 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-PRICING_SCHEMA_VERSION = 1
 PRICING_STATUSES = frozenset(
     {"priced", "subscription", "self_hosted", "requires_configuration", "unpublished", "retired", "unverified"}
 )
