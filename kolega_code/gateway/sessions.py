@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
-from kolega_code.agent import CoderAgent, PromptExtension
+from kolega_code.agent import CoderAgent, PromptExtension, ToolExtension
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.prompts import BUILD_QUESTION_PROMPT
 from kolega_code.cli.config import CliConfigError, CliConfigOverrides, build_agent_config, config_summary
@@ -30,6 +30,7 @@ from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEv
 from kolega_code.cli.session_store import SessionRecord, SessionStore, SessionStoreError
 from kolega_code.cli.settings import CliSettings, SettingsStore
 from kolega_code.events import AgentEvent, KnownEventType
+from kolega_code.mcp.config import LoadedMCPConfig
 from kolega_code.permissions import PermissionMode, normalize_permission_mode
 from kolega_code.session.recording import RecordingConnectionManager
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
@@ -52,7 +53,7 @@ from kolega_code.gateway.commands import (
 )
 from kolega_code.gateway.config import GatewayConfig
 from kolega_code.gateway.control_relay import ControlRelay
-from kolega_code.gateway.daemon import ERROR_REPLY
+from kolega_code.gateway.daemon import ERROR_REPLY, GatewayShutdownIncomplete
 from kolega_code.gateway.event_router import EventRouter
 from kolega_code.gateway.questions import build_question_extension
 from kolega_code.gateway.redaction import scrub
@@ -64,11 +65,60 @@ from kolega_code.gateway.stt import (
     build_transcriber,
 )
 from kolega_code.utils.images import encode_image_file
+from kolega_code.hooks import NO_OP_DISPATCHER
+from kolega_code.session.composition import (
+    CompositionHost,
+    CompositionRequest,
+    HostExtensions,
+    construct_agent,
+    prepare_composition,
+)
 
 logger = logging.getLogger(__name__)
 
 SESSION_MAP_FILE_NAME = "gateway_sessions.json"
 BACKGROUND_RETRY_SECONDS = 1.0
+LIFECYCLE_WAIT_SECONDS = 5.0
+SHUTDOWN_WAIT_SECONDS = 10.0
+
+
+class ChatLifecycleIncomplete(RuntimeError):
+    pass
+
+
+@dataclass
+class _LifecycleOperation:
+    chat_ref: ChatRef
+    kind: str
+    released: asyncio.Event = field(default_factory=asyncio.Event)
+    task: asyncio.Task[Any] | None = None
+    startup_failure: asyncio.Future[BaseException] | None = None
+    started: bool = False
+    stopping: bool = False
+    cleaning: bool = False
+    cleanup_failed: bool = False
+    entry: ChatSession | None = None
+    partial_agent: Any = None
+    router: EventRouter | None = None
+    relay: ControlRelay | None = None
+
+    def interrupt(self) -> None:
+        if self.stopping or self.cleaning:
+            return
+        self.stopping = True
+        if self.started and self.task is not None:
+            self.task.cancel()
+
+
+def _disabled_mcp_builder(
+    project_path: Path,
+    state_dir: Path,
+    *,
+    project_trusted: bool,
+    loaded_config: LoadedMCPConfig | None = None,
+) -> ToolExtension | None:
+    return None
+
 
 #: Builds the agent for one session. Injecting this is how tests run the
 #: whole host against a scripted LLM; the default mirrors the ACP recipe.
@@ -130,7 +180,8 @@ class AgentTurnHandler:
             idle_ttl_seconds=config.session_idle_ttl_seconds,
             on_evict=self._on_evict,
             is_pinned=lambda entry: (
-                entry.turn_task is not None
+                entry.chat_ref.key in self._operations
+                or entry.turn_task is not None
                 or entry.turn_lock.locked()
                 or entry.background_queued
                 or bool(entry.background_jobs is not None and entry.background_jobs.has_work)
@@ -141,15 +192,87 @@ class AgentTurnHandler:
         self._chat_sessions = self._load_map()
         self._queues: dict[str, asyncio.Queue[InboundMessage | None]] = {}
         self._workers: dict[str, asyncio.Task[None]] = {}
+        self._operations: dict[str, _LifecycleOperation] = {}
+        self._shutdown_task: asyncio.Task[None] | None = None
         self._closing = False
         self._secret_values = self._collect_secret_values()
 
     # -- TurnHandler interface ---------------------------------------------
 
     def status(self) -> dict[str, Any]:
-        return {"active_sessions": self._registry.active_count()}
+        return {
+            "active_sessions": self._registry.active_count(),
+            "pending_lifecycles": len(self._operations),
+            "failed_cleanups": sum(op.cleanup_failed for op in self._operations.values()),
+        }
+
+    def _check_admission(self, chat_ref: ChatRef) -> None:
+        if self._closing:
+            raise ChatLifecycleIncomplete("Gateway is shutting down.")
+        if chat_ref.key in self._operations:
+            raise ChatLifecycleIncomplete("This chat still owns startup or cleanup; try again after it settles.")
+
+    def _start_operation(
+        self,
+        chat_ref: ChatRef,
+        kind: str,
+        body: Callable[[_LifecycleOperation], Awaitable[Any]],
+        *,
+        cleaning: bool = False,
+    ) -> _LifecycleOperation:
+        if chat_ref.key in self._operations:
+            raise ChatLifecycleIncomplete("This chat still owns a lifecycle operation.")
+        owner = _LifecycleOperation(chat_ref, kind, cleaning=cleaning)
+        if kind == "startup":
+            owner.startup_failure = asyncio.get_running_loop().create_future()
+        self._operations[chat_ref.key] = owner
+
+        async def run() -> Any:
+            # Registration must precede acquisitions, including with eager task factories.
+            await asyncio.sleep(0)
+            owner.started = True
+            if owner.stopping:
+                raise asyncio.CancelledError()
+            return await body(owner)
+
+        def settled(task: asyncio.Task[Any]) -> None:
+            if not task.cancelled():
+                task.exception()
+            if not owner.cleanup_failed and self._operations.get(chat_ref.key) is owner:
+                self._operations.pop(chat_ref.key)
+                owner.released.set()
+                entry = self._registry.get(chat_ref)
+                if entry is not None:
+                    payload = entry.payload
+                    if payload.completions or (
+                        payload.background_jobs is not None and payload.background_jobs.pending_count
+                    ):
+                        self._wake_background(payload)
+
+        owner.task = asyncio.create_task(run(), name=f"gateway-{kind}-{chat_ref.key}")
+        owner.task.add_done_callback(settled)
+        return owner
+
+    async def _wait_operation(self, owner: _LifecycleOperation) -> Any:
+        assert owner.task is not None
+        waiters: set[asyncio.Future[Any]] = {owner.task}
+        if owner.startup_failure is not None:
+            waiters.add(owner.startup_failure)
+        try:
+            done, _ = await asyncio.wait(waiters, timeout=LIFECYCLE_WAIT_SECONDS, return_when=asyncio.FIRST_COMPLETED)
+        except asyncio.CancelledError:
+            owner.interrupt()
+            raise
+        if owner.startup_failure is not None and owner.startup_failure in done and not owner.task.done():
+            raise owner.startup_failure.result()
+        if not done:
+            owner.interrupt()
+            raise ChatLifecycleIncomplete("The chat operation is still pending; its cleanup remains owned.")
+        return owner.task.result()
 
     async def handle(self, chat_ref: ChatRef, message: InboundMessage) -> None:
+        if self._closing:
+            raise ChatLifecycleIncomplete("Gateway is shutting down.")
         if message.callback_token:
             # A button tap answers a control prompt, never starts a turn.
             entry = self._registry.get(chat_ref)
@@ -161,6 +284,7 @@ class AgentTurnHandler:
             await self._run_command(chat_ref, message, command)
             return
         await self._ensure_session(chat_ref)  # also prunes idle sessions
+        self._check_admission(chat_ref)
         queue = self._queues.setdefault(chat_ref.key, asyncio.Queue())
         queue.put_nowait(message)
         worker = self._workers.get(chat_ref.key)
@@ -169,32 +293,78 @@ class AgentTurnHandler:
                 self._worker(chat_ref), name=f"gateway-worker-{chat_ref.key}"
             )
 
-    async def shutdown(self) -> None:
+    def begin_shutdown(self) -> None:
+        if self._closing:
+            return
         self._closing = True
+        for owner in list(self._operations.values()):
+            owner.interrupt()
         for worker in list(self._workers.values()):
             worker.cancel()
-        for worker in list(self._workers.values()):
-            try:
-                await worker
-            except asyncio.CancelledError:
-                pass
+        self._shutdown_task = asyncio.create_task(self._shutdown(), name="gateway-session-shutdown")
+        self._shutdown_task.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+
+    async def shutdown(self) -> None:
+        self.begin_shutdown()
+        assert self._shutdown_task is not None
+        done, _ = await asyncio.wait({self._shutdown_task}, timeout=SHUTDOWN_WAIT_SECONDS)
+        if not done:
+            raise GatewayShutdownIncomplete("Session cleanup is still live; shutdown is incomplete.")
+        self._shutdown_task.result()
+
+    async def wait_closed(self) -> None:
+        self.begin_shutdown()
+        assert self._shutdown_task is not None
+        await asyncio.shield(self._shutdown_task)
+
+    async def _shutdown(self) -> None:
+        owners = list(self._operations.values())
+        entries = self._registry.take_all()
+
+        async def close(entry: ChatSession) -> None:
+            owner = self._operations.get(entry.chat_ref.key)
+            if owner is not None:
+                assert owner.task is not None
+                await asyncio.gather(owner.task, return_exceptions=True)
+                if owner.cleanup_failed:
+                    return
+                if self._operations.get(entry.chat_ref.key) is owner:
+                    self._operations.pop(entry.chat_ref.key)
+            owner = self._start_operation(
+                entry.chat_ref, "close", lambda op: self._close_entry_owned(entry, op), cleaning=True
+            )
+            assert owner.task is not None
+            await asyncio.gather(owner.task, return_exceptions=True)
+
+        await asyncio.gather(
+            *list(self._workers.values()),
+            *(owner.task for owner in owners if owner.task is not None),
+            *(close(entry.payload) for entry in entries),
+            return_exceptions=True,
+        )
         self._workers.clear()
         self._queues.clear()
-        await self._registry.clear()
         self._save_map()
+        if any(owner.cleanup_failed for owner in self._operations.values()):
+            raise GatewayShutdownIncomplete("Cleanup failed; ownership is retained and will not be retried.")
 
     # -- Per-chat worker ---------------------------------------------------
+
+    async def _wait_for_lifecycle(self, chat_ref: ChatRef) -> None:
+        while (owner := self._operations.get(chat_ref.key)) is not None:
+            await owner.released.wait()
 
     async def _worker(self, chat_ref: ChatRef) -> None:
         queue = self._queues[chat_ref.key]
         try:
+            # Publish the worker before eager turns can enqueue another wake.
+            await asyncio.sleep(0)
             while True:
                 message = await queue.get()
+                await self._wait_for_lifecycle(chat_ref)
                 entry = await self._ensure_session(chat_ref)
                 if message is None:
                     entry.background_queued = False
-                else:
-                    entry.auto_continue_paused = False
                 turn_task: asyncio.Task[None] = asyncio.create_task(
                     self._run_owned_turn(entry, chat_ref, message),
                     name=f"gateway-turn-{entry.session_id}",
@@ -206,7 +376,8 @@ class AgentTurnHandler:
                     # turn it awaits — the two have different outcomes.
                     await asyncio.shield(turn_task)
                 except asyncio.CancelledError:
-                    if turn_task.cancelled():
+                    worker = asyncio.current_task()
+                    if turn_task.cancelled() and (worker is None or not worker.cancelling()):
                         # /stop cancelled the turn; the worker keeps serving.
                         # A stopped turn's unwind can race the journal's
                         # cross-thread lock and end in a non-CancelledError
@@ -218,7 +389,8 @@ class AgentTurnHandler:
                     else:
                         # The worker itself was cancelled: stop the turn and
                         # propagate, so shutdown/eviction can proceed.
-                        turn_task.cancel()
+                        if not turn_task.cancelling():
+                            turn_task.cancel()
                         try:
                             await turn_task
                         except BaseException:  # noqa: BLE001
@@ -244,7 +416,13 @@ class AgentTurnHandler:
             self._queues.pop(chat_ref.key, None)
 
     def _wake_background(self, entry: ChatSession) -> None:
-        if self._closing or entry.closed or entry.background_queued or entry.background_retry is not None:
+        if (
+            self._closing
+            or entry.closed
+            or entry.chat_ref.key in self._operations
+            or entry.background_queued
+            or entry.background_retry is not None
+        ):
             return
         entry.background_queued = True
         queue = self._queues.setdefault(entry.chat_ref.key, asyncio.Queue())
@@ -281,56 +459,63 @@ class AgentTurnHandler:
             self._wake_background(entry)
 
     async def _run_owned_turn(self, entry: ChatSession, chat_ref: ChatRef, message: InboundMessage | None) -> None:
-        async with entry.turn_lock:
-            if entry.closed:
+        while True:
+            await self._wait_for_lifecycle(chat_ref)
+            async with entry.turn_lock:
+                if self._closing or entry.closed:
+                    return
+                if chat_ref.key in self._operations:
+                    continue
+                if message is not None:
+                    entry.auto_continue_paused = False
+                    await self._run_turn(entry, chat_ref, message)
+                    return
+                jobs = entry.background_jobs
+                if jobs is None or entry.background_retry is not None:
+                    return
+                try:
+                    await jobs.deliver(entry.runtime.agent)
+                    completions = bool(entry.completions)
+                    while entry.completions:
+                        if not entry.completion_chunks:
+                            entry.completion_chunks = chunk_text(
+                                scrub(str(entry.completions[0]["text"]), self._secret_values),
+                                self._adapter.capabilities.text_chunk_limit,
+                            )
+                        while entry.completion_chunks:
+                            await self._adapter.send_text(chat_ref.chat_id, entry.completion_chunks[0])
+                            # Acknowledge only after send succeeds, with no await
+                            # between success and removing the presented portion.
+                            entry.completion_chunks.pop(0)
+                        entry.completions.pop(0)
+                finally:
+                    if entry.completions:
+                        # /stop cancels the presentation, not its pending report.
+                        # Delay retries, including already-queued delivery wakes,
+                        # so a failing transport cannot spin the turn worker.
+                        self._retry_background(entry)
+                if (
+                    completions
+                    and not entry.auto_continue_paused
+                    and getattr(entry.runtime.agent, "background_needs_turn", True)
+                ):
+                    agent = entry.runtime.agent
+                    assert agent is not None
+                    renderer = TurnRenderer(
+                        self._adapter,
+                        chat_ref.chat_id,
+                        event_queue=entry.turn_events,
+                        chunk_limit=self._adapter.capabilities.text_chunk_limit,
+                        edit_throttle_seconds=self._config.edit_throttle_seconds,
+                    )
+                    await renderer.run(self._scrub_chunks(agent.continue_from_history_stream()))
+                self._persist(entry)
+                if not jobs.active_count and entry.retired_agents:
+                    owner = self._start_operation(
+                        chat_ref, "retire", lambda op: self._cleanup_retired(entry, op), cleaning=True
+                    )
+                    await self._wait_operation(owner)
                 return
-            if message is not None:
-                await self._run_turn(entry, chat_ref, message)
-                return
-            jobs = entry.background_jobs
-            if jobs is None or entry.background_retry is not None:
-                return
-            try:
-                await jobs.deliver(entry.runtime.agent)
-                completions = bool(entry.completions)
-                while entry.completions:
-                    if not entry.completion_chunks:
-                        entry.completion_chunks = chunk_text(
-                            scrub(str(entry.completions[0]["text"]), self._secret_values),
-                            self._adapter.capabilities.text_chunk_limit,
-                        )
-                    while entry.completion_chunks:
-                        await self._adapter.send_text(chat_ref.chat_id, entry.completion_chunks[0])
-                        # Acknowledge only after send succeeds, with no await
-                        # between success and removing the presented portion.
-                        entry.completion_chunks.pop(0)
-                    entry.completions.pop(0)
-            finally:
-                if entry.completions:
-                    # /stop cancels the presentation, not its pending report.
-                    # Delay retries, including already-queued delivery wakes,
-                    # so a failing transport cannot spin the turn worker.
-                    self._retry_background(entry)
-            if (
-                completions
-                and not entry.auto_continue_paused
-                and getattr(entry.runtime.agent, "background_needs_turn", True)
-            ):
-                agent = entry.runtime.agent
-                assert agent is not None
-                renderer = TurnRenderer(
-                    self._adapter,
-                    chat_ref.chat_id,
-                    event_queue=entry.turn_events,
-                    chunk_limit=self._adapter.capabilities.text_chunk_limit,
-                    edit_throttle_seconds=self._config.edit_throttle_seconds,
-                )
-                await renderer.run(self._scrub_chunks(agent.continue_from_history_stream()))
-            self._persist(entry)
-            if not jobs.active_count:
-                for old in entry.retired_agents:
-                    await old.cleanup()
-                entry.retired_agents.clear()
 
     async def _run_turn(self, entry: ChatSession, chat_ref: ChatRef, message: InboundMessage) -> None:
         # A previous turn may have left unconsumed events (its pump was
@@ -447,6 +632,8 @@ class AgentTurnHandler:
 
     async def _run_command(self, chat_ref: ChatRef, _message: InboundMessage, command: tuple[str, str]) -> None:
         name, args = command
+        if name not in (COMMAND_STOP, COMMAND_HELP, COMMAND_STATUS, "help"):
+            self._check_admission(chat_ref)
         if name == COMMAND_HELP or name == "help":
             await self._adapter.send_text(chat_ref.chat_id, HELP_TEXT)
         elif name == COMMAND_STATUS:
@@ -467,6 +654,10 @@ class AgentTurnHandler:
             await self._adapter.send_text(chat_ref.chat_id, UNKNOWN_COMMAND_REPLY)
 
     async def _status_text(self, chat_ref: ChatRef) -> str:
+        owner = self._operations.get(chat_ref.key)
+        if owner is not None:
+            state = "cleanup failed; chat remains fenced" if owner.cleanup_failed else "startup or cleanup pending"
+            return f"Chat {state}."
         entry = self._registry.get(chat_ref)
         if entry is None:
             return "No active session yet — send a message to start one."
@@ -483,6 +674,13 @@ class AgentTurnHandler:
         )
 
     async def _reset_session(self, chat_ref: ChatRef) -> None:
+        self._check_admission(chat_ref)
+        owner = self._start_operation(
+            chat_ref, "reset", lambda op: self._reset_session_owned(chat_ref, op), cleaning=True
+        )
+        await self._wait_operation(owner)
+
+    async def _reset_session_owned(self, chat_ref: ChatRef, owner: _LifecycleOperation) -> None:
         await self._stop_turn(chat_ref)
         entry = self._registry.remove(chat_ref)
         queue = self._queues.get(chat_ref.key)
@@ -490,15 +688,21 @@ class AgentTurnHandler:
             while not queue.empty():
                 queue.get_nowait()
         if entry is not None:
-            await self._close_entry(entry.payload)
+            await self._close_entry_owned(entry.payload, owner)
         self._chat_sessions.pop(chat_ref.key, None)
         self._save_map()
 
     async def _stop_turn(self, chat_ref: ChatRef) -> bool:
+        owner = self._operations.get(chat_ref.key)
         entry = self._registry.get(chat_ref)
+        payload = entry.payload if entry is not None else owner.entry if owner is not None else None
+        if payload is not None:
+            payload.auto_continue_paused = True
+        if owner is not None:
+            owner.interrupt()
+            return True
         if entry is None:
             return False
-        entry.payload.auto_continue_paused = True
         if entry.payload.turn_task is None:
             return False
         entry.payload.turn_task.cancel()
@@ -520,6 +724,16 @@ class AgentTurnHandler:
         await self._apply_model(chat_ref, entry.payload, args.strip())
 
     async def _apply_model(self, chat_ref: ChatRef, entry: ChatSession, spec: str) -> None:
+        self._check_admission(chat_ref)
+        owner = self._start_operation(
+            chat_ref, "rebuild", lambda op: self._apply_model_owned(chat_ref, entry, spec, op)
+        )
+        await self._wait_operation(owner)
+
+    async def _apply_model_owned(
+        self, chat_ref: ChatRef, entry: ChatSession, spec: str, owner: _LifecycleOperation
+    ) -> None:
+        owner.entry = entry
         turn_task = entry.turn_task
         if turn_task is not None and not turn_task.done():
             await self._adapter.send_text(chat_ref.chat_id, "A turn is running — /stop it first, then switch models.")
@@ -550,11 +764,18 @@ class AgentTurnHandler:
             entry.config_holder["config"] = new_config
             try:
                 rebuilt = await entry.runtime.start()
-            except Exception:  # noqa: BLE001 — a failed switch must not kill the chat
+            except BaseException:
                 entry.config_holder["config"] = entry.agent_config
-                logger.exception("gateway: model switch failed for chat %s", chat_ref.key)
-                await self._adapter.send_text(chat_ref.chat_id, ERROR_REPLY)
-                return
+                if old is not None and entry.runtime.agent is not old:
+                    try:
+                        entry.runtime.adopt(old)
+                    except BaseException:
+                        owner.cleanup_failed = True
+                        logger.exception("gateway: could not restore the old generation's policy")
+                await self._cleanup_partial(owner)
+                raise
+            owner.partial_agent = None
+            owner.cleaning = True
             if entry.background_jobs is not None:
                 rebuilt.background_jobs = entry.background_jobs
                 rebuilt.background_needs_turn = getattr(old, "background_needs_turn", False)
@@ -564,7 +785,13 @@ class AgentTurnHandler:
                 if entry.background_jobs is not None and entry.background_jobs.active_count:
                     entry.retired_agents.append(old)
                 else:
-                    await old.cleanup()
+                    owner.partial_agent = old
+                    try:
+                        await old.cleanup()
+                    except BaseException:
+                        owner.cleanup_failed = True
+                        raise
+                    owner.partial_agent = None
         entry.agent_config = new_config
         entry.record.config = config_summary(new_config)
         self._store.save(entry.record)
@@ -611,9 +838,16 @@ class AgentTurnHandler:
     # -- Session lifecycle -------------------------------------------------
 
     async def _ensure_session(self, chat_ref: ChatRef) -> ChatSession:
+        self._check_admission(chat_ref)
         entry = self._registry.get(chat_ref)
         if entry is not None:
             return entry.payload
+        if len(self._operations) >= max(2, self._config.max_sessions):
+            raise ChatLifecycleIncomplete("Too many retained chat operations; waiting for cleanup.")
+        owner = self._start_operation(chat_ref, "startup", lambda op: self._start_session(chat_ref, op))
+        return await self._wait_operation(owner)
+
+    async def _start_session(self, chat_ref: ChatRef, owner: _LifecycleOperation) -> ChatSession:
         settings = self._load_settings()
         record = None
         restore = False
@@ -642,14 +876,18 @@ class AgentTurnHandler:
             self._chat_sessions[chat_ref.key] = record.session_id
             self._save_map()
             restore = False
-        payload = await self._build_chat_session(chat_ref, record, agent_config, restore=restore)
-        entry = self._registry.put(chat_ref, payload)
-        # The new entry is most-recently-active, so an over-capacity prune
-        # evicts the least-recent neighbour — never the chat that just spoke.
-        async with payload.turn_lock:
+        payload = await self._build_chat_session(chat_ref, record, agent_config, restore=restore, owner=owner)
+        try:
             await self._attach_background(payload)
+            if self._closing or owner.stopping:
+                raise asyncio.CancelledError()
+        except BaseException as exc:
+            await self._cleanup_startup(owner, payload.runtime, exc)
+            raise
+        self._registry.put(chat_ref, payload)
+        async with payload.turn_lock:
             await self._registry.prune()
-        return entry.payload
+        return payload
 
     async def _build_chat_session(
         self,
@@ -658,6 +896,7 @@ class AgentTurnHandler:
         agent_config: Any,
         *,
         restore: bool,
+        owner: _LifecycleOperation,
     ) -> ChatSession:
         journal = self._store.journal(record.session_id)
         recorder = self._store.recorder(record.session_id)
@@ -700,7 +939,13 @@ class AgentTurnHandler:
                 permission_mode=runtime.permission_mode,
                 restore=build_state["restore"],
                 question_state=question_state,
+                owner=self._operations.get(chat_ref.key),
             )
+            active_owner = self._operations.get(chat_ref.key)
+            if active_owner is not None:
+                active_owner.partial_agent = built
+            if self._closing or (active_owner is not None and active_owner.stopping):
+                raise asyncio.CancelledError()
             # Every build after the first must restore the conversation.
             build_state["restore"] = True
             return built
@@ -721,6 +966,8 @@ class AgentTurnHandler:
             client_id=chat_ref.key,
             scrub=lambda text: scrub(text, self._secret_values),
         )
+        owner.router = router
+        owner.relay = relay
         question_state: dict[str, Any] = {}
 
         async def elicit(question: str, labels: list[str], descriptions: list[str]) -> str:
@@ -740,9 +987,13 @@ class AgentTurnHandler:
             return answer
 
         question_state["elicit"] = elicit
-        router.start()
-        relay.start()
-        await runtime.start()
+        try:
+            router.start()
+            relay.start()
+            await runtime.start()
+        except BaseException as exc:
+            await self._cleanup_startup(owner, runtime, exc)
+            raise
         return ChatSession(
             chat_ref=chat_ref,
             session_id=record.session_id,
@@ -763,16 +1014,29 @@ class AgentTurnHandler:
         permission_mode = kwargs["permission_mode"]
         restore: bool = kwargs["restore"]
         question_state: dict[str, Any] = kwargs["question_state"]
-        agent = CoderAgent(
+        agent_holder: dict[str, Any] = {}
+        request = CompositionRequest(
+            config=agent_config,
             project_path=Path(record.project_path),
+            active_project_path=Path(record.project_path),
+            state_dir=self._settings_store.root,
+            interaction_mode="build",
+            agent_class=CoderAgent,
             workspace_id=record.workspace_id,
             thread_id=record.thread_id,
             connection_manager=recording,
-            config=agent_config,
             agent_mode=AgentMode.CLI,
             permission_mode=permission_mode,
             permission_callback=permission_callback,
-            prompt_extensions=[
+            browser_manager=None,
+            memory_manager=None,
+            usage_ledger=None,
+            extension_selection=None,
+            session_recorder=None if restore else recorder,
+        )
+        host = CompositionHost(
+            extensions=lambda: HostExtensions([], []),
+            questions=lambda: (
                 PromptExtension(
                     id="gateway-questions",
                     title="Asking the User",
@@ -780,13 +1044,25 @@ class AgentTurnHandler:
                     modes=[AgentMode.CLI],
                     propagate_to_sub_agents=False,
                 ),
-            ],
-            tool_extensions=[build_question_extension(question_state)],
-            # Mirror the ask/ACP path: a resumed session hands the recorder
-            # over after restoring history so construction never
-            # double-records a resumed turn.
-            session_recorder=None if restore else recorder,
+                build_question_extension(question_state),
+            ),
+            additional_prompts=list,
+            history=lambda: agent_holder["agent"].history if "agent" in agent_holder else [],
+            set_catalogs=lambda _skills, _agents: None,
+            mcp_trusted=lambda: False,
+            mcp_diagnostic=lambda _diagnostic: None,
+            mcp_names=lambda _config: None,
+            mcp_builder=_disabled_mcp_builder,
+            own_bundle=lambda _bundle: None,
+            hook_dispatcher=lambda: NO_OP_DISPATCHER,
         )
+        prepared = prepare_composition(request, host)
+        agent, _ = construct_agent(request, host, prepared)
+        agent_holder["agent"] = agent
+        owner: _LifecycleOperation | None = kwargs.get("owner")
+        if owner is not None:
+            owner.partial_agent = agent
+        assert agent.tool_collection is not None
         lsp_messages = await agent.tool_collection.initialize()
         for lsp_message in lsp_messages:
             logger.debug("gateway lsp: %s", lsp_message)
@@ -795,6 +1071,35 @@ class AgentTurnHandler:
             agent.restore_compaction_state(record.compaction)
             agent.session_recorder = recorder
         return agent
+
+    async def _cleanup_partial(self, owner: _LifecycleOperation) -> None:
+        owner.cleaning = True
+        agent = owner.partial_agent
+        if agent is not None:
+            try:
+                await agent.cleanup()
+            except BaseException:
+                owner.cleanup_failed = True
+                logger.exception("gateway: partial agent cleanup failed")
+            else:
+                owner.partial_agent = None
+
+    async def _cleanup_startup(
+        self, owner: _LifecycleOperation, runtime: SessionRuntime, failure: BaseException
+    ) -> None:
+        owner.cleaning = True
+        if owner.startup_failure is not None:
+            owner.startup_failure.set_result(failure)
+        if owner.partial_agent is None:
+            owner.partial_agent = runtime.agent
+        await self._cleanup_partial(owner)
+        for resource in (owner.relay, owner.router):
+            if resource is not None:
+                try:
+                    await resource.stop()
+                except BaseException:
+                    owner.cleanup_failed = True
+                    logger.exception("gateway: startup transport cleanup failed")
 
     def _persist(self, entry: ChatSession) -> None:
         agent = entry.runtime.agent
@@ -806,43 +1111,66 @@ class AgentTurnHandler:
         record.permission_mode = agent.permission_mode.value
         self._store.save(record)
 
-    async def _on_evict(self, payload: Any) -> None:
+    def _on_evict(self, payload: Any) -> Awaitable[None]:
         chat_session: ChatSession = payload
-        worker = self._workers.get(chat_session.chat_ref.key)
-        if worker is not None and worker is not asyncio.current_task():
-            worker.cancel()
-            try:
-                await worker
-            except asyncio.CancelledError:
-                pass
-        await self._close_entry(chat_session)
+        owner = self._retain_close(chat_session)
+        return self._wait_operation(owner)
 
     async def _close_entry(self, chat_session: ChatSession) -> None:
+        await self._wait_operation(self._retain_close(chat_session))
+
+    def _retain_close(self, chat_session: ChatSession) -> _LifecycleOperation:
+        owner = self._start_operation(
+            chat_session.chat_ref, "close", lambda op: self._close_entry_owned(chat_session, op), cleaning=True
+        )
+        owner.entry = chat_session
+        return owner
+
+    async def _close_entry_owned(self, chat_session: ChatSession, owner: _LifecycleOperation) -> None:
+        owner.entry = chat_session
+        try:
+            await self._close_entry_impl(chat_session, owner)
+        except BaseException:
+            owner.cleanup_failed = True
+            raise
+
+    async def _cleanup_retired(self, entry: ChatSession, owner: _LifecycleOperation) -> None:
+        owner.entry = entry
+        while entry.retired_agents:
+            owner.partial_agent = entry.retired_agents.pop(0)
+            try:
+                await owner.partial_agent.cleanup()
+            except BaseException:
+                owner.cleanup_failed = True
+                raise
+            owner.partial_agent = None
+
+    async def _close_entry_impl(self, chat_session: ChatSession, owner: _LifecycleOperation) -> None:
         chat_session.closed = True
+        worker = self._workers.get(chat_session.chat_ref.key)
+        if worker is not None and worker is not asyncio.current_task():
+            if not worker.cancelling():
+                worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
         if chat_session.background_retry is not None:
             chat_session.background_retry.cancel()
             chat_session.background_retry = None
         turn_task = chat_session.turn_task
         if turn_task is not None and turn_task is not asyncio.current_task():
-            turn_task.cancel()
+            if not turn_task.cancelling():
+                turn_task.cancel()
             await asyncio.gather(turn_task, return_exceptions=True)
         if chat_session.background_jobs is not None:
             chat_session.background_jobs.set_callbacks(on_ready=None, on_delivered=None)
             await chat_session.background_jobs.close()
             await chat_session.background_jobs.deliver(chat_session.runtime.agent)
         self._persist(chat_session)
-        for old in chat_session.retired_agents:
-            await old.cleanup()
-        chat_session.retired_agents.clear()
-        try:
-            await chat_session.relay.stop()
-        except Exception:  # noqa: BLE001 — closing must not mask the eviction
-            logger.exception("gateway: relay stop failed (%s)", chat_session.session_id)
+        await self._cleanup_retired(chat_session, owner)
+        await chat_session.relay.stop()
         await chat_session.router.stop()
-        try:
-            await chat_session.runtime.shutdown()
-        except Exception:  # noqa: BLE001 — closing must not mask the eviction
-            logger.exception("gateway: session close failed (%s)", chat_session.session_id)
+        owner.partial_agent = chat_session.runtime.agent
+        await chat_session.runtime.shutdown()
+        owner.partial_agent = None
 
     # -- Persisted chat→session mapping ------------------------------------
 

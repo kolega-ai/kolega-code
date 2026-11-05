@@ -9,6 +9,7 @@ idle entries through an ``on_evict`` callback the session host supplies
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import time
 from collections import OrderedDict
@@ -90,21 +91,35 @@ class SessionRegistry:
             if candidate is None:
                 break  # temporary over-capacity is safer than cancelling owned work
             evicted.append(self._entries.pop(candidate))
-        for entry in evicted:
-            await self._notify_evict(entry)
+        await self._notify_evicted(evicted)
         return evicted
 
     async def clear(self) -> list[SessionEntry]:
         """Evict everything (shutdown path), calling the evict callback."""
-        evicted = list(self._entries.values())
-        self._entries.clear()
-        for entry in evicted:
-            await self._notify_evict(entry)
+        evicted = self.take_all()
+        await self._notify_evicted(evicted)
         return evicted
 
-    async def _notify_evict(self, entry: SessionEntry) -> None:
+    def take_all(self) -> list[SessionEntry]:
+        evicted = list(self._entries.values())
+        self._entries.clear()
+        return evicted
+
+    async def _notify_evicted(self, entries: list[SessionEntry]) -> None:
         if self._on_evict is None:
             return
-        result = self._on_evict(entry.payload)
-        if inspect.isawaitable(result):
-            await result
+        # Synchronous callbacks retain every removed entry before any waiter can cancel.
+        pending = []
+        failures: list[BaseException] = []
+        for entry in entries:
+            try:
+                result = self._on_evict(entry.payload)
+            except BaseException as exc:
+                failures.append(exc)
+            else:
+                if inspect.isawaitable(result):
+                    pending.append(result)
+        outcomes = await asyncio.gather(*pending, return_exceptions=True)
+        failures.extend(outcome for outcome in outcomes if isinstance(outcome, BaseException))
+        if failures:
+            raise failures[0]
