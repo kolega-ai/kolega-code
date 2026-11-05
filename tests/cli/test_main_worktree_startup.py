@@ -205,6 +205,7 @@ def test_ask_selected_worktree_flows_through_discovery_config_hooks_and_agent(
 ) -> None:
     del isolated_cli_env
     import kolega_code.cli.main as main_module
+    from kolega_code.session import composition
 
     source = tmp_path / "source"
     selected = tmp_path / "selected"
@@ -218,7 +219,7 @@ def test_ask_selected_worktree_flows_through_discovery_config_hooks_and_agent(
 
     seen: dict[str, list[Path]] = {"skills": [], "agents": [], "config": [], "hooks": []}
     original_discover_skills = main_module.discover_skills
-    original_discover_agents = main_module.discover_custom_agents
+    original_discover_agents = composition.discover_custom_agents
     original_build_config = main_module.build_agent_config
     original_load_hooks = main_module.load_hook_config
 
@@ -254,7 +255,7 @@ def test_ask_selected_worktree_flows_through_discovery_config_hooks_and_agent(
             return None
 
     monkeypatch.setattr(main_module, "discover_skills", discover_skills)
-    monkeypatch.setattr(main_module, "discover_custom_agents", discover_agents)
+    monkeypatch.setattr(composition, "discover_custom_agents", discover_agents)
     monkeypatch.setattr(main_module, "build_agent_config", build_config)
     monkeypatch.setattr(main_module, "load_hook_config", load_hooks)
     monkeypatch.setattr(main_module, "CoderAgent", FakeCoderAgent)

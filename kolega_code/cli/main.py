@@ -16,17 +16,16 @@ import threading
 import uuid
 import webbrowser
 from pathlib import Path
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional, cast
 
-from kolega_code.agent import CoderAgent
+from kolega_code.agent import CoderAgent, ToolExtension
 from kolega_code.config import EditProtocol
 from kolega_code.extensions import (
     ExtensionSelection,
-    KolegaExtensionHost,
+    KolegaExtensionBundle,
     KolegaExtensionLoadError,
     bind_extension_agent,
     cleanup_extension_bundle,
-    create_extension_bundle,
     resolve_extension_selection,
 )
 from kolega_code.llm.ledger import UsageLedger
@@ -37,7 +36,7 @@ from kolega_code.llm.specs.thinking import REASONING_REPLAY_VALUES
 from .ask_output import InMemorySessionJournal, SemanticStdoutPrinter
 from .session_journal import SessionJournal, SessionRecorder
 from .session_usage import SessionUsageSink
-from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
+from kolega_code.agent.custom_agents import CustomAgentCatalog, discover_custom_agents
 from kolega_code.agent.orchestration.guide import gigacode_prompt_extension
 from kolega_code.agent.prompt_provider import PromptExtension
 from kolega_code.agent.prompt_dump import (
@@ -84,6 +83,13 @@ from kolega_code.permissions import (
     normalize_permission_mode,
 )
 from kolega_code.session.control import ControlChannel
+from kolega_code.session.composition import (
+    CompositionHost,
+    CompositionRequest,
+    HostExtensions,
+    construct_agent,
+    prepare_composition,
+)
 from kolega_code.session.runtime import (
     SessionRuntime,
     deserialize_permission_request,
@@ -151,9 +157,6 @@ from .slash_commands import SKILLS_LIST_COMMAND, agent_command_names
 from .skills import (
     SkillCatalog,
     activated_skill_names,
-    build_skill_prompt_extension,
-    build_skill_tool_extension,
-    context_window_tokens_for_skill_budget,
     discover_skills,
 )
 from .updater import check_for_update, run_self_update, update_status_message
@@ -1988,7 +1991,6 @@ async def _run_ask(args: argparse.Namespace) -> int:
         print(activation_content)
         return 0
 
-    custom_agent_catalog = discover_custom_agents(project_path, settings_store.root)
     settings_changed = False
     if getattr(args, "trust_hooks", False):
         settings.trust_hook_project(launch_project_path)
@@ -2002,10 +2004,6 @@ async def _run_ask(args: argparse.Namespace) -> int:
     if settings_changed:
         settings_store.save(settings)
     config = build_agent_config(launch_project_path, overrides, settings=settings, settings_store=settings_store)
-    custom_agent_catalog = validate_custom_agent_models(custom_agent_catalog, config).for_mode("build")
-    if not args.json:
-        for diagnostic in custom_agent_catalog.diagnostics:
-            print(f"agents: {diagnostic.format()}", file=sys.stderr)
     summary = config_summary(config)
 
     hook_config = load_hook_config(
@@ -2040,55 +2038,54 @@ async def _run_ask(args: argparse.Namespace) -> int:
         browser_visible=args.browser_visible,
     )
     agent_ref: dict[str, CoderAgent] = {}
-    prompt_extensions = []
-    tool_extensions = []
-    if skills_enabled:
-        skill_prompt_extension = build_skill_prompt_extension(
-            skill_catalog,
-            context_window_tokens=context_window_tokens_for_skill_budget(config, CoderAgent.agent_name),
-        )
-        skill_tool_extension = build_skill_tool_extension(
-            skill_catalog,
-            lambda: agent_ref["agent"].history if "agent" in agent_ref else [],
-        )
-        if skill_prompt_extension is not None:
-            prompt_extensions.append(skill_prompt_extension)
-        if skill_tool_extension is not None:
-            tool_extensions.append(skill_tool_extension)
-    mcp_config = getattr(config, "mcp_config", None)
-    if not args.json and mcp_config is not None:
-        for diagnostic in getattr(mcp_config, "diagnostics", []) or []:
-            print(f"mcp: {diagnostic}", file=sys.stderr)
-    mcp_extension = build_mcp_tool_extension(
-        project_path,
-        settings_store.root,
-        project_trusted=settings.is_mcp_project_trusted(launch_project_path),
-        loaded_config=mcp_config if project_path == launch_project_path else None,
-    )
-    if mcp_extension is not None:
-        tool_extensions.append(mcp_extension)
-        if mcp_config is not None:
-            _print_mcp_tool_name_warnings(mcp_config, settings_store.root, project_path)
-    extension_bundle = None
-    if extension_selection is not None:
-        extension_host = KolegaExtensionHost(
-            project_path=project_path,
-            workspace_id=session.workspace_id,
-            thread_id=session.thread_id,
-            config=config,
-            agent_mode=AgentMode.ASK,
-        )
-        try:
-            extension_bundle = create_extension_bundle(extension_selection, extension_host)
-        except KolegaExtensionLoadError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            return 2
-        prompt_extensions.extend(extension_bundle.prompt_extensions)
-        tool_extensions.extend(extension_bundle.tool_extensions)
+    extension_bundle: KolegaExtensionBundle | None = None
 
-    # An extension bundle may exist from here on: every exit path below must
-    # flow through the finally, which tears down agent/bundle/sink exactly once
-    # and records the run terminal.
+    def _own_bundle(bundle: KolegaExtensionBundle) -> None:
+        nonlocal extension_bundle
+        extension_bundle = bundle
+
+    def _set_catalogs(_skills: SkillCatalog, custom_agents: CustomAgentCatalog) -> None:
+        if not args.json:
+            for diagnostic in custom_agents.diagnostics:
+                print(f"agents: {diagnostic.format()}", file=sys.stderr)
+
+    def _mcp_diagnostic(diagnostic: str) -> None:
+        if not args.json:
+            print(f"mcp: {diagnostic}", file=sys.stderr)
+
+    def _build_ask_mcp(
+        project_path: Path,
+        state_dir: Path,
+        *,
+        project_trusted: bool,
+        loaded_config: LoadedMCPConfig | None = None,
+    ) -> ToolExtension | None:
+        if loaded_config is not None:
+            return build_mcp_tool_extension(
+                project_path, state_dir, project_trusted=project_trusted, loaded_config=loaded_config
+            )
+        active_config = load_mcp_config(project_path, state_dir, project_trusted=project_trusted)
+        extension = build_mcp_tool_extension(
+            project_path, state_dir, project_trusted=project_trusted, loaded_config=active_config
+        )
+        if extension is not None:
+            _print_mcp_tool_name_warnings(active_config, state_dir, project_path)
+        return extension
+
+    composition_host = CompositionHost(
+        extensions=lambda: HostExtensions([], []),
+        questions=None,
+        additional_prompts=lambda: [],
+        history=lambda: agent_ref["agent"].history if "agent" in agent_ref else [],
+        set_catalogs=_set_catalogs,
+        mcp_trusted=lambda: settings.is_mcp_project_trusted(launch_project_path),
+        mcp_diagnostic=_mcp_diagnostic,
+        mcp_names=lambda loaded: _print_mcp_tool_name_warnings(loaded, settings_store.root, project_path),
+        own_bundle=_own_bundle,
+        hook_dispatcher=lambda: hook_dispatcher,
+        mcp_builder=_build_ask_mcp,
+    )
+
     usage_sink: Optional[SessionUsageSink] = None
     pump_task: Optional[asyncio.Task] = None
     # Initialized before the try so the finally can stop the inbox even when an
@@ -2161,39 +2158,30 @@ async def _run_ask(args: argparse.Namespace) -> int:
         usage_sink = sink
         usage_ledger.observer = sink
         await sink.start()
-        try:
-            constructor_recorder = None if restoring_session else session_recorder
-            agent = CoderAgent(
-                project_path=project_path,
-                workspace_id=session.workspace_id,
-                thread_id=session.thread_id,
-                connection_manager=manager,
-                config=config,
-                browser_manager=browser_manager,
-                agent_mode=AgentMode.ASK,
-                prompt_extensions=prompt_extensions,
-                tool_extensions=tool_extensions,
-                permission_mode=permission_mode,
-                permission_callback=permission_runtime.permission_callback,
-                session_recorder=constructor_recorder,
-                hook_dispatcher=hook_dispatcher,
-                custom_agent_catalog=custom_agent_catalog,
-                memory_project_path=launch_project_path,
-                memory_enabled=not getattr(args, "no_memory_tools", False),
-                usage_ledger=usage_ledger,
-                llm_trace_sink=extension_bundle.llm_trace_sink if extension_bundle else None,
-            )
-        except ValueError as exc:
-            if extension_bundle is None:
-                raise
-            # With an extension loaded, a tool-name conflict at construction
-            # refuses to start rather than running without the extension.
-            print(f"Error: {exc}", file=sys.stderr)
-            run_status = "failed"
-            run_error = {"code": "extension_error", "message": str(exc)[:500]}
-            exit_code = 2
-            terminal_exit_code = 2
-            return exit_code
+        composition_request = CompositionRequest(
+            config=config,
+            project_path=launch_project_path,
+            active_project_path=project_path,
+            state_dir=settings_store.root,
+            workspace_id=session.workspace_id,
+            thread_id=session.thread_id,
+            interaction_mode="build",
+            agent_mode=AgentMode.ASK,
+            agent_class=CoderAgent,
+            connection_manager=manager,
+            browser_manager=browser_manager,
+            permission_mode=permission_mode,
+            permission_callback=permission_runtime.permission_callback,
+            session_recorder=None if restoring_session else session_recorder,
+            usage_ledger=usage_ledger,
+            extension_selection=extension_selection,
+            preloaded_skills=skill_catalog,
+            memory_project_path=launch_project_path,
+            memory_enabled=not getattr(args, "no_memory_tools", False),
+        )
+        prepared = prepare_composition(composition_request, composition_host)
+        built_agent, _ = construct_agent(composition_request, composition_host, prepared)
+        agent = cast(CoderAgent, built_agent)
         agent_ref["agent"] = agent
         permission_runtime.adopt(agent)
         # --gigacode turns orchestration on for this run; a resumed session that had
@@ -2421,8 +2409,6 @@ async def _run_ask(args: argparse.Namespace) -> int:
             store.save(session)
         terminal_exit_code = exit_code
     except KolegaExtensionLoadError as exc:
-        # Only bind_extension_agent raises this here: refuse the run rather
-        # than continue with the extension unbound.
         print(f"Error: {exc}", file=sys.stderr)
         run_status = "failed"
         run_error = {"code": "extension_error", "message": str(exc)[:500]}

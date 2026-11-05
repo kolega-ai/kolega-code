@@ -119,6 +119,7 @@ def test_ask_resume_uses_active_tools_but_preserves_launch_identity_services(
     del isolated_cli_env
     import kolega_code.cli.main as main_module
     from kolega_code.cli.settings import SettingsStore
+    from kolega_code.session import composition
 
     main, linked = _repository_with_worktree(tmp_path)
     state = tmp_path / "state"
@@ -130,7 +131,7 @@ def test_ask_resume_uses_active_tools_but_preserves_launch_identity_services(
 
     seen: dict[str, list[Path]] = {"skills": [], "agents": [], "config": [], "hooks": [], "mcp": []}
     original_discover_skills = main_module.discover_skills
-    original_discover_agents = main_module.discover_custom_agents
+    original_discover_agents = composition.discover_custom_agents
     original_build_config = main_module.build_agent_config
     original_load_hooks = main_module.load_hook_config
 
@@ -153,7 +154,8 @@ def test_ask_resume_uses_active_tools_but_preserves_launch_identity_services(
     def build_mcp(path: Path, *_args: Any, **kwargs: Any):
         seen["mcp"].append(path)
         assert kwargs["project_trusted"] is True
-        assert kwargs["loaded_config"] is None
+        assert kwargs["loaded_config"].project_path == path
+        assert kwargs["loaded_config"].project_trusted is True
         return None
 
     class FakeCoderAgent(_FakeCoderAgent):
@@ -165,7 +167,7 @@ def test_ask_resume_uses_active_tools_but_preserves_launch_identity_services(
             self.__class__.instances.append(self)
 
     monkeypatch.setattr(main_module, "discover_skills", discover_skills)
-    monkeypatch.setattr(main_module, "discover_custom_agents", discover_agents)
+    monkeypatch.setattr(composition, "discover_custom_agents", discover_agents)
     monkeypatch.setattr(main_module, "build_agent_config", build_config)
     monkeypatch.setattr(main_module, "load_hook_config", load_hooks)
     monkeypatch.setattr(main_module, "build_mcp_tool_extension", build_mcp)
