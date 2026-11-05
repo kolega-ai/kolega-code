@@ -301,15 +301,19 @@ async def test_modal_dismiss_promotes_an_unflushed_render_to_full_sync(tmp_path:
 
     async with app.run_test() as pilot:
         await _settle(pilot)
+        # A coalesced flush scheduled before the modal opens fires while the modal
+        # covers the transcript and sets the deferred-sync marker, so the
+        # experiment would begin after a resync already happened. Drain the
+        # pending render, then freeze the cadence so nothing flushes under the
+        # modal.
+        await _wait_for_layout(pilot, lambda: not app._render_pending)
         base_count = len(app._entry_widgets)
+        monkeypatch.setattr(app, "_render_coalesce_interval", lambda _entry: 60.0)
 
         app._push_fullscreen_modal(_BareModal())
         await _settle(pilot)
         assert app._modal_cover_active is True
 
-        # Keep the coalesced flush from firing before dismissal, so no earlier
-        # modal-covered flush can set the deferred-sync marker.
-        monkeypatch.setattr(app, "_render_coalesce_interval", lambda _entry: 60.0)
         app._add_conversation_entry(ConversationEntry(kind="user", content="last-moment update"))
         assert app._render_pending is True
         assert app._transcript_sync_pending is False
