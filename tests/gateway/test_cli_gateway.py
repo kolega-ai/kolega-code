@@ -671,6 +671,7 @@ def test_foreground_watchdog_covers_cancellation_resistant_asyncio_run_teardown(
         """
         import argparse
         import asyncio
+        import gc
         import sys
         from kolega_code.cli import gateway, main
 
@@ -678,6 +679,7 @@ def test_foreground_watchdog_covers_cancellation_resistant_asyncio_run_teardown(
         def arm(*, seconds, force_exit):
             return original(seconds=0.1, force_exit=force_exit)
         main._arm_exit_watchdog = arm
+        pending_tasks: set[asyncio.Task[None]] = set()
 
         async def run(args, *, on_shutdown):
             started = asyncio.Event()
@@ -688,8 +690,9 @@ def test_foreground_watchdog_covers_cancellation_resistant_asyncio_run_teardown(
                 except asyncio.CancelledError:
                     print("final-drain-blocked", flush=True)
                     await asyncio.Event().wait()
-            asyncio.create_task(resistant())
+            pending_tasks.add(asyncio.create_task(resistant()))
             await started.wait()
+            gc.collect()
             on_shutdown()
             return 1
         gateway._run_gateway = run
@@ -707,6 +710,7 @@ def test_foreground_watchdog_covers_cancellation_resistant_asyncio_run_teardown(
     assert result.returncode == 1
     assert "final-drain-blocked" in result.stdout
     assert "Shutdown is taking too long" in result.stderr
+    assert "Task was destroyed" not in result.stderr
 
 
 @pytest.mark.parametrize("state", ["stopping", "incomplete"])
