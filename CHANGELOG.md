@@ -6,6 +6,28 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.48.0 - 2026-11-06
+
+### Added
+
+- **Refuseless provider.** The built-in `refuseless` provider
+  (`REFUSELESS_API_KEY`, or a key saved in Settings) serves five routes —
+  GLM-5.3 Abliterated, GLM-5.3 Flash Abliterated, DeepSeek V4.1 Flash
+  Abliterated, DeepSeek V4.1 Flash Fast and MiniMax M3.1 Flash — with each
+  route's window, output limit, thinking-effort ladder and per-million pricing in
+  the shared catalog. Selecting it defaults to GLM-5.3 Abliterated; saving a key
+  alone does not change your provider or any existing defaults. Prepaid-credit
+  exhaustion surfaces as a billing error, including mid-answer, instead of a
+  silently truncated reply.
+- Gateway voice notes can transcribe through OpenAI (`gpt-transcribe`, reusing
+  your OpenAI key) as well as Groq, selectable under **Tools → Voice
+  transcription**.
+- Editor sessions over ACP accept image prompts, so a host can send screenshots
+  and diagrams with a message.
+- ACP sessions track durable usage accounting: a request's lifetime inference
+  survives cancellation, late usage evidence and resume, and costs resolve from
+  reported charges, overrides or bundled catalogue prices without network calls.
+
 ### Changed
 
 - The install script now lives at `https://kolega.ai/code/install.sh`, which
@@ -22,6 +44,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 - Automatic session titles no longer get reworded after every turn: the title
   generator keeps the current title unless you move the session on to a
   different task. The description still updates each turn.
+- Turns wait less on terminal and file tracking: ordinary terminal output is no
+  longer parsed character by character, a checkpoint records only the paths that
+  changed instead of every dirty path, and a large checkout's startup copies
+  finish in the background instead of holding up the first turn.
+- Startup imports fewer optional SDKs: Tavily, Firecrawl, Beautiful Soup and the
+  HTML extractor load only when a search or fetch needs them, and aiohttp only
+  when an aiohttp error is mapped.
+- Refreshed the OpenRouter and Ollama Cloud model catalogs.
 
 ### Fixed
 
@@ -38,6 +68,39 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   dependencies have no wheels yet, so a fresh install failed building
   tiktoken from source. Intel Macs no longer get 3.13 or 3.14, whose
   onnxruntime wheels are missing or need macOS 13.
+- A reasoning stream that carries the reasoning tail and the first answer text in
+  the same delta no longer drops the start of the reply in the TUI; the stored
+  message was already complete.
+- The TUI no longer grows to tens of gigabytes in checkouts with many untracked
+  files: checkpoint baselines now live in an on-disk spool capped at 10 GiB per
+  session and paused when the volume has under 5 GiB free, files over 8 MB are
+  compared by signature instead of read, and restored copies are verified by
+  hash.
+- Saving settings repeatedly in one session no longer drops fields an earlier
+  save in that session had written.
+- An incomplete Responses stream (OpenAI and ChatGPT) no longer starts the tool
+  calls it reported before the response was validated, and the truncation is
+  reported as an error instead of a clean turn ending.
+- A goal loop now pauses after a failed turn instead of retrying the same
+  failing turn.
+- MCP tools with colliding names can no longer inherit each other's saved
+  permission grants, and a server id that could be parsed as another server's
+  grant now gets a process-local alias.
+- Hook command processes are cleaned up when a turn is cancelled.
+- ACP keeps protocol stdout to itself and retains lifecycle cleanup ownership on
+  shutdown, so stray output or a failed close no longer corrupts an editor
+  session or leaves tasks behind.
+- Skill activation history is per agent, so a sub-agent no longer reuses another
+  agent's activated skills.
+- Session-journal tail recovery takes the same lock as journal writers, so
+  opening a session while another process is appending no longer corrupts or
+  duplicates its events.
+- Shared replays show sub-agent lifecycle status and fold peer messages into the
+  transcript.
+- Rewinding no longer leaves a stale diff cache reporting the content just rolled
+  back, the vision-override warning names the model that blocks the image, and
+  `exec_command` accepts `cmd=` as an alias for `command`.
+- The memory screen no longer queues worker renders for rows it is pruning.
 
 ### Security
 
