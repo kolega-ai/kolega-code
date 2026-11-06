@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import random
 import subprocess
 import time
 import tracemalloc
@@ -117,10 +118,11 @@ def test_checkpoints_share_one_copy_of_identical_dirty_content(tmp_path: Path) -
     first = tracker.capture_checkpoint("turn 1")
     second = tracker.capture_checkpoint("turn 2")
 
-    base = tracker.checkpoints()[0].dirty["a.py"]
+    base = tracker._checkpoint_baseline(tracker.checkpoints()[0], "a.py")
     assert base.source == "store"
-    assert first.dirty["a.py"].sha == base.sha
-    assert second.dirty["a.py"].sha == base.sha
+    assert tracker._checkpoint_baseline(first, "a.py") is base
+    assert tracker._checkpoint_baseline(second, "a.py") is base
+    assert tracker._history["a.py"] == [(0, base)]
     assert len(_store(tracker)) == 1
 
 
@@ -421,7 +423,7 @@ def test_restore_skips_a_damaged_checkpoint_copy(tmp_path: Path) -> None:
     project = _committed_repo(tmp_path)
     (project / "notes.txt").write_text("original\n", encoding="utf-8")
     tracker = _git_tracker(project)
-    baseline = tracker.checkpoints()[0].dirty["notes.txt"]
+    baseline = tracker._checkpoint_baseline(tracker.checkpoints()[0], "notes.txt")
     assert baseline.sha is not None
     store = _store(tracker)
     blob = store._blobs[baseline.sha]
@@ -452,6 +454,76 @@ def test_eviction_and_close_delete_checkpoint_copies(tmp_path: Path) -> None:
 
     tracker.close()
     assert not store.path.exists()
+
+
+def test_unchanged_paths_add_no_history(tmp_path: Path) -> None:
+    project = _committed_repo(tmp_path)
+    for index in range(20):
+        (project / f"untracked_{index}.txt").write_text(f"{index}\n", encoding="utf-8")
+    tracker = _git_tracker(project)
+
+    for number in range(10):
+        tracker.capture_checkpoint(f"turn {number}")
+
+    assert len(tracker._history) == 20
+    assert all(len(history) == 1 for history in tracker._history.values())
+    assert tracker._multi_version == set()
+
+
+def _worktree(project: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(project).as_posix(): path.read_bytes()
+        for path in project.rglob("*")
+        if path.is_file() and ".git" not in path.relative_to(project).parts
+    }
+
+
+def test_history_matches_a_full_snapshot_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(session_diff, "REWIND_MAX_CHECKPOINTS", 8)
+    project = tmp_path / "repo"
+    project.mkdir()
+    _init_repo(project)
+    tracked = [f"tracked_{index}.txt" for index in range(4)]
+    for name in tracked:
+        (project / name).write_text(f"{name} committed\n", encoding="utf-8")
+    _commit_all(project)
+    pool = tracked + [f"untracked_{index}.txt" for index in range(4)]
+    rng = random.Random(899)
+    clock = time.time_ns()
+
+    def mutate() -> None:
+        nonlocal clock
+        for _ in range(rng.randint(1, 3)):
+            path = project / rng.choice(pool)
+            if path.exists() and rng.random() < 0.3:
+                path.unlink()
+                continue
+            path.write_text(f"{path.name} {rng.random()}\n" * rng.randint(1, 4), encoding="utf-8")
+            # Distinct signatures even on filesystems with coarse timestamps.
+            clock += 1_000_000_000
+            os.utime(path, ns=(clock, clock))
+
+    mutate()
+    tracker = _git_tracker(project)
+    model = {0: _worktree(project)}
+    for number in range(1, 25):
+        mutate()
+        checkpoint = tracker.capture_checkpoint(f"turn {number}")
+        model[checkpoint.checkpoint_id] = _worktree(project)
+    mutate()
+
+    retained = tracker.checkpoints()
+    assert [checkpoint.checkpoint_id for checkpoint in retained] == [0, *range(18, 25)]
+    current = _worktree(project)
+    for checkpoint in retained:
+        expected = model[checkpoint.checkpoint_id]
+        changed = {path for path in expected.keys() | current.keys() if expected.get(path) != current.get(path)}
+        assert {change.path for change in tracker.refresh(checkpoint_id=checkpoint.checkpoint_id)} == changed
+
+    for checkpoint in (retained[3], retained[0], retained[-1]):
+        result = tracker.apply_restore_plan(tracker.build_restore_plan(checkpoint_id=checkpoint.checkpoint_id))
+        assert result.errors == [] and result.skipped == []
+        assert _worktree(project) == model[checkpoint.checkpoint_id]
 
 
 # ---- snapshot-ledger tracker (non-git) ---------------------------------------
