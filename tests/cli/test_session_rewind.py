@@ -12,6 +12,7 @@ import pytest
 from kolega_code.cli.tui import session_diff
 from kolega_code.cli.tui.checkpoint_store import STORAGE_LIMIT, CheckpointBlobStore
 from kolega_code.cli.tui.session_diff import (
+    COPY_PENDING,
     DAMAGED_COPY,
     REWIND_MAX_CHECKPOINTS,
     TOO_LARGE_TO_COPY,
@@ -454,6 +455,69 @@ def test_eviction_and_close_delete_checkpoint_copies(tmp_path: Path) -> None:
 
     tracker.close()
     assert not store.path.exists()
+
+
+def test_copies_past_the_inline_limit_are_backfilled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(session_diff, "INLINE_COPY_LIMIT_FILES", 2)
+    monkeypatch.setattr(session_diff, "BACKFILL_BATCH_FILES", 2)
+    project = _committed_repo(tmp_path)
+    originals = {f"untracked_{index}.txt": f"{index}\n" * (index + 1) for index in range(5)}
+    for name, text in originals.items():
+        (project / name).write_text(text, encoding="utf-8")
+
+    tracker = _git_tracker(project)
+    assert tracker.copies_pending()
+    assert len(_store(tracker)) == 2
+    assert tracker.backfill() is True
+    assert tracker.backfill() is False
+    assert not tracker.copies_pending()
+    assert len(_store(tracker)) == 5
+    session_start = tracker.checkpoints()[0]
+    assert all(tracker._checkpoint_baseline(session_start, name).source == "store" for name in originals)
+
+    for name in originals:
+        (project / name).write_text("changed\n", encoding="utf-8")
+    result = tracker.apply_restore_plan(tracker.build_restore_plan())
+    assert result.skipped == []
+    assert sorted(result.restored) == sorted(originals)
+    assert {name: (project / name).read_text(encoding="utf-8") for name in originals} == originals
+
+
+def test_file_changed_before_its_copy_is_made_is_skipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(session_diff, "INLINE_COPY_LIMIT_FILES", 0)
+    project = _committed_repo(tmp_path)
+    notes = project / "notes.txt"
+    notes.write_text("original\n", encoding="utf-8")
+    tracker = _git_tracker(project)
+    assert tracker.copies_pending()
+
+    stamp = notes.stat().st_mtime_ns + 1_000_000_000
+    notes.write_text("edited before the copy\n", encoding="utf-8")
+    os.utime(notes, ns=(stamp, stamp))
+    assert tracker.backfill() is False
+
+    [change] = tracker.refresh()
+    assert change.unrestorable == COPY_PENDING
+    result = tracker.apply_restore_plan(tracker.build_restore_plan())
+    assert result.skipped == [("notes.txt", COPY_PENDING)]
+    assert notes.read_text(encoding="utf-8") == "edited before the copy\n"
+
+
+def test_backfill_keeps_the_session_start_share_of_the_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(session_diff, "INLINE_COPY_LIMIT_FILES", 0)
+    monkeypatch.setattr(session_diff, "CHECKPOINT_STORE_BUDGET", 100)
+    monkeypatch.setattr(session_diff, "BASELINE_STORE_SHARE", 0.5)
+    project = _committed_repo(tmp_path)
+    (project / "first.txt").write_text("f" * 39 + "\n", encoding="utf-8")
+    (project / "second.txt").write_text("s" * 39 + "\n", encoding="utf-8")
+
+    tracker = _git_tracker(project)
+    while tracker.backfill():
+        pass
+
+    session_start = tracker.checkpoints()[0]
+    assert tracker._checkpoint_baseline(session_start, "first.txt").source == "store"
+    assert tracker._checkpoint_baseline(session_start, "second.txt").unavailable == STORAGE_LIMIT
 
 
 def test_unchanged_paths_add_no_history(tmp_path: Path) -> None:

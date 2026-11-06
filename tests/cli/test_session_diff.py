@@ -740,6 +740,27 @@ def test_capture_skips_paths_outside_project(tmp_path: Path) -> None:
     assert _by_path(tracker.refresh())["inside.py"].status == "added"
 
 
+def test_capture_follows_symlinks_only_into_the_project(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    project = repo / "pkg"
+    project.mkdir(parents=True)
+    _init_repo(repo)
+    (project / "a.py").write_text("old\n", encoding="utf-8")
+    (repo / "elsewhere.txt").write_text("outside the project\n", encoding="utf-8")
+    _commit_all(repo)
+    (project / "inward").symlink_to(project / "a.py")
+    (project / "outward").symlink_to(repo / "elsewhere.txt")
+    (project / "real_dir").mkdir()
+    (project / "real_dir" / "new.py").write_text("new\n", encoding="utf-8")
+    (project / "dir_link").symlink_to(repo, target_is_directory=True)
+
+    tracker = GitSessionDiffTracker.create(project)
+    assert tracker is not None
+    tracker.capture_baseline()
+
+    assert tracker.dirty_paths_at(0) == {"pkg/inward", "pkg/real_dir/new.py"}
+
+
 def test_capture_never_touches_gitignored_paths(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "repo"
     project.mkdir()

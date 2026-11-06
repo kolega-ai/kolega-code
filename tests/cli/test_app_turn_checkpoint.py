@@ -152,3 +152,104 @@ async def test_goal_nudge_turn_takes_no_checkpoint(tmp_path: Path, monkeypatch: 
         assert captures == []
         # Progress still began and completed normally without a checkpoint.
         assert app._turn_final_text.startswith("Done in")
+
+
+async def _wait_until(pilot, condition, message: str, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(message)
+
+
+def _count_calls(monkeypatch: pytest.MonkeyPatch, target, name: str) -> list[object]:
+    original = getattr(target, name)
+    calls: list[object] = []
+
+    def wrapper(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(target, name, wrapper)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_turn_end_with_changes_closed_skips_the_diff_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    _init_git_project(app.project_path)
+
+    async with app.run_test() as pilot:
+        await wait_for_session_diff_baseline(app)
+        await _wait_until(pilot, lambda: app._session_diff_scope is not None, "startup scope probe never finished")
+        tracker = app._session_diff_tracker
+        assert tracker is not None
+        refreshes = _count_calls(monkeypatch, tracker, "refresh")
+        scopes = _count_calls(monkeypatch, tracker, "scope")
+
+        app.agent_worker = app.run_worker(app._process_message("hello"), name="kolega-turn", group="turns")
+        await wait_for_turn_idle(app, pilot)
+        await _wait_until(pilot, lambda: bool(scopes), "the turn end did not refresh the diff scope")
+
+        assert refreshes == []
+        assert app._session_diff_dirty is True
+
+
+@pytest.mark.asyncio
+async def test_turn_end_with_changes_open_refreshes_the_diff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    _init_git_project(app.project_path)
+
+    async with app.run_test() as pilot:
+        await wait_for_session_diff_baseline(app)
+        app.action_open_changes()
+        await _wait_until(pilot, lambda: not app._session_diff_refresh_running, "opening refresh never finished")
+        tracker = app._session_diff_tracker
+        assert tracker is not None
+        refreshes = _count_calls(monkeypatch, tracker, "refresh")
+
+        app.agent_worker = app.run_worker(app._process_message("hello"), name="kolega-turn", group="turns")
+        await wait_for_turn_idle(app, pilot)
+        await _wait_until(pilot, lambda: bool(refreshes), "the turn end did not refresh the open Changes screen")
+
+
+@pytest.mark.asyncio
+async def test_turn_checkpoint_runs_between_backfill_batches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.cli.tui import session_diff
+
+    monkeypatch.setattr(session_diff, "INLINE_COPY_LIMIT_FILES", 1)
+    monkeypatch.setattr(session_diff, "BACKFILL_BATCH_FILES", 1)
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    _init_git_project(app.project_path)
+    for index in range(4):
+        (app.project_path / f"untracked_{index}.txt").write_text(f"{index}\n", encoding="utf-8")
+    parked = threading.Event()
+    release = threading.Event()
+    original = app._tracker_backfill
+    batches: list[int] = []
+
+    def gated(tracker):
+        batches.append(len(batches))
+        if len(batches) == 2:
+            parked.set()  # between batches: the first has released the lock
+            release.wait(timeout=10.0)
+        return original(tracker)
+
+    monkeypatch.setattr(app, "_tracker_backfill", gated)
+
+    async with app.run_test() as pilot:
+        await wait_for_session_diff_baseline(app)
+        await _wait_for_thread_event(pilot, parked)
+        tracker = app._session_diff_tracker
+        assert tracker is not None
+        captured = len(tracker.checkpoints())
+
+        await asyncio.wait_for(app._record_turn_checkpoint("next turn"), timeout=5.0)
+
+        assert len(tracker.checkpoints()) == captured + 1
+        assert tracker.copies_pending()
+        release.set()
+        await _wait_until(pilot, lambda: not tracker.copies_pending(), "backfill never drained")
