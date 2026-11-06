@@ -19,6 +19,7 @@ worktree), so it is neither shown nor restorable. See
 
 from __future__ import annotations
 
+import bisect
 import enum
 import hashlib
 import os
@@ -125,7 +126,6 @@ class TurnCheckpoint:
     label: str
     created_at: float
     head_sha: str = ""  # git tracker only; pinned at capture
-    dirty: dict[str, FileBaseline] = field(default_factory=dict)
 
 
 @dataclass
@@ -216,12 +216,21 @@ class SessionDiffTrackerBase:
         # one reference to its blob.
         self._store = store
         self._store_limit = CHECKPOINT_STORE_BUDGET
+        # repo_path -> [(checkpoint_id, baseline or None)], oldest first: from
+        # that checkpoint on, the path was dirty with that baseline, or clean
+        # (None, so it baselines against the checkpoint's HEAD). A capture
+        # appends only for paths that changed, so unchanged paths cost nothing.
+        self._history: dict[str, list[tuple[int, Optional[FileBaseline]]]] = {}
+        self._dirty_now: set[str] = set()  # dirty at the latest checkpoint
+        self._multi_version: set[str] = set()  # paths with more than one history entry
+        self._dirty_at_cache: Optional[tuple[int, frozenset[str]]] = None
         self._diff_cache: dict[str, tuple[Optional[tuple[int, int]], Optional[SessionDiffFile]]] = {}
         self._diff_cache_checkpoint_id: Optional[int] = None
         # repo_path -> latest snapshot: shared by capture and refresh so a file
         # is read and hashed once per content version, then stat-only.
         self._snapshot_cache: dict[str, FileBaseline] = {}
         self._streamed_sha_cache: dict[tuple[str, tuple[int, int]], Optional[str]] = {}
+        self._abs_root = str(self.project_path)  # the directory _abs_path resolves repo paths against
 
     def close(self) -> None:
         """Delete the checkpoint copies. The tracker must not be used afterwards."""
@@ -234,6 +243,10 @@ class SessionDiffTrackerBase:
         """Capture checkpoint 0 (session start), resetting the ladder."""
         self._checkpoints = []
         self._next_checkpoint_id = 0
+        self._history = {}
+        self._dirty_now = set()
+        self._multi_version = set()
+        self._dirty_at_cache = None
         self._diff_cache = {}
         self._diff_cache_checkpoint_id = None
         self._snapshot_cache = {}
@@ -252,17 +265,77 @@ class SessionDiffTrackerBase:
             label=label,
             created_at=time.time(),
             head_sha=self._current_head_sha(),
-            dirty=self._capture_dirty_baselines(),
         )
-        for baseline in checkpoint.dirty.values():
-            self._acquire(baseline)
+        self._record_dirty(checkpoint.checkpoint_id, self._capture_dirty_baselines())
         self._next_checkpoint_id += 1
         self._checkpoints.append(checkpoint)
         while len(self._checkpoints) > REWIND_MAX_CHECKPOINTS:
-            evicted = self._checkpoints.pop(1)  # keep checkpoint 0, evict the oldest turn
-            for baseline in evicted.dirty.values():
-                self._release(baseline)
+            del self._checkpoints[1]  # keep checkpoint 0, evict the oldest turn
+            self._compact_history(self._checkpoints[1].checkpoint_id)
         return checkpoint
+
+    def dirty_paths_at(self, checkpoint_id: int) -> frozenset[str]:
+        """Paths that had a dirty baseline when the checkpoint was captured."""
+        cached = self._dirty_at_cache
+        if cached is not None and cached[0] == checkpoint_id:
+            return cached[1]
+        paths = frozenset(
+            path for path, history in self._history.items() if self._entry_at(history, checkpoint_id) is not None
+        )
+        self._dirty_at_cache = (checkpoint_id, paths)
+        return paths
+
+    def _record_dirty(self, checkpoint_id: int, dirty: dict[str, FileBaseline]) -> None:
+        for path, baseline in dirty.items():
+            history = self._history.get(path)
+            if history is None:
+                self._history[path] = [(checkpoint_id, baseline)]
+            elif history[-1][1] is not baseline:
+                history.append((checkpoint_id, baseline))
+                self._multi_version.add(path)
+            else:
+                continue
+            self._acquire(baseline)
+        for path in self._dirty_now.difference(dirty):
+            self._history[path].append((checkpoint_id, None))
+            self._multi_version.add(path)
+        self._dirty_now = set(dirty)
+        self._dirty_at_cache = None
+
+    def _compact_history(self, floor: int) -> None:
+        """Drop history no retained checkpoint can see once turns before ``floor`` are evicted."""
+        for path in list(self._multi_version):
+            history = self._history[path]
+            between = [index for index, (checkpoint_id, _) in enumerate(history) if 0 < checkpoint_id < floor]
+            if not between:
+                continue
+            # The newest entry before the floor is what the floor checkpoint
+            # sees, unless the floor checkpoint has its own entry.
+            shadowed = any(checkpoint_id == floor for checkpoint_id, _ in history)
+            dead = set(between if shadowed else between[:-1])
+            if not dead:
+                continue
+            for index in dead:
+                baseline = history[index][1]
+                if baseline is not None:
+                    self._release(baseline)
+            kept = [entry for index, entry in enumerate(history) if index not in dead]
+            if all(baseline is None for _, baseline in kept):
+                del self._history[path]
+                self._multi_version.discard(path)
+                continue
+            self._history[path] = kept
+            if len(kept) == 1:
+                self._multi_version.discard(path)
+        self._dirty_at_cache = None
+
+    @staticmethod
+    def _entry_at(history: list[tuple[int, Optional[FileBaseline]]], checkpoint_id: int) -> Optional[FileBaseline]:
+        if len(history) == 1:
+            first_id, baseline = history[0]
+            return baseline if first_id <= checkpoint_id else None
+        index = bisect.bisect_right(history, checkpoint_id, key=lambda entry: entry[0]) - 1
+        return history[index][1] if index >= 0 else None
 
     def checkpoints(self) -> list[TurnCheckpoint]:
         return list(self._checkpoints)
@@ -305,7 +378,8 @@ class SessionDiffTrackerBase:
         for repo_path in sorted(self._candidate_paths(checkpoint, event_paths)):
             if not self._is_under_project(repo_path):
                 continue
-            sig = self._stat_signature(repo_path)
+            st = self._stat_path(repo_path)
+            sig = None if st is None else (st.st_mtime_ns, st.st_size)
             cached = self._diff_cache.get(repo_path)
             if cached is not None and cached[0] == sig:
                 diff = cached[1]
@@ -314,7 +388,7 @@ class SessionDiffTrackerBase:
                 baseline = self._checkpoint_baseline(checkpoint, repo_path)
             else:
                 baseline = self._checkpoint_baseline(checkpoint, repo_path)
-                current = self._snapshot_repo_path(repo_path)
+                current = self._snapshot_repo_path(repo_path, st)
                 diff = self._build_diff(repo_path, baseline, current)
                 self._diff_cache[repo_path] = (sig, diff)
                 if diff is None:
@@ -323,7 +397,8 @@ class SessionDiffTrackerBase:
         return records
 
     def _checkpoint_baseline(self, checkpoint: TurnCheckpoint, repo_path: str) -> FileBaseline:
-        baseline = checkpoint.dirty.get(repo_path)
+        history = self._history.get(repo_path)
+        baseline = None if history is None else self._entry_at(history, checkpoint.checkpoint_id)
         if baseline is not None:
             return baseline
         return self._fallback_baseline(checkpoint, repo_path)
@@ -462,8 +537,10 @@ class SessionDiffTrackerBase:
             self._release(cached)
 
     def _stat_path(self, repo_path: str) -> Optional[os.stat_result]:
+        # A plain string join: building a Path per file cost 3x the stat
+        # itself across tens of thousands of untracked files.
         try:
-            return os.stat(self._abs_path(repo_path))
+            return os.stat(f"{self._abs_root}{os.sep}{repo_path}")
         except OSError:
             return None
 
@@ -658,6 +735,7 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
             spool_root = default_state_dir() / SPOOL_DIRNAME
         super().__init__(project_path, store=CheckpointBlobStore(spool_root))
         self.git_root = git_root.resolve()
+        self._abs_root = str(self.git_root)
         # repo_path -> verdict: _is_under_project resolves symlinks, which is
         # too slow to repeat for tens of thousands of status paths per capture.
         self._under_project_cache: dict[str, bool] = {}
@@ -765,7 +843,7 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
         return baselines
 
     def _candidate_paths(self, checkpoint: TurnCheckpoint, event_paths: Iterable[str]) -> set[str]:
-        candidates = self._git_status_paths() | set(checkpoint.dirty)
+        candidates = self._git_status_paths() | self.dirty_paths_at(checkpoint.checkpoint_id)
         candidates.update(self._repo_paths_from_event_paths(event_paths))
         candidates.update(self._session_committed_paths(checkpoint))
         return self._without_sibling_worktrees(candidates)

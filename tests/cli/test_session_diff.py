@@ -635,7 +635,7 @@ def test_capture_checkpoint_reuses_unchanged_snapshots(tmp_path: Path, monkeypat
     checkpoint = tracker.capture_checkpoint("turn 1")
 
     assert read_calls["count"] == 0
-    assert tracker._load_bytes(checkpoint.dirty["dirty.py"]) == b"dirty\n"
+    assert tracker._load_bytes(tracker._checkpoint_baseline(checkpoint, "dirty.py")) == b"dirty\n"
 
 
 def test_capture_checkpoint_rereads_when_signature_changes(tmp_path: Path, monkeypatch) -> None:
@@ -655,7 +655,7 @@ def test_capture_checkpoint_rereads_when_signature_changes(tmp_path: Path, monke
     checkpoint = tracker.capture_checkpoint("turn 1")
 
     assert read_calls["count"] == 1
-    assert tracker._load_bytes(checkpoint.dirty["dirty.py"]) == b"dirty but longer\n"
+    assert tracker._load_bytes(tracker._checkpoint_baseline(checkpoint, "dirty.py")) == b"dirty but longer\n"
 
 
 def test_refresh_then_capture_shares_snapshot_cache(tmp_path: Path, monkeypatch) -> None:
@@ -676,7 +676,7 @@ def test_refresh_then_capture_shares_snapshot_cache(tmp_path: Path, monkeypatch)
     checkpoint = tracker.capture_checkpoint("turn 1")
 
     assert read_calls["count"] == 0
-    assert tracker._load_bytes(checkpoint.dirty["new.py"]) == b"new\n"
+    assert tracker._load_bytes(tracker._checkpoint_baseline(checkpoint, "new.py")) == b"new\n"
 
 
 def test_capture_baseline_resets_snapshot_cache(tmp_path: Path, monkeypatch) -> None:
@@ -716,7 +716,7 @@ def test_capture_skips_sibling_worktree_paths(tmp_path: Path, monkeypatch) -> No
     snapshot_calls = _count_method_calls(monkeypatch, tracker, "_snapshot_repo_path")
     checkpoint = tracker.capture_checkpoint("turn 1")
 
-    assert set(checkpoint.dirty) == {"mine.py"}
+    assert tracker.dirty_paths_at(checkpoint.checkpoint_id) == {"mine.py"}
     assert snapshot_calls["count"] == 1
 
 
@@ -736,7 +736,7 @@ def test_capture_skips_paths_outside_project(tmp_path: Path) -> None:
     (project / "inside.py").write_text("inside\n", encoding="utf-8")
     checkpoint = tracker.capture_checkpoint("turn 1")
 
-    assert set(checkpoint.dirty) == {"pkg/inside.py"}
+    assert tracker.dirty_paths_at(checkpoint.checkpoint_id) == {"pkg/inside.py"}
     assert _by_path(tracker.refresh())["inside.py"].status == "added"
 
 
@@ -762,7 +762,7 @@ def test_capture_never_touches_gitignored_paths(tmp_path: Path, monkeypatch) -> 
 
     # git status never reports ignored files, so they are neither read nor
     # recorded; only the real untracked file is captured.
-    assert set(checkpoint.dirty) == {"kept.py"}
+    assert tracker.dirty_paths_at(checkpoint.checkpoint_id) == {"kept.py"}
     assert snapshot_calls["count"] == 1
     assert {change.path for change in tracker.refresh()} == {"kept.py"}
 
