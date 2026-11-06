@@ -14,9 +14,8 @@ from kolega_code.events import AgentEvent
 from kolega_code.llm.models import Message, TextBlock
 from kolega_code.llm.usage import normalize_usage
 
-from ._app_test_utils import FakeCoderAgent, _build_sub_agent_test_app, extension_by_name
+from ._app_test_utils import FakeCoderAgent, _build_sub_agent_test_app, extension_by_name, wait_for_layout
 from .test_app_status_usage import _settle
-from .test_tui_stylesheet import _wait_for_layout
 
 pytestmark = pytest.mark.usefixtures("isolated_cli_env")
 
@@ -35,7 +34,15 @@ async def test_empty_rows_are_single_line_and_populated_cards_restore(
         tasks = app.query_one("#status_task_list_section")
         task_md = app.query_one("#status_task_list_markdown", PlanningMarkdown)
         usage_text = app.query_one("#status_usage", Static)
-        await _wait_for_layout(pilot, lambda: usage.size.height == tasks.size.height == 1)
+        status_form = app.query_one("#status_form", VerticalScroll)
+        await wait_for_layout(
+            pilot,
+            lambda: (
+                usage.size.height == tasks.size.height == 1
+                and tasks.region.y == usage.region.bottom
+                and status_form.max_scroll_x == 0
+            ),
+        )
 
         assert task_md.source == "Task List · Not set"
         assert str(usage_text.render()) == "Usage · None yet"
@@ -44,14 +51,14 @@ async def test_empty_rows_are_single_line_and_populated_cards_restore(
         assert task_md.styles.padding.bottom == usage_text.styles.padding.bottom == 0
         assert task_md.styles.color == usage_text.styles.color
         assert isinstance(task_md.content, Text)  # No Markdown paragraph padding.
-        assert app.query_one("#status_form", VerticalScroll).max_scroll_x == 0
+        assert status_form.max_scroll_x == 0
         assert app.query_one("#composer").has_focus
 
         app.session.task_list_markdown = "- [ ] Inspect sidebar\n- [x] Preserve existing state"
         app._refresh_planning_sidebar()
         _settle(app._usage_ledger, inp=1200, out=100, cache_read=800)
         app._refresh_status_dashboard()
-        await _wait_for_layout(pilot, lambda: usage.size.height > 1 and tasks.size.height > 1)
+        await wait_for_layout(pilot, lambda: usage.size.height > 1 and tasks.size.height > 1)
 
         assert not usage.has_class("empty-state")
         assert not tasks.has_class("empty-state")
@@ -66,7 +73,7 @@ async def test_empty_rows_are_single_line_and_populated_cards_restore(
         # A whitespace-only task list is empty for display, never rewritten in storage.
         app.session.task_list_markdown = " \n\t "
         app._refresh_planning_sidebar()
-        await _wait_for_layout(pilot, lambda: tasks.size.height == 1)
+        await wait_for_layout(pilot, lambda: tasks.size.height == 1)
         assert task_md.source == "Task List · Not set"
         assert app.session.task_list_markdown == " \n\t "
         assert usage.size.height > 1
@@ -87,10 +94,10 @@ async def test_task_tool_contract_and_reset_preserve_lifetime_usage(
         app._refresh_status_dashboard()
         tasks = app.query_one("#status_task_list_section")
         usage = app.query_one("#status_usage_section")
-        await _wait_for_layout(pilot, lambda: tasks.size.height > 1 and usage.size.height > 1)
+        await wait_for_layout(pilot, lambda: tasks.size.height > 1 and usage.size.height > 1)
 
         await app._reset_current_thread()
-        await _wait_for_layout(pilot, lambda: tasks.size.height == 1)
+        await wait_for_layout(pilot, lambda: tasks.size.height == 1)
         assert await tools["get_task_list"]() == "No task list has been set."
         assert app.store.load(app.session.session_id).task_list_markdown == ""
         assert not usage.has_class("empty-state")
@@ -98,8 +105,9 @@ async def test_task_tool_contract_and_reset_preserve_lifetime_usage(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 32), (120, 24), (180, 48)])
 async def test_hidden_sidebar_receives_updates_and_survives_resize(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, size: tuple[int, int]
 ) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -108,20 +116,24 @@ async def test_hidden_sidebar_receives_updates_and_survives_resize(
         _settle(app._usage_ledger, inp=100, out=50)
         app._refresh_planning_sidebar()
         app._refresh_status_dashboard()
-        await pilot.resize_terminal(80, 32)
+        await pilot.resize_terminal(*size)
         app._set_sidebar_visible(True)
         tasks = app.query_one("#status_task_list_section")
         usage = app.query_one("#status_usage_section")
-        await _wait_for_layout(pilot, lambda: tasks.size.height > 1 and usage.size.height > 1)
+        status_form = app.query_one("#status_form", VerticalScroll)
+        # Card heights settle before the vertical scrollbar's width reflow.
+        await wait_for_layout(
+            pilot, lambda: tasks.size.height > 1 and usage.size.height > 1 and status_form.max_scroll_x == 0
+        )
         assert app.query_one("#status_task_list_markdown", PlanningMarkdown).source == "- [ ] Added while hidden"
         assert "150" in str(app.query_one("#status_usage", Static).render())
-        assert app.query_one("#status_form", VerticalScroll).max_scroll_x == 0
+        assert status_form.max_scroll_x == 0
 
         app._set_sidebar_visible(False)
         app.session.task_list_markdown = ""
         app._refresh_planning_sidebar()
         app._set_sidebar_visible(True)
-        await _wait_for_layout(pilot, lambda: tasks.size.height == 1)
+        await wait_for_layout(pilot, lambda: tasks.size.height == 1)
         assert usage.size.height > 1
 
 
@@ -146,7 +158,7 @@ async def test_restored_session_starts_with_full_cards(tmp_path: Path, monkeypat
     async with restored.run_test(size=(100, 48)) as pilot:
         tasks = restored.query_one("#status_task_list_section")
         usage = restored.query_one("#status_usage_section")
-        await _wait_for_layout(pilot, lambda: tasks.size.height > 1 and usage.size.height > 1)
+        await wait_for_layout(pilot, lambda: tasks.size.height > 1 and usage.size.height > 1)
         assert not tasks.has_class("empty-state")
         assert not usage.has_class("empty-state")
         assert restored.query_one("#status_task_list_markdown", PlanningMarkdown).source == "- [x] Recorded task"
