@@ -113,6 +113,7 @@ jobs:
       # overhead, and the badge job consumes this job's coverage.xml artifact.
       - name: Run fast tests
         if: needs.changes.outputs.coverage-badge-only != 'true'
+        timeout-minutes: 30
         run: |
           if [ "${{ matrix.python-version }}" = "3.12" ]; then
             ./run_tests.sh --coverage
