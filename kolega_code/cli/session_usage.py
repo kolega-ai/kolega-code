@@ -68,7 +68,6 @@ class UsageCloseResult:
 
     status: CloseStatus
     io_errors: int = 0
-    close_wait_timeouts: int = 0
 
     @property
     def committed(self) -> bool:
@@ -162,7 +161,6 @@ class SessionUsageSink:
         self._close_result: Optional[UsageCloseResult] = None
         self._stop_queued = False
         self._io_errors = 0
-        self._close_wait_timeouts = 0
         self._requests: dict[tuple[str, str], dict[str, Any]] = {}
         self._owners: dict[tuple[str, str], _RequestOwner] = {}
         self._revisions: dict[tuple[str, str], int] = {}
@@ -288,7 +286,7 @@ class SessionUsageSink:
     def _begin_close(self) -> asyncio.Task[UsageCloseResult]:
         if self._close_task is None:
             self._closed = True
-            self._close_result = UsageCloseResult("pending", self._io_errors, self._close_wait_timeouts)
+            self._close_result = UsageCloseResult("pending", self._io_errors)
             self._close_task = asyncio.create_task(self._finish_run())
         return self._close_task
 
@@ -306,8 +304,7 @@ class SessionUsageSink:
         except TimeoutError:
             if close_task.done():
                 return close_task.result()
-            self._close_wait_timeouts += 1
-            self._close_result = UsageCloseResult("pending", self._io_errors, self._close_wait_timeouts)
+            self._close_result = UsageCloseResult("pending", self._io_errors)
             return self._close_result
 
     async def wait_closed(self) -> UsageCloseResult:
@@ -324,7 +321,7 @@ class SessionUsageSink:
                     await self._stop_drainer()
                     if self._close_result is None or self._close_result.status == "pending":
                         self._ledger.note_persist_failure()
-                        self._close_result = UsageCloseResult("unknown", self._io_errors, self._close_wait_timeouts)
+                        self._close_result = UsageCloseResult("unknown", self._io_errors)
                     return self._close_result
 
     async def _finish_run(self) -> UsageCloseResult:
@@ -384,7 +381,7 @@ class SessionUsageSink:
                 status = receipt.result()
             elif status == "unknown":
                 self._ledger.note_persist_failure()
-            self._close_result = UsageCloseResult(status, self._io_errors, self._close_wait_timeouts)
+            self._close_result = UsageCloseResult(status, self._io_errors)
         return self._close_result
 
     async def _stop_drainer(self) -> None:
