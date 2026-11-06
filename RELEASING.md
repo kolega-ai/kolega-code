@@ -1,7 +1,7 @@
 # Releasing Kolega Code
 
 This project publishes the `kolega-code` package to PyPI and serves the public
-installer from `https://kolega.dev/install-kolega-code.sh`. Each published
+installer from `https://kolega.ai/code/install.sh`. Each published
 version should also have a GitHub Release for its matching tag.
 
 ## Release process
@@ -165,24 +165,21 @@ the organization request.
    The release workflow publishes to PyPI automatically when a release tag is
    pushed; no manual deployment approval is required.
 
-## Installer handoff
+## Installer
 
-The canonical installer source is tracked at:
+The installer source is tracked at:
 
 ```text
 scripts/install-kolega-code.sh
 ```
 
-The `kolega.dev` site repo should publish that file verbatim at:
-
-```text
-https://kolega.dev/install-kolega-code.sh
-```
-
-After updating the site, verify:
+`https://kolega.ai/code/install.sh` redirects to that file on `main`, via a
+rule in the kolega-website repo's `next.config.mjs`. There is no copy to
+publish: an installer change is live as soon as it merges, so it must work
+with the release currently on PyPI. After merging one, verify:
 
 ```bash
-curl -fsSL https://kolega.dev/install-kolega-code.sh | sh
+curl -fsSL https://kolega.ai/code/install.sh | sh
 ```
 
 ## Transfer to the PyPI organization

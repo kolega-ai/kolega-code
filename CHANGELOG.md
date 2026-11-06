@@ -8,6 +8,9 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Changed
 
+- The install script now lives at `https://kolega.ai/code/install.sh`, which
+  always serves the current script from this repository:
+  `curl -fsSL https://kolega.ai/code/install.sh | sh`.
 - The managed Python eval kernel now always provisions CPython 3.14, independently
   of the CLI's Python version, with numpy 2.5.4 and matplotlib 3.11.2. Runtime
   upgrades use separate version/bundle directories, and failed builds leave

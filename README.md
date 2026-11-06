@@ -108,7 +108,7 @@ for Zed, VS Code, and other ACP clients is in the
 **1. Install** with the script:
 
 ```bash
-curl -fsSL https://kolega.dev/install-kolega-code.sh | sh
+curl -fsSL https://kolega.ai/code/install.sh | sh
 ```
 
 Or with [uv](https://docs.astral.sh/uv/) (or `pip`):
