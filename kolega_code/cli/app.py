@@ -1221,6 +1221,7 @@ class KolegaCodeApp(
             name=record.name,
             title=record.title,
             description=record.description,
+            title_pinned=record.title_pinned,
             created_at=record.created_at,
             updated_at=record.updated_at,
             config=dict(record.config),

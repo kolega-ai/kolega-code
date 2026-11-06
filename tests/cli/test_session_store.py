@@ -139,6 +139,23 @@ def test_session_record_name_and_title_decoupled(tmp_path: Path) -> None:
     assert legacy_loaded.title == "legacy-slug-1234"
 
 
+def test_title_pin_round_trips_and_defaults_off_for_older_records(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {}, name="worker-43")
+    assert record.title_pinned is False
+
+    record.title = "Payments Platform Refactor"
+    record.title_pinned = True
+    store.save(record)
+    assert store.load(record.session_id).title_pinned is True
+
+    meta = record.to_metadata_dict()
+    meta.pop("title_pinned")
+    assert SessionRecord.from_dict(meta).title_pinned is False
+
+
 def test_parent_session_id_round_trips_through_store(tmp_path: Path) -> None:
     """Handoff lineage persists: the child records its parent across save/load."""
     project = tmp_path / "project"

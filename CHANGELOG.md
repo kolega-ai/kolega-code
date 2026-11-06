@@ -16,9 +16,15 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   manually installed eval packages must be reinstalled, while configured
   `eval_kernel_packages` migrate automatically. `eval_python_version` is
   deprecated and ignored; `eval_python_path` remains an explicit unbundled override.
+- Automatic session titles no longer get reworded after every turn: the title
+  generator keeps the current title unless you move the session on to a
+  different task. The description still updates each turn.
 
 ### Fixed
 
+- A title set with `/retitle <title>` is now pinned. The automatic refresh after
+  each turn no longer replaces it, and the pin is saved with the session.
+  `/retitle` with no title unpins it and generates a new title and description.
 - Project-memory tools now accept `file_path` as an alias for `path`, and reject
   missing or unknown arguments with the tool's usage, instead of reporting an
   opaque storage failure. Unexpected memory failures name the error type, and

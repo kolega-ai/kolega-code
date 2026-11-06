@@ -463,7 +463,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._schedule_primary_focus_restore()
 
     def _maybe_trigger_session_metadata(self) -> None:
-        """Trigger background session title and description generation if turn meets depth."""
+        """Refresh the session title and description in the background once there is an exchange."""
         if self._exit or self.agent is None or not self.agent.history:
             return
         if len(self.agent.history) < 2:
@@ -475,15 +475,18 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             exclusive=True,
         )
 
-    async def _update_session_metadata_worker(self, *, force_notify: bool = False) -> None:
-        """Generate descriptive session title and description in the background."""
+    async def _update_session_metadata_worker(self, *, user_requested: bool = False) -> None:
+        """Generate descriptive session title and description in the background.
+
+        ``user_requested`` (bare ``/retitle``) asks for a fresh title and reports the result.
+        """
         if self.agent is None or not getattr(self.agent, "llm", None):
-            if force_notify:
+            if user_requested:
                 self._notify_user("Cannot generate metadata: agent not ready.", severity="warning")
             return
         messages = list(self.agent.history)
         if len(messages) < 2:
-            if force_notify:
+            if user_requested:
                 self._notify_user("Not enough conversation history to generate title.", severity="warning")
             return
 
@@ -498,19 +501,23 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
 
         model_cfg = getattr(self.agent, "primary_model_config", None)
         model = model_cfg.model if model_cfg is not None else "fast"
+        # Offer only an automatic title: the name is a placeholder, and weighing a pinned one wastes the budget.
+        keep_title = not (user_requested or self.session.title_pinned or self.session.title == self.session.name)
         metadata = await generate_session_metadata(
             messages,
             llm=self.agent.llm,
             model=model,
             secret_values=secret_values,
+            current_title=self.session.title if keep_title else "",
         )
         if metadata is None:
-            if force_notify:
+            if user_requested:
                 self._notify_user("Could not generate session title.", severity="warning")
             return
 
         changed = False
-        if metadata.title and self.session.title != metadata.title:
+        # Read the pin after the model call: /retitle <title> can land while it runs.
+        if metadata.title and not self.session.title_pinned and self.session.title != metadata.title:
             self.session.title = metadata.title
             changed = True
         if metadata.description and self.session.description != metadata.description:
@@ -521,11 +528,11 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             await self._save_session_async()
             self._update_mode_chrome()
 
-        if force_notify:
+        if user_requested:
             self._add_conversation_entry(
                 tui_state.ConversationEntry(
                     kind="system",
-                    content=f"Session retitled: **{self.session.title}**"
+                    content=f"Session retitled: '{self.session.title}'"
                     + (f"\n{self.session.description}" if self.session.description else ""),
                 )
             )

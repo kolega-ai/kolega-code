@@ -139,6 +139,31 @@ async def test_generate_session_metadata_success_and_redaction() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("current_title", ["", "Payments Platform Refactor"])
+async def test_generate_session_metadata_offers_current_title(current_title: str) -> None:
+    llm = MagicMock()
+    captured: list[Any] = []
+
+    async def mock_stream(**kwargs):
+        captured.extend(kwargs["messages"])
+        return FakeStream('{"title": "Payments Platform Refactor", "description": "Refactoring payments."}')
+
+    llm.stream = mock_stream
+    messages = [
+        Message(role="user", content=[TextBlock(text="Refactor the payments platform")]),
+        Message(role="assistant", content=[TextBlock(text="Started with the webhook handler.")]),
+    ]
+
+    await generate_session_metadata(messages, llm=llm, model="test-model", current_title=current_title)
+
+    prompt_text = captured[0].content[0].text
+    if current_title:
+        assert prompt_text.startswith(f"Current title: {current_title}\n\n")
+    else:
+        assert "Current title:" not in prompt_text
+
+
+@pytest.mark.asyncio
 async def test_generate_session_metadata_cancelled() -> None:
     cancel_event = asyncio.Event()
     cancel_event.set()
