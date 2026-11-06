@@ -676,7 +676,9 @@ def test_foreground_watchdog_covers_cancellation_resistant_asyncio_run_teardown(
 
         original = main._arm_exit_watchdog
         def arm(*, seconds, force_exit):
-            return original(seconds=0.1, force_exit=force_exit)
+            # Outlast the loop's cancellation of the resistant task; 0.1s raced a
+            # loaded runner and force-exited before the task printed its marker.
+            return original(seconds=2.0, force_exit=force_exit)
         main._arm_exit_watchdog = arm
 
         async def run(args, *, on_shutdown):
