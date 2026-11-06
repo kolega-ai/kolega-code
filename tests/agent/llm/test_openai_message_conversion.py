@@ -1,9 +1,9 @@
 import asyncio
+from types import SimpleNamespace
 
 from kolega_code.llm.models import (
     ImageBlock,
     Message,
-    MessageChunk,
     MessageHistory,
     ThinkingBlock,
     ToolCall,
@@ -183,40 +183,6 @@ def test_openai_stream_reasoning_content_maps_to_thinking_block():
     assert message.stop_reason == "end_turn"
 
 
-def test_openai_stream_chunk_reasoning_content_delta_maps_to_thinking_chunk():
-    class Delta:
-        content = None
-        reasoning_content = "reasoning delta"
-
-    class Choice:
-        delta = Delta()
-
-    class Chunk:
-        choices = [Choice()]
-
-    chunk = MessageChunk.from_openai(Chunk())
-
-    assert chunk.type == "thinking"
-    assert chunk.thinking == "reasoning delta"
-
-
-def test_openai_stream_chunk_reasoning_delta_maps_to_thinking_chunk():
-    class Delta:
-        content = None
-        reasoning = "ollama reasoning delta"
-
-    class Choice:
-        delta = Delta()
-
-    class Chunk:
-        choices = [Choice()]
-
-    chunk = MessageChunk.from_openai(Chunk())
-
-    assert chunk.type == "thinking"
-    assert chunk.thinking == "ollama reasoning delta"
-
-
 def test_openai_stream_wrapper_accumulates_reasoning_field_in_final_message():
     class Delta:
         def __init__(self, content=None, reasoning=None):
@@ -273,6 +239,55 @@ def test_openai_stream_wrapper_accumulates_reasoning_field_in_final_message():
     assert message.content[1].text == "final answer"
     assert message.stop_reason == "end_turn"
     assert message.usage_metadata["provider"] == "ollama_cloud"
+
+
+def _wire_chunk(content=None, reasoning_content=None, finish_reason=None):
+    delta = SimpleNamespace(content=content, reasoning_content=reasoning_content, tool_calls=None)
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta, finish_reason=finish_reason)], usage=None)
+
+
+def _stream_through_wrapper(wire_chunks):
+    class FakeOpenAIStream:
+        def __init__(self):
+            self.chunks = iter(wire_chunks)
+
+        async def __anext__(self):
+            try:
+                return next(self.chunks)
+            except StopIteration:
+                raise StopAsyncIteration
+
+        async def aclose(self):
+            pass
+
+    async def run():
+        wrapper = OpenAIStreamWrapper(FakeOpenAIStream(), provider_name="refuseless")
+        async with wrapper:
+            chunks = [chunk async for chunk in wrapper]
+            final = await wrapper.get_final_message()
+        return chunks, final
+
+    return asyncio.run(run())
+
+
+def test_openai_stream_wrapper_streams_answer_text_sharing_a_delta_with_reasoning():
+    chunks, message = _stream_through_wrapper(
+        [
+            _wire_chunk(reasoning_content="Plan the ", content=""),
+            _wire_chunk(reasoning_content="reply.", content="Su"),
+            _wire_chunk(content="re, here it is."),
+            _wire_chunk(content="", finish_reason="stop"),
+        ]
+    )
+
+    assert [(chunk.type, chunk.thinking, chunk.text) for chunk in chunks if chunk.type != "ignore"] == [
+        ("thinking", "Plan the ", None),
+        ("thinking", "reply.", None),
+        ("text", None, "Su"),
+        ("text", None, "re, here it is."),
+    ]
+    assert isinstance(message.content[1], TextBlock)
+    assert message.content[1].text == "".join(chunk.text or "" for chunk in chunks if chunk.type == "text")
 
 
 def test_openai_provider_generate_stamps_ollama_cloud_provider_name_without_usage(monkeypatch):

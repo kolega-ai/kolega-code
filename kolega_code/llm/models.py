@@ -1371,34 +1371,6 @@ class MessageChunk:
         return cls(type="ignore", text="")
 
     @classmethod
-    def from_openai(cls, chunk):
-        """
-        Converts an OpenAI ChatCompletion chunk to a MessageChunk instance.
-
-        Args:
-            chunk: The OpenAI ChatCompletion chunk from the streaming response
-
-        Returns:
-            MessageChunk: A unified message chunk representation
-        """
-        delta = chunk.choices[0].delta
-
-        # Fireworks and other OpenAI-compatible reasoning models stream their
-        # reasoning separately from answer text. Ollama Cloud uses the
-        # OpenAI-compatible non-standard "reasoning" field instead of
-        # "reasoning_content".
-        reasoning_content = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
-        if reasoning_content:
-            return cls(type="thinking", thinking=reasoning_content)
-
-        # Handle text content
-        if delta.content is not None:
-            return cls(type="text", text=delta.content)
-
-        # Default empty chunk if no content or tool calls
-        return cls(type="ignore", text="")
-
-    @classmethod
     def from_google(cls, chunk):
         if chunk.text:
             return cls(type="text", text=chunk.text)
