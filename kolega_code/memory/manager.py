@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import threading
 from collections.abc import Mapping
 from contextlib import contextmanager
@@ -513,6 +514,7 @@ class ProjectMemoryManager:
         binding: MemoryToolBinding,
         source_backend: MemoryBackend,
     ) -> MemoryToolBinding:
+        @functools.wraps(binding.handler)
         def handler(*args: Any, **kwargs: Any) -> Any:
             if binding.mutating:
                 with self._prepared_mutation():

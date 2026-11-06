@@ -1,12 +1,13 @@
+import functools
 import inspect
 from pathlib import Path
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, List, Optional, Sequence, Union
+from typing import Any, Awaitable, Callable, List, Optional, Sequence, Union
 
 from .common import LogMixin
 from kolega_code.config import AgentConfig, EditProtocol
 from kolega_code.llm.models import ImageBlock, ToolDefinition
-from kolega_code.memory import ProjectMemoryManager
+from kolega_code.memory import MemoryToolBinding, ProjectMemoryManager
 from kolega_code.tools import Tool, ToolRegistry
 from kolega_code.scratchpad import expand_scratchpad_reference
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
@@ -1256,20 +1257,27 @@ class ToolCollection(LogMixin):
                 input_schema=dict(definition_data.get("input_schema", {"type": "object"})),
             )
 
-            async def handler(_binding=binding, **inputs):
-                return await self.memory_tool.invoke(_binding, **inputs)
-
             registry.add(
                 Tool(
                     name=binding.name,
                     definition=definition,
-                    handler=handler,
+                    handler=self._memory_tool_handler(binding),
                     groups=frozenset({"memory_tools"}),
                     parallel_safe=not binding.mutating,
+                    log_debug=self._log_alias_hit,
                 )
             )
 
         return registry
+
+    def _memory_tool_handler(self, binding: MemoryToolBinding) -> Callable[..., Awaitable[str]]:
+        # Carry the backend handler's signature so dispatch aliases and validates
+        # arguments instead of the backend raising a TypeError mid-call.
+        @functools.wraps(binding.handler)
+        async def handler(**inputs: Any) -> str:
+            return await self.memory_tool.invoke(binding, **inputs)
+
+        return handler
 
     def _should_include_memory_binding(self, name: str, *, mutating: bool) -> bool:
         """Memory capability is backend-driven; exact host policy remains final."""

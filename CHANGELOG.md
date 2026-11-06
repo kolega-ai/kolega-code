@@ -17,6 +17,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   `eval_kernel_packages` migrate automatically. `eval_python_version` is
   deprecated and ignored; `eval_python_path` remains an explicit unbundled override.
 
+### Fixed
+
+- Project-memory tools now accept `file_path` as an alias for `path`, and reject
+  missing or unknown arguments with the tool's usage, instead of reporting an
+  opaque storage failure. Unexpected memory failures name the error type, and
+  the full error is kept in the local session log and diagnostics.
+
 ### Security
 
 - Live sharing now requires a token and validates Host and Origin headers for

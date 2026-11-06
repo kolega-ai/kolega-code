@@ -27,6 +27,20 @@ ALIAS_CASES = [
     ("eval", "eval", {"command": "print(1)"}, {"code": "print(1)"}),
     ("read", "read", {"path": "a.py"}, {"file_path": "a.py"}),
     ("claude_write", "write", {"path": "a.py", "content": "hello"}, {"file_path": "a.py", "content": "hello"}),
+    ("read_memory", "read_memory", {"file_path": "notes.md"}, {"path": "notes.md"}),
+    (
+        "write_memory",
+        "write_memory",
+        {"content": "fact", "file_path": "notes.md"},
+        {"content": "fact", "path": "notes.md"},
+    ),
+    (
+        "edit_memory",
+        "edit_memory",
+        {"old_string": "a", "new_string": "b", "file_path": "notes.md"},
+        {"old_string": "a", "new_string": "b", "path": "notes.md"},
+    ),
+    ("delete_memory", "delete_memory", {"file_path": "notes.md"}, {"path": "notes.md"}),
 ]
 
 # One row per rename alias: alias + canonical together -> canonical wins.
@@ -46,6 +60,20 @@ CANONICAL_WINS_CASES = [
         {"path": "a.py", "content": "x", "file_path": "b.py"},
         {"file_path": "b.py", "content": "x"},
     ),
+    ("read_memory", "read_memory", {"file_path": "a.md", "path": "b.md"}, {"path": "b.md"}),
+    (
+        "write_memory",
+        "write_memory",
+        {"content": "x", "file_path": "a.md", "path": "b.md"},
+        {"content": "x", "path": "b.md"},
+    ),
+    (
+        "edit_memory",
+        "edit_memory",
+        {"old_string": "a", "new_string": "b", "file_path": "a.md", "path": "b.md"},
+        {"old_string": "a", "new_string": "b", "path": "b.md"},
+    ),
+    ("delete_memory", "delete_memory", {"file_path": "a.md", "path": "b.md"}, {"path": "b.md"}),
 ]
 
 

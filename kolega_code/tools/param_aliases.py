@@ -110,6 +110,12 @@ PARAM_ALIASES: Dict[str, Dict[str, ParamAlias]] = {
     "write": {
         "path": ParamAlias("file_path"),
     },
+    # Seen 3× (write_memory 2, read_memory 1): the claude_code file tools spell
+    # the path ``file_path``. Edit and delete share the same parameter.
+    "read_memory": {"file_path": ParamAlias("path")},
+    "write_memory": {"file_path": ParamAlias("path")},
+    "edit_memory": {"file_path": ParamAlias("path")},
+    "delete_memory": {"file_path": ParamAlias("path")},
     # ``search_codebase`` (path=…, max_results=…) and ``find_files_by_pattern``
     # (path→pattern) aliases were removed with the file-discovery tools
     # themselves — both were merged into ``glob`` and then deleted in favor of

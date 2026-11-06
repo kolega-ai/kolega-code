@@ -587,7 +587,7 @@ class MarkdownMemoryBackend:
 
 def _encode_candidate(content: Any) -> bytes:
     if not isinstance(content, str):
-        raise TypeError("memory content must be text")
+        raise MemorySafetyError("memory content must be text")
     return content.encode("utf-8")
 
 
