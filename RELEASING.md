@@ -136,7 +136,7 @@ because those forms can select and recreate the development `.venv`.
 8. Verify the release:
 
    ```bash
-   uv tool install --force kolega-code
+   kolega-code update
    kolega-code --version
    gh release view v0.3.2 --repo kolega-ai/kolega-code
    ```

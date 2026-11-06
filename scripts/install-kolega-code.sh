@@ -112,8 +112,15 @@ if [ "${KOLEGA_CODE_VERSION:-}" ]; then
     PACKAGE_SPEC="$PACKAGE_NAME==$KOLEGA_CODE_VERSION"
 fi
 
+# Without --python, uv uses its default interpreter, often a release kolega-code's pinned
+# dependencies ship no wheels for yet. Keep in step with TOOL_PYTHON in kolega_code/cli/updater.py.
+PYTHON_REQUEST=">=3.11,<3.15"
+if [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = x86_64 ]; then
+    PYTHON_REQUEST=">=3.11,<3.13"
+fi
+
 info "Installing or updating $PACKAGE_SPEC..."
-uv tool install --force --upgrade "$PACKAGE_SPEC"
+uv tool install --force --upgrade --python "$PYTHON_REQUEST" "$PACKAGE_SPEC"
 
 if ! have "$PACKAGE_NAME"; then
     uv tool update-shell >/dev/null 2>&1 || true

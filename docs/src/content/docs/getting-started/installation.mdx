@@ -7,14 +7,19 @@ import { Aside, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 ## Requirements
 
-- **Python 3.11 or newer**
+- **Python 3.11–3.14** (3.11 or 3.12 on Intel Macs). The installer and
+  `kolega-code update` choose a compatible version for you, and uv downloads
+  one if none is installed.
 - An API key for at least one [supported provider](../../configuration/providers-and-models/)
 
-On **Intel macOS 12 Monterey**, use **Python 3.11 or 3.12**. The document
-conversion dependency's Python 3.13 wheels require newer macOS. To select a
-compatible interpreter explicitly:
+`uv tool install` uses uv's newest Python unless you choose one. Pass a
+supported version when that is 3.15 or newer, and always on Intel Macs: the
+document conversion dependency has no Intel wheels for Python 3.14, and its
+3.13 wheels require macOS 13 or later.
 
 ```bash
+uv tool install --python 3.14 kolega-code
+# Intel Mac:
 uv tool install --python 3.12 kolega-code
 ```
 

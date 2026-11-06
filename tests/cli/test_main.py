@@ -440,13 +440,6 @@ def test_update_subcommand_reports_missing_uv(capsys, monkeypatch: pytest.Monkey
     assert "uv is required" in captured.err or "uv is required" in captured.out
 
 
-def test_install_script_upgrades_existing_install() -> None:
-    root = Path(__file__).resolve().parents[2]
-    installer = (root / "scripts" / "install-kolega-code.sh").read_text(encoding="utf-8")
-
-    assert 'uv tool install --force --upgrade "$PACKAGE_SPEC"' in installer
-
-
 def test_ask_skills_lists_discovered_skills_without_api_key(tmp_path: Path, capsys, isolated_cli_env: None) -> None:
     project = tmp_path / "project"
     project.mkdir()

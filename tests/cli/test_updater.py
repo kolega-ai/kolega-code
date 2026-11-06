@@ -1,7 +1,14 @@
 import json
+import platform
 import subprocess
+import sys
+from pathlib import Path
+
+import pytest
 
 from kolega_code.cli import updater
+
+INSTALLER = Path(__file__).resolve().parents[2] / "scripts" / "install-kolega-code.sh"
 
 
 class FakeResponse:
@@ -89,9 +96,61 @@ def test_run_self_update_runs_uv_tool_upgrade(monkeypatch) -> None:
     assert result.stdout == "ok\n"
     assert calls == [
         (
-            ["uv", "tool", "install", "--force", "--upgrade", "kolega-code"],
+            [
+                "uv",
+                "tool",
+                "install",
+                "--force",
+                "--upgrade",
+                "--python",
+                updater.tool_python(sys.platform, platform.machine()),
+                "kolega-code",
+            ],
             {"text": True, "capture_output": True, "check": False},
         )
+    ]
+
+
+def test_tool_python_narrows_only_for_intel_macs() -> None:
+    assert updater.tool_python("darwin", "x86_64") == updater.INTEL_MAC_TOOL_PYTHON
+    assert updater.tool_python("darwin", "arm64") == updater.TOOL_PYTHON
+    assert updater.tool_python("linux", "x86_64") == updater.TOOL_PYTHON
+    assert updater.tool_python("linux", "aarch64") == updater.TOOL_PYTHON
+
+
+@pytest.mark.parametrize(
+    "system,machine", [("Darwin", "arm64"), ("Darwin", "x86_64"), ("Linux", "x86_64"), ("Linux", "aarch64")]
+)
+def test_installer_requests_the_updater_python_range(tmp_path: Path, system: str, machine: str) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    uv_args = tmp_path / "uv-tool-args"
+    stubs = {
+        "uname": f'case "$1" in -s) echo {system} ;; -m) echo {machine} ;; esac',
+        "uv": f'if [ "$1" = tool ]; then printf "%s\\n" "$@" > "{uv_args}"; fi',
+        "kolega-code": "exit 0",
+        "rg": "echo ripgrep 15.0.0",
+    }
+    for name, body in stubs.items():
+        stub = bin_dir / name
+        stub.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        stub.chmod(0o755)
+
+    subprocess.run(
+        ["/bin/sh", str(INSTALLER)],
+        env={"HOME": str(tmp_path), "PATH": f"{bin_dir}:/usr/bin:/bin"},
+        capture_output=True,
+        check=True,
+    )
+
+    assert uv_args.read_text(encoding="utf-8").splitlines() == [
+        "tool",
+        "install",
+        "--force",
+        "--upgrade",
+        "--python",
+        updater.tool_python(system.lower(), machine),
+        "kolega-code",
     ]
 
 
