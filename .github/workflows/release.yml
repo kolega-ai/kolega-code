@@ -213,7 +213,7 @@ jobs:
             "PyPI: https://pypi.org/project/kolega-code/${version}/" \
             "Update with:" \
             '```bash' \
-            'uv tool install --force kolega-code' \
+            'kolega-code update' \
             '```' \
             "PyPI is the canonical package distribution. GitHub provides source archives for this release."
           )

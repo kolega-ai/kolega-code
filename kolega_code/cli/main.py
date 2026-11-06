@@ -1203,7 +1203,7 @@ def _arm_exit_watchdog(
 
 def _run_tui(args: argparse.Namespace) -> int:
     if importlib.util.find_spec("textual") is None:
-        print("Textual is not installed. Reinstall the CLI with: uv tool install --force kolega-code", file=sys.stderr)
+        print("Textual is not installed. Reinstall the CLI with: kolega-code update", file=sys.stderr)
         return 2
 
     store = _store_from_args(args)

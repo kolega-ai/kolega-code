@@ -19,8 +19,11 @@ from typing import Any
 import pytest
 from packaging.markers import Marker
 from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 from packaging.tags import Tag, compatible_tags, cpython_tags, mac_platforms
 from packaging.utils import parse_wheel_filename
+
+from kolega_code.cli.updater import INTEL_MAC_TOOL_PYTHON, TOOL_PYTHON
 
 LOCK_PATH = Path(__file__).resolve().parents[1] / "uv.lock"
 PROJECT_PATH = LOCK_PATH.with_name("pyproject.toml")
@@ -39,13 +42,29 @@ INTEL_MAC_TARGETS = [
 ]
 
 
-def _intel_mac_env(python: tuple[int, int], macos: tuple[int, int]) -> dict[str, str]:
+def _tool_pythons(request: str) -> list[tuple[int, int]]:
+    specifier = SpecifierSet(request)
+    return [(3, minor) for minor in range(30) if specifier.contains(f"3.{minor}")]
+
+
+# Every interpreter the installer and `kolega-code update` let uv pick. Apple Silicon
+# is checked at macOS 14, which onnxruntime's cp314 arm64 wheels require.
+TOOL_PYTHON_TARGETS = [
+    *(pytest.param(py, (14, 0), "arm64", id=f"macos14.0-arm64-cp3{py[1]}") for py in _tool_pythons(TOOL_PYTHON)),
+    *(
+        pytest.param(py, (12, 0), "x86_64", id=f"macos12.0-x86_64-cp3{py[1]}")
+        for py in _tool_pythons(INTEL_MAC_TOOL_PYTHON)
+    ),
+]
+
+
+def _mac_env(python: tuple[int, int], macos: tuple[int, int], machine: str = "x86_64") -> dict[str, str]:
     version = f"{python[0]}.{python[1]}"
     return {
         "implementation_name": "cpython",
         "implementation_version": f"{version}.0",
         "os_name": "posix",
-        "platform_machine": "x86_64",
+        "platform_machine": machine,
         "platform_python_implementation": "CPython",
         "platform_release": f"{macos[0] + 9}.0.0",
         "platform_system": "Darwin",
@@ -56,8 +75,8 @@ def _intel_mac_env(python: tuple[int, int], macos: tuple[int, int]) -> dict[str,
     }
 
 
-def _intel_mac_tags(python: tuple[int, int], macos: tuple[int, int]) -> set[Tag]:
-    platforms = list(mac_platforms(macos, "x86_64"))
+def _mac_tags(python: tuple[int, int], macos: tuple[int, int], machine: str = "x86_64") -> set[Tag]:
+    platforms = list(mac_platforms(macos, machine))
     return set(cpython_tags(python, None, platforms)) | set(compatible_tags(python, None, platforms))
 
 
@@ -111,18 +130,20 @@ def _has_installable_wheel(entry: dict[str, Any], supported: set[Tag]) -> bool:
     return False
 
 
-@pytest.mark.parametrize("python,macos", INTEL_MAC_TARGETS)
-def test_runtime_dependencies_have_intel_mac_wheels(python: tuple[int, int], macos: tuple[int, int]) -> None:
-    env = _intel_mac_env(python, macos)
-    supported = _intel_mac_tags(python, macos)
-
-    broken = [
+def _wheelless_runtime_entries(python: tuple[int, int], macos: tuple[int, int], machine: str) -> list[str]:
+    supported = _mac_tags(python, macos, machine)
+    return [
         f"{entry['name']}=={entry['version']}"
-        for entry in _reachable_runtime_entries(env)
+        for entry in _reachable_runtime_entries(_mac_env(python, macos, machine))
         # Sdist-only packages are pure source for every platform; a native one
         # would already fail everywhere, including CI.
         if entry.get("wheels") and not _has_installable_wheel(entry, supported)
     ]
+
+
+@pytest.mark.parametrize("python,macos", INTEL_MAC_TARGETS)
+def test_runtime_dependencies_have_intel_mac_wheels(python: tuple[int, int], macos: tuple[int, int]) -> None:
+    broken = _wheelless_runtime_entries(python, macos, "x86_64")
 
     assert not broken, (
         "These locked runtime dependencies ship wheels, but none installable on "
@@ -130,6 +151,18 @@ def test_runtime_dependencies_have_intel_mac_wheels(python: tuple[int, int], mac
         f"kolega-code` there falls back to a native source build: {broken}. "
         "Pin an older wheel-bearing release behind a platform marker in "
         "pyproject.toml, like the cryptography pin."
+    )
+
+
+@pytest.mark.parametrize("python,macos,machine", TOOL_PYTHON_TARGETS)
+def test_tool_python_range_has_mac_wheels(python: tuple[int, int], macos: tuple[int, int], machine: str) -> None:
+    broken = _wheelless_runtime_entries(python, macos, machine)
+
+    assert not broken, (
+        f"The installer and `kolega-code update` let uv pick CPython {python[0]}.{python[1]} on macOS "
+        f"{macos[0]}.{macos[1]} {machine}, but these locked runtime dependencies have no wheel there: {broken}. "
+        "Narrow TOOL_PYTHON / INTEL_MAC_TOOL_PYTHON in kolega_code/cli/updater.py and "
+        "scripts/install-kolega-code.sh, or pin wheel-bearing releases."
     )
 
 
@@ -155,7 +188,7 @@ def test_pdfium_pin_is_published_and_locked() -> None:
 @pytest.mark.parametrize("minimum_macos,expected", [(12, True), (13, False)])
 def test_monterey_wheel_baseline(minimum_macos: int, expected: bool) -> None:
     entry = {"wheels": [{"url": f"example-1.0-py3-none-macosx_{minimum_macos}_0_x86_64.whl"}]}
-    assert _has_installable_wheel(entry, _intel_mac_tags((3, 11), (12, 0))) is expected
+    assert _has_installable_wheel(entry, _mac_tags((3, 11), (12, 0))) is expected
 
 
 @pytest.mark.parametrize(
@@ -177,12 +210,12 @@ def test_legacy_onnx_pin_scope(python: tuple[int, int], system: str, machine: st
     legacy = [req for req in requirements if req.name == "onnxruntime" and str(req.specifier) == "==1.19.2"]
     assert len(legacy) == 1
     assert legacy[0].marker is not None
-    env = _intel_mac_env(python, (12, 0))
+    env = _mac_env(python, (12, 0))
     env.update(sys_platform=system, platform_machine=machine)
     assert legacy[0].marker.evaluate(env) is expected
 
 
 @pytest.mark.parametrize("python", [(3, 11), (3, 12)])
 def test_monterey_locks_compatible_onnx(python: tuple[int, int]) -> None:
-    entries = _reachable_runtime_entries(_intel_mac_env(python, (12, 0)))
+    entries = _reachable_runtime_entries(_mac_env(python, (12, 0)))
     assert [entry["version"] for entry in entries if entry["name"] == "onnxruntime"] == ["1.19.2"]

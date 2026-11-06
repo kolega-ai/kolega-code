@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import platform
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from importlib import metadata
 from typing import Optional
@@ -17,7 +19,29 @@ import kolega_code
 
 PACKAGE_NAME = "kolega-code"
 PYPI_JSON_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/json"
-UPDATE_COMMAND = ("uv", "tool", "install", "--force", "--upgrade", PACKAGE_NAME)
+# Without --python, uv uses its default interpreter, often a release our pinned dependencies
+# ship no wheels for yet. scripts/install-kolega-code.sh repeats both ranges.
+TOOL_PYTHON = ">=3.11,<3.15"
+# onnxruntime has no Intel-mac wheels for 3.14, and its 3.13 ones need macOS 13+.
+INTEL_MAC_TOOL_PYTHON = ">=3.11,<3.13"
+
+
+def tool_python(sys_platform: str, machine: str) -> str:
+    if sys_platform == "darwin" and machine == "x86_64":
+        return INTEL_MAC_TOOL_PYTHON
+    return TOOL_PYTHON
+
+
+UPDATE_COMMAND = (
+    "uv",
+    "tool",
+    "install",
+    "--force",
+    "--upgrade",
+    "--python",
+    tool_python(sys.platform, platform.machine()),
+    PACKAGE_NAME,
+)
 
 
 @dataclass(frozen=True)

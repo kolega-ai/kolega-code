@@ -23,6 +23,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   missing or unknown arguments with the tool's usage, instead of reporting an
   opaque storage failure. Unexpected memory failures name the error type, and
   the full error is kept in the local session log and diagnostics.
+- The installer and `kolega-code update` now ask uv for a supported Python
+  (3.11–3.14, or 3.11–3.12 on Intel Macs), downloading one when none is
+  installed. Before, uv picked its newest interpreter: on Python 3.15 several
+  dependencies have no wheels yet, so a fresh install failed building
+  tiktoken from source. Intel Macs no longer get 3.13 or 3.14, whose
+  onnxruntime wheels are missing or need macOS 13.
 
 ### Security
 
