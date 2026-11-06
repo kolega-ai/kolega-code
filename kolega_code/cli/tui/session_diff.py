@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import bisect
 import enum
+from collections import deque
 import hashlib
 import os
 import time
@@ -54,6 +55,13 @@ SPOOL_DIRNAME = "checkpoint-spool"
 MAX_DIFF_DECODE_BYTES = 4 * MAX_DIFF_INPUT_BYTES
 # Head shown on the Changes screen when a diff input is too large to diff.
 CHANGES_HEAD_MAX_LINES = 400
+# A capture copies at most this much inline; the rest is copied by backfill()
+# so a repo with a huge untracked set does not hold up the turn.
+INLINE_COPY_LIMIT_BYTES = 64 * 1024 * 1024
+INLINE_COPY_LIMIT_FILES = 2000
+# One backfill() call copies at most this much, then releases the caller's lock.
+BACKFILL_BATCH_BYTES = 32 * 1024 * 1024
+BACKFILL_BATCH_FILES = 500
 # Oldest turn checkpoints are evicted past this cap; checkpoint 0 never is.
 REWIND_MAX_CHECKPOINTS = 50
 # Committed-paths candidates per refresh are truncated to this many entries.
@@ -91,6 +99,7 @@ _MERGE_REFLOG_KINDS = frozenset({"merge", "pull", "commit (merge)", "rebase (mer
 
 NOT_RETAINED = "baseline content was not retained"
 TOO_LARGE_TO_COPY = "too large to keep a copy"
+COPY_PENDING = "changed before its checkpoint copy was made"
 DAMAGED_COPY = "checkpoint copy is damaged"
 
 BaselineSource = Literal["none", "store", "commit", "ledger"]
@@ -230,6 +239,10 @@ class SessionDiffTrackerBase:
         # is read and hashed once per content version, then stat-only.
         self._snapshot_cache: dict[str, FileBaseline] = {}
         self._streamed_sha_cache: dict[tuple[str, tuple[int, int]], Optional[str]] = {}
+        # (repo_path, stat-only baseline awaiting its copy, store limit it was
+        # captured under), in copy priority order. Not a dict: popping a dict's
+        # first item rescans its deleted slots, so draining it is quadratic.
+        self._pending: deque[tuple[str, FileBaseline, int]] = deque()
         self._abs_root = str(self.project_path)  # the directory _abs_path resolves repo paths against
 
     def close(self) -> None:
@@ -251,6 +264,7 @@ class SessionDiffTrackerBase:
         self._diff_cache_checkpoint_id = None
         self._snapshot_cache = {}
         self._streamed_sha_cache = {}
+        self._pending = deque()
         if self._store is not None:
             self._store.clear()
         self._store_limit = int(CHECKPOINT_STORE_BUDGET * BASELINE_STORE_SHARE)
@@ -273,6 +287,64 @@ class SessionDiffTrackerBase:
             del self._checkpoints[1]  # keep checkpoint 0, evict the oldest turn
             self._compact_history(self._checkpoints[1].checkpoint_id)
         return checkpoint
+
+    def copies_pending(self) -> bool:
+        return bool(self._pending)
+
+    def backfill(self) -> bool:
+        """Copy one batch of the files captures deferred. Returns whether any remain.
+
+        A file is copied only if its stat signature still matches the
+        checkpoint's; otherwise that version is gone and its baseline keeps
+        the COPY_PENDING reason.
+        """
+        copied_bytes = copied_files = 0
+        while self._pending and copied_bytes < BACKFILL_BATCH_BYTES and copied_files < BACKFILL_BATCH_FILES:
+            path, pending, limit = self._pending.popleft()
+            if self._stat_signature(path) != pending.sig:
+                continue
+            try:
+                data = self._read_path(path)
+            except OSError:
+                continue
+            if self._stat_signature(path) != pending.sig:
+                continue
+            copied_bytes += len(data)
+            copied_files += 1
+            saved_limit, self._store_limit = self._store_limit, limit
+            try:
+                baseline = self._retain(self._baseline_from_bytes(path, data, exists=True, sig=pending.sig), data)
+            finally:
+                self._store_limit = saved_limit
+            self._replace_pending(path, pending, baseline)
+        return bool(self._pending)
+
+    def _defer_copy(self, repo_path: str, st: os.stat_result) -> FileBaseline:
+        """A stat-only snapshot whose bytes backfill() copies later."""
+        baseline = FileBaseline(
+            path=repo_path,
+            exists=True,
+            sig=(st.st_mtime_ns, st.st_size),
+            size=st.st_size,
+            unavailable=COPY_PENDING,
+        )
+        self._drop_snapshot(repo_path)
+        self._snapshot_cache[repo_path] = baseline
+        self._pending.append((repo_path, baseline, self._store_limit))
+        return baseline
+
+    def _replace_pending(self, repo_path: str, pending: FileBaseline, baseline: FileBaseline) -> None:
+        history = self._history.get(repo_path)
+        if history is not None:
+            for index, (checkpoint_id, entry) in enumerate(history):
+                if entry is pending:
+                    history[index] = (checkpoint_id, baseline)
+                    self._acquire(baseline)
+        if self._snapshot_cache.get(repo_path) is pending:
+            self._snapshot_cache[repo_path] = baseline  # takes over the reference _retain added
+        else:
+            self._release(baseline)
+        self._diff_cache.pop(repo_path, None)
 
     def dirty_paths_at(self, checkpoint_id: int) -> frozenset[str]:
         """Paths that had a dirty baseline when the checkpoint was captured."""
@@ -514,11 +586,8 @@ class SessionDiffTrackerBase:
     # ---- content helpers -----------------------------------------------------
 
     def _stat_signature(self, repo_path: str) -> Optional[tuple[int, int]]:
-        try:
-            stat = os.stat(self._abs_path(repo_path))
-        except OSError:
-            return None
-        return (stat.st_mtime_ns, stat.st_size)
+        st = self._stat_path(repo_path)
+        return None if st is None else (st.st_mtime_ns, st.st_size)
 
     def _forget_cached_state(self, repo_path: str) -> None:
         """Drop the stat-keyed caches for a path we just rewrote.
@@ -537,12 +606,19 @@ class SessionDiffTrackerBase:
             self._release(cached)
 
     def _stat_path(self, repo_path: str) -> Optional[os.stat_result]:
-        # A plain string join: building a Path per file cost 3x the stat
-        # itself across tens of thousands of untracked files.
         try:
-            return os.stat(f"{self._abs_root}{os.sep}{repo_path}")
+            return os.stat(self._fs_path(repo_path))
         except OSError:
             return None
+
+    def _read_path(self, repo_path: str) -> bytes:
+        with open(self._fs_path(repo_path), "rb") as handle:
+            return handle.read()
+
+    def _fs_path(self, repo_path: str) -> str:
+        # A plain string join: building a Path per file cost 3x the stat
+        # itself across tens of thousands of untracked files.
+        return f"{self._abs_root}{os.sep}{repo_path}"
 
     def _snapshot_is_current(self, repo_path: str, st: Optional[os.stat_result]) -> bool:
         cached = self._snapshot_cache.get(repo_path)
@@ -568,7 +644,7 @@ class SessionDiffTrackerBase:
             )
         else:
             try:
-                data = self._abs_path(repo_path).read_bytes()
+                data = self._read_path(repo_path)
             except OSError:
                 return FileBaseline(path=repo_path, exists=True, binary_or_unreadable=True)
             baseline = self._retain(self._baseline_from_bytes(repo_path, data, exists=True, sig=sig), data)
@@ -739,6 +815,7 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
         # repo_path -> verdict: _is_under_project resolves symlinks, which is
         # too slow to repeat for tens of thousands of status paths per capture.
         self._under_project_cache: dict[str, bool] = {}
+        self._real_dir_cache: dict[str, str] = {}  # repo dir -> its realpath
         self._commit_cache: dict[tuple[str, str], FileBaseline] = {}
         # (old_sha, new_sha) -> paths that transition changed. Immutable by
         # construction, so entries never need invalidating.
@@ -838,8 +915,17 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
 
         # The store budget rations copies: uncommitted edits to tracked files
         # first, then untracked files smallest-first.
+        inline_bytes = inline_files = 0
         for path in sorted(unread, key=priority):
-            baselines[path] = self._snapshot_repo_path(path, stats[path])
+            st = stats[path]
+            copyable = st is not None and S_ISREG(st.st_mode) and st.st_size <= MAX_RETAINED_BYTES
+            if copyable and st is not None:
+                if inline_files >= INLINE_COPY_LIMIT_FILES or inline_bytes + st.st_size > INLINE_COPY_LIMIT_BYTES:
+                    baselines[path] = self._defer_copy(path, st)
+                    continue
+                inline_files += 1
+                inline_bytes += st.st_size
+            baselines[path] = self._snapshot_repo_path(path, st)
         return baselines
 
     def _candidate_paths(self, checkpoint: TurnCheckpoint, event_paths: Iterable[str]) -> set[str]:
@@ -940,11 +1026,20 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
         cached = self._under_project_cache.get(repo_path)
         if cached is not None:
             return cached
-        try:
-            (self.git_root / repo_path).resolve(strict=False).relative_to(self.project_path)
-            verdict = True
-        except ValueError:
-            verdict = False
+        abs_path = f"{self._abs_root}/{repo_path}"
+        if os.path.islink(abs_path):
+            resolved = os.path.realpath(abs_path)
+        else:
+            # Resolving the parent once per directory, not every component of
+            # every path, is what keeps a first scan of a huge untracked tree fast.
+            parent, _, name = repo_path.rpartition("/")
+            real_parent = self._real_dir_cache.get(parent)
+            if real_parent is None:
+                real_parent = os.path.realpath(f"{self._abs_root}/{parent}" if parent else self._abs_root)
+                self._real_dir_cache[parent] = real_parent
+            resolved = f"{real_parent}/{name}"
+        project = str(self.project_path)
+        verdict = resolved == project or resolved.startswith(f"{project}/")
         self._under_project_cache[repo_path] = verdict
         return verdict
 

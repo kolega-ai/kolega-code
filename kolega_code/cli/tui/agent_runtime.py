@@ -314,7 +314,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             if self.show_logs:
                 self._write_log(f"Checkpoint captured in {time.monotonic() - started:.2f}s", "debug")
         except Exception:
-            pass
+            return
+        self._start_checkpoint_backfill()
 
     def _agent_turn_stream(self, message: str, attachments: list[dict] | None = None):
         assert self.agent is not None
@@ -351,7 +352,13 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         await self._drain_pending_events()
         if self.agent_worker is not owner:
             return
-        self._start_session_diff_refresh()
+        if self._changes_inspector is not None:
+            self._start_session_diff_refresh()
+        else:
+            # Only the Changes screen reads the diff, and opening it refreshes.
+            # Scanning here would hold the lock the next turn's checkpoint needs.
+            self._mark_session_diff_dirty()
+            self._start_scope_probe()
         self._finalize_sub_agent_activities()
         self._finalize_workflow_activities()
 

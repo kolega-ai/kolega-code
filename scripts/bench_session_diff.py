@@ -111,6 +111,14 @@ def _timing_pass(root: Path) -> list[tuple[str, float]]:
     tracker = GitSessionDiffTracker.create(root)
     assert tracker is not None
     rows = [("startup baseline", _timed(lambda: tracker.capture_baseline("start")))]
+    backfill = getattr(tracker, "backfill", None)
+    if callable(backfill):
+
+        def drain() -> None:
+            while backfill():
+                pass
+
+        rows.append(("  then background copy", _timed(drain)))
     turn = iter(range(1, 1_000))
     rows.append(("turn capture, no changes", _median_seconds(lambda: tracker.capture_checkpoint(f"t{next(turn)}"), 5)))
 

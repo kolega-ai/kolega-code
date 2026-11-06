@@ -351,6 +351,7 @@ class KolegaCodeApp(
         self._session_diff_lock = threading.Lock()
         self._session_diff_dirty = False
         self._session_diff_refresh_running = False
+        self._checkpoint_backfill_running = False
         self._session_diff_timer: Optional[Timer] = None
         self._session_diff_baseline_id: Optional[int] = None
         self._rewind_running = False
@@ -2001,6 +2002,41 @@ class KolegaCodeApp(
         if generation != self._session_diff_generation or tracker is not self._session_diff_tracker:
             return
         self._start_scope_probe()
+        self._start_checkpoint_backfill()
+
+    def _start_checkpoint_backfill(self) -> None:
+        """Copy the files a capture deferred, in batches, off the turn path."""
+        tracker = self._session_diff_tracker
+        if tracker is None or self._checkpoint_backfill_running or not tracker.copies_pending():
+            return
+        try:
+            self._checkpoint_backfill_running = True
+            self.run_worker(
+                self._checkpoint_backfill_worker(tracker, self._session_diff_generation),
+                name="kolega-checkpoint-backfill",
+                group="checkpoint-backfill",
+            )
+        except Exception:
+            self._checkpoint_backfill_running = False
+
+    async def _checkpoint_backfill_worker(
+        self, tracker: tui_session_diff.SessionDiffTrackerBase, generation: int
+    ) -> None:
+        try:
+            while generation == self._session_diff_generation and tracker is self._session_diff_tracker:
+                # One batch per lock hold, so a turn checkpoint waits for at
+                # most one batch rather than the whole backlog.
+                if not await asyncio.to_thread(self._tracker_backfill, tracker):
+                    break
+        except Exception:
+            pass
+        finally:
+            self._checkpoint_backfill_running = False
+
+    def _tracker_backfill(self, tracker: tui_session_diff.SessionDiffTrackerBase) -> bool:
+        """Copy one backfill batch under the tracker lock. Worker threads only."""
+        with self._session_diff_lock:
+            return tracker.backfill()
 
     def _tracker_capture_baseline(self, tracker: tui_session_diff.SessionDiffTrackerBase, label: str) -> None:
         """Capture the session baseline under the tracker lock. Worker threads only."""
