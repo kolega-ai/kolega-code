@@ -54,6 +54,7 @@ These control the app and your session.
 | `/tasks` | Show the shared task list |
 | `/queue-clear` | Clear queued follow-up messages |
 | `/rewind` | Restore files and the conversation to before an earlier turn (`/rewind 2` goes two turns back). Checkpoint copies are kept on disk, up to 10 GB per session; files over 8 MB, or past that limit, show **can't rewind** in Changes and are skipped |
+| `/retitle` | Pin the session title (`/retitle <title>`) so automatic titles leave it alone; with no title, unpin it and generate a new title and description |
 | `/handoff` | Summarize this session and start a fresh one with the summary as context |
 | `/share` | Share a live link to this session (`/share lan`, `/share <port>`, `/share stop`) |
 | `/copy` | Copy the last response to the clipboard |

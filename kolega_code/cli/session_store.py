@@ -149,6 +149,8 @@ class SessionRecord:
     title: str = ""
     name: str = ""
     description: str = ""
+    # Set by /retitle <title>: automatic titling leaves a pinned title alone.
+    title_pinned: bool = False
     config: dict[str, Any] = field(default_factory=dict)
     history: list[dict[str, Any]] = field(default_factory=list)
     compaction: dict[str, Any] = field(default_factory=dict)
@@ -233,6 +235,7 @@ class SessionRecord:
             name=name,
             title=title,
             description=data.get("description") or "",
+            title_pinned=bool(data.get("title_pinned", False)),
             created_at=data["created_at"],
             updated_at=data["updated_at"],
             config=data.get("config") or {},
@@ -264,6 +267,7 @@ class SessionRecord:
             "name": self.name,
             "title": self.title,
             "description": self.description,
+            "title_pinned": self.title_pinned,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "config": self.config,

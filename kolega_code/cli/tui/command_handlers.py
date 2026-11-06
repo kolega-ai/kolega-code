@@ -687,28 +687,31 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         )
 
     async def _command_retitle(self, args: str) -> None:
-        """Set or regenerate this session's descriptive title and description."""
+        """Pin a title, or unpin it and regenerate the title and description."""
         title = args.strip()
+        if not title and (self._turn_active or self.agent_worker is not None or self._agent_execution_draining()):
+            self._notify_user("Cannot retitle while a turn is in progress.", severity="warning")
+            return
+
+        previous = (self.session.title, self.session.title_pinned)
+        self.session.title = title or self.session.title
+        self.session.title_pinned = bool(title)
+        try:
+            await self._save_session_async()
+        except Exception as exc:  # noqa: BLE001
+            self.session.title, self.session.title_pinned = previous
+            self._notify_user(f"Retitle failed: {exc}", severity="warning")
+            return
+
         if title:
-            previous = self.session.title
-            self.session.title = title
-            try:
-                await self._save_session_async()
-            except Exception as exc:  # noqa: BLE001
-                self.session.title = previous
-                self._notify_user(f"Retitle failed: {exc}", severity="warning")
-                return
             self._update_mode_chrome()
             self._add_conversation_entry(
                 tui_state.ConversationEntry(
                     kind="system",
-                    content=f"Session title updated: **{self.session.title}**",
+                    content=f"Session title pinned: '{title}'. Run /retitle without a title to return to "
+                    "automatic titles.",
                 )
             )
-            return
-
-        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
-            self._notify_user("Cannot retitle while a turn is in progress.", severity="warning")
             return
 
         self._add_conversation_entry(
@@ -718,7 +721,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             )
         )
         self.run_worker(
-            self._update_session_metadata_worker(force_notify=True),
+            self._update_session_metadata_worker(user_requested=True),
             name="kolega-session-metadata",
             group="metadata",
             exclusive=True,

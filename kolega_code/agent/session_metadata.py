@@ -32,6 +32,8 @@ Analyze the provided conversation transcript and generate:
 1. title: A concise, descriptive title in Natural Title Case (e.g. "Fix Authentication Middleware", "Add PostgreSQL Connection Pool", "Investigate Bug 662"). Maximum 60 characters. No surrounding quotes or Markdown formatting.
 2. description: A clear 1 to 2 sentence summary of what the session is working on, goals, and key progress or findings so far. Maximum 200 characters.
 
+If a current title is given, return it exactly unless the user has moved the session on to a different task. Do not reword a title that still fits.
+
 Respond ONLY with valid JSON in this exact structure:
 {
   "title": "Natural Title Case Title",
@@ -112,6 +114,7 @@ async def generate_session_metadata(
     temperature: float = 0.2,
     cancel_event: Optional[asyncio.Event] = None,
     secret_values: Sequence[str] = (),
+    current_title: str = "",
 ) -> Optional[SessionMetadata]:
     """Summarize ``messages`` into a title and description via the active LLM.
 
@@ -126,10 +129,10 @@ async def generate_session_metadata(
     try:
         stripped = replace_image_blocks_with_placeholders(list(messages), model)
         transcript = render_transcript(stripped)
-        bounded_transcript = _truncate_transcript(transcript)
-        scrubbed_transcript = scrub(bounded_transcript, secret_values)
-
-        user_content = f"Conversation transcript:\n\n{scrubbed_transcript}"
+        user_content = f"Conversation transcript:\n\n{_truncate_transcript(transcript)}"
+        if current_title:
+            user_content = f"Current title: {current_title}\n\n{user_content}"
+        user_content = scrub(user_content, secret_values)
         request_messages = MessageHistory([Message(role="user", content=[TextBlock(text=user_content)])])
         system_message = Message(role="system", content=[TextBlock(text=SESSION_METADATA_SYSTEM_PROMPT)])
 
