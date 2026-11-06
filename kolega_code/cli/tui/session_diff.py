@@ -6,7 +6,9 @@ in the tracked worktree, including shell-driven ones) and
 ``SnapshotLedgerDiffTracker`` for non-git projects (sees only edits recorded by
 the agent's snapshot service). The diff a checkpoint displays and the restore
 plan for that checkpoint are built from the same collected change records, so
-rewind always reverts exactly what is shown.
+rewind always reverts exactly what is shown. File contents are never held in
+memory: checkpoint copies live in an on-disk spool (``checkpoint_store``) and
+everything else is re-read from git, the working tree, or the snapshot ledger.
 
 Scope is per-worktree and per-session. Content that merely *arrived* in HEAD —
 merge second parents, fast-forwarded commits, rebase base moves, checkouts —
@@ -17,26 +19,40 @@ worktree), so it is neither shown nor restorable. See
 
 from __future__ import annotations
 
+import enum
 import hashlib
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from stat import S_ISREG
 from subprocess import DEVNULL, PIPE, CompletedProcess, run as subprocess_run
-from typing import TYPE_CHECKING, Iterable, Literal, Optional, Sequence
+from typing import TYPE_CHECKING, Iterable, Literal, Optional, Sequence, Union
 
-from kolega_code.agent.tool_backend.edit_preview import build_diff_preview
+from kolega_code.agent.tool_backend.edit_preview import MAX_DIFF_INPUT_BYTES, build_diff_preview
 from kolega_code.git_env import git_env
 from kolega_code.worktrees import list_worktrees
+
+from .checkpoint_store import CheckpointBlobStore
 
 if TYPE_CHECKING:
     from kolega_code.services.snapshots import FileState, SnapshotService
 
-# Checkpoint baseline bytes above this size are not retained for restore (the
-# diff preview still renders from the decoded content).
+# Files above this size are never read: they get a stat-signature baseline,
+# show as changed without a textual diff, and cannot be restored.
 MAX_RETAINED_BYTES = 8 * 1024 * 1024
+# Disk the checkpoint copies of one tracker may use.
+CHECKPOINT_STORE_BUDGET = 10 * 1024**3
+# Share of the budget the session-start capture may fill, so files changed
+# later in the session still get copies.
+BASELINE_STORE_SHARE = 0.8
+SPOOL_DIRNAME = "checkpoint-spool"
+# A side larger than this cannot fit build_diff_preview's character cap, so it
+# is never decoded (UTF-8 is at most 4 bytes per character).
+MAX_DIFF_DECODE_BYTES = 4 * MAX_DIFF_INPUT_BYTES
+# Head shown on the Changes screen when a diff input is too large to diff.
+CHANGES_HEAD_MAX_LINES = 400
 # Oldest turn checkpoints are evicted past this cap; checkpoint 0 never is.
 REWIND_MAX_CHECKPOINTS = 50
 # Committed-paths candidates per refresh are truncated to this many entries.
@@ -72,16 +88,30 @@ _COMMIT_REFLOG_KINDS = frozenset(
 _MERGE_REFLOG_KINDS = frozenset({"merge", "pull", "commit (merge)", "rebase (merge)"})
 
 
-@dataclass
+NOT_RETAINED = "baseline content was not retained"
+TOO_LARGE_TO_COPY = "too large to keep a copy"
+DAMAGED_COPY = "checkpoint copy is damaged"
+
+BaselineSource = Literal["none", "store", "commit", "ledger"]
+
+
+class _Unset(enum.Enum):
+    TOKEN = 0
+
+
+@dataclass(frozen=True, slots=True)
 class FileBaseline:
-    """A checkpoint baseline for one tracked path."""
+    """One path's state at a checkpoint. Bytes are loaded on demand from ``source``."""
 
     path: str  # tracker-relative, posix-style path
     exists: bool
-    content: Optional[str] = None
     binary_or_unreadable: bool = False
-    data: Optional[bytes] = None  # raw bytes for restore; None when not retained
     sha: Optional[str] = None  # sha256 of the file bytes, when read
+    sig: Optional[tuple[int, int]] = None  # (mtime_ns, size) of a working-tree snapshot
+    size: int = 0
+    source: BaselineSource = "none"  # where the bytes live; "none" when not retained
+    ref: Union[str, "FileState", None] = None  # commit sha ("commit") or FileState ("ledger")
+    unavailable: str = ""  # why the bytes were not retained
 
 
 @dataclass
@@ -108,6 +138,7 @@ class SessionDiffFile:
     adds: int = 0
     dels: int = 0
     message: str = ""
+    unrestorable: str = ""  # why a rewind would skip this file, "" when it can restore it
 
 
 @dataclass
@@ -167,6 +198,9 @@ class RewindDriftError(Exception):
         super().__init__(f"Files changed since the rewind was planned: {', '.join(paths)}")
 
 
+_BINARY_MESSAGE = "Binary or unreadable file changed; textual diff unavailable."
+
+
 class SessionDiffTrackerBase:
     """Checkpoint ladder, diff collection, and restore shared by both trackers.
 
@@ -174,18 +208,25 @@ class SessionDiffTrackerBase:
     rewinds. ``capture_baseline()`` must run before ``refresh()``.
     """
 
-    def __init__(self, project_path: Path) -> None:
+    def __init__(self, project_path: Path, *, store: Optional[CheckpointBlobStore] = None) -> None:
         self.project_path = project_path.resolve()
         self._checkpoints: list[TurnCheckpoint] = []
         self._next_checkpoint_id = 0
-        # sha256 -> (data, content): shared payloads so identical file versions
-        # across checkpoints cost one copy.
-        self._content_intern: dict[str, tuple[bytes, Optional[str]]] = {}
+        # Every "store" baseline held by a checkpoint or by _snapshot_cache owns
+        # one reference to its blob.
+        self._store = store
+        self._store_limit = CHECKPOINT_STORE_BUDGET
         self._diff_cache: dict[str, tuple[Optional[tuple[int, int]], Optional[SessionDiffFile]]] = {}
         self._diff_cache_checkpoint_id: Optional[int] = None
-        # repo_path -> (stat signature, baseline): shared by capture and refresh
-        # so a file is read and hashed once per content version, then stat-only.
-        self._snapshot_cache: dict[str, tuple[tuple[int, int], FileBaseline]] = {}
+        # repo_path -> latest snapshot: shared by capture and refresh so a file
+        # is read and hashed once per content version, then stat-only.
+        self._snapshot_cache: dict[str, FileBaseline] = {}
+        self._streamed_sha_cache: dict[tuple[str, tuple[int, int]], Optional[str]] = {}
+
+    def close(self) -> None:
+        """Delete the checkpoint copies. The tracker must not be used afterwards."""
+        if self._store is not None:
+            self._store.close()
 
     # ---- checkpoints ---------------------------------------------------------
 
@@ -193,11 +234,17 @@ class SessionDiffTrackerBase:
         """Capture checkpoint 0 (session start), resetting the ladder."""
         self._checkpoints = []
         self._next_checkpoint_id = 0
-        self._content_intern = {}
         self._diff_cache = {}
         self._diff_cache_checkpoint_id = None
         self._snapshot_cache = {}
-        self.capture_checkpoint(label)
+        self._streamed_sha_cache = {}
+        if self._store is not None:
+            self._store.clear()
+        self._store_limit = int(CHECKPOINT_STORE_BUDGET * BASELINE_STORE_SHARE)
+        try:
+            self.capture_checkpoint(label)
+        finally:
+            self._store_limit = CHECKPOINT_STORE_BUDGET
 
     def capture_checkpoint(self, label: str) -> TurnCheckpoint:
         checkpoint = TurnCheckpoint(
@@ -207,11 +254,14 @@ class SessionDiffTrackerBase:
             head_sha=self._current_head_sha(),
             dirty=self._capture_dirty_baselines(),
         )
+        for baseline in checkpoint.dirty.values():
+            self._acquire(baseline)
         self._next_checkpoint_id += 1
         self._checkpoints.append(checkpoint)
         while len(self._checkpoints) > REWIND_MAX_CHECKPOINTS:
-            del self._checkpoints[1]  # keep checkpoint 0, evict the oldest turn
-            self._rebuild_intern()
+            evicted = self._checkpoints.pop(1)  # keep checkpoint 0, evict the oldest turn
+            for baseline in evicted.dirty.values():
+                self._release(baseline)
         return checkpoint
 
     def checkpoints(self) -> list[TurnCheckpoint]:
@@ -231,29 +281,13 @@ class SessionDiffTrackerBase:
             raise ValueError(f"Unknown checkpoint id: {checkpoint_id}")
         return checkpoint
 
-    def _rebuild_intern(self) -> None:
-        self._content_intern = {}
-        for checkpoint in self._checkpoints:
-            for baseline in checkpoint.dirty.values():
-                if baseline.sha is not None and baseline.data is not None:
-                    self._content_intern.setdefault(baseline.sha, (baseline.data, baseline.content))
+    def _acquire(self, baseline: FileBaseline) -> None:
+        if self._store is not None and baseline.source == "store" and baseline.sha is not None:
+            self._store.acquire(baseline.sha)
 
-    def _intern_baseline(self, baseline: FileBaseline) -> FileBaseline:
-        if baseline.sha is None or baseline.data is None:
-            return baseline
-        cached = self._content_intern.get(baseline.sha)
-        if cached is None:
-            self._content_intern[baseline.sha] = (baseline.data, baseline.content)
-            return baseline
-        data, content = cached
-        return FileBaseline(
-            path=baseline.path,
-            exists=baseline.exists,
-            content=content,
-            binary_or_unreadable=baseline.binary_or_unreadable,
-            data=data,
-            sha=baseline.sha,
-        )
+    def _release(self, baseline: FileBaseline) -> None:
+        if self._store is not None and baseline.source == "store" and baseline.sha is not None:
+            self._store.release(baseline.sha)
 
     # ---- diff collection -----------------------------------------------------
 
@@ -355,13 +389,17 @@ class SessionDiffTrackerBase:
             except OSError as exc:
                 result.errors.append((item.display_path, str(exc)))
         for item in (item for item in plan if item.action == "write"):
-            if item.baseline.data is None:
-                result.skipped.append((item.display_path, "baseline content was not retained"))
+            data = self._load_bytes(item.baseline)
+            if data is None:
+                result.skipped.append((item.display_path, self._unrestorable_reason(item.baseline) or NOT_RETAINED))
+                continue
+            if item.baseline.sha is not None and hashlib.sha256(data).hexdigest() != item.baseline.sha:
+                result.skipped.append((item.display_path, DAMAGED_COPY))
                 continue
             abs_path = self._abs_path(item.repo_path)
             try:
                 abs_path.parent.mkdir(parents=True, exist_ok=True)
-                abs_path.write_bytes(item.baseline.data)
+                abs_path.write_bytes(data)
                 self._forget_cached_state(item.repo_path)
                 result.restored.append(item.display_path)
             except OSError as exc:
@@ -381,6 +419,10 @@ class SessionDiffTrackerBase:
 
     def _current_head_sha(self) -> str:
         return ""
+
+    def _load_source_bytes(self, baseline: FileBaseline) -> Optional[bytes]:
+        """Bytes of a baseline whose source is not the store."""
+        return None
 
     def _delete_guard_reason(self, repo_path: str) -> Optional[str]:
         return None
@@ -411,41 +453,118 @@ class SessionDiffTrackerBase:
         stat signature can match the pre-restore one and the cached content
         would shadow what is now on disk.
         """
-        self._snapshot_cache.pop(repo_path, None)
+        self._drop_snapshot(repo_path)
         self._diff_cache.pop(repo_path, None)
 
-    def _snapshot_repo_path(self, repo_path: str) -> FileBaseline:
-        abs_path = self._abs_path(repo_path)
+    def _drop_snapshot(self, repo_path: str) -> None:
+        cached = self._snapshot_cache.pop(repo_path, None)
+        if cached is not None:
+            self._release(cached)
+
+    def _stat_path(self, repo_path: str) -> Optional[os.stat_result]:
         try:
-            st = os.stat(abs_path)
+            return os.stat(self._abs_path(repo_path))
         except OSError:
-            st = None
+            return None
+
+    def _snapshot_is_current(self, repo_path: str, st: Optional[os.stat_result]) -> bool:
+        cached = self._snapshot_cache.get(repo_path)
+        return (
+            cached is not None and st is not None and S_ISREG(st.st_mode) and cached.sig == (st.st_mtime_ns, st.st_size)
+        )
+
+    def _snapshot_repo_path(
+        self, repo_path: str, st: Union[os.stat_result, None, _Unset] = _Unset.TOKEN
+    ) -> FileBaseline:
+        if st is _Unset.TOKEN:
+            st = self._stat_path(repo_path)
         if st is None or not S_ISREG(st.st_mode):
-            self._snapshot_cache.pop(repo_path, None)
+            self._drop_snapshot(repo_path)
             return FileBaseline(path=repo_path, exists=False)
         sig = (st.st_mtime_ns, st.st_size)
         cached = self._snapshot_cache.get(repo_path)
-        if cached is not None and cached[0] == sig:
-            return cached[1]
-        try:
-            data = abs_path.read_bytes()
-        except OSError:
-            return FileBaseline(path=repo_path, exists=True, binary_or_unreadable=True)
-        baseline = self._baseline_from_bytes(repo_path, data, exists=True)
-        self._snapshot_cache[repo_path] = (sig, baseline)
+        if cached is not None and cached.sig == sig:
+            return cached
+        if st.st_size > MAX_RETAINED_BYTES:
+            baseline = FileBaseline(
+                path=repo_path, exists=True, sig=sig, size=st.st_size, unavailable=TOO_LARGE_TO_COPY
+            )
+        else:
+            try:
+                data = self._abs_path(repo_path).read_bytes()
+            except OSError:
+                return FileBaseline(path=repo_path, exists=True, binary_or_unreadable=True)
+            baseline = self._retain(self._baseline_from_bytes(repo_path, data, exists=True, sig=sig), data)
+        # Retain before dropping: an unchanged rewrite shares the old blob.
+        self._drop_snapshot(repo_path)
+        self._snapshot_cache[repo_path] = baseline
         return baseline
 
+    def _retain(self, baseline: FileBaseline, data: bytes) -> FileBaseline:
+        """Copy a working-tree snapshot into the store, within the budget."""
+        if self._store is None or baseline.sha is None:
+            return baseline
+        refused = self._store.put(baseline.sha, data, limit=self._store_limit)
+        if refused:
+            return replace(baseline, unavailable=refused)
+        return replace(baseline, source="store")
+
     @staticmethod
-    def _baseline_from_bytes(repo_path: str, data: bytes, *, exists: bool) -> FileBaseline:
-        sha = hashlib.sha256(data).hexdigest()
-        retained = data if len(data) <= MAX_RETAINED_BYTES else None
-        if b"\x00" in data:
-            return FileBaseline(path=repo_path, exists=exists, binary_or_unreadable=True, data=retained, sha=sha)
+    def _baseline_from_bytes(
+        repo_path: str, data: bytes, *, exists: bool, sig: Optional[tuple[int, int]] = None
+    ) -> FileBaseline:
+        return FileBaseline(
+            path=repo_path,
+            exists=exists,
+            binary_or_unreadable=b"\x00" in data,
+            sha=hashlib.sha256(data).hexdigest(),
+            sig=sig,
+            size=len(data),
+        )
+
+    def _load_bytes(self, baseline: FileBaseline) -> Optional[bytes]:
+        """The bytes a baseline stands for, or None when they were not retained."""
+        if not baseline.exists:
+            return None
+        if baseline.source == "store":
+            if self._store is None or baseline.sha is None:
+                return None
+            return self._store.read(baseline.sha)
+        return self._load_source_bytes(baseline)
+
+    def _current_bytes(self, current: FileBaseline) -> Optional[bytes]:
+        if current.source == "store":
+            data = self._load_bytes(current)
+            if data is not None:
+                return data
         try:
-            content = data.decode("utf-8")
-        except UnicodeDecodeError:
-            content = data.decode("utf-8", errors="replace")
-        return FileBaseline(path=repo_path, exists=exists, content=content, data=retained, sha=sha)
+            return self._abs_path(current.path).read_bytes()
+        except OSError:
+            return None
+
+    @staticmethod
+    def _unrestorable_reason(baseline: FileBaseline) -> str:
+        if not baseline.exists or baseline.source != "none":
+            return ""
+        return baseline.unavailable or NOT_RETAINED
+
+    def _streamed_sha(self, baseline: FileBaseline) -> Optional[str]:
+        """sha256 of a large working-tree file, read in chunks rather than whole."""
+        if baseline.sig is None:
+            return None
+        key = (baseline.path, baseline.sig)
+        if key in self._streamed_sha_cache:
+            return self._streamed_sha_cache[key]
+        digest: Optional[str] = None
+        try:
+            with self._abs_path(baseline.path).open("rb") as handle:
+                digest = hashlib.file_digest(handle, "sha256").hexdigest()
+        except OSError:
+            digest = None
+        if self._stat_signature(baseline.path) != baseline.sig:
+            digest = None  # the file moved on while it was hashed
+        self._streamed_sha_cache[key] = digest
+        return digest
 
     # ---- diff construction ---------------------------------------------------
 
@@ -465,22 +584,32 @@ class SessionDiffTrackerBase:
             status = "deleted"
         else:
             status = "modified"
+        unrestorable = self._unrestorable_reason(baseline)
 
-        if baseline.binary_or_unreadable or current.binary_or_unreadable:
+        def without_text(message: str) -> SessionDiffFile:
             return SessionDiffFile(
-                path=display_path,
-                status=status,
-                preview=None,
-                message="Binary or unreadable file changed; textual diff unavailable.",
+                path=display_path, status=status, preview=None, message=message, unrestorable=unrestorable
             )
 
-        old = baseline.content or ""
-        new = current.content or ""
-        preview = build_diff_preview(old, new, display_path, max_lines=0)
-        if preview is None and old != new:
-            message = "File changed; textual diff unavailable."
-        else:
-            message = ""
+        if baseline.binary_or_unreadable or current.binary_or_unreadable:
+            return without_text(_BINARY_MESSAGE)
+        if max(baseline.size, current.size) > MAX_DIFF_DECODE_BYTES:
+            return without_text("File too large for a textual diff.")
+        old = self._load_bytes(baseline) if baseline.exists else b""
+        if old is None:
+            return without_text("File changed; no checkpoint copy was kept, so a textual diff is unavailable.")
+        new = self._current_bytes(current) if current.exists else b""
+        if new is None:
+            return without_text("File changed; textual diff unavailable.")
+        if b"\x00" in old or b"\x00" in new:
+            return without_text(_BINARY_MESSAGE)
+
+        old_text = old.decode("utf-8", errors="replace")
+        new_text = new.decode("utf-8", errors="replace")
+        preview = build_diff_preview(
+            old_text, new_text, display_path, max_lines=0, head_max_lines=CHANGES_HEAD_MAX_LINES
+        )
+        message = "File changed; textual diff unavailable." if preview is None and old_text != new_text else ""
         return SessionDiffFile(
             path=display_path,
             status=status,
@@ -488,19 +617,28 @@ class SessionDiffTrackerBase:
             adds=int((preview or {}).get("adds") or 0),
             dels=int((preview or {}).get("dels") or 0),
             message=message,
+            unrestorable=unrestorable,
         )
 
-    @staticmethod
-    def _same_state(left: FileBaseline, right: FileBaseline) -> bool:
+    def _same_state(self, left: FileBaseline, right: FileBaseline) -> bool:
         if left.exists != right.exists:
             return False
-        if not left.exists and not right.exists:
+        if not left.exists:
             return True
         if left.sha is not None and right.sha is not None:
             return left.sha == right.sha
-        if left.binary_or_unreadable or right.binary_or_unreadable:
-            return left.binary_or_unreadable == right.binary_or_unreadable and left.content == right.content
-        return (left.content or "") == (right.content or "")
+        if left.sig is not None and right.sig is not None:
+            return left.sig == right.sig
+        left_known = left.sha is not None or left.sig is not None
+        right_known = right.sha is not None or right.sig is not None
+        if not left_known or not right_known:
+            return not left_known and not right_known  # both unreadable
+        if left.size != right.size:
+            return False
+        # A sha-only baseline (commit or ledger) against a large working-tree
+        # file that was never hashed.
+        sig_side, sha_side = (left, right) if left.sha is None else (right, left)
+        return self._streamed_sha(sig_side) == sha_side.sha
 
 
 class GitSessionDiffTracker(SessionDiffTrackerBase):
@@ -513,8 +651,12 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
     reflog-reachable.
     """
 
-    def __init__(self, project_path: Path, git_root: Path) -> None:
-        super().__init__(project_path)
+    def __init__(self, project_path: Path, git_root: Path, *, spool_root: Optional[Path] = None) -> None:
+        if spool_root is None:
+            from kolega_code.cli.session_store import default_state_dir
+
+            spool_root = default_state_dir() / SPOOL_DIRNAME
+        super().__init__(project_path, store=CheckpointBlobStore(spool_root))
         self.git_root = git_root.resolve()
         # repo_path -> verdict: _is_under_project resolves symlinks, which is
         # too slow to repeat for tens of thousands of status paths per capture.
@@ -529,11 +671,11 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
         self._history_state: Optional[tuple[int, str]] = None  # (checkpoint_id, head) the flags describe
 
     @classmethod
-    def create(cls, project_path: Path) -> "GitSessionDiffTracker | None":
+    def create(cls, project_path: Path, *, spool_root: Optional[Path] = None) -> "GitSessionDiffTracker | None":
         git_root = cls._detect_git_root(project_path)
         if git_root is None:
             return None
-        return cls(project_path, git_root)
+        return cls(project_path, git_root, spool_root=spool_root)
 
     @staticmethod
     def _detect_git_root(project_path: Path) -> Path | None:
@@ -588,20 +730,39 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
 
     # ---- provider hooks ------------------------------------------------------
 
-    def _dirty_paths(self) -> set[str]:
-        """Status paths the session can ever display or restore.
+    def _dirty_entries(self) -> dict[str, bool]:
+        """Status paths the session can ever display or restore, mapped to "untracked".
 
         Sibling-worktree and out-of-project paths are dropped before any file
         is read: they are unreachable from diff and restore output anyway.
         """
+        entries = self._git_status_entries()
         return {
-            path for path in self._without_sibling_worktrees(self._git_status_paths()) if self._is_under_project(path)
+            path: entries[path]
+            for path in self._without_sibling_worktrees(set(entries))
+            if self._is_under_project(path)
         }
 
     def _capture_dirty_baselines(self) -> dict[str, FileBaseline]:
-        return {
-            repo_path: self._intern_baseline(self._snapshot_repo_path(repo_path)) for repo_path in self._dirty_paths()
-        }
+        entries = self._dirty_entries()
+        stats = {path: self._stat_path(path) for path in entries}
+        baselines: dict[str, FileBaseline] = {}
+        unread: list[str] = []
+        for path, st in stats.items():
+            if self._snapshot_is_current(path, st):
+                baselines[path] = self._snapshot_repo_path(path, st)
+            else:
+                unread.append(path)
+
+        def priority(path: str) -> tuple[bool, int, str]:
+            st = stats[path]
+            return (entries[path], st.st_size if st is not None else 0, path)
+
+        # The store budget rations copies: uncommitted edits to tracked files
+        # first, then untracked files smallest-first.
+        for path in sorted(unread, key=priority):
+            baselines[path] = self._snapshot_repo_path(path, stats[path])
+        return baselines
 
     def _candidate_paths(self, checkpoint: TurnCheckpoint, event_paths: Iterable[str]) -> set[str]:
         candidates = self._git_status_paths() | set(checkpoint.dirty)
@@ -712,6 +873,10 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
     # ---- git helpers ---------------------------------------------------------
 
     def _git_status_paths(self) -> set[str]:
+        return set(self._git_status_entries())
+
+    def _git_status_entries(self) -> dict[str, bool]:
+        """Status paths mapped to whether git reports them untracked."""
         completed = self._git(
             [
                 "--no-optional-locks",  # never contend on index.lock with the agent's own git
@@ -726,12 +891,12 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
             ]
         )
         if completed is None:
-            return set()
+            return {}
         return self._parse_porcelain_z(completed.stdout)
 
     @staticmethod
-    def _parse_porcelain_z(output: bytes) -> set[str]:
-        paths: set[str] = set()
+    def _parse_porcelain_z(output: bytes) -> dict[str, bool]:
+        paths: dict[str, bool] = {}
         entries = [entry for entry in output.decode("utf-8", errors="surrogateescape").split("\0") if entry]
         index = 0
         while index < len(entries):
@@ -742,12 +907,12 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
             status = entry[:2]
             path = entry[3:]
             if path:
-                paths.add(path)
+                paths[path] = status == "??"
             # In porcelain v1 -z, rename/copy records are followed by the other path.
             if status[0] in {"R", "C"} or status[1] in {"R", "C"}:
                 index += 1
                 if index < len(entries) and entries[index]:
-                    paths.add(entries[index])
+                    paths.setdefault(entries[index], False)
             index += 1
         return paths
 
@@ -757,7 +922,15 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
         completed = self._git(["show", f"{commit_sha}:{repo_path}"])
         if completed is None:
             return FileBaseline(path=repo_path, exists=False)
-        return self._baseline_from_bytes(repo_path, completed.stdout, exists=True)
+        # Only the digest is kept; the bytes are read back from the commit on demand.
+        baseline = self._baseline_from_bytes(repo_path, completed.stdout, exists=True)
+        return replace(baseline, source="commit", ref=commit_sha)
+
+    def _load_source_bytes(self, baseline: FileBaseline) -> Optional[bytes]:
+        if baseline.source != "commit" or not isinstance(baseline.ref, str):
+            return None
+        completed = self._git(["show", f"{baseline.ref}:{baseline.path}"])
+        return None if completed is None else completed.stdout
 
     def _current_head_sha(self) -> str:
         completed = self._git(["rev-parse", "HEAD"], text=True)
@@ -1006,14 +1179,18 @@ class SnapshotLedgerDiffTracker(SessionDiffTrackerBase):
         return records
 
     def _baseline_from_state(self, repo_path: str, state: Optional["FileState"]) -> FileBaseline:
-        from kolega_code.services.snapshots import SnapshotError
-
         if state is None or state.kind == "missing":
             return FileBaseline(path=repo_path, exists=False)
-        if state.kind != "file":
+        if state.kind != "file" or state.sha256 is None:
             return FileBaseline(path=repo_path, exists=True, binary_or_unreadable=True)
+        return FileBaseline(path=repo_path, exists=True, sha=state.sha256, size=state.size, source="ledger", ref=state)
+
+    def _load_source_bytes(self, baseline: FileBaseline) -> Optional[bytes]:
+        from kolega_code.services.snapshots import SnapshotError
+
+        if baseline.source != "ledger" or baseline.ref is None or isinstance(baseline.ref, str):
+            return None
         try:
-            data = self._service.read_blob(state)
+            return self._service.read_blob(baseline.ref)
         except SnapshotError:
-            return FileBaseline(path=repo_path, exists=True, binary_or_unreadable=True)
-        return self._intern_baseline(self._baseline_from_bytes(repo_path, data, exists=True))
+            return None

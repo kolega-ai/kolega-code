@@ -110,6 +110,8 @@ CHANGES_SCOPE_WORKTREE = "Worktree: {name}"
 CHANGES_SCOPE_BRANCH = "Branch: {branch}"
 CHANGES_HISTORY_MOVED = "Commits merged, pulled, or rebased in since the baseline are not shown."
 CHANGES_HISTORY_UNTRACKED = "Committed changes are not tracked in this repository."
+CHANGES_UNRESTORABLE_FILE = "Rewind can't restore this file: {reason}."
+CHANGES_UNRESTORABLE_COUNT = "{count} file(s) here can't be restored by rewind."
 
 # Agent-initiated worktree switch. The agent may only switch when the user asked
 # for it, so every switch is confirmed here before anything durable is written.
@@ -145,6 +147,8 @@ REWIND_HISTORY_MOVED_WARNING = (
     " History moved since this baseline (merge, rebase, or pull). Restoring writes session-start content "
     "and can revert commits that came from outside this session."
 )
+REWIND_UNRESTORABLE_WARNING = " {count} file(s) can't be restored and will be skipped."
+REWIND_FILE_UNRESTORABLE_WARNING = " This file can't be restored: {reason}."
 REWIND_FILE_CONFIRM_TITLE = "Restore file?"
 REWIND_FILE_CONFIRM_COPY = (
     "Restore {path} to its state at {label}, discarding +{adds} -{dels}. The conversation is not changed."

@@ -5,12 +5,18 @@ from pathlib import Path
 
 import pytest
 
-from kolega_code.cli.tui.session_diff import GitSessionDiffTracker
+from kolega_code.cli.tui import session_diff
+from kolega_code.cli.tui.session_diff import CHANGES_HEAD_MAX_LINES, GitSessionDiffTracker
 
 
 # These tests name the initial branch, merge it, and rebase onto it, so they must
 # not inherit whatever the developer's ~/.gitconfig says about git's behaviour.
 pytestmark = pytest.mark.usefixtures("hermetic_git_config")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_spool(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("KOLEGA_CODE_STATE_DIR", str(tmp_path / "state"))
 
 
 def _git(project: Path, *args: str) -> None:
@@ -629,7 +635,7 @@ def test_capture_checkpoint_reuses_unchanged_snapshots(tmp_path: Path, monkeypat
     checkpoint = tracker.capture_checkpoint("turn 1")
 
     assert read_calls["count"] == 0
-    assert checkpoint.dirty["dirty.py"].content == "dirty\n"
+    assert tracker._load_bytes(checkpoint.dirty["dirty.py"]) == b"dirty\n"
 
 
 def test_capture_checkpoint_rereads_when_signature_changes(tmp_path: Path, monkeypatch) -> None:
@@ -649,7 +655,7 @@ def test_capture_checkpoint_rereads_when_signature_changes(tmp_path: Path, monke
     checkpoint = tracker.capture_checkpoint("turn 1")
 
     assert read_calls["count"] == 1
-    assert checkpoint.dirty["dirty.py"].content == "dirty but longer\n"
+    assert tracker._load_bytes(checkpoint.dirty["dirty.py"]) == b"dirty but longer\n"
 
 
 def test_refresh_then_capture_shares_snapshot_cache(tmp_path: Path, monkeypatch) -> None:
@@ -670,7 +676,7 @@ def test_refresh_then_capture_shares_snapshot_cache(tmp_path: Path, monkeypatch)
     checkpoint = tracker.capture_checkpoint("turn 1")
 
     assert read_calls["count"] == 0
-    assert checkpoint.dirty["new.py"].content == "new\n"
+    assert tracker._load_bytes(checkpoint.dirty["new.py"]) == b"new\n"
 
 
 def test_capture_baseline_resets_snapshot_cache(tmp_path: Path, monkeypatch) -> None:
@@ -759,3 +765,44 @@ def test_capture_never_touches_gitignored_paths(tmp_path: Path, monkeypatch) -> 
     assert set(checkpoint.dirty) == {"kept.py"}
     assert snapshot_calls["count"] == 1
     assert {change.path for change in tracker.refresh()} == {"kept.py"}
+
+
+# ---- diff size caps ------------------------------------------------------------
+
+
+def test_oversized_text_change_shows_a_capped_head(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    _init_repo(project)
+    (project / "a.py").write_text("old\n", encoding="utf-8")
+    _commit_all(project)
+    tracker = GitSessionDiffTracker.create(project)
+    assert tracker is not None
+    tracker.capture_baseline()
+
+    (project / "log.txt").write_text("".join(f"line {index}\n" for index in range(20_000)), encoding="utf-8")
+    change = _by_path(tracker.refresh())["log.txt"]
+
+    assert change.status == "added"
+    assert change.preview is not None
+    assert change.preview["kind"] == "head"
+    assert len(change.preview["lines"]) == CHANGES_HEAD_MAX_LINES
+    assert change.preview["more"] == 20_000 - CHANGES_HEAD_MAX_LINES
+
+
+def test_change_too_large_to_decode_has_no_preview(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(session_diff, "MAX_DIFF_DECODE_BYTES", 1024)
+    project = tmp_path / "repo"
+    project.mkdir()
+    _init_repo(project)
+    (project / "a.py").write_text("old\n", encoding="utf-8")
+    _commit_all(project)
+    tracker = GitSessionDiffTracker.create(project)
+    assert tracker is not None
+    tracker.capture_baseline()
+
+    (project / "big.txt").write_text("x" * 4096, encoding="utf-8")
+    change = _by_path(tracker.refresh())["big.txt"]
+
+    assert change.preview is None
+    assert change.message == "File too large for a textual diff."

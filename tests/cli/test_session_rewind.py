@@ -3,18 +3,28 @@ from __future__ import annotations
 import os
 import subprocess
 import time
+import tracemalloc
 from pathlib import Path
 
 import pytest
 
+from kolega_code.cli.tui import session_diff
+from kolega_code.cli.tui.checkpoint_store import STORAGE_LIMIT, CheckpointBlobStore
 from kolega_code.cli.tui.session_diff import (
+    DAMAGED_COPY,
     REWIND_MAX_CHECKPOINTS,
+    TOO_LARGE_TO_COPY,
     GitSessionDiffTracker,
     RewindDriftError,
     SnapshotLedgerDiffTracker,
 )
 from kolega_code.services.file_system import LocalFileSystem
 from kolega_code.services.snapshots import SnapshotService
+
+
+@pytest.fixture(autouse=True)
+def _isolated_spool(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("KOLEGA_CODE_STATE_DIR", str(tmp_path / "state"))
 
 
 def _git(project: Path, *args: str) -> None:
@@ -39,6 +49,12 @@ def _head_sha(project: Path) -> str:
 
 def _by_path(changes):
     return {change.path: change for change in changes}
+
+
+def _store(tracker: GitSessionDiffTracker) -> CheckpointBlobStore:
+    store = tracker._store
+    assert store is not None
+    return store
 
 
 def _git_tracker(project: Path) -> GitSessionDiffTracker:
@@ -89,7 +105,7 @@ def test_checkpoint_eviction_keeps_session_start(tmp_path: Path) -> None:
     assert checkpoints[-1].label == f"turn {REWIND_MAX_CHECKPOINTS + 4}"
 
 
-def test_checkpoints_intern_identical_dirty_content(tmp_path: Path) -> None:
+def test_checkpoints_share_one_copy_of_identical_dirty_content(tmp_path: Path) -> None:
     project = tmp_path / "repo"
     project.mkdir()
     _init_repo(project)
@@ -102,8 +118,10 @@ def test_checkpoints_intern_identical_dirty_content(tmp_path: Path) -> None:
     second = tracker.capture_checkpoint("turn 2")
 
     base = tracker.checkpoints()[0].dirty["a.py"]
-    assert first.dirty["a.py"].data is base.data
-    assert second.dirty["a.py"].data is base.data
+    assert base.source == "store"
+    assert first.dirty["a.py"].sha == base.sha
+    assert second.dirty["a.py"].sha == base.sha
+    assert len(_store(tracker)) == 1
 
 
 # ---- git tracker: restore ----------------------------------------------------
@@ -260,6 +278,180 @@ def test_per_file_restore_filter(tmp_path: Path) -> None:
     tracker.apply_restore_plan(plan)
     assert (project / "a.py").read_text(encoding="utf-8") == "a old\n"
     assert (project / "b.py").read_text(encoding="utf-8") == "b new\n"
+
+
+# ---- git tracker: checkpoint copies ------------------------------------------
+
+
+def _committed_repo(tmp_path: Path) -> Path:
+    project = tmp_path / "repo"
+    project.mkdir()
+    _init_repo(project)
+    (project / "keep.txt").write_text("kept\n", encoding="utf-8")
+    _commit_all(project)
+    return project
+
+
+def test_appending_to_a_file_every_turn_keeps_tracker_memory_flat(tmp_path: Path) -> None:
+    project = _committed_repo(tmp_path)
+    notes = project / "notes.log"
+    # One non-ASCII character makes CPython store decoded text at 2 bytes per character.
+    notes.write_text("\u2713 start\n" + ("x" * 99 + "\n") * 20_000, encoding="utf-8")
+
+    def turn(number: int) -> None:
+        with notes.open("a", encoding="utf-8") as handle:
+            handle.write(f"turn {number}\n")
+        tracker.capture_checkpoint(f"turn {number}")
+
+    tracemalloc.start()
+    try:
+        tracker = _git_tracker(project)
+        for number in range(1, 11):
+            turn(number)
+        settled = tracemalloc.get_traced_memory()[0]
+        for number in range(11, 61):
+            turn(number)
+        grown = tracemalloc.get_traced_memory()[0] - settled
+    finally:
+        tracemalloc.stop()
+
+    assert grown < 5_000_000
+    assert len(_store(tracker)) <= REWIND_MAX_CHECKPOINTS + 1
+
+
+def test_file_over_the_copy_limit_is_never_read_and_is_skipped_on_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(session_diff, "MAX_RETAINED_BYTES", 1024)
+    project = _committed_repo(tmp_path)
+    (project / "big.log").write_text("line\n" * 1000, encoding="utf-8")
+
+    tracker = GitSessionDiffTracker.create(project)
+    assert tracker is not None
+    reads = []
+    original = tracker._baseline_from_bytes
+    monkeypatch.setattr(tracker, "_baseline_from_bytes", lambda *a, **k: reads.append(a) or original(*a, **k))
+    tracker.capture_baseline()
+    assert reads == []
+
+    (project / "big.log").write_text("rewritten\n" * 600, encoding="utf-8")
+    [change] = tracker.refresh()
+    assert change.path == "big.log"
+    assert change.status == "modified"
+    assert change.preview is None
+    assert change.unrestorable == TOO_LARGE_TO_COPY
+
+    result = tracker.apply_restore_plan(tracker.build_restore_plan())
+    assert result.skipped == [("big.log", TOO_LARGE_TO_COPY)]
+    assert (project / "big.log").read_text(encoding="utf-8") == "rewritten\n" * 600
+
+
+def test_large_tracked_file_rewritten_unchanged_is_not_a_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(session_diff, "MAX_RETAINED_BYTES", 1024)
+    project = tmp_path / "repo"
+    project.mkdir()
+    _init_repo(project)
+    big = project / "big.dat"
+    big.write_text("x" * 4096, encoding="utf-8")
+    _commit_all(project)
+    tracker = _git_tracker(project)
+
+    stamp = big.stat().st_mtime_ns
+    big.write_text("x" * 4096, encoding="utf-8")
+    os.utime(big, ns=(stamp + 1_000_000_000, stamp + 1_000_000_000))
+    assert tracker.refresh(["big.dat"]) == []
+
+    big.write_text("y" * 4096, encoding="utf-8")
+    os.utime(big, ns=(stamp + 2_000_000_000, stamp + 2_000_000_000))
+    assert [change.path for change in tracker.refresh(["big.dat"])] == ["big.dat"]
+
+
+def test_store_budget_copies_tracked_edits_before_untracked_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(session_diff, "CHECKPOINT_STORE_BUDGET", 100)
+    monkeypatch.setattr(session_diff, "BASELINE_STORE_SHARE", 1.0)
+    project = tmp_path / "repo"
+    project.mkdir()
+    _init_repo(project)
+    (project / "tracked.py").write_text("committed\n", encoding="utf-8")
+    _commit_all(project)
+    (project / "tracked.py").write_text("t" * 59 + "\n", encoding="utf-8")
+    (project / "small.txt").write_text("s" * 29 + "\n", encoding="utf-8")
+    (project / "wide.txt").write_text("w" * 49 + "\n", encoding="utf-8")
+
+    tracker = _git_tracker(project)
+    for name in ("tracked.py", "small.txt", "wide.txt"):
+        (project / name).write_text("new\n", encoding="utf-8")
+
+    assert {change.path: change.unrestorable for change in tracker.refresh()} == {
+        "tracked.py": "",
+        "small.txt": "",
+        "wide.txt": STORAGE_LIMIT,
+    }
+    result = tracker.apply_restore_plan(tracker.build_restore_plan())
+    assert result.skipped == [("wide.txt", STORAGE_LIMIT)]
+    assert sorted(result.restored) == ["small.txt", "tracked.py"]
+    assert (project / "tracked.py").read_text(encoding="utf-8") == "t" * 59 + "\n"
+
+
+def test_session_start_capture_leaves_room_for_later_turns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(session_diff, "CHECKPOINT_STORE_BUDGET", 100)
+    monkeypatch.setattr(session_diff, "BASELINE_STORE_SHARE", 0.5)
+    project = _committed_repo(tmp_path)
+    (project / "first.txt").write_text("f" * 39 + "\n", encoding="utf-8")
+    (project / "second.txt").write_text("s" * 39 + "\n", encoding="utf-8")
+
+    tracker = _git_tracker(project)
+    (project / "later.txt").write_text("l" * 39 + "\n", encoding="utf-8")
+    turn = tracker.capture_checkpoint("turn 1")
+    for name in ("first.txt", "second.txt", "later.txt"):
+        (project / name).write_text("changed\n", encoding="utf-8")
+
+    assert {change.path: change.unrestorable for change in tracker.refresh(checkpoint_id=turn.checkpoint_id)} == {
+        "first.txt": "",
+        "second.txt": STORAGE_LIMIT,
+        "later.txt": "",
+    }
+
+
+def test_restore_skips_a_damaged_checkpoint_copy(tmp_path: Path) -> None:
+    project = _committed_repo(tmp_path)
+    (project / "notes.txt").write_text("original\n", encoding="utf-8")
+    tracker = _git_tracker(project)
+    baseline = tracker.checkpoints()[0].dirty["notes.txt"]
+    assert baseline.sha is not None
+    store = _store(tracker)
+    blob = store._blobs[baseline.sha]
+    with store._segment_path(blob.segment).open("r+b") as handle:
+        handle.seek(blob.offset)
+        handle.write(b"X" * blob.size)
+
+    (project / "notes.txt").write_text("edited\n", encoding="utf-8")
+    result = tracker.apply_restore_plan(tracker.build_restore_plan())
+
+    assert result.skipped == [("notes.txt", DAMAGED_COPY)]
+    assert (project / "notes.txt").read_text(encoding="utf-8") == "edited\n"
+
+
+def test_eviction_and_close_delete_checkpoint_copies(tmp_path: Path) -> None:
+    project = _committed_repo(tmp_path)
+    notes = project / "notes.txt"
+    notes.write_text("v\n", encoding="utf-8")
+    tracker = _git_tracker(project)
+    for number in range(REWIND_MAX_CHECKPOINTS + 5):
+        notes.write_text("v" * (number + 2) + "\n", encoding="utf-8")
+        tracker.capture_checkpoint(f"turn {number}")
+
+    store = _store(tracker)
+    # Checkpoint 0 plus one version per retained turn.
+    assert len(store) == REWIND_MAX_CHECKPOINTS
+    assert store.path.is_dir()
+
+    tracker.close()
+    assert not store.path.exists()
 
 
 # ---- snapshot-ledger tracker (non-git) ---------------------------------------

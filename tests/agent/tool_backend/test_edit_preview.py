@@ -84,6 +84,19 @@ class TestBuildDiffPreview:
         # With max_lines=0, head should be uncapped (all lines shown).
         assert p["more"] == 0
 
+    def test_head_max_lines_caps_only_the_oversize_fallback(self):
+        lines = ep.MAX_DIFF_INPUT_LINES + 10
+        p = ep.build_diff_preview("", "x\n" * lines, "big.txt", max_lines=0, head_max_lines=25)
+        assert p is not None
+        assert p["kind"] == "head"
+        assert len(p["lines"]) == 25
+        assert p["more"] == lines - 25
+
+        small = ep.build_diff_preview("a\n" * 40, "b\n" * 40, "small.txt", max_lines=0, head_max_lines=25)
+        assert small is not None
+        assert small["kind"] == "diff"
+        assert len(small["lines"]) > 25
+
 
 class TestBuildHeadPreview:
     def test_basic_head(self):

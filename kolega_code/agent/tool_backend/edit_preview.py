@@ -130,11 +130,15 @@ def build_head_preview(content: str, path: str, *, max_lines: int | None = None)
     }
 
 
-def build_diff_preview(old: str, new: str, path: str, *, max_lines: int | None = None) -> Optional[dict]:
+def build_diff_preview(
+    old: str, new: str, path: str, *, max_lines: int | None = None, head_max_lines: int | None = None
+) -> Optional[dict]:
     """A capped unified diff of an edit. ``None`` when nothing changed or is renderable.
 
     *max_lines* controls the line cap: ``None`` (default) uses ``MAX_DIFF_LINES``,
     ``0`` means no cap, and any positive integer caps at that many lines.
+    *head_max_lines* caps the head shown for an input too large to diff, and
+    defaults to *max_lines*.
     """
     if old == new:
         return None
@@ -142,7 +146,7 @@ def build_diff_preview(old: str, new: str, path: str, *, max_lines: int | None =
         return None
     if _too_big(old, new):
         # Huge edit: fall back to a head of the new content so something still shows.
-        return build_head_preview(new, path, max_lines=max_lines)
+        return build_head_preview(new, path, max_lines=max_lines if head_max_lines is None else head_max_lines)
 
     rows: list[list[str]] = []
     adds = dels = 0
