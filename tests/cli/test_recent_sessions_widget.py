@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Sequence
@@ -21,14 +20,12 @@ from kolega_code.cli.tui.startup import (
 )
 from kolega_code.cli.tui.state import ConversationEntry
 
+from ._app_test_utils import wait_for_layout
 
-async def _wait_for_layout(pilot, predicate, *, timeout: float = 6.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        await pilot.pause(0.02)
-        if predicate():
-            return
-    raise AssertionError("recent-session layout did not settle")
+
+def _label(row: RecentSessionRow) -> str:
+    # A shown row draws its label on the resize after layout, not when display flips.
+    return row.render_line(0).text.strip()
 
 
 class RecentSessionsHarness(App[None]):
@@ -79,9 +76,10 @@ async def test_recent_session_rows_click_tab_enter_and_locked_disabled(tmp_path:
     )
 
     async with app.run_test(size=(90, 30)) as pilot:
-        await _wait_for_layout(pilot, lambda: bool(app.query(RecentSessionRow)))
+        await wait_for_layout(pilot, lambda: bool(app.query(RecentSessionRow)))
         rows = list(app.query(RecentSessionRow))
         assert len(rows) == 3
+        await wait_for_layout(pilot, lambda: all(_label(row) for row in rows))
         assert rows[0].display and rows[0].can_focus and not rows[0].disabled
         assert rows[1].display and rows[1].can_focus and not rows[1].disabled
         assert rows[2].display and not rows[2].can_focus and rows[2].disabled
@@ -119,7 +117,7 @@ async def test_recent_sessions_refresh_shows_and_hides_section(tmp_path: Path) -
     app = RecentSessionsHarness(factory)
 
     async with app.run_test(size=(90, 30)) as pilot:
-        await _wait_for_layout(pilot, lambda: bool(app.query(RecentSessionsWidget)))
+        await wait_for_layout(pilot, lambda: bool(app.query(RecentSessionsWidget)))
         section = app.query_one(RecentSessionsWidget)
         rows = list(app.query(RecentSessionRow))
         assert calls >= 1
@@ -129,15 +127,14 @@ async def test_recent_sessions_refresh_shows_and_hides_section(tmp_path: Path) -
         before = calls
         items[:] = [_item("session-visible", "visible.py")]
         app.query_one(StartupEntryWidget).refresh_content()
-        await _wait_for_layout(pilot, lambda: section.display and rows[0].display)
+        await wait_for_layout(pilot, lambda: section.display and rows[0].display and bool(_label(rows[0])))
         assert calls > before
-        assert rows[0].render_line(0).text.strip()
         assert all(not row.display for row in rows[1:])
 
         before = calls
         items.clear()
         app.query_one(StartupEntryWidget).refresh_content()
-        await _wait_for_layout(pilot, lambda: not section.display and all(not row.display for row in rows))
+        await wait_for_layout(pilot, lambda: not section.display and all(not row.display for row in rows))
         assert calls > before
 
 
@@ -149,9 +146,9 @@ async def test_recent_sessions_render_literal_single_line_without_link_metadata(
     app = RecentSessionsHarness(lambda: [_item(raw_uuid, title, updated_at="not-a-timestamp")])
 
     async with app.run_test(size=(width, 24)) as pilot:
-        await _wait_for_layout(pilot, lambda: bool(app.query(RecentSessionRow)))
+        await wait_for_layout(pilot, lambda: bool(app.query(RecentSessionRow)))
         row = app.query_one(RecentSessionRow)
-        await _wait_for_layout(pilot, lambda: row.display and row.size.width > 0)
+        await wait_for_layout(pilot, lambda: row.display and row.size.width > 0 and bool(_label(row)))
         line = row.render_line(0)
         text = line.text
         assert row.size.height == 1
