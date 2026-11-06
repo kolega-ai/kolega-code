@@ -53,6 +53,7 @@ def test_terminal_display_normalizer_reset_clears_pending_crlf_state() -> None:
 
 def test_terminal_display_normalizer_handles_backspace_rewrites_within_chunk() -> None:
     assert _normalize("abc\b\bd\n") == "ad\n"
+    assert _normalize("line\nab\bX") == "line\naX"
 
 
 def test_terminal_display_normalizer_drops_unknown_control_characters() -> None:
@@ -151,6 +152,22 @@ def test_terminal_display_normalizer_preserves_unicode_newlines_and_tabs_only() 
     standalone_controls = "\x00\x01\x07\x0b\x0c\x0e\x18\x1a\x7f\x80\x81\x85\x99\x9a\x9c"
 
     assert _normalize(f"héllo\t世界\n{standalone_controls}done") == "héllo\t世界\ndone"
+
+
+def test_terminal_display_normalizer_passes_control_free_chunks_through_unchanged() -> None:
+    chunk = "compiling src/kolega_code/agent/baseagent.py ... ok\n\théllo 世界 \U0001f642\n"
+
+    assert _normalize(chunk) == chunk
+    assert _normalize(chunk, chunk) == chunk + chunk
+
+
+def test_terminal_display_normalizer_keeps_parsing_control_free_chunks_inside_a_sequence() -> None:
+    normalizer = TerminalDisplayNormalizer()
+
+    assert normalizer.feed("before\x1b[") == "before"
+    assert normalizer.feed("3") == ""
+    assert normalizer.feed("1mred") == "red"
+    assert normalizer.feed(" plain") == " plain"
 
 
 def test_terminal_control_filter_handles_sequences_split_across_styled_segments() -> None:

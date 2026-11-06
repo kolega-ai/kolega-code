@@ -22,6 +22,9 @@ from textual.filter import LineFilter
 # needs the full parser; no hit means the parser would return it byte-identical.
 _CONTROL_CHARS_RE = re.compile("[\x00-\x1f\x7f-\x9f]")
 
+# _CONTROL_CHARS_RE minus the newline and tab that the NORMAL state emits verbatim.
+_NEEDS_PARSER_RE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
 
 class _State(Enum):
     NORMAL = auto()
@@ -64,6 +67,9 @@ class _TerminalControlParser:
         if not text:
             return ""
 
+        if self._state is _State.NORMAL and not self._pending_cr and not _NEEDS_PARSER_RE.search(text):
+            return text
+
         out: list[str] = []
         suppressed: list[str] = []
 
@@ -95,6 +101,17 @@ class _TerminalControlParser:
                     continue
 
             if state is _State.NORMAL:
+                next_special = _NEEDS_PARSER_RE.search(text, index)
+                run_end = next_special.start() if next_special is not None else length
+                if run_end > index:
+                    flush_suppressed()
+                    out.append(text[index:run_end])
+                    index = run_end
+                    if index >= length:
+                        break
+                    ch = text[index]
+                    code = ord(ch)
+
                 if ch == "\x1b":
                     suppress(ch)
                     self._state = _State.ESC
@@ -220,7 +237,12 @@ class _TerminalControlParser:
     @staticmethod
     def _erase_previous_output_char(out: list[str]) -> None:
         # Do not erase across emitted line boundaries or parser feed calls.
-        if out and out[-1] != "\n":
+        # An ``out`` element may be a whole run, so trim one character instead of popping.
+        if not out or not out[-1] or out[-1][-1] == "\n":
+            return
+        if len(out[-1]) > 1:
+            out[-1] = out[-1][:-1]
+        else:
             out.pop()
 
 
