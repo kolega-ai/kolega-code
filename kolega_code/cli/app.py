@@ -1954,7 +1954,11 @@ class KolegaCodeApp(
         the tracker has no checkpoint 0 and turn checkpoints skip themselves.
         """
         self._session_diff_generation += 1
-        self._session_diff_tracker = tui_session_diff.GitSessionDiffTracker.create(self.active_project_path)
+        previous = self._session_diff_tracker
+        self._session_diff_tracker = tui_session_diff.GitSessionDiffTracker.create(
+            self.active_project_path, spool_root=self.store.root / tui_session_diff.SPOOL_DIRNAME
+        )
+        self._discard_session_diff_tracker(previous)
         self._session_diff_files = []
         self._session_diff_scope = None
         if self._session_diff_tracker is None:
@@ -1968,8 +1972,17 @@ class KolegaCodeApp(
                 group="session-diff-baseline",
             )
         except Exception:
+            self._discard_session_diff_tracker(self._session_diff_tracker)
             self._session_diff_tracker = None
             self._session_diff_files = []
+
+    def _discard_session_diff_tracker(self, tracker: Optional[tui_session_diff.SessionDiffTrackerBase]) -> None:
+        """Delete a dropped tracker's checkpoint copies off the UI thread.
+
+        Not a daemon thread, so a large spool is still removed when the app exits.
+        """
+        if tracker is not None:
+            threading.Thread(target=tracker.close, name="kolega-checkpoint-spool-close").start()
 
     async def _session_diff_baseline_worker(
         self, tracker: tui_session_diff.SessionDiffTrackerBase, generation: int, label: str
@@ -1981,6 +1994,7 @@ class KolegaCodeApp(
                 self._write_log(f"Session diff baseline captured in {time.monotonic() - started:.2f}s", "debug")
         except Exception:
             if generation == self._session_diff_generation and tracker is self._session_diff_tracker:
+                self._discard_session_diff_tracker(tracker)
                 self._session_diff_tracker = None
                 self._session_diff_files = []
             return
@@ -2695,6 +2709,7 @@ class KolegaCodeApp(
                 pass
         self._unregister_from_inbox()
         self._close_memory_manager()
+        self._discard_session_diff_tracker(self._session_diff_tracker)
 
     def on_worker_state_changed(self, event) -> None:
         self._refresh_shortcut_context()

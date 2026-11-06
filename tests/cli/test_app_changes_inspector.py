@@ -1,4 +1,6 @@
+import asyncio
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -200,6 +202,53 @@ async def test_changes_inspector_opens_and_renders_git_shell_changes(
         }
         assert screen._selected_path in {"src/a.py", "src/b.py"}
         assert "net" in screen._preview_widgets
+
+
+@pytest.mark.asyncio
+async def test_changes_inspector_flags_files_rewind_cannot_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from textual.widgets import Static
+
+    from kolega_code.cli import messages as cli_messages
+    from kolega_code.cli.tui import session_diff
+
+    monkeypatch.setattr(session_diff, "MAX_RETAINED_BYTES", 1024)
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    _init_git_project(app.project_path)
+    notes = app.project_path / "notes.log"
+    notes.write_text("entry\n" * 400, encoding="utf-8")
+
+    async with app.run_test() as pilot:
+        await wait_for_session_diff_baseline(app)
+        tracker = app._session_diff_tracker
+        assert tracker is not None
+        assert tracker._store is not None
+        spool = tracker._store.path
+        assert spool.parent == app.store.root / session_diff.SPOOL_DIRNAME
+
+        notes.write_text("rewritten\n" * 400, encoding="utf-8")
+        (app.project_path / "src" / "a.py").write_text("new a\n", encoding="utf-8")
+        app.action_open_changes("notes.log")
+        await settle_changes_inspector(app, pilot)
+
+        screen = app._changes_inspector
+        assert screen is not None
+        by_path = {change.path: change for change in app._session_diff_files}
+        assert by_path["notes.log"].unrestorable == session_diff.TOO_LARGE_TO_COPY
+        assert by_path["src/a.py"].unrestorable == ""
+        assert "can't rewind" in screen._roster_row(by_path["notes.log"], selected=True).plain
+        assert "can't rewind" not in screen._roster_row(by_path["src/a.py"], selected=False).plain
+        body = renderable_text(screen._net_diff_renderable(by_path["notes.log"]))
+        assert cli_messages.CHANGES_UNRESTORABLE_FILE.format(reason=session_diff.TOO_LARGE_TO_COPY) in body
+        scope_text = str(screen.query_one("#changes_scope", Static).render())
+        assert cli_messages.CHANGES_UNRESTORABLE_COUNT.format(count=1) in scope_text
+        assert spool.is_dir()
+
+    deadline = time.monotonic() + 10
+    while spool.exists() and time.monotonic() < deadline:
+        await asyncio.sleep(0.02)
+    assert not spool.exists()
 
 
 @pytest.mark.asyncio

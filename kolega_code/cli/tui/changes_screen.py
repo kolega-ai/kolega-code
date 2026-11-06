@@ -211,6 +211,8 @@ class ChangesInspectorScreen(ModalScreen):
             meta += f"  +{change.adds} -{change.dels}"
         if change.message:
             meta += "  diff unavailable"
+        if change.unrestorable:
+            meta += "  can't rewind"
         line.append(meta, style="dim")
         return line
 
@@ -282,6 +284,9 @@ class ChangesInspectorScreen(ModalScreen):
                 body = Text("Preview unavailable", style="dim")
         else:
             body = Text("Preview unavailable", style="dim")
+        if change.unrestorable:
+            note = Text(messages.CHANGES_UNRESTORABLE_FILE.format(reason=change.unrestorable), style="dim")
+            return Group(Padding(note, (0, 0, 1, 0)), Padding(body, (0, 0, 1, 0)))
         return Group(Padding(body, (0, 0, 1, 0)))
 
     def _preview_body_without_meta(self, preview: dict):
@@ -330,8 +335,11 @@ class ChangesInspectorScreen(ModalScreen):
             if segment
         ]
         line = f"  {sep}  ".join(segments)
-        note = self._owner._changes_history_note()
-        scope.update(f"{line}\n{note}" if note else line)
+        notes = [self._owner._changes_history_note()]
+        unrestorable = sum(1 for change in self._ordered_diffs() if change.unrestorable)
+        if unrestorable:
+            notes.append(messages.CHANGES_UNRESTORABLE_COUNT.format(count=unrestorable))
+        scope.update("\n".join([line, *(note for note in notes if note)]))
 
     def _refresh_footer(self) -> None:
         try:
@@ -382,6 +390,9 @@ class ChangesInspectorScreen(ModalScreen):
             copy += messages.REWIND_CONFIRM_CONVERSATION
         else:
             copy += messages.REWIND_CONFIRM_FILES_ONLY
+        unrestorable = sum(1 for change in diffs if change.unrestorable)
+        if unrestorable:
+            copy += messages.REWIND_UNRESTORABLE_WARNING.format(count=unrestorable)
         copy += self._history_moved_warning()
         self.app.push_screen(
             ConfirmSettingsActionScreen(
@@ -413,6 +424,8 @@ class ChangesInspectorScreen(ModalScreen):
         copy = messages.REWIND_FILE_CONFIRM_COPY.format(
             path=change.path, label=label, adds=change.adds, dels=change.dels
         )
+        if change.unrestorable:
+            copy += messages.REWIND_FILE_UNRESTORABLE_WARNING.format(reason=change.unrestorable)
         copy += self._history_moved_warning()
         self.app.push_screen(
             ConfirmSettingsActionScreen(
@@ -460,7 +473,10 @@ class ChangesInspectorScreen(ModalScreen):
         lines = [f"Changes for {change.path}"]
         if scope_label:
             lines.append(scope_label)
-        lines.extend([f"Status: {change.status}", ""])
+        lines.append(f"Status: {change.status}")
+        if change.unrestorable:
+            lines.append(messages.CHANGES_UNRESTORABLE_FILE.format(reason=change.unrestorable))
+        lines.append("")
         if change.message:
             lines.append(change.message)
             lines.append("")
