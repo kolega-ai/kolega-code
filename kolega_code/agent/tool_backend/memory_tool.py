@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import traceback
 from datetime import UTC, datetime
 from typing import Any
 
@@ -80,9 +81,13 @@ class MemoryTool:
         except (MemoryAccessError, MemorySafetyError, MemoryUnavailableError) as exc:
             raise ToolError(f"Project memory error: {exc}") from exc
         except Exception as exc:
+            await self.caller.log_error(
+                f"Project memory {binding.name} failed unexpectedly:\n{''.join(traceback.format_exception(exc))}",
+                sender=self.caller.agent_name,
+            )
             raise ToolError(
-                "Project memory operation failed without exposing private storage details. "
-                "Use `/memory status` to inspect the local diagnostic."
+                f"Project memory operation failed unexpectedly ({_failure_kind(exc)}). "
+                "Private storage details are withheld; the full error is in the local session log."
             ) from exc
 
         if isinstance(result, MemoryEntry):
@@ -128,3 +133,10 @@ class MemoryTool:
                         "could not be refreshed. Memory will be reloaded before the next top-level turn."
                     )
         return output
+
+
+def _failure_kind(exc: Exception) -> str:
+    # str(OSError) names the file; strerror is the path-free reason.
+    if isinstance(exc, OSError) and exc.strerror:
+        return f"{type(exc).__name__}: {exc.strerror}"
+    return type(exc).__name__

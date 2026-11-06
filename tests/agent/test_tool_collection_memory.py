@@ -1,6 +1,8 @@
+import errno
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -8,7 +10,7 @@ from kolega_code.agent.tool_backend.memory_tool import MemoryTool
 from kolega_code.agent.tools import ToolCollection, ToolCollectionConfig
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.memory import MemoryAccessScope, MemoryToolBinding, ProjectMemoryManager
-from kolega_code.tools import ToolError
+from kolega_code.tools import ToolError, ToolInputError
 
 
 MEMORY_TOOL_NAMES = [
@@ -61,11 +63,13 @@ def _tools(
     write_access: bool = True,
     allowed_tools: list[str] | None = None,
 ) -> ToolCollection:
+    connection_manager = Mock()
+    connection_manager.broadcast_event = AsyncMock()
     return ToolCollection(
         project,
         "workspace",
         "thread",
-        Mock(),
+        connection_manager,
         _config(),
         _caller(manager, sub_agent=sub_agent),
         tool_config=ToolCollectionConfig(
@@ -236,14 +240,27 @@ async def test_committed_mutation_is_not_reported_as_failed_when_prompt_refresh_
 
 
 @pytest.mark.asyncio
-async def test_unexpected_backend_errors_do_not_expose_private_paths(
+@pytest.mark.parametrize(
+    ("make_error", "kind"),
+    [
+        (lambda path: OSError(f"permission denied: {path}"), "(OSError)"),
+        (
+            lambda path: PermissionError(errno.EACCES, "Permission denied", str(path)),
+            "(PermissionError: Permission denied)",
+        ),
+    ],
+    ids=["message-only", "errno"],
+)
+async def test_unexpected_backend_errors_name_the_failure_and_log_it_without_exposing_paths(
     tmp_path: Path,
+    make_error: Callable[[Path], OSError],
+    kind: str,
 ) -> None:
     private_path = tmp_path / "private" / "MEMORY.md"
 
     def fail(path: str = "MEMORY.md") -> None:
         del path
-        raise OSError(f"permission denied: {private_path}")
+        raise make_error(private_path)
 
     manager = Mock()
     manager.tool_bindings.return_value = (
@@ -257,12 +274,95 @@ async def test_unexpected_backend_errors_do_not_expose_private_paths(
             fail,
         ),
     )
-    tool = MemoryTool(manager, Mock())
+    caller = Mock()
+    caller.log_error = AsyncMock()
+    tool = MemoryTool(manager, caller)
 
     with pytest.raises(ToolError) as caught:
         await tool.read_memory()
+
     assert str(private_path) not in str(caught.value)
-    assert "without exposing private storage details" in str(caught.value)
+    assert kind in str(caught.value)
+    assert "local session log" in str(caught.value)
+    caller.log_error.assert_awaited_once()
+    logged = caller.log_error.await_args.args[0]
+    assert logged.startswith("Project memory read_memory failed unexpectedly:")
+    assert "Traceback" in logged
+    assert str(private_path) in logged
+
+
+@pytest.mark.asyncio
+async def test_dispatch_aliases_file_path_for_memory_tools(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    manager = ProjectMemoryManager(project, tmp_path / "state")
+    registry = _tools(project, manager).registry()
+
+    write_result = await registry.call("write_memory", content="alpha", file_path="topics/notes.md")
+    edit_result = await registry.call("edit_memory", old_string="alpha", new_string="beta", file_path="topics/notes.md")
+    read_result = await registry.call("read_memory", file_path="topics/notes.md")
+    delete_result = await registry.call("delete_memory", file_path="topics/notes.md")
+
+    assert write_result.startswith("Project memory updated: `topics/notes.md`")
+    assert edit_result.startswith("Project memory updated: `topics/notes.md`")
+    assert read_result == "Memory `topics/notes.md` (4 bytes):\n\nbeta"
+    assert delete_result.startswith("Project memory deleted: `topics/notes.md`")
+    assert not manager.read_entry("topics/notes.md").present
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "inputs", "problem", "usage"),
+    [
+        (
+            "write_memory",
+            {"path": "MEMORY.md"},
+            "missing a required argument: 'content'",
+            "write_memory(content, path='MEMORY.md')",
+        ),
+        (
+            "write_memory",
+            {"content": "fact", "title": "Fact"},
+            "got an unexpected keyword argument 'title'",
+            "write_memory(content, path='MEMORY.md')",
+        ),
+        (
+            "edit_memory",
+            {"old_string": "a"},
+            "missing a required argument: 'new_string'",
+            "edit_memory(old_string, new_string, path='MEMORY.md')",
+        ),
+    ],
+)
+async def test_dispatch_rejects_malformed_memory_arguments_with_usage(
+    tmp_path: Path,
+    tool_name: str,
+    inputs: dict[str, str],
+    problem: str,
+    usage: str,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    manager = ProjectMemoryManager(project, tmp_path / "state")
+    registry = _tools(project, manager).registry()
+
+    with pytest.raises(ToolInputError) as caught:
+        await registry.call(tool_name, **inputs)
+
+    assert problem in str(caught.value)
+    assert f"Usage: {usage}" in str(caught.value)
+    assert not manager.read_entry("MEMORY.md").present
+
+
+@pytest.mark.asyncio
+async def test_non_text_memory_content_is_a_memory_error(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    manager = ProjectMemoryManager(project, tmp_path / "state")
+    registry = _tools(project, manager).registry()
+
+    with pytest.raises(ToolError, match="Project memory error: memory content must be text"):
+        await registry.call("write_memory", content={"fact": "alpha"})
 
 
 def test_tool_schema_order_availability_and_revision_free_file_api(tmp_path: Path) -> None:
