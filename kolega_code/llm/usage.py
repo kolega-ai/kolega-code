@@ -60,6 +60,7 @@ OPENAI_USAGE_PROVIDERS = frozenset(
         "openrouter",
         "perplexity_agent",
         "mistral",
+        "refuseless",
     }
 )
 GOOGLE_USAGE_PROVIDERS = frozenset({"google"})

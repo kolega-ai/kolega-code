@@ -32,8 +32,12 @@ from kolega_code.mcp.config import (
 from kolega_code.mcp.service import MCPService, MCPVerificationResult
 from kolega_code.session.inbox import PeerMessage
 
-from ._app_test_utils import FakeCoderAgent, install_fake_agents, wait_for_turn_idle
-from .test_settings_dropdown_interactions import _wait_for_layout
+from ._app_test_utils import (
+    FakeCoderAgent,
+    install_fake_agents,
+    wait_for_layout as _wait_for_layout,
+    wait_for_turn_idle,
+)
 from .test_tui_settings_screens import _configured_app
 
 
@@ -132,7 +136,10 @@ async def test_mcp_dirty_is_separate_from_global_apply(
     async with app.run_test(size=(100, 40)) as pilot:
         screen = await _open_mcp(app, pilot)
         screen.query_one("#mcp_url_input", Input).value = "https://edited.invalid/mcp"
-        await pilot.pause()
+        await _wait_for_layout(
+            pilot,
+            lambda: "Unsaved server changes" in str(screen.query_one("#mcp_draft_status", Static).render()),
+        )
         assert screen.mcp_dirty
         assert not screen.dirty
         assert "Unsaved server changes" in str(screen.query_one("#mcp_draft_status", Static).render())

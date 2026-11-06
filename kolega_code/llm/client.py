@@ -69,6 +69,7 @@ _CHAT_COMPLETIONS_PROVIDERS = frozenset(
         "ollama_cloud",
         "openrouter",
         cloudflare_workers_ai.PROVIDER,
+        "refuseless",
     }
 )
 
@@ -281,6 +282,7 @@ class LLMClient:
                 # Tinker's Anthropic-compatible endpoint: the Anthropic SDK appends
                 # /v1/messages (and /v1/messages/count_tokens) to this base.
                 "thinking_machines": "https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api",
+                "refuseless": "https://api.refuseless.com/v1",
             }
 
             provider_class = self._provider_class(provider)

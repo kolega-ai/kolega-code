@@ -58,6 +58,14 @@ PROVIDER_SOURCES["tinker://*"] = {
     "policy": "Saved checkpoints are unpriced by default, even with a resolved base; require an exact-route override.",
     "url": "https://tinker-docs.thinkingmachines.ai/tinker/api-reference/samplingclient/index.md",
 }
+PROVIDER_SOURCES["refuseless"] = {
+    "checked_at": "2026-11-05",
+    "billing_surface": "prepaid_credits",
+    "policy": (
+        "Use current exact-route USD input, cached-input, and output rates from Refuseless's model/pricing pages."
+    ),
+    "url": "https://refuseless.com/pricing",
+}
 
 # Names are aliases for consumers auditing coverage; there is one registry.
 PRICING_SOURCES = PROVIDER_SOURCES

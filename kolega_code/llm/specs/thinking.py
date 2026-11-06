@@ -181,6 +181,7 @@ _REASONING_REPLAY_FIELDS: Dict[str, str] = {
     # against grok-4.3: streaming emits reasoning_content deltas and replaying it
     # on a multi-turn tool-call request is accepted).
     "xai": "reasoning_content",
+    "refuseless": "reasoning_content",
 }
 
 # Chat-Completions reasoning modes whose reasoning text is replayable via a flat

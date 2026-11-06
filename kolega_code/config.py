@@ -43,6 +43,7 @@ class ModelProvider(str, Enum):
     THINKING_MACHINES = "thinking_machines"  # Thinking Machines Lab (Tinker API)
     TINKER = "tinker"  # Native Tinker SamplingClient (agentic-RL trajectory source)
     PERPLEXITY_AGENT = "perplexity_agent"
+    REFUSELESS = "refuseless"
 
     @classmethod
     def _missing_(cls, value: object) -> Optional["ModelProvider"]:
@@ -237,6 +238,7 @@ class AgentConfig(BaseModel):
     perplexity_api_key: Optional[str] = Field(
         default=None, description="API key for Perplexity (Gateway and Agent API)"
     )
+    refuseless_api_key: Optional[str] = Field(default=None, description="API key for Refuseless")
 
     # ChatGPT-subscription OAuth credentials (used instead of an api key for the
     # OPENAI_CHATGPT provider). The live, refreshing token manager is attached
@@ -473,6 +475,7 @@ class AgentConfig(BaseModel):
             ModelProvider.TINKER: self.thinking_machines_api_key,
             ModelProvider.PERPLEXITY_AGENT: self.perplexity_api_key,
             ModelProvider.LLAMA: None,  # Local model, no API key needed
+            ModelProvider.REFUSELESS: self.refuseless_api_key,
         }
         return api_key_map[provider]
 

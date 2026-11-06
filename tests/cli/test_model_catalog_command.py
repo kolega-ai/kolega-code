@@ -67,6 +67,17 @@ def test_list_featured_matches_the_picker() -> None:
     assert all(row["featured"] for row in rows)
 
 
+@pytest.mark.parametrize("provider", ["anthropic", "refuseless"])
+def test_list_featured_keeps_the_full_picker_without_featured_flags(provider: str) -> None:
+    from kolega_code.cli.provider_registry import ui_model_options
+
+    picker = [model for _label, model in ui_model_options(provider)]
+    assert picker
+    rows = model_catalog.catalog_rows(provider=provider, featured_only=True)
+    assert [row["model"] for row in rows] == picker
+    assert not any(row["featured"] for row in rows)
+
+
 def test_list_rejects_an_unknown_provider() -> None:
     # A typo must fail loudly instead of printing an empty table.
     _lines, printer = _collect()

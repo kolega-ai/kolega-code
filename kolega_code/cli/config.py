@@ -79,6 +79,7 @@ API_KEY_ENV = {
     # Native Tinker sampling authenticates with the same key.
     ModelProvider.TINKER: "TINKER_API_KEY",
     ModelProvider.PERPLEXITY_AGENT: "PERPLEXITY_API_KEY",
+    ModelProvider.REFUSELESS: "REFUSELESS_API_KEY",
 }
 
 DEFAULT_WEB_SEARCH_BACKEND = "duckduckgo"
@@ -1033,6 +1034,7 @@ def build_agent_config(
             openrouter_api_key=_api_key_for_provider(ModelProvider.OPENROUTER, loaded_env, settings),
             thinking_machines_api_key=_api_key_for_provider(ModelProvider.THINKING_MACHINES, loaded_env, settings),
             perplexity_api_key=_api_key_for_provider(ModelProvider.PERPLEXITY_AGENT, loaded_env, settings),
+            refuseless_api_key=_api_key_for_provider(ModelProvider.REFUSELESS, loaded_env, settings),
             environment=overrides.environment or loaded_env.get("KOLEGA_CODE_ENVIRONMENT", "development"),
             edit_protocol=edit_protocol,
             long_context_config=_model_config(

@@ -42,6 +42,75 @@ Anthropic-compatible):
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
 | Perplexity Agent API | `perplexity_agent` | `PERPLEXITY_API_KEY` |
 | Llama (local) | `llama` | _none — local model_ |
+| Refuseless | `refuseless` | `REFUSELESS_API_KEY` |
+
+### Refuseless
+
+The built-in `refuseless` provider uses **Chat Completions** at
+`https://api.refuseless.com/v1`, with `REFUSELESS_API_KEY` or a key saved in
+Settings → Providers. No custom endpoint is needed. Selecting Refuseless defaults
+to **GLM-5.3 Abliterated** (`glm-5.3-abliterated`); setting its key alone does not
+change your provider or any existing defaults.
+
+```bash
+export REFUSELESS_API_KEY="your-api-key"
+kolega-code . --provider refuseless --model glm-5.3-abliterated
+kolega-code models list --provider refuseless
+```
+
+The installed CLI does **not** load a target project's `.env`. Export the key in
+the launching shell or save it in Settings instead.
+
+All five paid routes are bundled in the shared catalog used by the Python API, CLI,
+TUI onboarding, Settings, `/model`, the Fast slot, per-agent role selectors, and
+configured sub-agent discovery:
+
+| Model ID | Context window (tokens) | Output limit (tokens) | Image input | Thinking efforts |
+| --- | ---: | ---: | --- | --- |
+| [`glm-5.3-abliterated`](https://refuseless.com/models/glm-5.3-abliterated) | 1,048,576 | 131,072 | No | `low`, `high`, `max` |
+| [`glm-5.3-flash-abliterated`](https://refuseless.com/models/glm-5.3-flash-abliterated) | 1,048,576 | 131,072 | Yes | `low`, `high`, `max` |
+| [`deepseek-v4.1-flash-abliterated`](https://refuseless.com/models/deepseek-v4.1-flash-abliterated) | 1,048,576 | 65,536 | Yes | `off`, `low`, `high`, `max` |
+| [`deepseek-v4.1-flash-fast`](https://refuseless.com/models/deepseek-v4.1-flash-fast) | 1,048,576 | 262,144 | Yes | `off`, `low`, `high`, `max` |
+| [`minimax-m3.1-flash`](https://refuseless.com/models/minimax-m3.1-flash) | 1,048,576 | 512,000 | Yes | `low`, `high`, `max` |
+
+The primary GLM route's context and output limits are both measured and published.
+GLM Flash, DeepSeek Flash Fast, and MiniMax use Refuseless's published exact-route
+maxima; these are accepted catalog limits, not claims of live verification at
+those ceilings. Paid DeepSeek Abliterated retains its **measured 65,536-token
+output cap**, despite its model page advertising 131,072: a native-usage probe
+requested 131,073 tokens and finished with `length` at 65,536.
+
+All routes default to `low`. DeepSeek's native `off` disables reasoning; it is
+not a `none` alias, and `medium`, `minimal`, and `xhigh` are not supported.
+Reasoning is displayed as thinking and replayed in the native
+`reasoning_content` field across tool results, not mixed into the visible answer.
+Function tools run in Kolega Code; hosted search is not enabled.
+
+The `abliterated` routes use Refuseless's modified weights. DeepSeek Flash Fast
+and MiniMax Flash use standard weights; Fast is not an alias for the Abliterated
+route. Refuseless credentials, capabilities, limits, and pricing are independent
+of the corresponding first-party providers.
+
+The standard-weight DeepSeek Flash Fast and MiniMax routes have been observed to
+exceed small requested output caps. Kolega forwards smaller caller limits
+unchanged, but those limits are **not a reliable provider-side spending ceiling**
+on these routes.
+
+Refuseless uses prepaid credits. HTTP 402 and streamed `insufficient_credits`
+errors surface as billing failures, including after partial output, rather than
+successful truncated answers or an automatic retry loop.
+
+Refuseless's [public pricing page](https://refuseless.com/pricing) publishes the
+five paid routes' rates below. Kolega uses these literal **USD per million
+tokens** rates for input, cache reads, and output:
+
+| Model ID | Input | Cache read | Output |
+| --- | ---: | ---: | ---: |
+| `glm-5.3-abliterated` | $1.00 | $0.15 | $2.00 |
+| `glm-5.3-flash-abliterated` | $0.12 | $0.03 | $0.50 |
+| `deepseek-v4.1-flash-abliterated` | $0.12 | $0.025 | $0.45 |
+| `deepseek-v4.1-flash-fast` | $0.01 | $0.002 | $0.08 |
+| `minimax-m3.1-flash` | $0.02 | $0.002 | $0.08 |
 
 **GPT-6 Astra** (`gpt-6-astra`) is available in the model picker for both `openai`
 and `openai_chatgpt`. It supports image input, hosted web search, and reasoning
