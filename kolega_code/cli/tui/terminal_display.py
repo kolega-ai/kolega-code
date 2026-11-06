@@ -22,10 +22,7 @@ from textual.filter import LineFilter
 # needs the full parser; no hit means the parser would return it byte-identical.
 _CONTROL_CHARS_RE = re.compile("[\x00-\x1f\x7f-\x9f]")
 
-# Characters that make a NORMAL-state stream diverge from a plain pass-through:
-# every C0/C1 control except the newline and tab the parser emits unchanged.
-# Checking them with one regex search keeps ordinary build output out of the
-# per-character state machine, which runs at ~1.4 MB/s.
+# _CONTROL_CHARS_RE minus the newline and tab that the NORMAL state emits verbatim.
 _NEEDS_PARSER_RE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 
@@ -70,10 +67,6 @@ class _TerminalControlParser:
         if not text:
             return ""
 
-        # Fast path: most PTY output is ordinary text, and while the state machine
-        # sits in NORMAL with no pending CR it would emit every character verbatim.
-        # One scan is all that is needed to prove that for the whole chunk; a
-        # standing state (split escape, pending CRLF) always takes the slow path.
         if self._state is _State.NORMAL and not self._pending_cr and not _NEEDS_PARSER_RE.search(text):
             return text
 
@@ -108,9 +101,6 @@ class _TerminalControlParser:
                     continue
 
             if state is _State.NORMAL:
-                # Emit the run before the next control byte in one slice: a chunk
-                # carrying a single escape sequence must not put every ordinary
-                # character through the per-character dispatch.
                 next_special = _NEEDS_PARSER_RE.search(text, index)
                 run_end = next_special.start() if next_special is not None else length
                 if run_end > index:
@@ -247,8 +237,7 @@ class _TerminalControlParser:
     @staticmethod
     def _erase_previous_output_char(out: list[str]) -> None:
         # Do not erase across emitted line boundaries or parser feed calls.
-        # ``out`` may hold a whole ordinary run in one element, so erase its last
-        # character rather than discarding the run.
+        # An ``out`` element may be a whole run, so trim one character instead of popping.
         if not out or not out[-1] or out[-1][-1] == "\n":
             return
         if len(out[-1]) > 1:

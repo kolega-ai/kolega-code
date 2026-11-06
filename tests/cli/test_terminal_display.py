@@ -162,9 +162,6 @@ def test_terminal_display_normalizer_passes_control_free_chunks_through_unchange
 
 
 def test_terminal_display_normalizer_keeps_parsing_control_free_chunks_inside_a_sequence() -> None:
-    # "3" and "1" carry no control byte, but the parser is still inside the CSI
-    # sequence opened by the previous chunk, so the pass-through fast path must
-    # not consume them as text.
     normalizer = TerminalDisplayNormalizer()
 
     assert normalizer.feed("before\x1b[") == "before"
