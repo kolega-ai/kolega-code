@@ -19,6 +19,7 @@ Multi-agent terminal coding agent: Python 3.11+ package `kolega_code/` (hatchlin
 - Coverage: `./run_tests.sh --coverage` (fails under 45%).
 - Lint/format/typecheck: `uv run ruff check .`, `uv run ruff format .`, `uv run pyright`.
 - CI parity check: `uv run pre-commit run --all-files --show-diff-on-failure` (same command as CI and the tracked git hook). CI runs it once, in the required `Dependency audit` job: the hooks are interpreter-independent, and repeating them in every test leg only delayed those legs' tests.
+- Don't add a separate CI step for a test file: `./run_tests.sh` already collects every unmarked module in every leg. The completion/Stop lifecycle files briefly had their own step; it re-ran ~154 cases per leg for 65–100 s without adding coverage, because `-m "not slow"` includes those modules.
 - Browser-dependent tests need Chromium: `uv run playwright install --with-deps chromium`.
 - CI matrix: Python 3.11–3.14, coverage enforced on 3.12 only so coverage.py can use its faster sysmon core. Jobs that install Playwright are pinned to `ubuntu-24.04`: `ubuntu-latest` moved to 26.04 ahead of Playwright, which failed the release build and would fail any CI job that misses the browser cache (#763), so keep that pin instead of "modernizing" it.
 
