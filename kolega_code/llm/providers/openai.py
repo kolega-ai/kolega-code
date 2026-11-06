@@ -171,6 +171,7 @@ class OpenAIStreamWrapper:
         self.usage_data = None
         self.tool_execution_ids = ToolExecutionIdRegistry()
         self.provider_name = provider_name
+        self._ready_chunks: List[MessageChunk] = []
 
         self._closed = False
         self._requested_include_usage = requested_include_usage
@@ -210,6 +211,8 @@ class OpenAIStreamWrapper:
     async def __anext__(self):
         if self._closed:
             raise StopAsyncIteration
+        if self._ready_chunks:
+            return self._ready_chunks.pop(0)
 
         try:
             chunk = await self.openai_stream.__anext__()
@@ -234,23 +237,28 @@ class OpenAIStreamWrapper:
                 self.usage_data = incoming
                 self._wire_finished = self._wire_finished or final
 
+            # A reasoning→answer transition delta can carry both fields; each becomes a chunk.
+            chunks: List[MessageChunk] = []
             # Some providers emit usage-only events with no choices; guard accesses
             if hasattr(chunk, "choices") and chunk.choices:
                 choice0 = chunk.choices[0]
                 delta = getattr(choice0, "delta", None)
                 if delta is not None:
-                    content = getattr(delta, "content", None) or ""
-                    if content:
-                        self._content_parts.append(content)
-
                     reasoning_content = getattr(delta, "reasoning_content", None)
                     reasoning = getattr(delta, "reasoning", None)
                     if reasoning_content:
                         self._reasoning_field = "reasoning_content"
-                        self._reasoning_parts.append(reasoning_content)
                     elif reasoning:
                         self._reasoning_field = "reasoning"
-                        self._reasoning_parts.append(reasoning)
+                    thinking = reasoning_content or reasoning
+                    if thinking:
+                        self._reasoning_parts.append(thinking)
+                        chunks.append(MessageChunk(type="thinking", thinking=thinking))
+
+                    content = getattr(delta, "content", None)
+                    if content:
+                        self._content_parts.append(content)
+                        chunks.append(MessageChunk(type="text", text=content))
 
                     for tool_call in getattr(delta, "tool_calls", []) or []:
                         index = tool_call.index
@@ -269,12 +277,10 @@ class OpenAIStreamWrapper:
                 # Capture stop reason if present
                 self.stop_reason = getattr(choice0, "finish_reason", self.stop_reason)
 
-            # Capture usage data from final chunk
-            # Return a safe chunk representation; ignore events with no choices
-            if hasattr(chunk, "choices") and chunk.choices:
-                return MessageChunk.from_openai(chunk)
-            else:
+            if not chunks:
                 return MessageChunk(type="ignore", text="")
+            self._ready_chunks.extend(chunks[1:])
+            return chunks[0]
 
         except StopAsyncIteration:
             if self.provider_name != "cloudflare_workers_ai":

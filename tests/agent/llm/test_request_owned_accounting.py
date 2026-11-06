@@ -257,16 +257,11 @@ async def test_workers_ai_partial_deltas_then_authoritative_total_replace() -> N
         provider_name="cloudflare_workers_ai",
         model="m",
     )
-    # Capture occurs before presentation conversion; these synthetic deltas are intentionally minimal.
-    with pytest.raises(AttributeError):
-        await wrapper.__anext__()
+    assert (await wrapper.__anext__()).type == "ignore"
     first = wrapper.get_usage_observation()
     assert first.input_tokens == 10 and first.output_tokens == 0 and not first.complete
     for _ in range(4):
-        try:
-            await wrapper.__anext__()
-        except AttributeError:
-            pass
+        await wrapper.__anext__()
     final = wrapper.get_usage_observation()
     assert final.input_tokens == 10 and final.output_tokens == 9 and final.total_tokens == 19
     assert final.complete
