@@ -43,6 +43,12 @@ else
 
   if [ "$CPU_COUNT" = "auto" ]; then
     NUM_WORKERS=auto
+  elif [ "$RUN_COVERAGE" = true ]; then
+    # Coverage instrumentation makes the run CPU-bound: the same 204-test TUI
+    # slice took 299.4s with 2 workers and 299.1s with 3, so there is no idle
+    # time for a spare worker to fill and it only adds contention. The 3.12
+    # badge leg keeps one worker per CPU.
+    NUM_WORKERS="$CPU_COUNT"
   else
     # One worker beyond the CPU count: a measurable share of the suite's wall
     # time is tests waiting on timers, subprocesses, sockets and browsers, so a
