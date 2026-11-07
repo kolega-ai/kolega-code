@@ -65,7 +65,6 @@ class SkillCatalogBudget:
 class SkillCatalogRenderReport:
     total_count: int
     truncated_description_count: int = 0
-    truncated_description_chars: int = 0
 
 
 @dataclass(frozen=True)
@@ -216,13 +215,12 @@ def _render_skill_metadata_records(
 
     minimum_lines = [_skill_metadata_line(record, "") for record in records]
     if _joined_len(minimum_lines) <= budget.max_chars:
-        lines, truncated_count, truncated_chars = _largest_description_limited_lines(records, budget.max_chars)
+        lines, truncated_count = _largest_description_limited_lines(records, budget.max_chars)
         return SkillCatalogRenderResult(
             markdown="\n".join(lines),
             report=SkillCatalogRenderReport(
                 total_count=total_count,
                 truncated_description_count=truncated_count,
-                truncated_description_chars=truncated_chars,
             ),
         )
 
@@ -233,45 +231,40 @@ def _render_skill_metadata_records(
         report=SkillCatalogRenderReport(
             total_count=total_count,
             truncated_description_count=sum(1 for record in records if _clean_description(record.description)),
-            truncated_description_chars=sum(len(_clean_description(record.description)) for record in records),
         ),
     )
 
 
-def _largest_description_limited_lines(records: Sequence[SkillRecord], max_chars: int) -> tuple[list[str], int, int]:
+def _largest_description_limited_lines(records: Sequence[SkillRecord], max_chars: int) -> tuple[list[str], int]:
     max_description_len = max((len(_clean_description(record.description)) for record in records), default=0)
     best_lines = [_skill_metadata_line(record, "") for record in records]
     best_truncated_count = sum(1 for record in records if _clean_description(record.description))
-    best_truncated_chars = sum(len(_clean_description(record.description)) for record in records)
     low = 0
     high = max_description_len
 
     while low <= high:
         mid = (low + high) // 2
-        lines, truncated_count, truncated_chars = _description_limited_lines(records, mid)
+        lines, truncated_count = _description_limited_lines(records, mid)
         if _joined_len(lines) <= max_chars:
             best_lines = lines
             best_truncated_count = truncated_count
-            best_truncated_chars = truncated_chars
             low = mid + 1
         else:
             high = mid - 1
 
-    return best_lines, best_truncated_count, best_truncated_chars
+    return best_lines, best_truncated_count
 
 
-def _description_limited_lines(records: Sequence[SkillRecord], description_limit: int) -> tuple[list[str], int, int]:
+def _description_limited_lines(records: Sequence[SkillRecord], description_limit: int) -> tuple[list[str], int]:
     lines: list[str] = []
     truncated_count = 0
-    truncated_chars = 0
     for record in records:
         description = _clean_description(record.description)
         rendered_description = _truncate_description(description, description_limit)
         if rendered_description != description:
             truncated_count += 1
-            truncated_chars += max(0, len(description) - len(rendered_description))
         lines.append(_skill_metadata_line(record, rendered_description))
-    return lines, truncated_count, truncated_chars
+    return lines, truncated_count
 
 
 def _truncate_description(description: str, limit: int) -> str:
