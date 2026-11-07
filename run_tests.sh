@@ -31,18 +31,31 @@ for arg in "$@"; do
 done
 
 if [ -n "${PYTEST_WORKERS:-}" ]; then
-  NUM_CPUS="$PYTEST_WORKERS"
-elif command -v nproc &> /dev/null; then
-  NUM_CPUS=$(nproc)
-elif command -v sysctl &> /dev/null; then
-  NUM_CPUS=$(sysctl -n hw.ncpu 2>/dev/null || echo auto)
+  NUM_WORKERS="$PYTEST_WORKERS"
 else
-  NUM_CPUS=auto
+  if command -v nproc &> /dev/null; then
+    CPU_COUNT=$(nproc)
+  elif command -v sysctl &> /dev/null; then
+    CPU_COUNT=$(sysctl -n hw.ncpu 2>/dev/null || echo auto)
+  else
+    CPU_COUNT=auto
+  fi
+
+  if [ "$CPU_COUNT" = "auto" ]; then
+    NUM_WORKERS=auto
+  else
+    # One worker beyond the CPU count: a measurable share of the suite's wall
+    # time is tests waiting on timers, subprocesses, sockets and browsers, so a
+    # spare worker keeps CPU-bound tests running during those waits. Measured
+    # on 2 CPUs: 3 workers ran the fast suite in 798s vs 878s (-9.2%), while 4
+    # workers only reached 819s, so one extra is the useful amount.
+    NUM_WORKERS=$((CPU_COUNT + 1))
+  fi
 fi
 
-echo "Running tests with ${NUM_CPUS} parallel workers"
+echo "Running tests with ${NUM_WORKERS} parallel workers"
 
-PYTEST_BASE_ARGS=(-ra --durations=50 --import-mode=importlib -n "$NUM_CPUS")
+PYTEST_BASE_ARGS=(-ra --durations=50 --import-mode=importlib -n "$NUM_WORKERS")
 
 if [ "$RUN_COVERAGE" = true ]; then
   # coverage.py's sysmon core (Python 3.12+) records the same lines as the C
