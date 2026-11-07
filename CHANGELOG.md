@@ -6,6 +6,23 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.49.0 - 2026-11-07
+
+### Added
+
+- **Inkling 2 Small.** The `thinking_machines` provider (Tinker's
+  Anthropic-compatible endpoint) gains the `thinkingmachines/Inkling-2-Small`
+  route: natively multimodal (text + image), with 256K-token context and
+  reasoning on by default. The thinking effort picker offers `none`, `low`,
+  `medium`, `high`, `xhigh` and `max`, and pricing follows the published
+  serverless rates.
+
+### Changed
+
+- The catalogued context window for Inkling and Inkling Small is now 256K
+  tokens, matching the published Tinker serverless routes (previously listed
+  as 1M).
+
 ### Fixed
 
 - Project memory can be enabled when Kolega Code is launched from your home
