@@ -838,36 +838,54 @@ async def test_logs_output_supports_mouse_drag_selection(tmp_path: Path, monkeyp
     async with app.run_test(size=(100, 30)) as pilot:
         app.query_one("#events", TabbedContent).active = "logs_pane"
         logs = app._logs
-        logs.write_log("select this log text\n")
-        await pilot.pause()
+        line = "select this log text"
+        # RichLog renders each write at the width it knows at that moment and never
+        # re-wraps it. Write only once the pane has its real size, otherwise a
+        # transient narrow first layout splits the line across rows.
+        await wait_for_layout(
+            pilot,
+            lambda: logs._size_known and logs.region.height > 0 and logs.scrollable_content_region.width >= len(line),
+        )
+        logs.write_log(f"{line}\n")
+        # Startup diagnostics (e.g. the peer-socket degrade notice on long tmp
+        # paths) share this pane and flush on a timer. Drain them now and wait for
+        # the follow-bottom callback so a late append cannot scroll the line away.
+        app._flush_log_output()
+        await wait_for_layout(
+            pilot,
+            lambda: (
+                not logs._follow_bottom_pending
+                and not logs._follow_bottom_callback_scheduled
+                and any(strip.text.rstrip() == line for strip in logs.lines)
+            ),
+        )
 
-        def selection_targets_are_ready() -> bool:
+        content_row = next(i for i, strip in enumerate(logs.lines) if strip.text.rstrip() == line)
+        # ``logs.lines`` is content space; the pilot offset is viewport space.
+        visible_row = content_row - int(logs.scroll_offset.y)
+        assert 0 <= visible_row < logs.region.height
+
+        def drag_targets_the_line() -> bool:
             for x in (0, 19):
-                hit_widget, select_offset = app.screen.get_widget_and_offset_at(logs.region.x + x, logs.region.y)
-                if hit_widget is not logs or select_offset is None:
+                hit_widget, select_offset = app.screen.get_widget_and_offset_at(
+                    logs.region.x + x, logs.region.y + visible_row
+                )
+                if hit_widget is not logs or select_offset is None or select_offset.y != content_row:
                     return False
             return True
 
-        await wait_for_layout(pilot, selection_targets_are_ready)
-
-        # Startup diagnostics (e.g. the peer-socket degrade notice on long tmp
-        # paths) may occupy earlier rows; drag OUR line's row, not row 0.
-        target_row = next(
-            (i for i, strip in enumerate(logs.lines) if "select this log text" in strip.text),
-            0,
-        )
-
-        await pilot.mouse_down(logs, offset=(0, target_row))
-        await pilot._post_mouse_events([events.MouseMove], logs, offset=(19, target_row), button=1)
-        await pilot.mouse_up(logs, offset=(19, target_row))
+        await wait_for_layout(pilot, drag_targets_the_line)
+        assert await pilot.mouse_down(logs, offset=(0, visible_row))
+        assert await pilot._post_mouse_events([events.MouseMove], logs, offset=(19, visible_row), button=1)
+        assert await pilot.mouse_up(logs, offset=(19, visible_row))
 
         def selection_copied_text() -> bool:
-            return (app.screen.get_selected_text() or "").strip() == "select this log text"
+            return (app.screen.get_selected_text() or "").strip() == line
 
         await wait_for_layout(pilot, selection_copied_text)
         selected_text = app.screen.get_selected_text()
         assert selected_text is not None
-        assert selected_text.strip() == "select this log text"
+        assert selected_text.strip() == line
 
 
 @pytest.mark.asyncio
