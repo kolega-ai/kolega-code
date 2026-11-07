@@ -270,25 +270,29 @@ def test_symlink_below_private_state_root_is_rejected(tmp_path: Path) -> None:
     assert not list(outside.iterdir())
 
 
-def test_state_root_inside_project_is_rejected_without_repository_writes(
+def test_home_directory_project_containing_the_state_root_can_enable_memory(
     tmp_path: Path,
 ) -> None:
-    project = tmp_path / "project"
-    project.mkdir()
-    state = project / ".private-state"
-    manager = ProjectMemoryManager(project, state)
+    home = tmp_path / "home"
+    home.mkdir()
+    state = home / "Library" / "Application Support" / "kolega-code"
+    manager = ProjectMemoryManager(home, state)
 
-    assert not manager.status().available
-    with pytest.raises(MemoryUnavailableError, match="inside the project"):
-        manager.write_entry("MEMORY.md", "must stay outside")
-    assert not state.exists()
+    status = manager.status()
+    assert status.available and status.diagnostic is None
+    manager.set_enabled(False)
+    manager.set_enabled(True)
+    assert manager.write_entry("MEMORY.md", "stable fact").ok
+    assert ProjectMemoryManager(home, state).read_entry("MEMORY.md").content == "stable fact"
 
 
-def test_state_root_inside_containing_repository_is_rejected_from_subdirectory(
+@pytest.mark.parametrize("project_parts", [(), ("packages", "app")])
+def test_state_root_inside_containing_repository_is_rejected(
     tmp_path: Path,
+    project_parts: tuple[str, ...],
 ) -> None:
     repository = tmp_path / "repository"
-    project = repository / "packages" / "app"
+    project = repository.joinpath(*project_parts)
     project.mkdir(parents=True)
     subprocess.run(["git", "init", "-q", str(repository)], check=True)
     state = repository / ".private-state"

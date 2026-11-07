@@ -476,7 +476,6 @@ class ProjectMemoryManager:
 
     def _storage_safety_error(self) -> str | None:
         """Reject symlinks inserted below the trusted local-state root."""
-        project_root = Path(self.identity.display_path).resolve(strict=False)
         candidate = self.memory_dir.resolve(strict=False)
         if self._state_repository_root is not None:
             try:
@@ -485,12 +484,6 @@ class ProjectMemoryManager:
                 pass
             else:
                 return "project memory storage must not be located inside a Git repository"
-        try:
-            candidate.relative_to(project_root)
-        except ValueError:
-            pass
-        else:
-            return "project memory storage must not be located inside the project"
         try:
             relative = self.memory_dir.relative_to(self.state_root)
         except ValueError:
