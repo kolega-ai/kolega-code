@@ -338,6 +338,7 @@ def test_thinking_machines_models_are_selectable_and_inkling_is_default():
     assert options == [
         ("Inkling", "thinkingmachines/Inkling"),
         ("Inkling Small", "thinkingmachines/Inkling-Small"),
+        ("Inkling 2 Small", "thinkingmachines/Inkling-2-Small"),
     ]
     assert default_model_for_provider(ModelProvider.THINKING_MACHINES) == "thinkingmachines/Inkling"
     assert ui_thinking_effort_options("thinking_machines", "thinkingmachines/Inkling") == [
@@ -356,12 +357,21 @@ def test_thinking_machines_models_are_selectable_and_inkling_is_default():
         ("Extra high", "xhigh"),
         ("Max", "max"),
     ]
+    assert ui_thinking_effort_options("thinking_machines", "thinkingmachines/Inkling-2-Small") == [
+        ("None", "none"),
+        ("Low", "low"),
+        ("Medium", "medium"),
+        ("High", "high"),
+        ("Extra high", "xhigh"),
+        ("Max", "max"),
+    ]
 
 
 def test_thinking_machines_models_support_vision():
     assert ui_model_options("thinking_machines", vision_only=True) == [
         ("Inkling", "thinkingmachines/Inkling"),
         ("Inkling Small", "thinkingmachines/Inkling-Small"),
+        ("Inkling 2 Small", "thinkingmachines/Inkling-2-Small"),
     ]
 
 
@@ -369,6 +379,7 @@ def test_tinker_provider_lists_catalogued_bases_and_defaults_to_qwen3_8b():
     options = ui_model_options(ModelProvider.TINKER.value)
 
     assert any(model == "Qwen/Qwen3-8B" for _label, model in options)
+    assert ("Inkling 2 Small", "thinkingmachines/Inkling-2-Small") in options
     assert default_model_for_provider(ModelProvider.TINKER) == "Qwen/Qwen3-8B"
     # Inkling bases expose the named effort set through the native renderer.
     assert ui_thinking_effort_options("tinker", "thinkingmachines/Inkling") == [
@@ -379,6 +390,7 @@ def test_tinker_provider_lists_catalogued_bases_and_defaults_to_qwen3_8b():
         ("Extra high", "xhigh"),
         ("Max", "max"),
     ]
+    assert get_model_specs("tinker", "thinkingmachines/Inkling-2-Small")["context_length"] == 65536
 
 
 def test_tinker_checkpoint_paths_resolve_through_wildcard_and_other_entry():

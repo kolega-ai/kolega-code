@@ -415,10 +415,10 @@ upstreams may serve a request. Opt in with
 **Thinking Machines.** The `thinking_machines` provider targets Thinking Machines
 Lab's Tinker API through its Anthropic-compatible endpoint
 (`https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api`) with
-`TINKER_API_KEY`, exposing **Inkling** (default) and **Inkling Small**. Both are
-open-weights, natively multimodal (text + image) models with up to 1M token
-context, and reasoning is on by default: thinking blocks stream into the
-transcript, and the thinking effort picker offers `none`, `low`, `medium`,
+`TINKER_API_KEY`, exposing **Inkling** (default), **Inkling Small**, and
+**Inkling 2 Small**. These serverless routes are natively multimodal (text +
+image) with 256K-token context, and reasoning is on by default: thinking
+blocks stream into the transcript, and the thinking effort picker offers `none`, `low`, `medium`,
 `high`, `xhigh`, and `max` (effort rides in Tinker's `output_config.effort`
 field; `none` disables reasoning). Tool use, streaming, and
 `count_tokens` all work through this endpoint. Note that the Tinker
