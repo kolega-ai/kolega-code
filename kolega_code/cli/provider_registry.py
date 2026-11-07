@@ -220,6 +220,7 @@ MODEL_LABELS: dict[str, str] = {
     # Thinking Machines
     "thinkingmachines/Inkling": "Inkling",
     "thinkingmachines/Inkling-Small": "Inkling Small",
+    "thinkingmachines/Inkling-2-Small": "Inkling 2 Small",
     "glm-5.3-abliterated": "GLM-5.3 Abliterated",
     "glm-5.3-flash-abliterated": "GLM-5.3 Flash Abliterated",
     "deepseek-v4.1-flash-abliterated": "DeepSeek V4.1 Flash Abliterated",

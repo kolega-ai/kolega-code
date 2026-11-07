@@ -450,10 +450,14 @@ def test_claude_51_55_model_specs(model: str, default_effort: str) -> None:
 
 
 def test_thinking_machines_model_specs():
-    for model in ("thinkingmachines/Inkling", "thinkingmachines/Inkling-Small"):
+    for model in (
+        "thinkingmachines/Inkling",
+        "thinkingmachines/Inkling-Small",
+        "thinkingmachines/Inkling-2-Small",
+    ):
         specs = get_model_specs("thinking_machines", model)
 
-        assert specs["context_length"] == 1000000
+        assert specs["context_length"] == 262144
         assert specs["max_completion_tokens"] == 32768
         assert specs["default_temperature"] == 1.0
         assert specs["supports_vision"] is True

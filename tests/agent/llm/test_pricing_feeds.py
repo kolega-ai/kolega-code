@@ -249,7 +249,11 @@ def test_openrouter_override_only_audio_charge_is_not_silently_free(
 
 @pytest.mark.parametrize(
     ("model", "amount"),
-    [("thinkingmachines/Inkling", "0.001405"), ("thinkingmachines/Inkling-Small", "0.00042")],
+    [
+        ("thinkingmachines/Inkling", "0.001405"),
+        ("thinkingmachines/Inkling-Small", "0.00042"),
+        ("thinkingmachines/Inkling-2-Small", "0.0004"),
+    ],
 )
 def test_thinking_machines_uses_published_serverless_rates_without_an_override(model: str, amount: str) -> None:
     cost = _estimate("thinking_machines", model)
@@ -261,7 +265,12 @@ def test_thinking_machines_uses_published_serverless_rates_without_an_override(m
 
 
 @pytest.mark.parametrize(
-    ("model", "amount"), [("thinkingmachines/Inkling", "0.00099"), ("thinkingmachines/Inkling-Small", "0.0003")]
+    ("model", "amount"),
+    [
+        ("thinkingmachines/Inkling", "0.00099"),
+        ("thinkingmachines/Inkling-Small", "0.0003"),
+        ("thinkingmachines/Inkling-2-Small", "0.000265"),
+    ],
 )
 def test_thinking_machines_published_cache_discount_requires_observed_cache_counts(model: str, amount: str) -> None:
     cached = _estimate("thinking_machines", model, read=500)
@@ -325,9 +334,12 @@ def test_native_tinker_rates_retirements_promotions_and_wildcard_remain_distinct
     native = PRICING[("tinker", "thinkingmachines/Inkling")]
     serverless = PRICING[("thinking_machines", "thinkingmachines/Inkling")]
     assert native["rates"]["input"] == "1.87"
-    assert native["regular_rates"]["input"] == "3.74"
+    assert "regular_rates" not in native
     assert serverless["rates"]["input"] == "1.00"
     assert serverless["status"] == "priced"
+    promoted = PRICING[("tinker", "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16")]
+    assert promoted["regular_rates"]["input"] == "1.14"
+    assert promoted["promotion"]["description"] == "Limited-time 50% discount"
     wildcard = PRICING[("tinker", "tinker://*")]
     assert wildcard["status"] == "requires_configuration" and not wildcard["rates"]
     assert wildcard["checkpoint_policy"] == {"automatic_estimation": False, "inherit": "none"}
