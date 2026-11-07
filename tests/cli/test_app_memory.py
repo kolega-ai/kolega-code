@@ -724,10 +724,15 @@ async def test_settings_memory_apply_failure_preserves_draft(
         screen.query_one("#memory_enabled_select", Select).value = "false"
         await pilot.pause()
 
-        def fail_set_enabled(_enabled: bool) -> None:
+        set_enabled_calls: list[bool] = []
+
+        def fail_set_enabled(enabled: bool) -> None:
+            set_enabled_calls.append(enabled)
             raise OSError("manifest unavailable")
 
+        notices: list[str] = []
         monkeypatch.setattr(app.memory_manager, "set_enabled", fail_set_enabled)
+        monkeypatch.setattr(app, "notify", lambda message, **_kwargs: notices.append(message))
 
         assert await screen.apply_memory_draft() is False
         await pilot.pause()
@@ -735,6 +740,63 @@ async def test_settings_memory_apply_failure_preserves_draft(
         assert screen.dirty is True
         assert screen.query_one("#save_settings", Button).disabled is False
         assert app.memory_manager.enabled is True
+        assert set_enabled_calls == [False]
+        assert len(notices) == 1
+        assert "manifest unavailable" in notices[0]
+        assert "could not be fully restored" not in notices[0]
+
+
+@pytest.mark.asyncio
+async def test_settings_memory_apply_reports_failed_rollback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Select, Static
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        screen = await open_settings_screen(app, pilot, "memory")
+        for _ in range(40):
+            await pilot.pause(0.025)
+            if "markdown" in str(screen.query_one("#memory_settings_status", Static).render()):
+                break
+        await pilot.pause()
+
+        screen.query_one("#memory_enabled_select", Select).value = "false"
+        await pilot.pause()
+
+        real_set_enabled = app.memory_manager.set_enabled
+        set_enabled_calls: list[bool] = []
+
+        def set_enabled_then_fail(enabled: bool) -> None:
+            set_enabled_calls.append(enabled)
+            if len(set_enabled_calls) > 1:
+                raise OSError("manifest unavailable")
+            real_set_enabled(enabled)
+
+        refresh_calls = 0
+
+        async def fail_first_refresh() -> None:
+            nonlocal refresh_calls
+            refresh_calls += 1
+            if refresh_calls == 1:
+                raise RuntimeError("prompt refresh failed")
+
+        notices: list[str] = []
+        monkeypatch.setattr(app.memory_manager, "set_enabled", set_enabled_then_fail)
+        monkeypatch.setattr(app, "_refresh_agent_memory", fail_first_refresh)
+        monkeypatch.setattr(app, "notify", lambda message, **_kwargs: notices.append(message))
+
+        assert await screen.apply_memory_draft() is False
+        assert set_enabled_calls == [False, True]
+        assert refresh_calls == 2
+        assert app.memory_manager.enabled is False
+        assert len(notices) == 1
+        assert "prompt refresh failed" in notices[0]
+        assert "could not be fully restored" in notices[0]
 
 
 @pytest.mark.asyncio

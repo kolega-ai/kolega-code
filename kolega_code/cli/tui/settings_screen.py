@@ -1149,28 +1149,32 @@ class SettingsScreen(ModalScreen[None]):
         enabled_changed = desired_enabled != status.enabled
         if not backend_changed and not enabled_changed:
             return True
+        backend_saved = enabled_saved = False
         try:
             if desired_backend is not None and backend_changed:
                 await asyncio.to_thread(manager.select_backend, desired_backend)
+                backend_saved = True
             if enabled_changed:
                 await asyncio.to_thread(manager.set_enabled, desired_enabled)
+                enabled_saved = True
             await self.owner._refresh_agent_memory()
         except Exception as error:
             rollback_errors: list[str] = []
-            if enabled_changed:
+            if enabled_saved:
                 try:
                     await asyncio.to_thread(manager.set_enabled, status.enabled)
                 except Exception as rollback_error:
                     rollback_errors.append(str(rollback_error))
-            if backend_changed:
+            if backend_saved:
                 try:
                     await asyncio.to_thread(manager.select_backend, status.backend_id)
                 except Exception as rollback_error:
                     rollback_errors.append(str(rollback_error))
-            try:
-                await self.owner._refresh_agent_memory()
-            except Exception as rollback_error:
-                rollback_errors.append(str(rollback_error))
+            if enabled_saved or backend_saved:
+                try:
+                    await self.owner._refresh_agent_memory()
+                except Exception as rollback_error:
+                    rollback_errors.append(str(rollback_error))
             detail = f"Could not update project memory: {error}"
             if rollback_errors:
                 detail += " Previous memory settings could not be fully restored."

@@ -6,6 +6,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Project memory can be enabled when Kolega Code is launched from your home
+  directory, or any folder that contains its state directory. Memory showed
+  "Backend unavailable" there and refused to turn on. A failed memory change in
+  Settings also no longer reports that previous settings could not be restored
+  when nothing had been changed.
+
 ## 0.48.0 - 2026-11-06
 
 ### Added
