@@ -13,6 +13,7 @@ from ._app_test_utils import (
     build_test_config,
     install_fake_agents,
     open_settings_screen,
+    wait_for_layout,
 )
 
 
@@ -622,7 +623,9 @@ async def test_memory_screen_agent_view_matches_prompt_context(
         assert "Agent startup context" in metadata
 
         screen._start_load("MEMORY.md")
-        await pilot.pause(0.2)
+        # The action is a no-op while the screen is busy (the button is disabled),
+        # so wait for the load worker instead of assuming it finishes in 0.2 s.
+        await wait_for_layout(pilot, lambda: not screen._busy)
         assert screen._agent_view is False
 
         app.memory_manager.set_enabled(False)
