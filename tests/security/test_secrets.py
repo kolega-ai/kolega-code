@@ -92,6 +92,25 @@ def test_redact_in_obj_applies_configured_extra_values():
     assert "hunter2hunter2" not in out["note"]
 
 
+def test_redact_in_obj_applies_environment_values_to_every_nested_leaf(monkeypatch):
+    monkeypatch.setenv("KOLEGA_TEST_API_KEY", "envsecretvalue123")
+    payload = {"outer": [{"text": "envsecretvalue123"}, "harmless"], "count": 1}
+
+    out = redact_secrets_in_obj(payload, include_environment=True)
+
+    assert "envsecretvalue123" not in json.dumps(out)
+    assert out["outer"][1] == "harmless"
+    assert out["count"] == 1
+
+
+def test_redact_in_obj_ignores_environment_values_by_default(monkeypatch):
+    monkeypatch.setenv("KOLEGA_TEST_API_KEY", "envsecretvalue123")
+
+    out = redact_secrets_in_obj({"text": "envsecretvalue123"})
+
+    assert out["text"] == "envsecretvalue123"
+
+
 def test_quoted_credential_values_are_still_redacted():
     text = 'DEEPSEEK_API_KEY="quotedsecretvalue123"'
 
