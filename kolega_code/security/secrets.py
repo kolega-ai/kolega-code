@@ -140,16 +140,20 @@ def redact_secrets_in_obj(
     collisions.
     """
     values = list(extra_values or [])
+    if include_environment:
+        # Snapshot once: rebuilding the environment value list for every string
+        # leaf dominated exporting payloads with thousands of blocks.
+        values.extend(_environment_values())
 
     def walk(node: Any) -> Any:
         if isinstance(node, str):
-            return redact_secrets(node, values, include_environment=include_environment)
+            return redact_secrets(node, values)
         if isinstance(node, bool) or node is None or isinstance(node, (int, float)):
             return node
         if isinstance(node, dict):
             return {key: walk(value) for key, value in node.items()}
         if isinstance(node, (list, tuple)):
             return [walk(item) for item in node]
-        return redact_secrets(str(node), values, include_environment=include_environment)
+        return redact_secrets(str(node), values)
 
     return walk(obj)
