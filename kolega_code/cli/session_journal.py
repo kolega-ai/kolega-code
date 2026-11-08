@@ -220,8 +220,6 @@ class TurnSummary:
 
 @dataclass(frozen=True)
 class RewindOutcome:
-    target_turn_id: str
-    boundary_seq: int
     rewound_turn_ids: list[str]
     user_message_text: str
 
@@ -1568,8 +1566,6 @@ class SessionRecorder:
             if self._pending_assistant is not None and self._pending_assistant.turn_id in rewound:
                 self._pending_assistant = None
             return RewindOutcome(
-                target_turn_id=target.turn_id,
-                boundary_seq=target.boundary_seq,
                 rewound_turn_ids=rewound,
                 user_message_text=target.user_text,
             )
