@@ -15,6 +15,7 @@ import sys
 import threading
 import uuid
 import webbrowser
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, cast
 
@@ -1201,206 +1202,226 @@ def _arm_exit_watchdog(
     return cancel
 
 
+@dataclass
+class _TuiLaunch:
+    args: argparse.Namespace
+    store: SessionStore
+    settings_store: SettingsStore
+    overrides: CliConfigOverrides
+    extension_selection: Optional[ExtensionSelection]
+    crash_context: dict[str, Any]
+    armed_watchdogs: list[threading.Event]
+
+
+def _build_tui_app(
+    launch: _TuiLaunch,
+    project_path: Path,
+    selected_session: SessionRecord | None,
+    *,
+    apply_name: bool,
+) -> Any:
+    from .app import KolegaCodeApp
+
+    args = launch.args
+    store = launch.store
+    settings_store = launch.settings_store
+    settings = settings_store.load()
+    settings_changed = False
+    if getattr(args, "trust_hooks", False):
+        settings.trust_hook_project(project_path)
+        settings_changed = True
+    if getattr(args, "trust_mcp", False):
+        settings.trust_mcp_project(project_path)
+        settings_changed = True
+    if getattr(args, "trust_lsp", False):
+        settings.trust_lsp_project(project_path)
+        settings_changed = True
+    if settings_changed:
+        settings_store.save(settings)
+    summary = {}
+    startup_config_error = None
+    try:
+        config = build_agent_config(project_path, launch.overrides, settings=settings, settings_store=settings_store)
+        summary = config_summary(config)
+    except StrictContextBudgetError:
+        # Strict caps are explicit per-run constraints, not recoverable missing
+        # setup. Fail before creating a TUI session or emitting llm.run_started.
+        raise
+    except CliConfigError as exc:
+        if str(exc) == DEPRECATED_THINKING_TOKENS_MESSAGE:
+            raise
+        config = None
+        startup_config_error = str(exc)
+
+    if selected_session is None:
+        session = _resolve_tui_session(
+            store,
+            project_path,
+            summary,
+            args.resume,
+            args.session,
+        )
+        resuming_session = args.resume is not None or bool(args.session)
+    else:
+        session = _validate_session_project(selected_session, project_path)
+        session = _normalize_cli_session_mode(store, session, persist=True)
+        resuming_session = True
+
+    if apply_name:
+        _apply_launch_name(store, session, getattr(args, "name", None))
+    effective_permission_mode = _resolve_tui_permission_mode(
+        session,
+        settings,
+        args.permission_mode,
+        resumed=resuming_session,
+    )
+    if session.permission_mode != effective_permission_mode:
+        session.permission_mode = effective_permission_mode
+        store.save(session)
+
+    app = KolegaCodeApp(
+        project_path=project_path,
+        config=config,
+        mode=CLI_AGENT_MODE,
+        store=store,
+        settings_store=settings_store,
+        overrides=launch.overrides,
+        session=session,
+        permission_mode=effective_permission_mode,
+        browser_visible=args.browser_visible,
+        check_for_updates=True,
+        show_logs=args.show_logs,
+        startup_config_error=startup_config_error,
+        extension_selection=launch.extension_selection,
+        resuming_session=resuming_session,
+    )
+    exit_watchdog: threading.Event | None = None
+
+    def _arm_app_exit_watchdog() -> None:
+        nonlocal exit_watchdog
+        if exit_watchdog is None:
+            exit_watchdog = _arm_exit_watchdog()
+            launch.armed_watchdogs.append(exit_watchdog)
+
+    app._on_shutdown_requested = _arm_app_exit_watchdog
+    launch.crash_context.update(
+        {
+            "settings": settings,
+            "project_path": project_path,
+            "config": config,
+            "session_id": getattr(app.session, "session_id", session.session_id),
+        }
+    )
+    return app
+
+
+async def _close_tui_app(app: Any) -> None:
+    # Awaited teardown for exits that bypass action_quit (startup
+    # errors, crashes); a no-op after a normal quit.
+    cleanup_error: BaseException | None = None
+    cancel_startup = getattr(app, "_cancel_startup", None)
+    if cancel_startup is not None:
+        await cancel_startup()
+    shutdown_task = getattr(app, "_session_shutdown_task", None)
+    if shutdown_task is not None:
+        try:
+            await asyncio.shield(shutdown_task)
+        except BaseException as exc:  # noqa: BLE001 — still drain after failed shutdown
+            cleanup_error = exc
+    try:
+        await app._cleanup_agent_generation()
+    except BaseException as exc:  # noqa: BLE001 — sink draining still has to run before propagation
+        if cleanup_error is None:
+            cleanup_error = exc
+    usage_sink = getattr(app, "_usage_sink", None)
+    if usage_sink is not None:
+        try:
+            wait_closed = getattr(usage_sink, "wait_closed", None)
+            if callable(wait_closed):
+                await cast(Any, wait_closed)()
+            else:
+                await usage_sink.aclose()
+        except Exception as exc:  # noqa: BLE001 — reported, never masks the primary exception
+            print(f"Warning: usage sink close failed: {exc}", file=sys.stderr)
+    if cleanup_error is not None:
+        raise cleanup_error
+
+
+async def _run_tui_loop(launch: _TuiLaunch, initial_project_path: Path) -> None:
+    next_project_path = initial_project_path
+    next_session: SessionRecord | None = None
+    apply_name = True
+    while True:
+        launch.crash_context["session_id"] = None
+        app = _build_tui_app(launch, next_project_path, next_session, apply_name=apply_name)
+        launch.crash_context["session_id"] = getattr(app.session, "session_id", None)
+        try:
+            await app.run_async()
+        finally:
+            # Also guard crashes/direct exits that bypass action_quit.
+            app._on_shutdown_requested()
+            await _close_tui_app(app)
+            launch.crash_context["session_id"] = getattr(app.session, "session_id", launch.crash_context["session_id"])
+
+        clean_quit = bool(getattr(app, "_quit_cleanly", False)) and not getattr(app, "_agent_cleanup_failed", False)
+        selected = getattr(app, "resume_session", None)
+        current_session_id = getattr(app.session, "session_id", launch.crash_context["session_id"])
+        if clean_quit and selected is not None:
+            if current_session_id and current_session_id != selected.session_id:
+                launch.store.release_session_lock(current_session_id)
+            next_project_path = Path(selected.project_path).expanduser().resolve()
+            next_session = selected
+            apply_name = False
+            launch.armed_watchdogs.pop().set()
+            continue
+
+        # Normal quit only: action_quit set _quit_cleanly after saving the
+        # session, so the terminal now shows how to resume exactly this one.
+        if clean_quit and current_session_id:
+            _print_quit_resume_hint(current_session_id)
+        break
+
+
 def _run_tui(args: argparse.Namespace) -> int:
     if importlib.util.find_spec("textual") is None:
         print("Textual is not installed. Reinstall the CLI with: kolega-code update", file=sys.stderr)
         return 2
 
-    store = _store_from_args(args)
-    settings_store = _settings_store_from_args(args)
-    overrides = _overrides_from_args(args)
-    crash_context: dict[str, Any] = {
-        "settings": None,
-        "project_path": None,
-        "config": None,
-        "session_id": None,
-    }
-    armed_watchdogs: list[threading.Event] = []
+    launch = _TuiLaunch(
+        args=args,
+        store=_store_from_args(args),
+        settings_store=_settings_store_from_args(args),
+        overrides=_overrides_from_args(args),
+        extension_selection=None,
+        crash_context={
+            "settings": None,
+            "project_path": None,
+            "config": None,
+            "session_id": None,
+        },
+        armed_watchdogs=[],
+    )
     try:
         initial_project_path = _select_startup_project(args.project_path, args)
         try:
-            extension_selection = _resolve_extension_selection_from_args(args)
+            launch.extension_selection = _resolve_extension_selection_from_args(args)
         except KolegaExtensionLoadError as exc:
             _print_styled(str(exc), style="error", stderr=True)
             return 1
 
-        from .app import KolegaCodeApp
-
-        def _build_app(
-            project_path: Path,
-            selected_session: SessionRecord | None,
-            *,
-            apply_name: bool,
-        ) -> Any:
-            settings = settings_store.load()
-            settings_changed = False
-            if getattr(args, "trust_hooks", False):
-                settings.trust_hook_project(project_path)
-                settings_changed = True
-            if getattr(args, "trust_mcp", False):
-                settings.trust_mcp_project(project_path)
-                settings_changed = True
-            if getattr(args, "trust_lsp", False):
-                settings.trust_lsp_project(project_path)
-                settings_changed = True
-            if settings_changed:
-                settings_store.save(settings)
-            summary = {}
-            startup_config_error = None
-            try:
-                config = build_agent_config(project_path, overrides, settings=settings, settings_store=settings_store)
-                summary = config_summary(config)
-            except StrictContextBudgetError:
-                # Strict caps are explicit per-run constraints, not recoverable missing
-                # setup. Fail before creating a TUI session or emitting llm.run_started.
-                raise
-            except CliConfigError as exc:
-                if str(exc) == DEPRECATED_THINKING_TOKENS_MESSAGE:
-                    raise
-                config = None
-                startup_config_error = str(exc)
-
-            if selected_session is None:
-                session = _resolve_tui_session(
-                    store,
-                    project_path,
-                    summary,
-                    args.resume,
-                    args.session,
-                )
-                resuming_session = args.resume is not None or bool(args.session)
-            else:
-                session = _validate_session_project(selected_session, project_path)
-                session = _normalize_cli_session_mode(store, session, persist=True)
-                resuming_session = True
-
-            if apply_name:
-                _apply_launch_name(store, session, getattr(args, "name", None))
-            effective_permission_mode = _resolve_tui_permission_mode(
-                session,
-                settings,
-                args.permission_mode,
-                resumed=resuming_session,
-            )
-            if session.permission_mode != effective_permission_mode:
-                session.permission_mode = effective_permission_mode
-                store.save(session)
-
-            app = KolegaCodeApp(
-                project_path=project_path,
-                config=config,
-                mode=CLI_AGENT_MODE,
-                store=store,
-                settings_store=settings_store,
-                overrides=overrides,
-                session=session,
-                permission_mode=effective_permission_mode,
-                browser_visible=args.browser_visible,
-                check_for_updates=True,
-                show_logs=args.show_logs,
-                startup_config_error=startup_config_error,
-                extension_selection=extension_selection,
-                resuming_session=resuming_session,
-            )
-            exit_watchdog: threading.Event | None = None
-
-            def _arm_app_exit_watchdog() -> None:
-                nonlocal exit_watchdog
-                if exit_watchdog is None:
-                    exit_watchdog = _arm_exit_watchdog()
-                    armed_watchdogs.append(exit_watchdog)
-
-            app._on_shutdown_requested = _arm_app_exit_watchdog
-            crash_context.update(
-                {
-                    "settings": settings,
-                    "project_path": project_path,
-                    "config": config,
-                    "session_id": getattr(app.session, "session_id", session.session_id),
-                }
-            )
-            return app
-
-        async def _close_app(app: Any) -> None:
-            # Awaited teardown for exits that bypass action_quit (startup
-            # errors, crashes); a no-op after a normal quit.
-            cleanup_error: BaseException | None = None
-            cancel_startup = getattr(app, "_cancel_startup", None)
-            if cancel_startup is not None:
-                await cancel_startup()
-            shutdown_task = getattr(app, "_session_shutdown_task", None)
-            if shutdown_task is not None:
-                try:
-                    await asyncio.shield(shutdown_task)
-                except BaseException as exc:  # noqa: BLE001 — still drain after failed shutdown
-                    cleanup_error = exc
-            try:
-                await app._cleanup_agent_generation()
-            except BaseException as exc:  # noqa: BLE001 — sink draining still has to run before propagation
-                if cleanup_error is None:
-                    cleanup_error = exc
-            usage_sink = getattr(app, "_usage_sink", None)
-            if usage_sink is not None:
-                try:
-                    wait_closed = getattr(usage_sink, "wait_closed", None)
-                    if callable(wait_closed):
-                        await cast(Any, wait_closed)()
-                    else:
-                        await usage_sink.aclose()
-                except Exception as exc:  # noqa: BLE001 — reported, never masks the primary exception
-                    print(f"Warning: usage sink close failed: {exc}", file=sys.stderr)
-            if cleanup_error is not None:
-                raise cleanup_error
-
-        async def _run_app_loop() -> None:
-            next_project_path = initial_project_path
-            next_session: SessionRecord | None = None
-            apply_name = True
-            while True:
-                crash_context["session_id"] = None
-                app = _build_app(next_project_path, next_session, apply_name=apply_name)
-                crash_context["session_id"] = getattr(app.session, "session_id", None)
-                try:
-                    await app.run_async()
-                finally:
-                    # Also guard crashes/direct exits that bypass action_quit.
-                    app._on_shutdown_requested()
-                    await _close_app(app)
-                    crash_context["session_id"] = getattr(app.session, "session_id", crash_context["session_id"])
-
-                clean_quit = bool(getattr(app, "_quit_cleanly", False)) and not getattr(
-                    app, "_agent_cleanup_failed", False
-                )
-                selected = getattr(app, "resume_session", None)
-                current_session_id = getattr(app.session, "session_id", crash_context["session_id"])
-                if clean_quit and selected is not None:
-                    if current_session_id and current_session_id != selected.session_id:
-                        store.release_session_lock(current_session_id)
-                    next_project_path = Path(selected.project_path).expanduser().resolve()
-                    next_session = selected
-                    apply_name = False
-                    armed_watchdogs.pop().set()
-                    continue
-
-                # Normal quit only: action_quit set _quit_cleanly after saving the
-                # session, so the terminal now shows how to resume exactly this one.
-                if clean_quit and current_session_id:
-                    _print_quit_resume_hint(current_session_id)
-                break
-
         try:
-            asyncio.run(_run_app_loop())
+            asyncio.run(_run_tui_loop(launch, initial_project_path))
         except Exception as exc:  # noqa: BLE001 — last-resort crash capture before re-raising
-            settings = crash_context.get("settings")
-            project_path = crash_context.get("project_path")
-            config = crash_context.get("config")
-            session_id = crash_context.get("session_id")
+            settings = launch.crash_context.get("settings")
+            project_path = launch.crash_context.get("project_path")
+            config = launch.crash_context.get("config")
+            session_id = launch.crash_context.get("session_id")
             if session_id is None:
                 raise
             _secrets = (
                 known_secret_values(
                     settings,
-                    settings_store,
+                    launch.settings_store,
                     project_path=project_path,
                     mcp_config=getattr(config, "mcp_config", None),
                 )
@@ -1408,7 +1429,10 @@ def _run_tui(args: argparse.Namespace) -> int:
                 else []
             )
             path = write_crash_log(
-                store.root, exc=exc, header=f"kolega-code crash | session {session_id}", secret_values=_secrets
+                launch.store.root,
+                exc=exc,
+                header=f"kolega-code crash | session {session_id}",
+                secret_values=_secrets,
             )
             if path is not None:
                 _print_styled(
@@ -1421,9 +1445,9 @@ def _run_tui(args: argparse.Namespace) -> int:
         return 0
     finally:
         # Control came back, so leave no watchdog armed to kill a later caller.
-        for cancel in armed_watchdogs:
+        for cancel in launch.armed_watchdogs:
             cancel.set()
-        store.release_session_locks()
+        launch.store.release_session_locks()
 
 
 def known_secret_values(
