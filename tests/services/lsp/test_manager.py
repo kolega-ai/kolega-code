@@ -36,7 +36,7 @@ def manager(tmp_path: Path) -> LspManager:
     m = LspManager(tmp_path, config=LspConfig(enabled=True, prompt_on_missing=False))
     # Populate a fake report so status() has data
     m.report = DetectionReport(
-        detected=[DetectionResult("python", "Python", ["pyproject.toml"], 5, "pyproject.toml")],
+        detected=[DetectionResult("python", "Python", "pyproject.toml")],
         resolved=[
             ResolvedLanguage(
                 language_id="python",
