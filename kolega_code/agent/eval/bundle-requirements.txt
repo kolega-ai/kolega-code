@@ -4,7 +4,7 @@ contourpy==1.4.0
     # via matplotlib
 cycler==0.12.1
     # via matplotlib
-fonttools==4.67.0
+fonttools==4.68.0
     # via matplotlib
 kiwisolver==1.5.1
     # via matplotlib
@@ -26,15 +26,13 @@ pillow==13.0.0
     #   matplotlib
 pyparsing==3.3.3
     # via matplotlib
-python-dateutil==3.0.0
+python-dateutil==4.0.0
     # via
     #   matplotlib
     #   pandas
-pytz==2026.5
+pytz==2026.6
     # via pandas
-six==1.17.0
-    # via python-dateutil
-tzdata==2026.5
+tzdata==2026.6
     # via
     #   pandas
     #   python-dateutil
