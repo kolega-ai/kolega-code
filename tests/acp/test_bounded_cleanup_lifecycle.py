@@ -39,6 +39,10 @@ async def _open(
 def slow_setup_cleanup(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     if not request.param:
         return
+    # This case holds the previous agent's cleanup open until the mode switch
+    # returns, so the join always runs to its bound: shrink it below the 5 s
+    # production timeout, as the sibling ACP cleanup suites already do.
+    monkeypatch.setattr(agent_factory, "CLEANUP_TIMEOUT", 0.05)
     set_mode = AcpAgent.set_session_mode
     setup_timeout = agent_factory.CLEANUP_TIMEOUT
 
