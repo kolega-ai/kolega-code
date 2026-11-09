@@ -91,6 +91,18 @@ def test_streamed_segments_accumulate_not_replace() -> None:
     assert [item.text for item in state.conversation] == ["one two three"]
 
 
+def test_streamed_text_accumulates_in_parts_until_read() -> None:
+    """Deltas must not recopy the whole segment; reading joins them once."""
+    state = PresentationState()
+    fold(state, _event(KnownEventType.ASSISTANT_DELTA, 1, uuid="a", text="one", complete=False))
+    item = state.conversation[0]
+    fold(state, _event(KnownEventType.ASSISTANT_DELTA, 2, uuid="a", text=" two", complete=False))
+
+    assert item.__dict__["_text_parts"] == ["one", " two"]
+    assert item.text == "one two"
+    assert item.__dict__["_text_parts"] is None, "materializing must release the parts list"
+
+
 def test_interleaved_streams_stay_in_separate_blocks() -> None:
     """Reasoning and prose arrive interleaved and must not merge."""
     state = replay(

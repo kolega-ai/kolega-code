@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 from kolega_code.events import AgentEvent, ArtifactRef, KnownEventType
 
@@ -39,6 +39,32 @@ TERMINAL_MAX_DROPPED_PREFIX = 512 * 1024
 
 class ProjectionError(RuntimeError):
     """Raised when events arrive in an order the projection cannot trust."""
+
+
+class _StreamingText:
+    """A ``text`` attribute that appends in constant time per stream delta.
+
+    ``item.text += delta`` copies the whole accumulated text, so a long reasoning
+    or tool stream made replay quadratic in the number of deltas. Parts are
+    joined only when the text is read, keeping fold linear for every consumer.
+    """
+
+    __slots__ = ()
+
+    def __get__(self, instance: Optional["ConversationItem"], owner: type | None = None) -> Any:
+        if instance is None:
+            return self
+        parts = instance.__dict__.get("_text_parts")
+        if parts is None:
+            return instance.__dict__.get("_text", "")
+        value = "".join(parts)
+        instance.__dict__["_text"] = value
+        instance.__dict__["_text_parts"] = None
+        return value
+
+    def __set__(self, instance: "ConversationItem", value: str) -> None:
+        instance.__dict__["_text"] = value
+        instance.__dict__["_text_parts"] = None
 
 
 @dataclass
@@ -67,6 +93,11 @@ class ConversationItem:
     tool_subject: Optional[str] = None
     #: Complete safe paths / command for expanded details (never raw arguments).
     tool_display: Optional[dict[str, list[str] | str]] = None
+
+
+# ``dataclass`` generates ``__init__`` from the field declared above; install the
+# lazy accumulator afterwards so the constructor keeps accepting ``text=``.
+ConversationItem.text = _StreamingText()  # type: ignore[assignment]
 
 
 @dataclass
@@ -396,6 +427,17 @@ def _append(state: PresentationState, item: ConversationItem, event: AgentEvent)
     return item
 
 
+def _extend_text(item: ConversationItem, text: str) -> None:
+    """Append a streamed delta without recopying the accumulated text."""
+    if not text:
+        return
+    parts = item.__dict__.get("_text_parts")
+    if parts is None:
+        item.__dict__["_text_parts"] = [item.text, text]
+    else:
+        parts.append(text)
+
+
 def _text_of(event: AgentEvent, *keys: str) -> str:
     for key in keys:
         value = event.content.get(key)
@@ -439,7 +481,7 @@ def _on_assistant_delta(state: PresentationState, event: AgentEvent, *, kind: st
         if complete:
             state._streams.pop(stream_key, None)
         return
-    target.text += text
+    _extend_text(target, text)
     target.complete = complete
     if complete:
         state._streams.pop(stream_key, None)
@@ -636,7 +678,7 @@ def _on_tool_streaming_update(state: PresentationState, event: AgentEvent) -> No
     if str(event.content.get("stream_mode") or "") == "replace":
         target.text = text
     else:
-        target.text += text
+        _extend_text(target, text)
     if event.content.get("is_complete"):
         target.status = "done"
 
