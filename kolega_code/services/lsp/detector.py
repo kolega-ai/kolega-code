@@ -64,8 +64,6 @@ class DetectionResult:
 
     language_id: str
     display_name: str
-    config_files_found: list[str]  # config files that were detected
-    file_count: int  # number of files with matching extensions
     detection_reason: str  # human-readable summary, e.g. "pyproject.toml + 42 .py files"
 
 
@@ -167,8 +165,6 @@ async def detect_languages(project_path: str | Path, registry: LspRegistry) -> D
                 DetectionResult(
                     language_id=lang_id,
                     display_name=spec.display_name,
-                    config_files_found=cf + ff,
-                    file_count=fc,
                     detection_reason=" + ".join(reason_parts),
                 )
             )
@@ -178,8 +174,6 @@ async def detect_languages(project_path: str | Path, registry: LspRegistry) -> D
                 DetectionResult(
                     language_id=lang_id,
                     display_name=spec.display_name,
-                    config_files_found=[],
-                    file_count=fc,
                     detection_reason=f"{fc} {spec.extensions[0] if spec.extensions else ''} files",
                 )
             )
