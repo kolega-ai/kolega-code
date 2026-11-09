@@ -11,6 +11,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
+from textual.widget import Widget
 from textual.widgets import Button, Input, Label, OptionList, Static, Switch
 from textual.widgets.option_list import Option
 
@@ -203,6 +204,12 @@ class SettingsScreen(ModalScreen[None]):
         self.credential_provider: Optional[str] = None
         # A deferred apply-label refresh is already queued for this batch of Changed events.
         self._apply_label_pending = False
+        # Populated on mount: the dirty-check walks the tree, so resolving the same
+        # MCP widgets by CSS selector on every refresh dominated the refresh cost.
+        self._mcp_page: Optional[VerticalScroll] = None
+        self._mcp_draft_status: Optional[Static] = None
+        self._mcp_buttons: list[Button] = []
+        self._mcp_buttons_by_id: dict[str, Button] = {}
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="settings_screen_header"):
@@ -797,8 +804,17 @@ class SettingsScreen(ModalScreen[None]):
                         classes="quiet",
                     )
 
+    def _cache_mcp_widgets(self) -> None:
+        """Resolve the MCP page's controls once; recomposition never replaces them."""
+        page = self.query_one("#settings_page_mcp", VerticalScroll)
+        self._mcp_page = page
+        self._mcp_draft_status = self.query_one("#mcp_draft_status", Static)
+        self._mcp_buttons = [widget for widget in page.walk_children(Widget) if isinstance(widget, Button)]
+        self._mcp_buttons_by_id = {button.id: button for button in self._mcp_buttons if button.id}
+
     def on_mount(self) -> None:
         self.owner._settings_screen = self
+        self._cache_mcp_widgets()
         self._show_category(self.category)
         self._show_agent_role("planning")
         self.owner._populate_settings_controls()
@@ -867,10 +883,11 @@ class SettingsScreen(ModalScreen[None]):
         self._queue_apply_label_refresh()
 
     def _mcp_snapshot(self) -> tuple[tuple[str, Any], ...]:
+        root = self._mcp_page if self._mcp_page is not None else self
         return tuple(
             sorted(
                 (widget.id, None if widget.value is Select.NULL else widget.value)
-                for widget in self.query("Input, Select")
+                for widget in root.walk_children(Widget)
                 if isinstance(widget, (Input, Select))
                 and widget.id
                 and widget.id.startswith("mcp_")
@@ -896,6 +913,10 @@ class SettingsScreen(ModalScreen[None]):
     def _refresh_mcp_actions(self) -> None:
         if not self.is_mounted:
             return
+        page = self._mcp_page
+        draft_status = self._mcp_draft_status
+        if page is None or draft_status is None:
+            return
         new = self.mcp_server_id == settings_panel.MCP_NEW_SERVER_VALUE
         dirty = self.mcp_dirty
         feedback = self._mcp_feedback
@@ -903,18 +924,20 @@ class SettingsScreen(ModalScreen[None]):
             feedback = "Unsaved server changes — use Save Server or Save & Verify."
             # Results describe the saved version, never later edits.
             self._mcp_feedback = ""
-        self.query_one("#mcp_draft_status", Static).update(
+        draft_status.update(
             feedback or ("New server — not saved or verified." if new else "No unsaved server changes.")
         )
-        for widget in self.query("#settings_page_mcp Input, #settings_page_mcp Select"):
-            widget.disabled = self.mcp_busy or (self._mcp_read_only and widget.id != "mcp_server_select")
-        for button in self.query("#settings_page_mcp Button"):
+        for widget in page.walk_children(Widget):
+            if isinstance(widget, (Input, Select)):
+                widget.disabled = self.mcp_busy or (self._mcp_read_only and widget.id != "mcp_server_select")
+        for button in self._mcp_buttons:
             button.disabled = self.mcp_busy
-        self.query_one("#mcp_save_server", Button).disabled = self.mcp_busy or self._mcp_read_only
-        self.query_one("#mcp_save_verify_server", Button).display = (new or dirty) and not self._mcp_read_only
-        self.query_one("#mcp_verify_server", Button).display = not new and not dirty
-        self.query_one("#mcp_delete_server", Button).disabled = self.mcp_busy or new or self._mcp_read_only
-        self.query_one("#mcp_clear_tokens", Button).disabled = self.mcp_busy or new
+        buttons = self._mcp_buttons_by_id
+        buttons["mcp_save_server"].disabled = self.mcp_busy or self._mcp_read_only
+        buttons["mcp_save_verify_server"].display = (new or dirty) and not self._mcp_read_only
+        buttons["mcp_verify_server"].display = not new and not dirty
+        buttons["mcp_delete_server"].disabled = self.mcp_busy or new or self._mcp_read_only
+        buttons["mcp_clear_tokens"].disabled = self.mcp_busy or new
 
     def request_mcp_selection(self, server_id: str) -> None:
         if server_id == self.mcp_server_id:
@@ -990,7 +1013,7 @@ class SettingsScreen(ModalScreen[None]):
 
     def _snapshot(self) -> tuple[tuple[str, Any], ...]:
         values: list[tuple[str, Any]] = []
-        for widget in self.query("Select, Input, Switch"):
+        for widget in self.walk_children(Widget):
             if not isinstance(widget, (Select, Input, Switch)):
                 continue
             widget_id = widget.id or ""
