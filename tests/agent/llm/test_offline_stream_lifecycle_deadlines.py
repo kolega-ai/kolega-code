@@ -713,6 +713,9 @@ async def test_remaining_retry_budget_bounds_subsequent_attempt(
 @pytest.mark.asyncio
 async def test_initial_attempt_does_not_start_retry_budget(guarded: BaseAgent) -> None:
     guarded._llm_retry_budget_seconds = 0.001
+    # The 30 ms handler is not what this test checks; real SDK setup can outlast
+    # the fixture's 80 ms first-chunk guard on a loaded worker.
+    guarded._stream_first_chunk_timeout = 10.0
     body = _Body()
     body.release.set()
 
