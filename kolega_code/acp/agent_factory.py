@@ -306,6 +306,9 @@ class AgentFactory:
         """The session's durable event journal as a readable event store."""
         return FileSessionEventStore(self._store.journal(session_id))
 
+    def artifact_store(self, session_id: str) -> FileArtifactStore:
+        return FileArtifactStore(self._store.journal(session_id))
+
     # -- internal -----------------------------------------------------------
 
     @staticmethod

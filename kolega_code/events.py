@@ -344,6 +344,8 @@ class AgentEventEmitter:
         turn_id: str,
         status: Optional[str] = None,
         user_text: Optional[str] = None,
+        images: Optional[Sequence[Tuple[str, str]]] = None,
+        image_count: int = 0,
     ) -> None:
         """Mark a turn boundary so frontends can seek by turn.
 
@@ -356,16 +358,19 @@ class AgentEventEmitter:
         transcript as a message the user never sent.
         """
         sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
+        payload: Dict[str, Any] = {"turn_id": turn_id, "status": status, "user_text": user_text}
+        if phase == "started":
+            if images:
+                payload["images"] = [{"media_type": media_type, "data": data} for media_type, data in images]
+            count = max(image_count, len(images or []))
+            if count > 0:
+                payload["image_count"] = count
 
         await self.emit(
             AgentEvent(
                 sender=self.sender,
                 event_type=(KnownEventType.TURN_STARTED if phase == "started" else KnownEventType.TURN_ENDED),
-                content={
-                    "turn_id": turn_id,
-                    "status": status,
-                    "user_text": user_text,
-                },
+                content=payload,
                 sub_agent_info=sub_agent_info,
             )
         )

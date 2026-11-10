@@ -275,7 +275,7 @@ class AcpAgent(Agent):
             logger.info("acp sub-session load: no delegate for %s", session_id)
             return LoadSessionResponse()
         activity = replay(events).sub_agents.get(key)
-        bridge = AcpBridge(self._conn)
+        bridge = AcpBridge(self._conn, artifact_store=self._factory.artifact_store(parent_id))
         task = activity.task if activity is not None else ""
         if task:
             update = update_user_message(text_block(task))
@@ -626,7 +626,7 @@ class AcpAgent(Agent):
             logger.exception("acp session/load: transcript replay failed (session=%s)", session.session_id)
             return
         state = replay(events)
-        bridge = AcpBridge(self._conn)
+        bridge = AcpBridge(self._conn, artifact_store=self._factory.artifact_store(session.session_id))
         await bridge.replay_conversation(session.session_id, state.conversation)
         # Restore the compaction marker: the last finished summary renders as a
         # collapsible thought block, like the live event does.

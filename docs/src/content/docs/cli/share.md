@@ -29,6 +29,11 @@ megabyte or two. Images are embedded too, and very large ones are left out and
 shown as a badge rather than making the file too big to email — the command says
 when that happens.
 
+User-attached images captured by the TUI or ACP appear beneath their prompt,
+including prompts with no text. Unavailable images are shown as badges. Older
+recordings cannot recover attachments they never captured, and replay never
+downloads a remote image URL to fill in a missing attachment.
+
 ### Options
 
 | Option | Effect |
@@ -96,7 +101,9 @@ Secret detection is **pattern matching**, not proof. It knows the common
 credential shapes and every API key you have configured in Kolega Code, but a
 secret in a shape nobody anticipated can still get through. A replay also
 contains real file contents, real command output, and real prompts. Review one
-before sharing it outside your team.
+before sharing it outside your team. Image pixels are copied without redaction:
+secret detection does not remove credentials or other private information
+visible in a screenshot.
 :::
 
 ## Sharing a session that is still running

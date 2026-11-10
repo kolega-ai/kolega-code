@@ -383,7 +383,7 @@ async def test_permission_callback_prompts_through_client(tmp_path: Path) -> Non
 async def test_load_session_replays_transcript(tmp_path: Path) -> None:
     from acp.schema import AgentMessageChunk, LoadSessionResponse, UserMessageChunk
 
-    from kolega_code.cli.session_event_store import FileSessionEventStore
+    from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
     from kolega_code.cli.session_journal import SessionJournal
     from kolega_code.events import AgentEvent
 
@@ -419,6 +419,7 @@ async def test_load_session_replays_transcript(tmp_path: Path) -> None:
 
     factory = _FakeFactory(session)
     factory.event_store = lambda session_id: store  # type: ignore[method-assign]
+    factory.artifact_store = lambda session_id: FileArtifactStore(journal)  # type: ignore[attr-defined]
 
     async def _load(
         cwd: str, session_id: str, *, permission_callback: Any = None, mcp_servers: Any = None
@@ -481,7 +482,7 @@ async def test_load_sub_session_replays_delegated_turn(tmp_path: Path) -> None:
     from acp.schema import AgentMessageChunk, AgentThoughtChunk, LoadSessionResponse, UserMessageChunk
 
     from kolega_code.acp.bridge import sub_session_id
-    from kolega_code.cli.session_event_store import FileSessionEventStore
+    from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
     from kolega_code.cli.session_journal import SessionJournal
     from kolega_code.events import AgentEvent
 
@@ -534,6 +535,7 @@ async def test_load_sub_session_replays_delegated_turn(tmp_path: Path) -> None:
 
     factory = _FakeFactory(session)
     factory.event_store = lambda session_id: store  # type: ignore[method-assign]
+    factory.artifact_store = lambda session_id: FileArtifactStore(journal)  # type: ignore[attr-defined]
     conn = _FakeConn()
     agent = AcpAgent(factory=cast(Any, factory))
     agent.on_connect(cast(Client, conn))

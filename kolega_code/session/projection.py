@@ -87,6 +87,7 @@ class ConversationItem:
     seq: Optional[int] = None
     elapsed_ms: int = 0
     artifacts: list[ArtifactRef] = field(default_factory=list)
+    image_count: int = 0
     #: Structured edit preview attached to a tool item, when the tool edited a file.
     edit_preview: Optional[dict] = None
     #: Bounded, already-sanitized display metadata; never raw tool arguments.
@@ -333,6 +334,8 @@ def _item_dict(item: ConversationItem) -> dict:
             payload[key] = value
     if item.artifacts:
         payload["artifacts"] = [ref.model_dump(exclude_none=True) for ref in item.artifacts]
+    if item.image_count:
+        payload["image_count"] = item.image_count
     return payload
 
 
@@ -802,6 +805,13 @@ def _on_status_update(state: PresentationState, event: AgentEvent) -> None:
 def _on_turn_started(state: PresentationState, event: AgentEvent) -> None:
     turn_id = str(event.content.get("turn_id") or "")
     user_text = str(event.content.get("user_text") or "")
+    count = event.content.get("image_count")
+    image_count = (
+        int(count)
+        if isinstance(count, (int, float)) and not isinstance(count, bool) and count > 0 and count % 1 == 0
+        else 0
+    )
+    images = [ref for ref in event.artifacts if ref.purpose == "image" and ref.media_type.startswith("image/")]
     # A dispatched agent runs its own turns. They are not session turns: indexing
     # them would put work nobody typed into the turn rail, and letting them drive
     # the activity flag would report the session idle while the main agent is
@@ -819,8 +829,12 @@ def _on_turn_started(state: PresentationState, event: AgentEvent) -> None:
         state.activity = "generating"
         if peer_text is not None:
             return
-    if user_text:
-        _append(state, ConversationItem(kind="user", text=user_text), event)
+    if user_text or images or image_count:
+        _append(
+            state,
+            ConversationItem(kind="user", text=user_text, artifacts=images, image_count=image_count),
+            event,
+        )
 
 
 def _on_turn_ended(state: PresentationState, event: AgentEvent) -> None:

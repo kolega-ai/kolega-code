@@ -14,12 +14,13 @@ from a unit test of either end.
 from __future__ import annotations
 
 import asyncio
+import base64
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from kolega_code.cli.session_event_store import FileSessionEventStore
+from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.events import AgentEvent, KnownEventType
 from kolega_code.web.hosting import ShareServer
@@ -240,6 +241,111 @@ async def test_a_served_session_renders_an_image_from_the_artifact_endpoint(tmp_
     assert shown is not None, "a served session still shows a badge where the image should be"
     assert shown["naturalWidth"] == 1, "the artifact endpoint did not return decodable image bytes"
     assert f"/api/sessions/{SESSION_ID}/artifacts/{ref.sha256}" in shown["src"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("live", [False, True], ids=["served-replay", "served-live"])
+async def test_user_images_load_and_fail_safely_in_served_sessions(tmp_path: Path, live: bool) -> None:
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    store = SessionStore(tmp_path / "state")
+    store.create(tmp_path, "cli", {}, session_id=SESSION_ID, title="user pictures")
+    journal = store.journal(SESSION_ID)
+    artifacts = FileArtifactStore(journal)
+    image = await artifacts.put(png, media_type="image/png", purpose="image", encoding="base64")
+    second = await artifacts.put(png + b"second", media_type="image/png", purpose="image", encoding="base64")
+    corrupt = await artifacts.put(b"not a PNG", media_type="image/png", purpose="image", encoding="base64")
+    missing = image.model_copy(update={"sha256": "e" * 64})
+    opaque = image.model_copy(update={"sha256": "d" * 64, "purpose": "provider_signature"})
+    text_ref = image.model_copy(update={"sha256": "f" * 64, "media_type": "text/plain"})
+    unsafe = image.model_copy(update={"sha256": "https://forbidden.invalid/image.png"})
+    image.path = "https://forbidden.invalid/path.png"
+    events = FileSessionEventStore(journal)
+    first = AgentEvent(
+        session_id=SESSION_ID,
+        sender="agent",
+        event_type=KnownEventType.TURN_STARTED,
+        content={"turn_id": "mixed", "user_text": "compare", "image_count": 2},
+        artifacts=[image, second],
+    )
+    await events.append(first)
+    later = [
+        AgentEvent(
+            session_id=SESSION_ID,
+            sender="agent",
+            event_type=KnownEventType.TURN_STARTED,
+            elapsed_ms=index * 100,
+            content={"turn_id": f"t{index}", "user_text": text, "image_count": count},
+            artifacts=refs,
+        )
+        for index, (text, refs, count) in enumerate(
+            [
+                ("", [image], 1),
+                ("", [missing, corrupt], 3),
+                ("unsafe refs", [opaque, text_ref, unsafe], None),
+                ("", [], None),
+            ],
+            1,
+        )
+    ]
+    if not live:
+        for event in later:
+            await events.append(event)
+        await _append(events, KnownEventType.TURN_ENDED, elapsed_ms=500, turn_id="t4", status="completed")
+    server = ShareServer(store, session_id=SESSION_ID)
+    await server.start()
+    url = server.session_url(SESSION_ID)
+    try:
+        async with playwright_api.async_playwright() as driver:
+            try:
+                browser = await driver.chromium.launch(headless=True)
+            except Exception as exc:  # pragma: no cover - depends on the local install
+                pytest.skip(f"chromium is not installed for playwright: {exc}")
+            try:
+                page = await browser.new_page(viewport={"width": 1200, "height": 1800})
+                requests: list[str] = []
+                responses: list[tuple[str, int]] = []
+                errors: list[str] = []
+                page.on("request", lambda request: requests.append(request.url))
+                page.on("response", lambda response: responses.append((response.url, response.status)))
+                page.on("pageerror", lambda error: errors.append(str(error)))
+                await page.goto(url)
+                await page.wait_for_selector(".kc-entry")
+                if live:
+                    attached = await _wait_for(page, lambda snap: snap["liveState"] == "following")
+                    assert attached["liveState"] == "following"
+                    for event in later:
+                        await events.append(event)
+                else:
+                    await page.eval_on_selector(
+                        "#scrub", "(el) => { el.value = el.max; el.dispatchEvent(new Event('input')); }"
+                    )
+                await page.wait_for_function(
+                    """() => {
+                      const images = [...document.querySelectorAll('#transcript img')];
+                      return images.length === 3 && images.every(img => img.complete && img.naturalWidth === 1)
+                        && document.querySelectorAll('.kc-missing-image').length === 4;
+                    }"""
+                )
+                users = page.locator('.kc-entry[data-kind="user"]')
+                assert await users.count() == 4
+                assert await users.nth(0).locator("img").count() == 2
+                assert await users.nth(1).locator("img").count() == 1
+                assert await users.nth(2).locator(".kc-missing-image").count() == 3
+                assert await users.nth(3).locator("img").count() == 0
+                assert not errors
+                assert all(request.startswith(url.split("/s/", 1)[0] + "/") for request in requests)
+                assert not any(
+                    "forbidden.invalid" in request or opaque.sha256 in request or text_ref.sha256 in request
+                    for request in requests
+                )
+                assert any(missing.sha256 in address and status == 410 for address, status in responses)
+                assert any(corrupt.sha256 in address and status == 200 for address, status in responses)
+            finally:
+                await browser.close()
+    finally:
+        await server.stop()
 
 
 async def _wait_for_image(page: Any, *, timeout: float = 10.0):

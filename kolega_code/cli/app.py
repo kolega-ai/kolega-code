@@ -1478,12 +1478,13 @@ class KolegaCodeApp(
             self._notify_user(messages.BLOCK_PLAN_DECISION, severity="warning")
             return
 
-        if not stripped_text or self.agent is None:
-            if stripped_text:
-                self._set_settings_status(messages.SETTINGS_REQUIRED, tone="warning")
-                if self.config is None:
-                    self._set_composer_status(messages.DISCONNECTED_COMPOSER_PLACEHOLDER)
-                    self._show_composer_hint(messages.DISCONNECTED_ACTIVITY, tone="warning")
+        if not stripped_text and not self._pending_image_attachments:
+            return
+        if self.agent is None:
+            self._set_settings_status(messages.SETTINGS_REQUIRED, tone="warning")
+            if self.config is None:
+                self._set_composer_status(messages.DISCONNECTED_COMPOSER_PLACEHOLDER)
+                self._show_composer_hint(messages.DISCONNECTED_ACTIVITY, tone="warning")
             return
         # Build attachments first (without clearing pending) so the vision gate
         # can block before we consume the composer text and pending images.

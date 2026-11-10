@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -16,7 +17,8 @@ from packaging.version import Version
 
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import SettingsStore
-from kolega_code.llm.models import Message
+from kolega_code.llm.models import ImageBlock, Message
+from kolega_code.session.store import SessionStoreError
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 
@@ -183,6 +185,48 @@ def test_roundtrip_checks_current_event_coverage(completed_roundtrip: tuple[Path
     assert fixture_module._producer_inventory() <= set(manifest["event_types"])
     assert {f"ui.{name}" for name in fixture_module._ui_types()} <= set(manifest["event_types"])
     fixture_module.verify_after_previous(root, manifest)
+
+
+def test_roundtrip_retains_real_mixed_and_image_only_user_history(
+    completed_roundtrip: tuple[Path, dict[str, Any]],
+) -> None:
+    from PIL import Image
+
+    root, manifest = completed_roundtrip
+    store = SessionStore(root)
+    users = [Message.from_dict(item) for item in store.load(manifest["session_id"]).history if item["role"] == "user"]
+    assert users[0].get_text_content() == "current-release user"
+    assert users[1].get_text_content() == ""
+    for message in users[:2]:
+        (image,) = [block for block in message.content if isinstance(block, ImageBlock)]
+        assert image.image_type == "base64" and image.media_type == "image/png"
+    path = store.journal(manifest["session_id"]).artifacts_dir / manifest["image_sha256"]
+    data = path.read_bytes()
+    assert hashlib.sha256(data).hexdigest() == manifest["image_sha256"]
+    with Image.open(io.BytesIO(data)) as image:
+        assert image.size == (1, 1)
+        assert image.format == "PNG"
+    fixture_module.verify_after_previous(root, manifest)
+
+
+def test_missing_user_image_artifact_fails_roundtrip(
+    completed_roundtrip: tuple[Path, dict[str, Any]],
+) -> None:
+    root, manifest = completed_roundtrip
+    artifact = SessionStore(root).journal(manifest["session_id"]).artifacts_dir / manifest["image_sha256"]
+    artifact.unlink()
+    with pytest.raises(SessionStoreError, match="Missing session artifact"):
+        fixture_module.verify_after_previous(root, manifest)
+
+
+def test_corrupt_user_image_artifact_fails_roundtrip(
+    completed_roundtrip: tuple[Path, dict[str, Any]],
+) -> None:
+    root, manifest = completed_roundtrip
+    artifact = SessionStore(root).journal(manifest["session_id"]).artifacts_dir / manifest["image_sha256"]
+    artifact.write_bytes(b"not the original image")
+    with pytest.raises(SessionStoreError, match="integrity"):
+        fixture_module.verify_after_previous(root, manifest)
 
 
 def test_rewritten_journal_bytes_fail(completed_roundtrip: tuple[Path, dict[str, Any]]) -> None:

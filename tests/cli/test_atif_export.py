@@ -2,6 +2,8 @@
 
 import base64
 import json
+from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -534,6 +536,47 @@ def test_image_assets_are_copied_hash_verified_and_relative(tmp_path):
     assert asset.name.split(".")[0] == hashlib.sha256(_PNG).hexdigest()
     # Provider-opaque artifact purposes are structurally unreachable.
     assert [p.name for p in sorted((out.parent / "trajectory.assets").iterdir())] == [asset.name]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("user_text", ["look", ""])
+async def test_user_image_presentation_does_not_duplicate_semantic_atif(tmp_path: Path, user_text: str) -> None:
+    from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
+    from kolega_code.events import AgentConnectionManager, AgentEventEmitter
+    from kolega_code.session.recording import RecordingConnectionManager
+
+    journal = make_journal(tmp_path / "j")
+    recorder = bootstrap(journal)
+    encoded = base64.b64encode(_PNG).decode("ascii")
+    blocks = [TextBlock(user_text)] if user_text else []
+    recorder.start_turn(Message(role="user", content=[*blocks, ImageBlock("base64", "image/png", encoded)]))
+    manager = RecordingConnectionManager(
+        AsyncMock(spec=AgentConnectionManager),
+        FileSessionEventStore(journal),
+        session_id="atif-s1",
+        artifact_store=FileArtifactStore(journal),
+    )
+    emitter = AgentEventEmitter(manager, "workspace", "thread", "agent")
+    await emitter.turn_boundary(
+        "started", turn_id="image-turn", user_text=user_text, images=[("image/png", encoded)], image_count=1
+    )
+    await emitter.turn_boundary("ended", turn_id="image-turn", status="completed")
+    recorder.finish_turn("completed")
+
+    out = tmp_path / "export" / "trajectory.json"
+    export_atif_to_path(journal, output=out, **EXPORT_KW)
+    document = json.loads(out.read_text())
+    assert [step["source"] for step in document["steps"]] == ["user"]
+    parts = document["steps"][0]["message"]
+    assert [part["type"] for part in parts] == (["text", "image"] if user_text else ["image"])
+    image = next(part for part in parts if part["type"] == "image")
+    assert (out.parent / image["source"]["path"]).read_bytes() == _PNG
+    events = journal.read_events()
+    assert sum(event.event_type == "turn.started" for event in events) == 1
+    assert sum(event.event_type == "ui.turn_started" for event in events) == 1
+    ui = next(event for event in events if event.event_type == "ui.turn_started")
+    assert "images" not in ui.payload["event"]["content"]
+    assert ui.payload["event"]["content"]["image_count"] == 1
 
 
 def test_stdout_export_with_images_refuses_before_writing(tmp_path):

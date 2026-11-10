@@ -14,11 +14,13 @@ events for non-TUI frontends, so mapping both would duplicate every word.
 
 from __future__ import annotations
 
+import base64
 import logging
 from typing import Any
 from typing import TYPE_CHECKING
 
 from acp.helpers import (
+    image_block,
     start_tool_call,
     text_block,
     tool_content,
@@ -30,13 +32,14 @@ from acp.helpers import (
     update_user_message,
 )
 from acp.interfaces import Client
-from acp.schema import ToolCallStatus, ToolKind
+from acp.schema import ImageContentBlock, TextContentBlock, ToolCallStatus, ToolKind
 
 from kolega_code.acp.diffs import AcpDiffProvider
 from kolega_code.acp.plans import task_entries_from_markdown
 from kolega_code.acp.usage import build_context_usage_update
 from kolega_code.events import AgentEvent
 from kolega_code.session.projection import ConversationItem
+from kolega_code.session.store import ArtifactStore, SessionStoreError
 
 logger = logging.getLogger(__name__)
 
@@ -109,11 +112,15 @@ class AcpBridge:
         diff_provider: AcpDiffProvider | None = None,
         agent: Any = None,
         accounting: AcpUsageAccounting | None = None,
+        *,
+        artifact_store: ArtifactStore | None = None,
     ) -> None:
         self._conn = conn
         self._diffs = diff_provider
         self._agent = agent
         self._accounting = accounting
+        # Only the caller can supply the replay session's confined artifact store.
+        self._artifact_store: ArtifactStore | None = artifact_store
         self._terminal_text: dict[str, str] = {}
         self._active_execute_tool: str | None = None
         self._latest_context_tokens: int | None = None
@@ -201,10 +208,11 @@ class AcpBridge:
         """
         for item in items:
             if item.kind == "user":
-                update = update_user_message(text_block(item.text))
-                if item.seq is not None:
-                    update.message_id = f"replay-{item.seq}-user"
-                await self.send(session_id, update)
+                for block in await self._replay_user_blocks(item):
+                    update = update_user_message(block)
+                    if item.seq is not None:
+                        update.message_id = f"replay-{item.seq}-user"
+                    await self.send(session_id, update)
             elif item.kind == "assistant":
                 update = update_agent_message(text_block(item.text))
                 if item.seq is not None:
@@ -227,6 +235,31 @@ class AcpBridge:
                     status = "completed"
                 content = [tool_content(text_block(item.text))] if item.text else None
                 await self.send(session_id, update_tool_call(tool_call_id, status=status, content=content))
+
+    async def _replay_user_blocks(self, item: ConversationItem) -> list[TextContentBlock | ImageContentBlock]:
+        refs = [ref for ref in item.artifacts if ref.purpose == "image"]
+        count = getattr(item, "image_count", 0)
+        count = count if isinstance(count, int) and not isinstance(count, bool) and count > 0 else 0
+        count = max(count, len(refs))
+        blocks: list[TextContentBlock | ImageContentBlock] = []
+        if item.text or not count:
+            blocks.append(text_block(item.text))
+        available = 0
+        if self._artifact_store is not None:
+            for ref in refs:
+                if not ref.media_type.startswith("image/"):
+                    continue
+                try:
+                    data = await self._artifact_store.open(ref)
+                except (SessionStoreError, OSError):
+                    continue
+                blocks.append(image_block(base64.b64encode(data).decode("ascii"), ref.media_type))
+                available += 1
+        unavailable = count - available
+        if unavailable:
+            label = "image" if unavailable == 1 else "images"
+            blocks.append(text_block(f"[{unavailable} {label} unavailable in replay]"))
+        return blocks
 
     async def handle_event(self, session_id: str, event: AgentEvent) -> None:
         """Map one agent event to tool-call lifecycle updates.

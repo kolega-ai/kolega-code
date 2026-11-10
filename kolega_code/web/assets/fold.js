@@ -125,6 +125,7 @@ function newItem(fields) {
     seq: null,
     elapsedMs: 0,
     artifacts: fields.artifacts || [],
+    imageCount: fields.imageCount || 0,
     editPreview: null,
   };
 }
@@ -467,6 +468,11 @@ const HANDLERS = {
   turn_started: (state, event) => {
     const turnId = String((event.content && event.content.turn_id) || "");
     const userText = String((event.content && event.content.user_text) || "");
+    const count = event.content?.image_count;
+    const imageCount = Number.isInteger(count) && count > 0 ? count : 0;
+    const images = (event.artifacts || []).filter(
+      (ref) => ref.purpose === "image" && String(ref.media_type || "").startsWith("image/"),
+    );
     // A dispatched agent runs its own turns. They are not session turns: indexing
     // them would put work nobody typed into the turn rail, and letting them drive
     // the activity flag would report the session idle while the main agent is
@@ -484,7 +490,9 @@ const HANDLERS = {
       state.activity = "generating";
       if (peerText !== null) return;
     }
-    if (userText) append(state, newItem({ kind: "user", text: userText }), event);
+    if (userText || images.length || imageCount) {
+      append(state, newItem({ kind: "user", text: userText, artifacts: images, imageCount }), event);
+    }
   },
   turn_ended: (state, event) => {
     if (subAgentKey(event) !== null) return;
@@ -620,6 +628,7 @@ function itemDict(item) {
     if (value !== null && value !== undefined) payload[key] = value;
   }
   if (item.artifacts && item.artifacts.length) payload.artifacts = item.artifacts.map(artifactDict);
+  if (item.imageCount) payload.image_count = item.imageCount;
   return payload;
 }
 

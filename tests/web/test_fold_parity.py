@@ -339,6 +339,84 @@ def test_folds_agree_at_every_prefix(tmp_path: Path) -> None:
         assert actual == expected, f"folds diverged after {cut} events"
 
 
+def test_user_images_have_independent_expected_states_at_every_prefix(tmp_path: Path) -> None:
+    image = ArtifactRef(sha256="a" * 64, bytes=12, media_type="image/png", purpose="image", encoding="base64")
+    second = image.model_copy(update={"sha256": "b" * 64})
+    missing = image.model_copy(update={"sha256": "c" * 64})
+    opaque = image.model_copy(update={"sha256": "d" * 64, "purpose": "provider_signature"})
+    text_ref = image.model_copy(update={"media_type": "text/plain"})
+    cases = [
+        ("compare", [image, second], 2, False, True, 2),
+        ("", [image, second], 2, False, True, 2),
+        ("", [missing], 3, False, True, 3),
+        ("", [], 2, False, True, 2),
+        ("legacy text", [], None, False, True, 0),
+        ("", [], None, False, False, 0),
+        ("", [image], None, False, True, 0),
+        ("", [opaque, text_ref], None, False, False, 0),
+        ("delegated", [second], 2, True, True, 2),
+        ("", [image], 1, True, True, 1),
+        ("", [], None, True, False, 0),
+        ("continued", [], None, False, True, 0),
+        ("integral JSON number", [], 2.0, False, True, 2),
+    ]
+    events = []
+    expected_main = []
+    expected_sub = []
+    assert replay([]).to_dict()["conversation"] == _run_js_fold([], tmp_path)["conversation"] == []
+    for seq, (text, refs, count, delegated, visible, expected_count) in enumerate(cases, 1):
+        event = _event(KnownEventType.TURN_STARTED, seq, turn_id=f"t{seq}", user_text=text)
+        event.artifacts = refs
+        if count is not None:
+            event.content["image_count"] = count
+        if delegated:
+            _sub_agent(event, dispatch_id="images", agent_name="investigator")
+        events.append(event)
+        if visible:
+            row = {"kind": "user", "text": text, "complete": True, "seq": seq, "elapsed_ms": 0}
+            if refs:
+                row["artifacts"] = [ref.model_dump(exclude_none=True) for ref in refs]
+            if expected_count:
+                row["image_count"] = expected_count
+            if delegated:
+                row["sub_agent"] = "images"
+            (expected_sub if delegated else expected_main).append(row)
+        python = replay(events).to_dict()
+        javascript = _run_js_fold([item.model_dump(mode="json") for item in events], tmp_path)
+        for state in (python, javascript):
+            assert state["conversation"] == expected_main, f"main rows after {seq}"
+            assert state["sub_agents"].get("images", {}).get("steps", []) == expected_sub, f"delegate rows after {seq}"
+            assert [turn["turn_id"] for turn in state["turns"]] == [
+                f"t{index}" for index in range(1, seq + 1) if not cases[index - 1][3]
+            ]
+        assert javascript == python
+
+
+@pytest.mark.parametrize("count", [True, False, "2", -1, 0, 1.5, None, float("nan"), float("inf"), float("-inf")])
+def test_malformed_image_counts_do_not_create_or_annotate_rows(count: object, tmp_path: Path) -> None:
+    events = [
+        _event(KnownEventType.TURN_STARTED, 1, turn_id="empty", image_count=count),
+        _event(KnownEventType.TURN_STARTED, 2, turn_id="text", user_text="text", image_count=count),
+    ]
+    expected = [{"kind": "user", "text": "text", "complete": True, "seq": 2, "elapsed_ms": 0}]
+    for cut in range(3):
+        assert replay(events[:cut]).to_dict()["conversation"] == (expected if cut == 2 else [])
+    harness = tmp_path / "malformed-count.mjs"
+    harness.write_text(
+        f"""
+import assert from "node:assert/strict";
+import {{ replay, toDict }} from {json.dumps(str(ASSET_DIR / "fold.js"))};
+const events = {json.dumps([event.model_dump(mode="json") for event in events])};
+for (let cut = 0; cut <= events.length; cut++) {{
+  assert.deepEqual(toDict(replay(events.slice(0, cut))).conversation, cut === 2 ? {json.dumps(expected)} : []);
+}}
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(["node", str(harness)], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+
+
 def test_javascript_fold_rejects_out_of_order_events(tmp_path: Path) -> None:
     events = [
         _event(KnownEventType.ASSISTANT_DELTA, 5, uuid="a", text="x", complete=True).model_dump(mode="json"),
@@ -497,6 +575,36 @@ runInNewContext(source + `
   const legacyHead = renderToolBody({{ toolName: "read", status: "done" }}).children[0];
   assert.equal(legacyHead.children.length, 2);
   assert.equal(legacyHead.children[1].className, "kc-tool-status");
+  for (const field of ["imageCount", "image_count"]) {{
+    const item = {{ kind: "user", text: "", complete: true }};
+    const row = {{ item, agent: null }};
+    const before = entrySnapshot(row);
+    item[field] = 2;
+    assert.equal(entryChanged(before, row), true, "image count alone must repaint");
+    const rendered = renderEntry(row);
+    assert.equal(rendered.children[1].children[0].textContent, "2 images unavailable");
+    assert.equal(entryChanged(entrySnapshot(row), row), false);
+  }}
+  manifest = {{ artifacts_inline: true }};
+  const digest = "a".repeat(64);
+  const ref = {{ sha256: digest, media_type: "image/png", purpose: "image" }};
+  const item = {{
+    kind: "user", text: "", complete: true,
+    artifacts: [
+      {{ ...ref, purpose: "provider_signature" }},
+      {{ ...ref, purpose: "tool_result" }},
+      {{ ...ref, media_type: "text/plain" }},
+      {{ ...ref, sha256: "https://forbidden.invalid/image.png" }},
+    ],
+  }};
+  const body = renderEntry({{ item }}).children[1];
+  assert.equal(body.children.length, 1, "only purpose=image with image media is displayable");
+  assert.equal(body.children[0].textContent, "Image unavailable");
+  assert.equal(artifactSource({{ ...ref, path: "https://forbidden.invalid/image.png" }}), null);
+  globalThis.__KC_REPLAY__ = {{ artifacts: {{ [digest]: "https://forbidden.invalid/image.png" }} }};
+  assert.equal(artifactSource(ref), null, "inline map must not turn arbitrary URLs into requests");
+  globalThis.__KC_REPLAY__.artifacts[digest] = "data:image/png;base64,aGVsbG8=";
+  assert.equal(artifactSource(ref), "data:image/png;base64,aGVsbG8=");
   assert.equal(globalThis.compromised, undefined);
 `, {{ document, emptyState, fold, assert }});
 """,

@@ -31,7 +31,7 @@ from .store import ArtifactStore, SessionEventStore
 #: Content keys that may hold large text. Checked for artifact offload.
 _TEXT_KEYS = ("text", "output", "content", "message", "summary", "diff")
 
-#: Content key carrying images a tool produced, as ``{"media_type", "data"}``
+#: Content key carrying user or tool images, as ``{"media_type", "data"}``
 #: entries with base64 ``data``. Consumed here and never persisted inline.
 IMAGE_PAYLOAD_KEY = "images"
 
@@ -145,8 +145,28 @@ class RecordingConnectionManager(AgentConnectionManager):
 
     async def broadcast_event(self, event: AgentEvent, workspace_id: str, thread_id: str) -> None:
         self._stamp(event, workspace_id, thread_id)
+        if IMAGE_PAYLOAD_KEY not in event.content:
+            await self._broadcast_recorded_event(event, workspace_id, thread_id)
+            return
+        # An image write may own a worker thread; cancellation must not drop its
+        # turn boundary or release the caller while that writer is still live.
+        operation = asyncio.create_task(
+            self._broadcast_recorded_event(event.model_copy(deep=True), workspace_id, thread_id)
+        )
+        cancelled = False
+        while not operation.done():
+            try:
+                await asyncio.shield(operation)
+            except asyncio.CancelledError:
+                cancelled = True
+        operation.result()
+        if cancelled:
+            raise asyncio.CancelledError()
+
+    async def _broadcast_recorded_event(self, event: AgentEvent, workspace_id: str, thread_id: str) -> None:
         try:
             async with self._write_lock:
+                await self._offload_images(event)
                 await self._record(event)
         except Exception:
             # Recording is an enhancement to live delivery, never a precondition
@@ -431,26 +451,17 @@ class RecordingConnectionManager(AgentConnectionManager):
             pass
 
     async def _offload_large_payloads(self, event: AgentEvent) -> AgentEvent:
-        """Move oversized text and image payloads out of the event body.
-
-        Images are why a replay can show a screenshot at all. They reach the
-        model as content blocks on a history record, which no presentation
-        client reads, so a tool that returns one has to hand the bytes over here
-        as well; this is where they become an artifact the event can point at.
-        """
+        """Move oversized text out of the stored event, preserving full live text."""
         if self.artifact_store is None:
             return event
-        images = event.content.get(IMAGE_PAYLOAD_KEY)
         oversized = {
             key: value
             for key, value in event.content.items()
             if isinstance(value, str) and len(value) > self.policy.inline_payload_chars
         }
-        if not oversized and not images:
+        if not oversized:
             return event
         clone = event.model_copy(deep=True)
-        if images:
-            await self._offload_images(clone)
         refs: list[ArtifactRef] = list(clone.artifacts)
         for key, value in oversized.items():
             try:
@@ -474,9 +485,15 @@ class RecordingConnectionManager(AgentConnectionManager):
         The base64 never reaches the store inline: it would bloat every read of
         the event stream for bytes that only the artifact endpoint serves.
         """
-        assert self.artifact_store is not None
         payload = clone.content.pop(IMAGE_PAYLOAD_KEY, None)
         if not isinstance(payload, list):
+            return
+        if clone.event_type == KnownEventType.TURN_STARTED and payload:
+            count = clone.content.get("image_count")
+            clone.content["image_count"] = max(
+                count if isinstance(count, int) and not isinstance(count, bool) else 0, len(payload)
+            )
+        if self.artifact_store is None:
             return
         refs: list[ArtifactRef] = list(clone.artifacts)
         for item in payload:

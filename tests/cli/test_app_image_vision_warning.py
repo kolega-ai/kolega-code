@@ -12,6 +12,10 @@ submit-time pre-send gate in ``on_chat_composer_submitted``.
 """
 
 import base64
+from collections.abc import Coroutine
+from pathlib import Path
+from typing import Any
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -284,7 +288,10 @@ async def test_attach_command_non_vision_shows_warning(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_submit_with_pending_image_non_vision_blocked(tmp_path, monkeypatch):
+@pytest.mark.parametrize("text", ["describe this", ""])
+async def test_submit_with_pending_image_non_vision_blocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None, text: str
+) -> None:
     """Submitting with a pending image on a non-vision model blocks the send at the CLI gate.
     No agent worker is spawned — the user sees a transcript message, not an API failure."""
     app = _make_app(tmp_path, monkeypatch)
@@ -308,10 +315,10 @@ async def test_submit_with_pending_image_non_vision_blocked(tmp_path, monkeypatc
         from kolega_code.cli.tui.widgets import ChatComposer
 
         composer = app.query_one("#composer", ChatComposer)
-        composer.text = "describe this"
+        composer.text = text
 
         # Simulate submit.
-        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, "describe this"))
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, text))
 
         # No agent worker spawned (send blocked).
         assert spawned == [], "no agent worker should be spawned when the send is blocked"
@@ -326,9 +333,115 @@ async def test_submit_with_pending_image_non_vision_blocked(tmp_path, monkeypatc
         assert hints
         assert "not sent" in hints[-1][0].lower() or "Not sent" in hints[-1][0]
         # Composer text is preserved so the user can edit and resend.
-        assert composer.text == "describe this", "composer text should be preserved when blocked"
+        assert composer.text == text, "composer text should be preserved when blocked"
         # Pending attachment is preserved so the user can /detach it.
         assert app._pending_image_attachments, "pending attachment should be preserved when blocked"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active", [False, True])
+async def test_submit_image_only_consumes_once_or_queues_attachment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None, active: bool
+) -> None:
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _make_app(tmp_path, monkeypatch)
+    async with app.run_test():
+        monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=True))
+        monkeypatch.setattr(app, "_turn_active", active)
+        attachment = _image_attachment("photo.png")
+        app._pending_image_attachments.append(attachment)
+        process = AsyncMock()
+        monkeypatch.setattr(app, "_process_message", process)
+        entries: list[Any] = []
+        monkeypatch.setattr(app, "_add_conversation_entry", entries.append)
+
+        def close_worker(coro: Coroutine[Any, Any, Any], **kwargs: Any) -> None:
+            coro.close()
+
+        worker = Mock(side_effect=close_worker)
+        monkeypatch.setattr(app, "run_worker", worker)
+        composer = app.query_one("#composer", ChatComposer)
+        composer.text = ""
+
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, ""))
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, ""))
+
+        assert app._pending_image_attachments == []
+        assert composer.text == ""
+        if active:
+            process.assert_not_called()
+            worker.assert_not_called()
+            assert len(app._queued_messages) == 1
+            queued = app._queued_messages[0]
+            assert queued.text == ""
+            assert queued.attachments == [attachment]
+            assert queued.attachments is not None
+            assert queued.attachments[0] is not attachment
+            assert not any(entry.kind == "user" for entry in entries)
+        else:
+            process.assert_called_once_with("", [attachment])
+            worker.assert_called_once()
+            assert [entry.kind for entry in entries] == ["user"]
+            assert app._queued_messages == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("configured", [False, True])
+async def test_submit_image_only_disconnected_preserves_attachment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None, configured: bool
+) -> None:
+    from kolega_code.cli import messages
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _make_app(tmp_path, monkeypatch)
+    async with app.run_test():
+        monkeypatch.setattr(app, "agent", None)
+        if not configured:
+            monkeypatch.setattr(app, "config", None)
+        attachment = _image_attachment("photo.png")
+        app._pending_image_attachments.append(attachment)
+        status = Mock()
+        hint = Mock()
+        process = AsyncMock()
+        monkeypatch.setattr(app, "_set_settings_status", status)
+        monkeypatch.setattr(app, "_show_composer_hint", hint)
+        monkeypatch.setattr(app, "_process_message", process)
+        composer = app.query_one("#composer", ChatComposer)
+        composer.text = ""
+
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, ""))
+
+        assert app._pending_image_attachments == [attachment]
+        assert app._queued_messages == []
+        process.assert_not_called()
+        status.assert_called_once_with(messages.SETTINGS_REQUIRED, tone="warning")
+        if not configured:
+            hint.assert_called_once_with(messages.DISCONNECTED_ACTIVITY, tone="warning")
+
+
+@pytest.mark.asyncio
+async def test_submit_genuinely_empty_input_is_noop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _make_app(tmp_path, monkeypatch)
+    async with app.run_test():
+        monkeypatch.setattr(app, "agent", None)
+        status = Mock()
+        attachments = Mock()
+        monkeypatch.setattr(app, "_set_settings_status", status)
+        monkeypatch.setattr(app, "_build_mention_attachments", attachments)
+        composer = app.query_one("#composer", ChatComposer)
+        composer.text = " \n "
+
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        status.assert_not_called()
+        attachments.assert_not_called()
+        assert composer.text == " \n "
+        assert app._queued_messages == []
 
 
 @pytest.mark.asyncio
