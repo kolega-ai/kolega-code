@@ -114,6 +114,7 @@ def test_opus_5_is_selectable_and_default_for_anthropic() -> None:
     assert dict(options)["Claude Opus 5.5"] == "claude-opus-5-5"
     assert dict(options)["Claude Sonnet 5.5"] == "claude-sonnet-5-5"
     assert dict(options)["Claude Fable 5.1"] == "claude-fable-5-1"
+    assert dict(options)["Claude Fable 5.2"] == "claude-fable-5-2"
     assert ui_thinking_effort_options("anthropic", "claude-sonnet-5-5") == [
         ("Low", "low"),
         ("Medium", "medium"),
