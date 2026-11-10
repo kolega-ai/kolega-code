@@ -6,6 +6,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- **New model support.** Anthropic **Claude Fable 5.2** (`claude-fable-5-2`) —
+  1M context, 128K output, adaptive thinking with the full
+  `low`/`medium`/`high`/`xhigh`/`max` effort ladder (default `high`), and the
+  Fable line's first fast-tier pricing.
+
 ## 0.49.0 - 2026-11-07
 
 ### Added

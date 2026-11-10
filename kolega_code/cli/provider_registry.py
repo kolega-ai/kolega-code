@@ -109,6 +109,7 @@ MODEL_LABELS: dict[str, str] = {
     "claude-fable-5-1": "Claude Fable 5.1",
     "claude-opus-5-5": "Claude Opus 5.5",
     "claude-sonnet-5-5": "Claude Sonnet 5.5",
+    "claude-fable-5-2": "Claude Fable 5.2",
     # OpenAI (shared labels across the API and ChatGPT-subscription providers)
     "gpt-6-astra": "GPT-6 Astra",
     "gpt-5.6-sol": "GPT-5.6 Sol",

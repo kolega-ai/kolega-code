@@ -1344,4 +1344,134 @@ ANTHROPIC_SPECS = {
             ],
         },
     },
+    # Claude Fable 5.2 (Nov 2026): the Fable line's first fast-capable model —
+    # fast is engaged via the `speed: "fast"` request parameter (service_tier
+    # only accepts auto/standard_only) and doubles every token rate.
+    ("anthropic", "claude-fable-5-2"): {
+        "context_length": 1000000,
+        "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("low", "medium", "high", "xhigh", "max"),
+            default="high",
+            mode="anthropic_adaptive_effort",
+        ),
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "anthropic:claude-fable-5-2:2026-11-10",
+            "provider": "anthropic",
+            "model": "claude-fable-5-2",
+            "billing_model": "claude-fable-5-2",
+            "status": "priced",
+            "billing_mode": "pay_as_you_go",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "checked_at": "2026-11-10",
+            "rates": {"input": "8", "output": "40", "cache_read": "0.2", "cache_write": "10"},
+            "default_context": {
+                "service_tier": "standard",
+                "region": "global",
+                "modality": "text",
+                "billing_surface": "api",
+                "cache_ttl": "5m",
+            },
+            "sources": [
+                {
+                    "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+                    "model_id": "claude-fable-5-2",
+                    "checked_at": "2026-11-10",
+                }
+            ],
+            "conditions": {},
+            "schedules": [
+                {
+                    "id": "published-0",
+                    "mode": "whole_request",
+                    "when": {"service_tier": "standard", "region": "global", "cache_ttl": "5m"},
+                    "rates": {"input": "8", "output": "40", "cache_read": "0.20", "cache_write": "10.00"},
+                },
+                {
+                    "id": "published-1",
+                    "mode": "whole_request",
+                    "when": {"service_tier": "standard", "region": "global", "cache_ttl": "1h"},
+                    "rates": {"input": "8", "output": "40", "cache_read": "0.20", "cache_write": "16"},
+                },
+                {
+                    "id": "published-2",
+                    "mode": "whole_request",
+                    "when": {"service_tier": "standard", "region": "us", "cache_ttl": "5m"},
+                    "rates": {"input": "8.80", "output": "44.0", "cache_read": "0.22", "cache_write": "11.000"},
+                },
+                {
+                    "id": "published-3",
+                    "mode": "whole_request",
+                    "when": {"service_tier": "standard", "region": "us", "cache_ttl": "1h"},
+                    "rates": {"input": "8.80", "output": "44.0", "cache_read": "0.22", "cache_write": "17.60"},
+                },
+                {
+                    "id": "published-4",
+                    "mode": "whole_request",
+                    "when": {"service_tier": "batch", "region": "global", "cache_ttl": "5m"},
+                    "rates": {"input": "4.0", "output": "20.0", "cache_read": "0.100", "cache_write": "5.00"},
+                },
+                {
+                    "id": "published-5",
+                    "mode": "whole_request",
+                    "when": {"service_tier": "batch", "region": "global", "cache_ttl": "1h"},
+                    "rates": {"input": "4.0", "output": "20.0", "cache_read": "0.100", "cache_write": "8.00"},
+                },
+                {
+                    "id": "published-6",
+                    "mode": "whole_request",
+                    "when": {"service_tier": "batch", "region": "us", "cache_ttl": "5m"},
+                    "rates": {"input": "4.40", "output": "22.00", "cache_read": "0.110", "cache_write": "5.5000"},
+                },
+                {
+                    "id": "published-7",
+                    "mode": "whole_request",
+                    "when": {"service_tier": "batch", "region": "us", "cache_ttl": "1h"},
+                    "rates": {"input": "4.40", "output": "22.00", "cache_read": "0.110", "cache_write": "8.80"},
+                },
+                {
+                    "id": "published-8",
+                    "mode": "whole_request",
+                    "when": {"service_tier": "fast", "region": "global", "cache_ttl": "5m"},
+                    "rates": {"input": "16", "output": "80", "cache_read": "0.40", "cache_write": "20.00"},
+                },
+                {
+                    "id": "published-9",
+                    "mode": "whole_request",
+                    "when": {"service_tier": "fast", "region": "global", "cache_ttl": "1h"},
+                    "rates": {"input": "16", "output": "80", "cache_read": "0.40", "cache_write": "32"},
+                },
+                {
+                    "id": "published-10",
+                    "mode": "whole_request",
+                    "when": {"service_tier": "fast", "region": "us", "cache_ttl": "5m"},
+                    "rates": {"input": "17.60", "output": "88.0", "cache_read": "0.44", "cache_write": "22.000"},
+                },
+                {
+                    "id": "published-11",
+                    "mode": "whole_request",
+                    "when": {"service_tier": "fast", "region": "us", "cache_ttl": "1h"},
+                    "rates": {"input": "17.60", "output": "88.0", "cache_read": "0.44", "cache_write": "35.20"},
+                },
+            ],
+            "cache_policy": {"cache_read": "separate", "cache_write": "separate"},
+            "exclusions": [
+                "Taxes, negotiated discounts and account-level allowances.",
+                "Code execution is free with web_search_20260209 or web_fetch_20260209; hourly container "
+                "billing and the daily free allowance require attributable billing quantities.",
+                "Web fetch has no separate fee. Search content and extended thinking are already billed token usage.",
+            ],
+            "requires_schedule": True,
+            "components": [
+                {"name": "web_search", "quantity": "web_search_requests", "rate": "0.01", "unit": "per_request"},
+                {"name": "code_execution", "quantity": "code_execution_hours", "rate": "0.05", "unit": "per_request"},
+            ],
+        },
+    },
 }
