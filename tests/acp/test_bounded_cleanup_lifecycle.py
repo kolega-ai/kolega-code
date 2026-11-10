@@ -346,15 +346,16 @@ async def test_failed_clear_context_preparation_releases_approval(
         with monkeypatch.context() as fault:
             error = RuntimeError(f"failed {failure}")
             if failure == "clear_context":
-                fault.setattr(old, "reset_volatile_context", Mock(side_effect=error))
+                fault.setattr(server, "_clear_agent_context", Mock(side_effect=error))
             else:
                 jobs = old.get_background_jobs()
                 fault.setattr(jobs, "close" if failure == "close_jobs" else "deliver", AsyncMock(side_effect=error))
             with pytest.raises(RuntimeError, match=f"failed {failure}"):
                 async with session.execution_lock:
                     await server._request_plan_approval(session, plan)
-        assert session.agent is old
-        assert session.record.interaction_mode == mode
+        adopted = failure == "clear_context" and mode == "plan"
+        assert (session.agent is not old) == adopted
+        assert session.record.interaction_mode == ("build" if adopted else mode)
         assert session.record.plan_pending
         assert session.record.latest_plan_markdown == plan
         assert session.approved_plan is None
