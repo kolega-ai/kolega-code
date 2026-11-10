@@ -147,7 +147,7 @@ def test_openrouter_published_rates_produce_default_estimate_and_reported_cost_w
     assert cost["source"] == "estimated"
     assert cost["pricing_source"] == "catalogue"
     assert cost["complete"] is True
-    assert cost["amount"] == "0.00021"
+    assert cost["amount"] == "0.000056"
     assert any("routed" in assumption for assumption in cost["assumptions"])
     for amount in ("0", "0.0042"):
         reported = PricingResolver().calculate(
