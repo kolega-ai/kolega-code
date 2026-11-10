@@ -1944,6 +1944,19 @@ def _prepare_ask_journal(
 
 
 async def _run_ask(args: argparse.Namespace) -> int:
+    tearing_down = asyncio.Event()
+    # Binding and cleanup must share a task for task-affine extension contexts.
+    invocation = asyncio.create_task(_run_ask_owned(args, tearing_down), name="ask-invocation")
+    while not invocation.done():
+        try:
+            await asyncio.shield(invocation)
+        except asyncio.CancelledError:
+            if not invocation.done() and not tearing_down.is_set():
+                invocation.cancel()
+    return invocation.result()
+
+
+async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) -> int:
     launch_project_path = _select_startup_project(args.project, args)
     project_path = launch_project_path
     store = _store_from_args(args)
@@ -2464,6 +2477,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
         run_error = {"code": type(exc).__name__, "message": str(exc)[:500]}
         raise
     finally:
+        tearing_down.set()
         end_fire_hook = getattr(agent_ref.get("agent"), "fire_hook", None)
         if end_fire_hook is not None:
             try:
