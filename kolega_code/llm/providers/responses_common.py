@@ -488,8 +488,13 @@ class ResponsesStreamWrapper:
         self._model = model
         self._iterator: Optional[AsyncIterator[Any]] = None
         self._closed = False
-        self._text = ""
-        self._reasoning = ""
+        # Streamed deltas land in parts and are joined once when the message is
+        # built: appending to a string held on the wrapper copies the whole
+        # accumulated text per delta, so a long answer or reasoning segment is
+        # quadratic in the number of events (same fix as the Mistral SSE
+        # accumulator).
+        self._text_parts: List[str] = []
+        self._reasoning_parts: List[str] = []
         # Responses reasoning summaries are a list of independently streamed
         # ``summary_text`` parts. Keep their display state separate from the raw
         # accumulator so the TUI can preserve part boundaries and discard redundant
@@ -511,7 +516,7 @@ class ResponsesStreamWrapper:
         # content. Tagged (kind, payload) records preserve the interleaving.
         self._prefix_records: List[tuple[str, Dict[str, Any]]] = []
         self._final_response: Any = None
-        self._function_calls: Dict[str, Dict[str, str]] = {}
+        self._function_calls: Dict[str, Dict[str, Any]] = {}
         self._tool_execution_ids = ToolExecutionIdRegistry()
         self._started_calls: set[str] = set()
         self._deferred_tool_starts: List[MessageChunk] = []
@@ -679,7 +684,7 @@ class ResponsesStreamWrapper:
         key = self._summary_key(event)
         display = self._switch_summary_part(key)
         delta = getattr(event, "delta", "") or ""
-        self._reasoning += delta
+        self._reasoning_parts.append(delta)
         self._summary_seen_delta_parts.add(key)
         display += self._emit_summary_text(self._normalize_summary_delta(delta))
         return self._thinking_chunk(display)
@@ -697,7 +702,7 @@ class ResponsesStreamWrapper:
             if text is None:
                 text = getattr(getattr(event, "part", None), "text", "")
             text = text or ""
-            self._reasoning += text
+            self._reasoning_parts.append(text)
             display += self._emit_summary_text(self._normalize_summary_delta(text))
 
         display += self._finish_active_summary_part()
@@ -717,7 +722,7 @@ class ResponsesStreamWrapper:
         event_type = getattr(event, "type", "")
         if event_type == "response.output_text.delta":
             delta = getattr(event, "delta", "") or ""
-            self._text += delta
+            self._text_parts.append(delta)
             return MessageChunk(type="text", text=delta)
         if event_type == "response.reasoning_summary_text.delta":
             return self._handle_summary_delta(event)
@@ -727,7 +732,7 @@ class ResponsesStreamWrapper:
             return self._thinking_chunk(self._switch_summary_part(self._summary_key(event)))
         if event_type == "response.reasoning_text.delta":
             delta = getattr(event, "delta", "") or ""
-            self._reasoning += delta
+            self._reasoning_parts.append(delta)
             return MessageChunk(type="thinking", thinking=delta)
         if event_type == "response.output_item.added":
             item = getattr(event, "item", None)
@@ -743,7 +748,7 @@ class ResponsesStreamWrapper:
                     {
                         "call_id": call_id,
                         "name": name,
-                        "arguments": "",
+                        "argument_parts": [],
                         "input_kind": "freeform" if item_kind == "custom_tool_call" else "json",
                     },
                 )
@@ -762,12 +767,12 @@ class ResponsesStreamWrapper:
                 {
                     "call_id": call_id,
                     "name": "",
-                    "arguments": "",
+                    "argument_parts": [],
                     "input_kind": "freeform" if "custom_tool" in event_type else "json",
                 },
             )
             delta = getattr(event, "delta", "") or ""
-            record["arguments"] += delta
+            record["argument_parts"].append(delta)
             return MessageChunk(type="tool_use_delta", tool_call_delta={"input_delta": delta})
         elif event_type in ("response.function_call_arguments.done", "response.custom_tool_call_input.done"):
             call_id = getattr(event, "item_id", None) or getattr(event, "call_id", "")
@@ -776,7 +781,7 @@ class ResponsesStreamWrapper:
                 {
                     "call_id": call_id,
                     "name": "",
-                    "arguments": "",
+                    "argument_parts": [],
                     "input_kind": "freeform" if "custom_tool" in event_type else "json",
                 },
             )
@@ -784,7 +789,7 @@ class ResponsesStreamWrapper:
             if arguments is None:
                 arguments = getattr(event, "input", None)
             if arguments is not None:
-                record["arguments"] = arguments
+                record["argument_parts"] = [arguments]
         elif event_type == "response.output_item.done":
             item = getattr(event, "item", None)
             item_kind = getattr(item, "type", None)
@@ -837,7 +842,7 @@ class ResponsesStreamWrapper:
                     {
                         "call_id": call_id,
                         "name": "",
-                        "arguments": "",
+                        "argument_parts": [],
                         "input_kind": "freeform" if item_kind == "custom_tool_call" else "json",
                     },
                 )
@@ -849,7 +854,7 @@ class ResponsesStreamWrapper:
                 if name:
                     record["name"] = name
                 if arguments:
-                    record["arguments"] = arguments
+                    record["argument_parts"] = [arguments]
         elif event_type in ("response.completed", "response.incomplete"):
             # A response truncated at max_output_tokens terminates with
             # response.incomplete, NOT response.completed (DeepSeek verified live
@@ -883,8 +888,9 @@ class ResponsesStreamWrapper:
         # response there would drop the whole answer.
         if self._final_response is None:
             pending_tool_calls = len(self._function_calls)
-            partial_output = bool(self._text or self._reasoning or self._prefix_records or pending_tool_calls)
-            partial_content = [TextBlock(text=self._text)] if self._text else []
+            text = "".join(self._text_parts)
+            partial_output = bool(text or self._reasoning_parts or self._prefix_records or pending_tool_calls)
+            partial_content = [TextBlock(text=text)] if text else []
             prefix_blocks = self._collect_prefix_blocks()
             partial_message = None
             if partial_content or prefix_blocks:
@@ -1084,14 +1090,16 @@ class ResponsesStreamWrapper:
     def _blocks_from_accumulators(self):
         content_blocks: list = []
         tool_use_blocks: list = []
-        if self._text:
-            content_blocks.append(TextBlock(text=self._text))
+        text = "".join(self._text_parts)
+        if text:
+            content_blocks.append(TextBlock(text=text))
         for record in self._function_calls.values():
             is_freeform = record.get("input_kind") == "freeform"
+            arguments = "".join(record["argument_parts"])
             tool_call = ToolCall(
                 id=record["call_id"],
                 name=record["name"],
-                input=record["arguments"] if is_freeform else safe_parse_tool_arguments(record["arguments"]),
+                input=arguments if is_freeform else safe_parse_tool_arguments(arguments),
                 execution_id=self._tool_execution_ids.get_or_create(record["call_id"]),
                 input_kind="freeform" if is_freeform else "json",
             )
