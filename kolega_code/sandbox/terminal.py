@@ -1069,10 +1069,6 @@ class SandboxTerminalManager(TerminalManager):
         self._output_accumulators.clear()
         self._command_tasks.clear()
 
-    def _handle_output(self, terminal_id: str, data: str, stream: str):
-        """Handle output from process."""
-        self.outputs[terminal_id].append({"type": stream, "data": data, "timestamp": datetime.now(timezone.utc)})
-
     async def get_output(self, terminal_id: str, **kwargs) -> str:
         """
         Get output from a terminal.
