@@ -27,10 +27,21 @@ from kolega_code.agent.orchestration import (
     DispatchFn,
     extract_meta,
 )
+from kolega_code.agent.orchestration import runtime as runtime_module
 from kolega_code.agent.orchestration.accounting import WorkflowRunAccounting
 from kolega_code.agent.model_routing import AtomicModelOverride
 
 META = 'meta = {"name": "t", "description": "d"}\n'
+
+
+@pytest.fixture(autouse=True)
+def _instant_agent_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the production start-stagger: every dispatch here is an instant stub.
+
+    The runtime jitters each agent start by 0-0.75 s to de-synchronize real
+    provider bursts; with a stub dispatch that delay is pure wall-clock cost.
+    """
+    monkeypatch.setattr(runtime_module, "START_STAGGER_SECONDS", 0)
 
 
 def make_runtime(
@@ -472,10 +483,7 @@ async def test_cached_agent_does_not_reserve_or_spend(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_queued_cancellation_does_not_reserve_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from kolega_code.agent.orchestration import runtime as runtime_module
-
-    monkeypatch.setattr(runtime_module, "START_STAGGER_SECONDS", 0)
+async def test_queued_cancellation_does_not_reserve_agent(tmp_path: Path) -> None:
     started = asyncio.Event()
     release = asyncio.Event()
 
