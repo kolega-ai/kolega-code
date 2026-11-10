@@ -8,11 +8,14 @@ stored volume without losing any streamed text.
 
 from __future__ import annotations
 
+import base64
+from copy import deepcopy
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
-from kolega_code.events import AgentConnectionManager, AgentEvent, KnownEventType
+from kolega_code.events import AgentConnectionManager, AgentEvent, ArtifactPurpose, ArtifactRef, KnownEventType
 from kolega_code.session.inmemory import InMemoryArtifactStore, InMemorySessionEventStore
 from kolega_code.session.recording import RecordingConnectionManager, RetentionPolicy
 
@@ -338,12 +341,8 @@ async def test_tool_images_become_artifacts_and_leave_the_event_body() -> None:
     no presentation client reads those, so a shared replay could never render a
     screenshot however large it was.
     """
-    import base64
-
-    from kolega_code.events import ArtifactPurpose
-
     artifacts = InMemoryArtifactStore()
-    manager, _, store = _manager(artifacts=artifacts)
+    manager, inner, store = _manager(artifacts=artifacts)
     raw = b"\x89PNG\r\n\x1a\nnot-really-a-png"
 
     await manager.broadcast_event(
@@ -362,3 +361,182 @@ async def test_tool_images_become_artifacts_and_leave_the_event_body() -> None:
     assert [ref.purpose for ref in stored.artifacts] == [ArtifactPurpose.IMAGE]
     assert await artifacts.open(stored.artifacts[0]) == raw
     assert stored.content["text"] == "# marker.png", "the text payload is unchanged by carrying an image"
+    assert inner.events[0].artifacts == stored.artifacts
+    assert "images" not in inner.events[0].content
+
+
+@pytest.mark.asyncio
+async def test_user_images_are_offloaded_once_for_live_and_recorded_events() -> None:
+    artifacts = InMemoryArtifactStore()
+    artifacts.put = AsyncMock(wraps=artifacts.put)
+    manager, inner, store = _manager(artifacts=artifacts, policy=RetentionPolicy(inline_payload_chars=200))
+    raw_images = [b"first-image", b"second-image"]
+    payload = [
+        {"media_type": media_type, "data": base64.b64encode(raw).decode("ascii")}
+        for media_type, raw in zip(("image/png", "image/jpeg"), raw_images)
+    ]
+    original_content = {"user_text": "look at both", "text": "x" * 5_000, "images": payload, "image_count": 3}
+    event = _event(KnownEventType.TURN_STARTED, **deepcopy(original_content))
+    existing = await artifacts.put(
+        b"existing", media_type="image/png", purpose=ArtifactPurpose.IMAGE, encoding="base64"
+    )
+    event.artifacts.append(existing)
+    artifacts.put.reset_mock()
+
+    await manager.broadcast_event(event, "w", "t")
+
+    (stored,) = await store.read(SESSION_ID)
+    (live,) = inner.events
+    assert live.seq == stored.seq == 1
+    assert live.content["text"] == original_content["text"]
+    assert stored.content["text"] != original_content["text"]
+    assert live.content["user_text"] == stored.content["user_text"] == "look at both"
+    assert live.content["image_count"] == stored.content["image_count"] == 3
+    image_refs = [ref for ref in stored.artifacts if ref.purpose == ArtifactPurpose.IMAGE]
+    assert live.artifacts == image_refs
+    assert image_refs[0] == existing
+    assert [await artifacts.open(ref) for ref in image_refs[1:]] == raw_images
+    assert [ref.media_type for ref in image_refs[1:]] == ["image/png", "image/jpeg"]
+    assert artifacts.put.await_count == 3, "two image writes and one text write, not a second live-image pass"
+    for normalized in (stored, live):
+        assert "images" not in normalized.content
+        assert all(item["data"] not in normalized.model_dump_json() for item in payload)
+    assert event.content == original_content
+    assert event.artifacts == [existing]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("store_mode", ["missing", "failing"])
+async def test_unavailable_artifact_store_strips_raw_images_and_keeps_original_count(store_mode: str) -> None:
+    artifacts = InMemoryArtifactStore() if store_mode == "failing" else None
+    if artifacts is not None:
+        artifacts.put = AsyncMock(side_effect=OSError("artifact storage unavailable"))
+    manager, inner, store = _manager(artifacts=artifacts)
+    event = _event(
+        KnownEventType.TURN_STARTED,
+        user_text="still visible",
+        image_count=4,
+        images=[{"media_type": "image/png", "data": base64.b64encode(b"image").decode("ascii")}],
+    )
+    original = deepcopy(event.content)
+
+    await manager.broadcast_event(event, "w", "t")
+
+    (stored,) = await store.read(SESSION_ID)
+    for normalized in (stored, inner.events[0]):
+        assert normalized.content == {"user_text": "still visible", "image_count": 4}
+        assert normalized.artifacts == []
+    assert event.content == original
+
+
+@pytest.mark.asyncio
+async def test_malformed_images_do_not_lose_text_or_other_images() -> None:
+    artifacts = InMemoryArtifactStore()
+    artifacts.put = AsyncMock(wraps=artifacts.put)
+    manager, inner, store = _manager(artifacts=artifacts)
+    payload = [
+        None,
+        "not an image object",
+        {"data": b"not base64 text"},
+        {"data": "%%%invalid%%%"},
+        {"data": ""},
+        {"data": "https://example.invalid/image.png", "media_type": "image/png"},
+        {"data": base64.b64encode(b"valid").decode("ascii"), "media_type": "image/png"},
+    ]
+    event = _event(KnownEventType.TURN_STARTED, user_text="retain me", images=payload)
+
+    await manager.broadcast_event(event, "w", "t")
+
+    (stored,) = await store.read(SESSION_ID)
+    assert stored.content == {"user_text": "retain me", "image_count": len(payload)}
+    assert stored.artifacts == inner.events[0].artifacts
+    assert len(stored.artifacts) == 1
+    assert await artifacts.open(stored.artifacts[0]) == b"valid"
+    assert artifacts.put.await_count == 1
+    assert "images" not in inner.events[0].content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [None, {}, "not a list", []])
+async def test_malformed_image_container_never_reaches_live_or_stored_event(payload: Any) -> None:
+    manager, inner, store = _manager()
+
+    await manager.broadcast_event(_event(KnownEventType.TURN_STARTED, user_text="retain me", images=payload), "w", "t")
+
+    (stored,) = await store.read(SESSION_ID)
+    assert stored.content == inner.events[0].content == {"user_text": "retain me"}
+
+
+@pytest.mark.asyncio
+async def test_failed_image_write_does_not_prevent_remaining_image_writes() -> None:
+    artifacts = InMemoryArtifactStore()
+    put = artifacts.put
+    attempts: list[bytes] = []
+
+    async def partially_failing_put(data: bytes, **kwargs: Any) -> ArtifactRef:
+        attempts.append(data)
+        if data == b"fail":
+            raise OSError("first image failed")
+        return await put(data, **kwargs)
+
+    artifacts.put = AsyncMock(side_effect=partially_failing_put)
+    manager, inner, store = _manager(artifacts=artifacts)
+    event = _event(
+        KnownEventType.TURN_STARTED,
+        user_text="both images",
+        images=[{"media_type": "image/png", "data": base64.b64encode(raw).decode("ascii")} for raw in (b"fail", b"ok")],
+    )
+
+    await manager.broadcast_event(event, "w", "t")
+
+    (stored,) = await store.read(SESSION_ID)
+    assert attempts == [b"fail", b"ok"]
+    assert stored.content == {"user_text": "both images", "image_count": 2}
+    assert stored.artifacts == inner.events[0].artifacts
+    assert len(stored.artifacts) == 1
+    assert await artifacts.open(stored.artifacts[0]) == b"ok"
+
+
+@pytest.mark.asyncio
+async def test_failed_event_append_still_delivers_normalized_live_images() -> None:
+    artifacts = InMemoryArtifactStore()
+    artifacts.put = AsyncMock(wraps=artifacts.put)
+    manager, inner, store = _manager(artifacts=artifacts)
+    store.append = AsyncMock(side_effect=OSError("event storage unavailable"))
+    event = _event(
+        KnownEventType.TURN_STARTED,
+        user_text="still live",
+        images=[{"data": base64.b64encode(b"image").decode("ascii"), "media_type": "image/png"}],
+    )
+
+    await manager.broadcast_event(event, "w", "t")
+
+    (live,) = inner.events
+    attempted = store.append.call_args.args[0]
+    assert live.content == {"user_text": "still live", "image_count": 1}
+    assert live.artifacts == attempted.artifacts
+    assert len(live.artifacts) == 1
+    assert live.seq is None
+    assert artifacts.put.await_count == 1
+    assert await artifacts.open(live.artifacts[0]) == b"image"
+
+
+@pytest.mark.asyncio
+async def test_images_are_normalized_after_recording_retention_limit() -> None:
+    artifacts = InMemoryArtifactStore()
+    manager, inner, store = _manager(artifacts=artifacts, policy=RetentionPolicy(max_events=0))
+    await manager.broadcast_event(_event(text="exhaust recording"), "w", "t")
+    event = _event(
+        KnownEventType.TURN_STARTED,
+        user_text="live only",
+        images=[{"data": base64.b64encode(b"image").decode("ascii"), "media_type": "image/png"}],
+    )
+
+    await manager.broadcast_event(event, "w", "t")
+
+    (stored,) = await store.read(SESSION_ID)
+    assert stored.event_type == KnownEventType.STREAM_TRUNCATED
+    live = inner.events[-1]
+    assert live.content == {"user_text": "live only", "image_count": 1}
+    assert len(live.artifacts) == 1
+    assert await artifacts.open(live.artifacts[0]) == b"image"

@@ -683,6 +683,7 @@ function entrySnapshot(row) {
     toolName: item.tool_name || item.toolName,
     toolSubject: item.tool_subject || item.toolSubject,
     artifacts: item.artifacts,
+    imageCount: item.image_count ?? item.imageCount,
     preview: item.editPreview || item.edit_preview,
   };
 }
@@ -708,6 +709,7 @@ function entryChanged(previous, row) {
     previous.toolName !== (item.tool_name || item.toolName) ||
     previous.toolSubject !== (item.tool_subject || item.toolSubject) ||
     previous.artifacts !== item.artifacts ||
+    previous.imageCount !== (item.image_count ?? item.imageCount) ||
     previous.preview !== (item.editPreview || item.edit_preview)
   );
 }
@@ -937,6 +939,16 @@ function renderEntry(entry) {
     body.append(renderToolBody(item));
   } else {
     body.textContent = item.text;
+    if (item.kind === "user") {
+      const images = (item.artifacts || []).filter(
+        (ref) => ref.purpose === "image" && String(ref.media_type || "").startsWith("image/"),
+      );
+      for (const ref of images) body.append(renderArtifact(ref));
+      const count = item.image_count ?? item.imageCount;
+      if (Number.isInteger(count) && count > images.length) {
+        body.append(missingImageBadge(count - images.length));
+      }
+    }
     if (!item.complete) body.append(spinnerNode());
   }
   row.append(body);
@@ -1025,9 +1037,11 @@ function renderToolBody(item) {
  * same shareable-purpose allowlist as everything else.
  */
 function artifactSource(ref) {
+  if (!/^[a-f0-9]{64}$/.test(ref.sha256)) return null;
   const inlined = globalThis.__KC_REPLAY__;
   if (inlined && inlined.artifacts && inlined.artifacts[ref.sha256]) {
-    return inlined.artifacts[ref.sha256];
+    const source = inlined.artifacts[ref.sha256];
+    return typeof source === "string" && /^data:image\/[^,]+;base64,/i.test(source) ? source : null;
   }
   // A single-file export has no sibling files, so an artifact missing from the
   // inline map above is simply unreachable — never a relative path that 404s.
@@ -1041,18 +1055,28 @@ function artifactSource(ref) {
 
 function renderArtifact(ref) {
   const source = artifactSource(ref);
-  if (source && String(ref.media_type || "").startsWith("image/")) {
+  if (String(ref.media_type || "").startsWith("image/")) {
+    if (!source) return missingImageBadge();
     const image = document.createElement("img");
     image.className = "kc-artifact-image";
     image.src = source;
     image.alt = "Image captured during this session";
     image.loading = "lazy";
+    image.addEventListener("error", () => image.replaceWith(missingImageBadge()), { once: true });
     return image;
   }
   const badge = document.createElement("span");
   badge.className = "kc-artifact";
   const size = ref.chars ? `${ref.chars.toLocaleString()} chars` : `${ref.bytes} bytes`;
   badge.textContent = `artifact · ${size}`;
+  return badge;
+}
+
+function missingImageBadge(count = 1) {
+  const badge = document.createElement("span");
+  badge.className = "kc-artifact kc-missing-image";
+  badge.textContent = count === 1 ? "Image unavailable" : `${count.toLocaleString()} images unavailable`;
+  badge.title = "Image bytes are missing, not shared, too large to embed, or could not be loaded.";
   return badge;
 }
 

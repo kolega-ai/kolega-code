@@ -9,18 +9,21 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import base64
 import copy
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 import kolega_code
 from kolega_code.cli import session_usage
-from kolega_code.cli.session_event_store import FileSessionEventStore
+from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import SettingsStore
-from kolega_code.events import AgentEvent, KnownEventType
-from kolega_code.llm.models import Message, TextBlock
+from kolega_code.events import AgentEvent, ArtifactPurpose, ArtifactRef, KnownEventType
+from kolega_code.llm.models import ImageBlock, Message, TextBlock
+from kolega_code.session.projection import replay
 
 
 _SEMANTIC_TYPES = {
@@ -78,6 +81,9 @@ _STATUSES = {
 _UNKNOWN_SEMANTIC = "compat.future_semantic"
 _UNKNOWN_UI = "compat_future_ui"
 _SNAPSHOT = "compat-original-events.jsonl"
+_IMAGE = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+)
 
 
 def _producer_inventory() -> set[str]:
@@ -161,14 +167,32 @@ def _ui_types() -> set[str]:
     return {value for name, value in vars(KnownEventType).items() if name.isupper() and isinstance(value, str)}
 
 
-async def _write_ui(store: FileSessionEventStore, session_id: str) -> None:
+async def _write_ui(store: FileSessionEventStore, session_id: str, image: ArtifactRef) -> None:
     for event_type in sorted(_ui_types() | {_UNKNOWN_UI}):
+        content: dict[str, Any] = {"compat_payload": {"preserve": [1, "future"]}}
+        if event_type == KnownEventType.TURN_STARTED:
+            content.update(turn_id="compat-mixed", user_text="current-release user", image_count=1)
         await store.append(
             AgentEvent(
                 event_type=event_type,
                 sender="compat-fixture",
                 session_id=session_id,
-                content={"compat_payload": {"preserve": [1, "future"]}},
+                content=content,
+                artifacts=[image] if event_type == KnownEventType.TURN_STARTED else [],
+            )
+        )
+    for phase in (KnownEventType.TURN_STARTED, KnownEventType.TURN_ENDED):
+        await store.append(
+            AgentEvent(
+                event_type=phase,
+                sender="compat-fixture",
+                session_id=session_id,
+                content=(
+                    {"turn_id": "compat-image-only", "user_text": "", "image_count": 1}
+                    if phase == KnownEventType.TURN_STARTED
+                    else {"turn_id": "compat-image-only", "status": "completed"}
+                ),
+                artifacts=[image] if phase == KnownEventType.TURN_STARTED else [],
             )
         )
 
@@ -204,8 +228,12 @@ def create_fixture(root: Path) -> dict:
     try:
         recorder = sessions.recorder(session_id)
         journal = recorder.journal
-        recorder.start_turn(_message("user", "current-release user"))
+        image = ImageBlock("base64", "image/png", base64.b64encode(_IMAGE).decode("ascii"))
+        recorder.start_turn(Message(role="user", content=[TextBlock("current-release user"), image]))
         recorder.record_assistant(_message("assistant", "current-release assistant"))
+        recorder.finish_turn("completed")
+        recorder.start_turn(Message(role="user", content=[image]))
+        recorder.record_assistant(_message("assistant", "current-release image response"))
         recorder.finish_turn("completed")
         existing = {event.event_type for event in journal.read_events(repair_tail=False)}
         message = _message("user", "compat context").to_dict()
@@ -223,7 +251,10 @@ def create_fixture(root: Path) -> dict:
                 payload["completion_id"] = "compat-completion"
             journal.append(event_type, actor="system", payload=payload)
         journal.append(_UNKNOWN_SEMANTIC, actor="system", payload={"compat_unknown_payload": {"keep": [1, 2]}})
-        asyncio.run(_write_ui(FileSessionEventStore(journal), session_id))
+        image_ref = ArtifactRef(
+            **journal.put_artifact(_IMAGE, media_type="image/png", purpose=ArtifactPurpose.IMAGE, encoding="base64")
+        )
+        asyncio.run(_write_ui(FileSessionEventStore(journal), session_id, image_ref))
         path = sessions.events_path_for(session_id)
         lines = path.read_bytes().splitlines()
         for index, line in enumerate(lines):
@@ -253,6 +284,7 @@ def create_fixture(root: Path) -> dict:
             "event_types": [event.event_type for event in events],
             "original_types": sorted({event.event_type for event in events}),
             "original_history": history,
+            "image_sha256": hashlib.sha256(_IMAGE).hexdigest(),
         }
     finally:
         sessions.release_session_locks()
@@ -282,6 +314,24 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
     assert len(events) == len(actual.splitlines()), "Journal contains unreadable records"
     ui_events = asyncio.run(FileSessionEventStore(sessions.journal(session_id)).read(session_id))
     assert _ui_types() | {_UNKNOWN_UI} <= {event.event_type for event in ui_events}
+    image_turns = [
+        event
+        for event in ui_events
+        if event.event_type == KnownEventType.TURN_STARTED
+        and event.content.get("turn_id") in {"compat-mixed", "compat-image-only"}
+    ]
+    assert len(image_turns) == 2, "Previous writer lost user-image presentation events"
+    for event in image_turns:
+        assert event.content["image_count"] == 1
+        assert "images" not in event.content, "Raw user-image payload escaped offloading"
+        assert len(event.artifacts) == 1
+        ref = event.artifacts[0]
+        assert ref.sha256 == manifest["image_sha256"] == hashlib.sha256(_IMAGE).hexdigest()
+        assert ref.purpose == ArtifactPurpose.IMAGE and ref.media_type == "image/png"
+        assert asyncio.run(FileArtifactStore(sessions.journal(session_id)).open(ref)) == _IMAGE
+    image_rows = [item for item in replay(ui_events).conversation if item.kind == "user"]
+    assert [(item.text, item.image_count) for item in image_rows] == [("current-release user", 1), ("", 1)]
+    assert all([ref.sha256 for ref in item.artifacts] == [manifest["image_sha256"]] for item in image_rows)
     history = sessions.load(session_id).history
     assert history[: len(manifest["original_history"])] == manifest["original_history"]
     appended_history = history[len(manifest["original_history"]) :]
