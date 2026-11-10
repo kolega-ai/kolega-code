@@ -64,6 +64,23 @@ def _saved(store: SessionStore, project: Path, title: str = "Previous work") -> 
     return record
 
 
+async def _wait_for_settings_confirmation(pilot: Pilot, app: KolegaCodeApp) -> ConfirmSettingsActionScreen:
+    """Return the resume confirmation once its composed buttons are mounted.
+
+    ``push_screen_wait`` makes the screen current before its compose pass mounts
+    the dialog, so matching only the screen class can query an empty screen.
+    """
+    await _wait(
+        pilot,
+        lambda: (
+            isinstance(app.screen, ConfirmSettingsActionScreen)
+            and len(app.screen.query("#settings_action_confirm")) == 1
+        ),
+    )
+    assert isinstance(app.screen, ConfirmSettingsActionScreen)
+    return app.screen
+
+
 async def _wait_for_row(pilot: Pilot, app: KolegaCodeApp, session_id: str) -> RecentSessionRow:
     """Return a recent-session row once the startup card has mounted it.
 
@@ -222,10 +239,10 @@ async def test_draft_confirmation_cancel_preserves_draft_and_releases_target(
         row = await _wait_for_row(pilot, app, previous.session_id)
         await _wait(pilot, lambda: row.region.height == 1)
         assert await pilot.click(row)
-        await _wait(pilot, lambda: isinstance(app.screen, ConfirmSettingsActionScreen))
-        dialog = app.screen.query_one("#settings_action_dialog")
-        confirm = app.screen.query_one("#settings_action_confirm")
-        cancel = app.screen.query_one("#settings_action_cancel")
+        screen = await _wait_for_settings_confirmation(pilot, app)
+        dialog = screen.query_one("#settings_action_dialog")
+        confirm = screen.query_one("#settings_action_confirm")
+        cancel = screen.query_one("#settings_action_cancel")
         await _wait(
             pilot,
             lambda: (
@@ -261,7 +278,7 @@ async def test_attachment_only_confirmation_cancel_preserves_attachment(
         row = await _wait_for_row(pilot, app, previous.session_id)
         await _wait(pilot, lambda: row.region.height == 1)
         assert await pilot.click(row)
-        await _wait(pilot, lambda: isinstance(app.screen, ConfirmSettingsActionScreen))
+        await _wait_for_settings_confirmation(pilot, app)
         await pilot.press("escape")
         await _wait(pilot, lambda: not app._resume_in_progress)
         assert app._pending_image_attachments == [attachment]
@@ -471,9 +488,8 @@ async def test_saved_workspace_confirmation_cancel_leaves_session_unchanged(
         row = await _wait_for_row(pilot, app, previous.session_id)
         await _wait(pilot, lambda: row.region.height == 1)
         assert await pilot.click(row)
-        await _wait(pilot, lambda: isinstance(app.screen, ConfirmSettingsActionScreen))
-        assert isinstance(app.screen, ConfirmSettingsActionScreen)
-        assert "Saved active worktree is unavailable" in app.screen.action_copy
+        screen = await _wait_for_settings_confirmation(pilot, app)
+        assert "Saved active worktree is unavailable" in screen.action_copy
         await pilot.press("escape")
         await _wait(pilot, lambda: not app._resume_in_progress)
         assert app.resume_session is None
@@ -498,7 +514,7 @@ async def test_keyboard_resume_and_confirmed_draft_discard(tmp_path: Path, monke
             await pilot.press("tab")
         assert app.screen.focused is row
         await pilot.press("enter")
-        await _wait(pilot, lambda: isinstance(app.screen, ConfirmSettingsActionScreen))
+        await _wait_for_settings_confirmation(pilot, app)
         assert await pilot.click("#settings_action_confirm")
         await _wait(pilot, lambda: app._quit_cleanly and not app._resume_in_progress)
         assert app.resume_session is not None
