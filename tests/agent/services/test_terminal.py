@@ -577,13 +577,22 @@ async def test_background_stopped_by_kill_session(manager):
 @pytest.mark.asyncio
 async def test_background_poll_captures_incremental_output(manager):
     # Initial call captures early output; a later poll captures new output while
-    # the process keeps running (write_stdin clamps its poll window to >=5s).
+    # the process keeps running. The public poll window is a model-facing 10 s
+    # default (>=5 s minimum), which this test would otherwise wait out in full;
+    # the private batch reader already skips that minimum to poll until output.
     result = await manager.exec_command(
         "echo first; sleep 1; echo second; sleep 30", yield_time_ms=600, background=True
     )
     assert result.status == "running"
     assert "first" in result.output
-    poll = await manager.write_stdin(result.session_id, "")
+    poll = await manager._write_stdin(
+        result.session_id,
+        "",
+        yield_time_ms=2000,
+        max_output_tokens=10000,
+        hard_limit=True,
+        enforce_poll_minimum=False,
+    )
     assert poll.status == "running"
     assert "second" in poll.output
     await manager.kill_session(result.session_id, "TERM")
