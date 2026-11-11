@@ -95,6 +95,21 @@ class AgentTool(BaseTool):
             return await value
         return value
 
+    def _launch_parent_context(self) -> dict[str, Any]:
+        context = getattr(self.caller, "sub_agent_context", None)
+        return deepcopy(context) if isinstance(context, dict) else {}
+
+    def _parent_depth(self, context: dict[str, Any]) -> int:
+        depth = context.get("depth")
+        if isinstance(depth, int) and not isinstance(depth, bool):
+            return depth
+        return 1 if getattr(self.caller, "sub_agent", False) else 0
+
+    @staticmethod
+    def _parent_agent_id(context: dict[str, Any]) -> str:
+        agent_id = context.get("agent_id")
+        return agent_id if isinstance(agent_id, str) and agent_id.strip() else "root"
+
     @staticmethod
     def _sub_agent_extensions(extensions):
         """Filter a caller's prompt/tool extensions down to those that should be
@@ -215,7 +230,9 @@ class AgentTool(BaseTool):
         """
         if not isinstance(background, bool):
             raise ValueError("background must be a boolean.")
-        parent_context = getattr(self.caller, "sub_agent_context", None)
+        parent_context = self._launch_parent_context()
+        parent_depth = self._parent_depth(parent_context)
+        sub_agent_info_extra = deepcopy(sub_agent_info_extra)
         if background and (getattr(self.caller, "sub_agent", False) or has_workflow_context_marker(parent_context)):
             raise ValueError("Background agents cannot be launched from a sub-agent or workflow worker.")
         workflow_depth: Optional[tuple[int, int]] = None
@@ -273,9 +290,9 @@ class AgentTool(BaseTool):
         # Capture launch identity before admission yields to another parent turn.
         agent_id = str(uuid.uuid4())
         tool_call_id = getattr(self.caller, "current_tool_execution_id", None)
-        if not isinstance(tool_call_id, str):
+        if not isinstance(tool_call_id, str) or not tool_call_id.strip():
             tool_call_id = getattr(self.caller, "current_tool_call_id", None)
-        if not isinstance(tool_call_id, str):
+        if not isinstance(tool_call_id, str) or not tool_call_id.strip():
             tool_call_id = None
         parent_recorder = getattr(self.caller, "session_recorder", None)
         launch_turn_id = getattr(parent_recorder, "current_turn_id", None)
@@ -329,14 +346,13 @@ class AgentTool(BaseTool):
                         if name != "fire_hook":
                             setattr(hook_caller, name, value)
                     hook_caller.config = self.caller.config.model_copy(deep=True)
-                    hook_caller.sub_agent_context = deepcopy(parent_context)
+                    hook_caller.sub_agent_context = deepcopy(getattr(self.caller, "sub_agent_context", None))
                     collection = getattr(self.caller, "tool_collection", None)
                     if collection is not None:
                         hook_caller.tool_collection = copy(collection)
                         hook_caller.tool_collection.agent_tool = execution
                     captured["fire_hook"] = fire.__func__.__get__(hook_caller, type(hook_caller))
             execution.caller = SimpleNamespace(**captured)
-            parent_context = deepcopy(parent_context)
             dispatch_config = dispatch_config.model_copy(deep=True)
             execution.config = dispatch_config
             routing = replace(
@@ -359,6 +375,7 @@ class AgentTool(BaseTool):
                 tool_call_id=tool_call_id,
                 launch_turn_id=launch_turn_id,
                 parent_context=parent_context,
+                parent_depth=parent_depth,
                 workflow_depth=workflow_depth,
                 workflow_accounting=workflow_accounting,
                 reservation=reservation,
@@ -432,6 +449,7 @@ class AgentTool(BaseTool):
         tool_call_id: Optional[str],
         launch_turn_id: Optional[str],
         parent_context: Any,
+        parent_depth: int,
         workflow_depth: Optional[tuple[int, int]],
         workflow_accounting: Optional[WorkflowRunAccounting],
         reservation: Optional[AgentReservation],
@@ -456,17 +474,6 @@ class AgentTool(BaseTool):
                 task=task,
             )
 
-        if not isinstance(parent_context, dict):
-            parent_context = {}
-        if workflow_depth is not None:
-            parent_depth = workflow_depth[0]
-        else:
-            context_depth = parent_context.get("depth")
-            if isinstance(context_depth, int) and not isinstance(context_depth, bool):
-                parent_depth = context_depth
-            else:
-                parent_depth = 1 if getattr(self.caller, "sub_agent", False) else 0
-
         # Attached to every event from this dispatch so the UI can group and
         # disambiguate concurrently running sub-agents.
         sub_agent_info = {
@@ -476,6 +483,7 @@ class AgentTool(BaseTool):
             "task_full": task,
             "conversation_id": conversation_id,
             "parent_tool_call_id": tool_call_id,
+            "parent_agent_id": self._parent_agent_id(parent_context),
             "depth": parent_depth + 1,
             "requested_routing": (
                 routing.requested.as_dict(effort_key="thinking_effort") if routing.requested is not None else None
@@ -491,10 +499,15 @@ class AgentTool(BaseTool):
                 workflow_run_id=parent_context["workflow_run_id"],
                 max_agent_depth=workflow_depth[1],
                 phase=parent_context.get("phase"),
-                parent_agent_id=parent_context.get("agent_id"),
             )
         if sub_agent_info_extra:
             sub_agent_info.update(sub_agent_info_extra)
+        sub_agent_info.update(
+            parent_tool_call_id=tool_call_id,
+            parent_agent_id=self._parent_agent_id(parent_context),
+            depth=parent_depth + 1,
+            background=background,
+        )
 
         # Send start status
         await self._send_status_event("GENERATING", f"Starting {agent_name} task", sub_agent_info=sub_agent_info)
@@ -1232,6 +1245,7 @@ class AgentTool(BaseTool):
                 "effective_routing": sub_agent_info.get("effective_routing"),
                 "conversation_id": conversation_id,
                 "background": sub_agent_info.get("background", False),
+                "parent_agent_id": sub_agent_info["parent_agent_id"],
             },
             turn_id=launch_turn_id,
         )
@@ -1257,13 +1271,16 @@ class AgentTool(BaseTool):
         ``structured`` is the validated ``submit_result`` payload (or ``None`` when
         no schema was requested or the agent declined to call it).
         """
+        parent_context = self._launch_parent_context()
+        parent_depth = self._parent_depth(parent_context)
+        sub_agent_info_extra = deepcopy(sub_agent_info_extra)
         agent_name = getattr(agent_class, "agent_name", agent_class.__name__)
         agent_id = str(uuid.uuid4())
 
         tool_call_id = getattr(self.caller, "current_tool_execution_id", None)
-        if not isinstance(tool_call_id, str):
+        if not isinstance(tool_call_id, str) or not tool_call_id.strip():
             tool_call_id = getattr(self.caller, "current_tool_call_id", None)
-        if not isinstance(tool_call_id, str):
+        if not isinstance(tool_call_id, str) or not tool_call_id.strip():
             tool_call_id = None
 
         conversation_id = None
@@ -1277,7 +1294,6 @@ class AgentTool(BaseTool):
                 task=task,
             )
 
-        parent_depth = 1 if getattr(self.caller, "sub_agent", False) else 0
         sub_agent_info = {
             "agent_id": agent_id,
             "agent_name": agent_name,
@@ -1291,6 +1307,12 @@ class AgentTool(BaseTool):
             sub_agent_info.update({k: v for k, v in sub_agent_info_extra.items() if v is not None})
             if "requested_routing" in sub_agent_info_extra:
                 sub_agent_info["requested_routing"] = sub_agent_info_extra["requested_routing"]
+        sub_agent_info.update(
+            parent_tool_call_id=tool_call_id,
+            parent_agent_id=self._parent_agent_id(parent_context),
+            depth=parent_depth + 1,
+            background=False,
+        )
 
         artifact_metadata = dict(artifact_metadata or {})
         artifact_metadata.setdefault("agent_name", agent_name)

@@ -12,6 +12,7 @@ import asyncio
 import codecs
 import contextlib
 import fcntl
+import json
 import os
 import pty
 import shlex
@@ -22,8 +23,10 @@ import sys
 import tempfile
 import termios
 import time
+from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Generator, Optional, Union
 
 from ..events import AgentConnectionManager
 from ..events import AgentEvent
@@ -90,6 +93,40 @@ _BACKGROUND_JOB_TRAP = (
     "command ended. To keep a process running, re-run it with exec_command background=true; it is detached and "
     'keeps running after this command and after the kolega-code session ends (stop it with kill_command).\\n" "$pids" >&2; fi; fi\' EXIT; '
 )
+
+
+@dataclass(frozen=True)
+class TerminalEventContext:
+    tool_call_id: Optional[str] = None
+    sub_agent_info_json: Optional[str] = None
+
+    @classmethod
+    def capture(cls, caller: Any) -> "TerminalEventContext":
+        tool_call_id = getattr(caller, "current_tool_execution_id", None)
+        if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+            tool_call_id = getattr(caller, "current_tool_call_id", None)
+        if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+            tool_call_id = None
+        context = getattr(caller, "sub_agent_context", None)
+        return cls(tool_call_id, json.dumps(context) if isinstance(context, dict) else None)
+
+    @property
+    def sub_agent_info(self) -> Optional[dict[str, Any]]:
+        return json.loads(self.sub_agent_info_json) if self.sub_agent_info_json is not None else None
+
+
+_terminal_event_context: ContextVar[TerminalEventContext] = ContextVar(
+    "terminal_event_context", default=TerminalEventContext()
+)
+
+
+@contextlib.contextmanager
+def terminal_event_scope(context: TerminalEventContext) -> Generator[None, None, None]:
+    token = _terminal_event_context.set(context)
+    try:
+        yield
+    finally:
+        _terminal_event_context.reset(token)
 
 
 def _strip_runtime_venv(env: Dict[str, str], runtime_prefix: Optional[str] = None) -> Dict[str, str]:
@@ -197,6 +234,7 @@ class PtySession:
         auto_activate_venv: bool = True,
         spill_store: Optional[TerminalSpillStore] = None,
         retain_full_delta: bool = False,
+        event_context: Optional[TerminalEventContext] = None,
     ):
         self.session_id = session_id
         self.command = command
@@ -207,6 +245,9 @@ class PtySession:
         self.login = login
         self.env = env or {}
         self.auto_activate_venv = auto_activate_venv
+        self.event_context: TerminalEventContext = (
+            event_context if event_context is not None else _terminal_event_context.get()
+        )
 
         self.pid: Optional[int] = None
         self.master_fd: Optional[int] = None
@@ -439,7 +480,9 @@ class PtySession:
                         "terminal_id": self.session_id,
                         "session_id": self.session_id,
                         "thread_id": self.thread_id,
+                        "tool_call_id": self.event_context.tool_call_id,
                     },
+                    sub_agent_info=self.event_context.sub_agent_info,
                 )
                 await self._safe_broadcast(event)
             finally:
@@ -583,6 +626,7 @@ class DetachedSession:
         auto_activate_venv: bool = True,
         spill_store: Optional[TerminalSpillStore] = None,
         retain_full_delta: bool = False,
+        event_context: Optional[TerminalEventContext] = None,
     ):
         self.session_id = session_id
         self.command = command
@@ -593,6 +637,9 @@ class DetachedSession:
         self.login = login
         self.env = env or {}
         self.auto_activate_venv = auto_activate_venv
+        self.event_context: TerminalEventContext = (
+            event_context if event_context is not None else _terminal_event_context.get()
+        )
         self.spill_store = spill_store
         self.retain_full_delta = retain_full_delta
 
@@ -717,7 +764,9 @@ class DetachedSession:
                         "terminal_id": self.session_id,
                         "session_id": self.session_id,
                         "thread_id": self.thread_id,
+                        "tool_call_id": self.event_context.tool_call_id,
                     },
+                    sub_agent_info=self.event_context.sub_agent_info,
                 ),
                 self.workspace_id,
                 self.thread_id,
@@ -893,9 +942,17 @@ class LocalTerminalManager(TerminalManager):
         """Whether a retained PTY could still mutate its original workdir."""
         return any(session.running for session in self.sessions.values())
 
-    async def _emit_command(self, session_id: str, command: str, workdir: str) -> None:
+    async def _emit_command(
+        self,
+        session_id: str,
+        command: str,
+        workdir: str,
+        *,
+        event_context: Optional[TerminalEventContext] = None,
+    ) -> None:
         if not self.connection_manager:
             return
+        owner = event_context if event_context is not None else _terminal_event_context.get()
         try:
             await self.connection_manager.broadcast_event(
                 AgentEvent(
@@ -906,7 +963,9 @@ class LocalTerminalManager(TerminalManager):
                         "terminal_id": session_id,
                         "session_id": session_id,
                         "workdir": workdir,
+                        "tool_call_id": owner.tool_call_id,
                     },
+                    sub_agent_info=owner.sub_agent_info,
                 ),
                 self.workspace_id,
                 self.thread_id,
@@ -914,9 +973,15 @@ class LocalTerminalManager(TerminalManager):
         except Exception:
             pass
 
-    async def _emit_output(self, session_id: str, text: str) -> None:
+    async def _emit_output(
+        self, session_id: str, text: str, *, event_context: Optional[TerminalEventContext] = None
+    ) -> None:
         if not self.connection_manager:
             return
+        owner = event_context
+        if owner is None:
+            session = self.sessions.get(session_id)
+            owner = session.event_context if session is not None else _terminal_event_context.get()
         try:
             await self.connection_manager.broadcast_event(
                 AgentEvent(
@@ -927,7 +992,9 @@ class LocalTerminalManager(TerminalManager):
                         "terminal_id": session_id,
                         "session_id": session_id,
                         "thread_id": self.thread_id,
+                        "tool_call_id": owner.tool_call_id,
                     },
+                    sub_agent_info=owner.sub_agent_info,
                 ),
                 self.workspace_id,
                 self.thread_id,
@@ -977,7 +1044,9 @@ class LocalTerminalManager(TerminalManager):
         )
 
     async def _finish_if_exited(self, session: Session) -> None:
-        await self._emit_output(session.session_id, f"[exited {session.exit_code}]\n")
+        await self._emit_output(
+            session.session_id, f"[exited {session.exit_code}]\n", event_context=session.event_context
+        )
         await session.close()
         self.sessions.pop(session.session_id, None)
 
@@ -1021,8 +1090,9 @@ class LocalTerminalManager(TerminalManager):
         # this process's cwd, not default_workdir.
         wd = os.path.realpath(os.path.abspath(workdir or self.default_workdir))
         session_id = self._next_session_id()
+        event_context = _terminal_event_context.get()
 
-        await self._emit_command(session_id, command, wd)
+        await self._emit_command(session_id, command, wd, event_context=event_context)
         # background=true launches a detached session that survives our exit; a
         # normal command runs under a PTY tied to this process's lifetime.
         session_cls = DetachedSession if background else PtySession
@@ -1038,6 +1108,7 @@ class LocalTerminalManager(TerminalManager):
             auto_activate_venv=self.auto_activate_venv,
             spill_store=self._spill_store,
             retain_full_delta=not hard_limit,
+            event_context=event_context,
         )
         start = time.monotonic()
         await session.start()
@@ -1131,7 +1202,7 @@ class LocalTerminalManager(TerminalManager):
             hard_limit=hard_limit,
         )
         exit_code = session.exit_code
-        await self._emit_output(session_id, f"[exited {exit_code}]\n")
+        await self._emit_output(session_id, f"[exited {exit_code}]\n", event_context=session.event_context)
         await session.close()
         self.sessions.pop(session_id, None)
         return ExecResult(

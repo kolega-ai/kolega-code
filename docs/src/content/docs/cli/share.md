@@ -67,6 +67,10 @@ default — it has nothing to fetch.
   entry in the Sub-agents panel, to read that agent's thread on its own and then
   come back. Parallel agents interleave line by line, so a merged stream is
   unreadable once more than one is running.
+- Opening an agent also selects its terminal output. Returning to the session
+  restores the main agent's terminal; parallel and background workers do not
+  mix their commands into it. Agent details retain reported parent links,
+  delegation depth, model routing, background status and token totals.
 - A gigacode run shows its own name, each phase as it starts, and how it
   finished, with its agents' cards in between.
 - Play, pause, and 1x / 2x / 4x / max playback. Long idle gaps are compressed, so
@@ -78,6 +82,10 @@ default — it has nothing to fetch.
 
 Keyboard: <kbd>Space</kbd> plays and pauses, <kbd>←</kbd>/<kbd>→</kbd> seek five
 seconds, <kbd>Home</kbd>/<kbd>End</kbd> jump to the start or end.
+
+Older recordings remain playable, but missing parent, routing and terminal-owner
+metadata cannot be reconstructed. Untagged terminal output stays in the main
+terminal rather than being assigned to a guessed worker.
 
 ## What is removed before sharing
 

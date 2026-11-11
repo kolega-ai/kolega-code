@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import importlib.util
 import io
-import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -15,9 +16,12 @@ from typing import Any
 import pytest
 from packaging.version import Version
 
+from kolega_code.cli.session_event_store import FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import SettingsStore
+from kolega_code.events import AgentEvent
 from kolega_code.llm.models import ImageBlock, Message
+from kolega_code.session.projection import PresentationState, replay
 from kolega_code.session.store import SessionStoreError
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
@@ -207,6 +211,47 @@ def test_roundtrip_retains_real_mixed_and_image_only_user_history(
         assert image.size == (1, 1)
         assert image.format == "PNG"
     fixture_module.verify_after_previous(root, manifest)
+
+
+def test_roundtrip_retains_nested_background_linkage_and_terminal_output(
+    completed_roundtrip: tuple[Path, dict[str, Any]],
+) -> None:
+    root, manifest = completed_roundtrip
+    store = SessionStore(root)
+    events = asyncio.run(FileSessionEventStore(store.journal(manifest["session_id"])).read(manifest["session_id"]))
+    state = replay(events)
+    assert state.terminal == "$ printf root\nroot output\n"
+    parent = state.sub_agents["compat-parent"]
+    nested = state.sub_agents["compat-nested"]
+    assert parent.parent_agent_id == "root"
+    assert parent.parent_tool_call_id == "compat-dispatch-parent"
+    assert parent.depth == 1 and parent.background is True and parent.total_tokens == 37
+    assert parent.terminal == "$ printf parent\nparent output\n"
+    assert nested.parent_agent_id == "compat-parent"
+    assert nested.parent_tool_call_id == "compat-dispatch-nested"
+    assert nested.depth == 2 and nested.background is False and nested.total_tokens == 0
+    assert nested.effective_routing == {
+        "provider": "openai",
+        "model": "compat-nested-model",
+        "thinking_effort": None,
+    }
+    assert nested.terminal == "$ printf nested\nnested output\n"
+    fixture_module.verify_after_previous(root, manifest)
+
+
+def test_lost_subagent_linkage_fails_roundtrip(
+    completed_roundtrip: tuple[Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_replay = fixture_module.replay
+
+    def drop_parent(events: list[AgentEvent]) -> PresentationState:
+        state = original_replay(events)
+        state.sub_agents["compat-nested"].parent_agent_id = None
+        return state
+
+    monkeypatch.setattr(fixture_module, "replay", drop_parent)
+    with pytest.raises(AssertionError, match="sub-agent linkage"):
+        fixture_module.verify_after_previous(*completed_roundtrip)
 
 
 def test_missing_user_image_artifact_fails_roundtrip(

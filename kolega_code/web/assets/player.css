@@ -268,6 +268,7 @@ body::after {
   z-index: 2;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.6rem;
   margin-bottom: 1rem;
   padding: 0.4rem 0.6rem;
@@ -305,6 +306,28 @@ body::after {
 .kc-agent-back:hover {
   color: var(--kc-foreground);
   border-color: var(--kc-tool);
+}
+.kc-agent-details {
+  flex: 1 0 100%;
+  margin-top: 0.35rem;
+  font-size: 0.72rem;
+  color: color-mix(in srgb, var(--kc-foreground) 68%, var(--kc-text-muted));
+  overflow-wrap: anywhere;
+}
+.kc-agent-parent {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--kc-tool);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.kc-agent-parent:focus-visible,
+.kc-agent-back:focus-visible {
+  outline: 1px solid var(--kc-tool);
+  outline-offset: 2px;
 }
 
 /* A gigacode run's own lifecycle: its name, each phase, and how it ended. */
@@ -708,6 +731,15 @@ button.kc-tool-name:focus-visible {
   overflow: auto;
   /* Keeps the last line off the card's rounded edge. */
   padding-bottom: 0.3rem;
+}
+.kc-terminal-owner,
+.kc-terminal-truncated {
+  margin-bottom: 0.35rem;
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+.kc-terminal-truncated {
+  color: var(--kc-warning);
 }
 
 .kc-empty {

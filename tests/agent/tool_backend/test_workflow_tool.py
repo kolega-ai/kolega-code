@@ -376,6 +376,85 @@ async def test_run_workflow_propagates_explicit_max_agent_depth(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("context", "expected_parent", "expected_depth"),
+    [(None, "root", 1), ({"agent_id": ""}, "root", 1), ({"agent_id": "nested-parent", "depth": 4}, "nested-parent", 5)],
+)
+async def test_workflow_launch_snapshots_parent_before_start_event_yields(
+    workflow_tool: Any,
+    caller: Mock,
+    connection_manager: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    context: Any,
+    expected_parent: str,
+    expected_depth: int,
+) -> None:
+    tool, _ = workflow_tool
+    caller.sub_agent_context = context
+    caller.sub_agent = context is not None and context.get("depth") == 4
+    caller.current_tool_execution_id = "workflow-launch-execution"
+    started = asyncio.Event()
+    resume = asyncio.Event()
+    instances = []
+
+    class WorkflowChild:
+        agent_name: str = "general-agent"
+        sub_agent_context: dict[str, Any]
+
+        def __init__(self, **kwargs: Any) -> None:
+            self.total_tokens_used: int = 11
+            instances.append(self)
+
+        async def process_message_stream(self, task: str) -> Any:
+            yield {"type": "notice", "content": task, "complete": True}
+
+        async def recap_agent_outcome(self) -> str:
+            return "workflow result"
+
+        def dump_message_history(self) -> list[dict]:
+            return []
+
+    async def broadcast(event: Any, workspace_id: str, thread_id: str) -> None:
+        if event.content.get("message_type") == "workflow_start":
+            started.set()
+            await resume.wait()
+
+    connection_manager.broadcast_event.side_effect = broadcast
+    monkeypatch.setattr("kolega_code.agent.tool_backend.workflow_tool._import_agent_class", lambda path: WorkflowChild)
+    task = asyncio.create_task(
+        tool.run_workflow(
+            script=(
+                'meta = {"name": "launch-context", "description": "d"}\n'
+                'return await parallel([lambda: agent("first"), lambda: agent("second")])\n'
+            )
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=10)
+    if isinstance(context, dict):
+        context.update(agent_id="wrong-parent", depth=99)
+    caller.sub_agent_context = {"agent_id": "other-turn", "depth": 50}
+    caller.current_tool_execution_id = "later-execution"
+    resume.set()
+    await asyncio.wait_for(task, timeout=10)
+
+    assert len(instances) == 2
+    assert instances[0].sub_agent_context["agent_id"] != instances[1].sub_agent_context["agent_id"]
+    for child in instances:
+        assert child.sub_agent_context["parent_agent_id"] == expected_parent
+        assert child.sub_agent_context["depth"] == expected_depth
+        assert child.sub_agent_context["parent_tool_call_id"] == "workflow-launch-execution"
+        assert child.sub_agent_context["background"] is False
+        assert child.sub_agent_context["effective_routing"]["provider"] == "anthropic"
+    completions = [
+        call.args[0]
+        for call in connection_manager.broadcast_event.call_args_list
+        if call.args[0].sub_agent_info and call.args[0].content.get("status") == "STOPPED"
+    ]
+    assert len(completions) == 2
+    assert all(event.content["total_tokens"] == 11 for event in completions)
+
+
+@pytest.mark.asyncio
 async def test_per_agent_markdown_and_jsonl_are_written(workflow_tool):
     tool, state_dir = workflow_tool
 

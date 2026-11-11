@@ -17,7 +17,7 @@ from textual.widgets import Static
 from .. import messages, theme
 from ..theme import Color, Glyph
 from . import pacing
-from .state import ConversationEntry, SubAgentActivity
+from .state import ConversationEntry, SubAgentActivity, SubAgentTerminalEntry
 from .widgets import ConversationEntryWidget, ScrollbackWindow, ToolEntryWidget, TrajectoryScrollView
 
 if TYPE_CHECKING:
@@ -239,11 +239,14 @@ class SubAgentInspectorScreen(ModalScreen):
         line.append("> " if selected else "  ", style=row_style)
         line.append(f"{indent}{glyph} ", style=color)
         parts = [f"#{activity.index}", activity.agent_name, self._elapsed(activity), f"{activity.tool_calls}t"]
-        if activity.tokens:
+        if activity.tokens is not None:
             parts.append(f"{self._owner._format_token_count(activity.tokens)}tok")
         if activity.context_percentage is not None:
             parts.append(f"ctx {activity.context_percentage:.0f}%")
         line.append(f"  {sep}  ".join(parts), style=row_style)
+        parent = self._owner._sub_agent_parent_label(activity)
+        if parent:
+            line.append(f"\n    Parent: {parent}", style="dim")
         tail = activity.current_action if activity.status == "running" else activity.last_activity
         if tail:
             line.append(f"\n    {theme.g(Glyph.INSET_ELBOW)} ", style="dim")
@@ -273,13 +276,16 @@ class SubAgentInspectorScreen(ModalScreen):
         owner = self._owner
         base = owner._sub_agent_header(activity)
         extras = [f"{activity.tool_calls} tool{'' if activity.tool_calls == 1 else 's'}"]
-        if activity.tokens:
+        if activity.tokens is not None:
             extras.append(f"{owner._format_token_count(activity.tokens)} tok")
         if activity.context_percentage is not None:
             extras.append(f"ctx {activity.context_percentage:.0f}%")
         line = base + theme.styled(f" {sep} " + f" {sep} ".join(extras), "dim")
         if activity.task:
             line += "\n" + theme.styled(escape(f"Task: {activity.task}"), "dim")
+        parent = owner._sub_agent_parent_label(activity)
+        if parent:
+            line += "\n" + theme.styled(escape(f"Parent: {parent}"), "dim")
         return line
 
     def _get_trajectory_window(self, view: TrajectoryScrollView) -> ScrollbackWindow:
@@ -433,6 +439,11 @@ class SubAgentInspectorScreen(ModalScreen):
         full_task = activity.task_full or activity.task
         if full_task:
             lines.append(f"Task: {full_task}")
+        parent = self._owner._sub_agent_parent_label(activity)
+        if parent:
+            lines.append(f"Parent: {parent}")
+        if activity.tokens is not None:
+            lines.append(f"Tokens: {activity.tokens}")
         routing = activity.routing
         if routing is not None:
             sep = theme.g(Glyph.BULLET_SEP)
@@ -448,6 +459,10 @@ class SubAgentInspectorScreen(ModalScreen):
             if step.tool_subject:
                 label += f" {theme.g(Glyph.BULLET_SEP)} {step.tool_subject}"
             lines.append(f"[{step.kind}] {label}")
+            if isinstance(step, SubAgentTerminalEntry):
+                command = step.tool_display.get("command")
+                if isinstance(command, str):
+                    lines.append(command)
             # Fold any deferred stream deltas so a copy mid-stream isn't missing the tail.
             step.materialize()
             body = step.full_content or step.content
