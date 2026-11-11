@@ -113,7 +113,9 @@ async def test_action_quit_uses_bounded_lsp_shutdown_timeout(tmp_path: Path, mon
             await manager.shutdown()
 
         agent.cleanup = cleanup_agent
-        await asyncio.wait_for(app.action_quit(), timeout=1.0)
+        # Quit also persists session history on a worker thread; a loaded runner
+        # overran the old 1 s bound with no LSP shutdown regression.
+        await asyncio.wait_for(app.action_quit(), timeout=10.0)
 
     client.request.assert_awaited_once_with("shutdown", timeout=_LSP_SHUTDOWN_REQUEST_TIMEOUT_SECONDS)
     client.stop.assert_awaited_once_with()
