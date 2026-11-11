@@ -563,6 +563,50 @@ button.kc-tool-name:focus-visible {
   margin-top: 0.25rem;
 }
 
+#usage {
+  max-height: 32rem;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.kc-usage-summary,
+.kc-usage-note {
+  margin: 0 0 0.4rem;
+  color: color-mix(in srgb, var(--kc-foreground) 66%, var(--kc-text-muted));
+}
+
+.kc-usage-group {
+  margin-top: 0.7rem;
+}
+
+.kc-usage-heading {
+  margin: 0 0 0.3rem;
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.kc-usage-row {
+  margin-bottom: 0.3rem;
+}
+
+.kc-usage-label {
+  display: block;
+  color: color-mix(in srgb, var(--kc-foreground) 66%, var(--kc-text-muted));
+}
+
+.kc-usage-value {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.kc-usage-note[data-state="incomplete"],
+.kc-usage-note[data-state="unhealthy"] {
+  color: var(--kc-warning);
+}
+
 #taskList {
   max-height: 20rem;
   overflow-y: auto;

@@ -84,6 +84,7 @@ class KnownEventType:
     PEER_MESSAGE_RECEIVED = "peer_message_received"
     PEER_MESSAGE_DELIVERED = "peer_message_delivered"
     TASK_LIST_UPDATED = "task_list_updated"
+    USAGE_UPDATED = "usage_updated"
 
 
 class ArtifactPurpose:
@@ -346,6 +347,18 @@ class AgentEventEmitter:
                 event_type=KnownEventType.TASK_LIST_UPDATED,
                 content={"markdown": markdown},
                 sub_agent_info=sub_agent_info,
+            )
+        )
+
+    async def usage_updated(self, usage: dict, *, source_seq: int) -> None:
+        sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
+        if sub_agent_info:
+            return
+        await self.emit(
+            AgentEvent(
+                sender=self.sender,
+                event_type=KnownEventType.USAGE_UPDATED,
+                content={"scope": "session", "semantics": "snapshot", "source_seq": source_seq, "usage": usage},
             )
         )
 

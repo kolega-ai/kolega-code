@@ -34,6 +34,7 @@ from kolega_code.mcp.config import LoadedMCPConfig
 from kolega_code.permissions import PermissionMode, normalize_permission_mode
 from kolega_code.session.recording import RecordingConnectionManager
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
+from kolega_code.session.usage import UsagePresentation
 from kolega_code.tools import ToolError
 
 from kolega_code.gateway.adapters.base import Attachment, ChatRef, GatewayAdapter, InboundMessage
@@ -101,6 +102,7 @@ class _LifecycleOperation:
     partial_agent: Any = None
     router: EventRouter | None = None
     relay: ControlRelay | None = None
+    usage_presentation: UsagePresentation | None = None
 
     def interrupt(self) -> None:
         if self.stopping or self.cleaning:
@@ -151,6 +153,7 @@ class ChatSession:
     auto_continue_paused: bool = False
     closed: bool = False
     retired_agents: list[Any] = field(default_factory=list)
+    usage_presentation: UsagePresentation | None = None
 
 
 class AgentTurnHandler:
@@ -907,6 +910,13 @@ class AgentTurnHandler:
             session_id=record.session_id,
             artifact_store=FileArtifactStore(journal),
         )
+        presentation = UsagePresentation(
+            journal,
+            recording.broadcast_event,
+            workspace_id=record.workspace_id,
+            thread_id=record.thread_id,
+        )
+        owner.usage_presentation = presentation
         permission_mode = normalize_permission_mode(
             record.permission_mode,
             default=PermissionMode(self._config.permission_mode),
@@ -990,6 +1000,8 @@ class AgentTurnHandler:
         try:
             router.start()
             relay.start()
+            await recording.prime_elapsed_offset()
+            await presentation.start()
             await runtime.start()
         except BaseException as exc:
             await self._cleanup_startup(owner, runtime, exc)
@@ -1005,6 +1017,7 @@ class AgentTurnHandler:
             turn_events=turn_events,
             relay=relay,
             config_holder=config_holder,
+            usage_presentation=presentation,
         )
 
     async def _default_agent_builder(self, record: SessionRecord, agent_config: Any, **kwargs: Any) -> Any:
@@ -1093,6 +1106,14 @@ class AgentTurnHandler:
         if owner.partial_agent is None:
             owner.partial_agent = runtime.agent
         await self._cleanup_partial(owner)
+        if owner.usage_presentation is not None:
+            try:
+                await owner.usage_presentation.aclose()
+            except BaseException:
+                owner.cleanup_failed = True
+                logger.exception("gateway: startup usage presentation cleanup failed")
+            else:
+                owner.usage_presentation = None
         for resource in (owner.relay, owner.router):
             if resource is not None:
                 try:
@@ -1168,6 +1189,8 @@ class AgentTurnHandler:
         owner.partial_agent = chat_session.runtime.agent
         await chat_session.runtime.shutdown()
         owner.partial_agent = None
+        if chat_session.usage_presentation is not None:
+            await chat_session.usage_presentation.aclose()
 
     # -- Persisted chat→session mapping ------------------------------------
 

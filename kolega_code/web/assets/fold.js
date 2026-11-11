@@ -46,6 +46,7 @@ export function emptyState() {
     context: null,
     compaction: null,
     taskList: null,
+    usage: null,
     status: "",
     activity: "idle",
     openBrowsers: new Set(),
@@ -126,6 +127,50 @@ function subAgentKey(event) {
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+const USAGE_COUNTS = [
+  "requests", "responses", "reported", "unreported", "failed", "open", "abandoned", "partial", "missing",
+];
+const USAGE_TOKENS = [
+  "input_tokens", "output_tokens", "total_tokens", "cache_read_input_tokens",
+  "cache_write_input_tokens", "reasoning_output_tokens",
+];
+const USAGE_DECIMAL = /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$(?![\s\S])/;
+
+function usageCount(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function usageDecimal(value) {
+  if (typeof value !== "string" || !USAGE_DECIMAL.test(value)) return false;
+  const mantissa = value.toLowerCase().split("e")[0];
+  return !value.startsWith("-") || !mantissa.slice(1).replace(/[.0]/g, "");
+}
+
+function validUsageCosts(costs) {
+  if (!isRecord(costs) || typeof costs.complete !== "boolean") return false;
+  if (!["reported", "estimated", "missing", "partial", "missing_requests", "partial_requests"]
+    .every((name) => usageCount(costs[name]))) return false;
+  for (const name of ["currencies", "non_monetary"]) {
+    if (!isRecord(costs[name])) return false;
+    for (const [denomination, row] of Object.entries(costs[name])) {
+      if (!denomination || !isRecord(row)) return false;
+      if (!["reported", "estimated", "total"].every((field) => usageDecimal(row[field]))) return false;
+      if (!["requests", "reported_requests", "estimated_requests"]
+        .every((field) => usageCount(row[field]))) return false;
+      if ("token_cost_subtotal" in row && !usageDecimal(row.token_cost_subtotal)) return false;
+    }
+  }
+  return true;
+}
+
+function validUsage(usage) {
+  return isRecord(usage) && typeof usage.complete === "boolean" &&
+    [...USAGE_COUNTS, ...USAGE_TOKENS].every((name) => usageCount(usage[name])) &&
+    isRecord(usage.known_requests) &&
+    USAGE_TOKENS.every((name) => usageCount(usage.known_requests[name])) &&
+    validUsageCosts(usage.costs);
 }
 
 function subAgent(state, key, event) {
@@ -707,6 +752,16 @@ export function fold(state, event) {
   }
   state.elapsedMs = Math.max(state.elapsedMs, event.elapsed_ms || 0);
 
+  if (event.event_type === "usage_updated") {
+    const content = event.content || {};
+    if (subAgentKey(event) === null && content.scope === "session" &&
+      content.semantics === "snapshot" && usageCount(content.source_seq) &&
+      validUsage(content.usage) && (state.usage === null || content.source_seq >= state.usage.source_seq)) {
+      state.usage = { ...JSON.parse(JSON.stringify(content.usage)), source_seq: content.source_seq };
+    }
+    return state;
+  }
+
   if (
     event.event_type === "task_list_updated" ||
     (event.event_type === "chat_message" && event.content?.message_type === "task_list_update")
@@ -829,6 +884,7 @@ export function toDict(state) {
     context: state.context,
     compaction: state.compaction,
     task_list: state.taskList,
+    usage: state.usage,
     prompts: state.prompts.map((prompt) => ({
       request_id: prompt.request_id,
       kind: prompt.kind,

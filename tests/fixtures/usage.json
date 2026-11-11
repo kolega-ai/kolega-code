@@ -1,0 +1,5527 @@
+{
+  "initial_usage": null,
+  "journal": [
+    {
+      "version": 1,
+      "id": "fact-1",
+      "session_id": "usage-fixture",
+      "seq": 1,
+      "epoch_id": "epoch",
+      "turn_id": null,
+      "timestamp": "2026-11-11T00:00:00+00:00",
+      "actor": "system",
+      "type": "llm.run_started",
+      "payload": {
+        "run_id": "run",
+        "accounting_version": 2,
+        "mode": "cli"
+      },
+      "artifacts": []
+    },
+    {
+      "version": 1,
+      "id": "fact-2",
+      "session_id": "usage-fixture",
+      "seq": 2,
+      "epoch_id": "epoch",
+      "turn_id": null,
+      "timestamp": "2026-11-11T00:00:00+00:00",
+      "actor": "system",
+      "type": "llm.request_started",
+      "payload": {
+        "run_id": "run",
+        "request_id": "first",
+        "provider": "fixture-provider",
+        "model": "fixture-model",
+        "revision": 0,
+        "state": "open"
+      },
+      "artifacts": []
+    },
+    {
+      "version": 1,
+      "id": "fact-3",
+      "session_id": "usage-fixture",
+      "seq": 3,
+      "epoch_id": "epoch",
+      "turn_id": null,
+      "timestamp": "2026-11-11T00:00:00+00:00",
+      "actor": "system",
+      "type": "llm.usage_observed",
+      "payload": {
+        "run_id": "run",
+        "request_id": "first",
+        "provider": "fixture-provider",
+        "model": "fixture-model",
+        "revision": 1,
+        "observation": {
+          "input_tokens": 7,
+          "complete": false
+        },
+        "cost": {
+          "source": "estimated",
+          "known_subtotal": "0.0000000000000000000000000001",
+          "currency": "USD",
+          "complete": false,
+          "token_cost_subtotal": "1E-28"
+        }
+      },
+      "artifacts": []
+    },
+    {
+      "version": 1,
+      "id": "fact-4",
+      "session_id": "usage-fixture",
+      "seq": 4,
+      "epoch_id": "epoch",
+      "turn_id": null,
+      "timestamp": "2026-11-11T00:00:00+00:00",
+      "actor": "system",
+      "type": "llm.request_settled",
+      "payload": {
+        "run_id": "run",
+        "request_id": "first",
+        "provider": "fixture-provider",
+        "model": "fixture-model",
+        "revision": 2,
+        "state": "responded",
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0,
+          "complete": true
+        },
+        "cost": {
+          "source": "provider_reported",
+          "amount": "0",
+          "currency": "USD",
+          "complete": true
+        }
+      },
+      "artifacts": []
+    },
+    {
+      "version": 1,
+      "id": "fact-5",
+      "session_id": "usage-fixture",
+      "seq": 5,
+      "epoch_id": "epoch",
+      "turn_id": null,
+      "timestamp": "2026-11-11T00:00:00+00:00",
+      "actor": "system",
+      "type": "llm.usage_observed",
+      "payload": {
+        "run_id": "run",
+        "request_id": "first",
+        "provider": "fixture-provider",
+        "model": "fixture-model",
+        "revision": 3,
+        "usage": {
+          "input_tokens": 12,
+          "output_tokens": 7,
+          "total_tokens": 19,
+          "cache_read_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0,
+          "complete": true
+        },
+        "cost": {
+          "source": "provider_reported",
+          "amount": "0.1234567890123456789012345678",
+          "currency": "USD",
+          "complete": true
+        }
+      },
+      "artifacts": []
+    },
+    {
+      "version": 1,
+      "id": "fact-6",
+      "session_id": "usage-fixture",
+      "seq": 6,
+      "epoch_id": "epoch",
+      "turn_id": null,
+      "timestamp": "2026-11-11T00:00:00+00:00",
+      "actor": "system",
+      "type": "llm.request_settled",
+      "payload": {
+        "run_id": "run",
+        "request_id": "euro",
+        "provider": "fixture-provider",
+        "model": "fixture-model",
+        "revision": 0,
+        "state": "responded",
+        "usage": {
+          "input_tokens": 2,
+          "output_tokens": 3,
+          "total_tokens": 5,
+          "cache_read_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0,
+          "complete": true
+        },
+        "cost": {
+          "source": "provider_reported",
+          "amount": "2.50000000000000000001",
+          "currency": "EUR",
+          "complete": true
+        }
+      },
+      "artifacts": []
+    },
+    {
+      "version": 1,
+      "id": "fact-7",
+      "session_id": "usage-fixture",
+      "seq": 7,
+      "epoch_id": "epoch",
+      "turn_id": null,
+      "timestamp": "2026-11-11T00:00:00+00:00",
+      "actor": "system",
+      "type": "llm.request_settled",
+      "payload": {
+        "run_id": "run",
+        "request_id": "credits",
+        "provider": "fixture-provider",
+        "model": "fixture-model",
+        "revision": 0,
+        "state": "responded",
+        "usage": {
+          "input_tokens": 4,
+          "output_tokens": 1,
+          "total_tokens": 5,
+          "cache_read_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0,
+          "complete": true
+        },
+        "cost": {
+          "source": "provider_reported",
+          "amount": "3.141592653589793238462643383",
+          "currency": null,
+          "complete": true,
+          "denomination": "provider_credits"
+        }
+      },
+      "artifacts": []
+    },
+    {
+      "version": 1,
+      "id": "fact-8",
+      "session_id": "usage-fixture",
+      "seq": 8,
+      "epoch_id": "epoch",
+      "turn_id": null,
+      "timestamp": "2026-11-11T00:00:00+00:00",
+      "actor": "system",
+      "type": "llm.usage_observed",
+      "payload": {
+        "run_id": "run",
+        "request_id": "first",
+        "provider": "fixture-provider",
+        "model": "fixture-model",
+        "revision": 4,
+        "usage": {
+          "input_tokens": 1,
+          "output_tokens": 1,
+          "total_tokens": 2,
+          "cache_read_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0,
+          "complete": true
+        },
+        "cost": {
+          "source": "provider_reported",
+          "amount": "1E-28",
+          "currency": "USD",
+          "complete": true
+        }
+      },
+      "artifacts": []
+    },
+    {
+      "version": 1,
+      "id": "fact-9",
+      "session_id": "usage-fixture",
+      "seq": 9,
+      "epoch_id": "epoch",
+      "turn_id": null,
+      "timestamp": "2026-11-11T00:00:00+00:00",
+      "actor": "system",
+      "type": "llm.run_finished",
+      "payload": {
+        "run_id": "run",
+        "counts": {
+          "requests": 3
+        },
+        "persist_failures": 0
+      },
+      "artifacts": []
+    }
+  ],
+  "steps": [
+    {
+      "name": "old log has no invented usage",
+      "event": {
+        "event_type": "chat_message",
+        "content": {
+          "text": "Old log"
+        },
+        "seq": 1,
+        "elapsed_ms": 0
+      },
+      "expected_usage": null
+    },
+    {
+      "name": "known empty session",
+      "event": {
+        "event_type": "usage_updated",
+        "content": {
+          "scope": "session",
+          "semantics": "snapshot",
+          "source_seq": 0,
+          "usage": {
+            "requests": 0,
+            "responses": 0,
+            "reported": 0,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "breakdown": [],
+            "coverage": {
+              "accounted_runs": 0,
+              "pre_accounting_turns": 0,
+              "uninstrumented_turns": 0,
+              "legacy_turns": 0,
+              "legacy_requests": 0,
+              "legacy_identity_requests": 0,
+              "legacy_events": 0,
+              "ambiguous_legacy_ids": 0,
+              "uncovered_assistant_turns": 0,
+              "unclosed_runs": 0,
+              "orphan_runs": 0,
+              "malformed_facts": 0,
+              "lost_requests": 0,
+              "full": true
+            },
+            "detail": {
+              "reported_missing_cache_read": 0,
+              "reported_missing_cache_write": 0,
+              "reported_missing_reasoning": 0
+            },
+            "known_fields": {
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "total_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_write_input_tokens": 0,
+              "reasoning_output_tokens": 0
+            },
+            "complete": true,
+            "known_requests": {
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "total_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_write_input_tokens": 0,
+              "reasoning_output_tokens": 0
+            },
+            "detail_complete": {
+              "cache_read_input_tokens": true,
+              "cache_write_input_tokens": true,
+              "reasoning_output_tokens": true
+            },
+            "costs": {
+              "reported": 0,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {},
+              "non_monetary": {},
+              "complete": true
+            },
+            "persist_failures": 0,
+            "persistence": {
+              "persist_failures": 0,
+              "unclosed_runs": 0,
+              "lost_requests": 0,
+              "healthy": true
+            }
+          }
+        },
+        "seq": 2,
+        "elapsed_ms": 10
+      },
+      "expected_usage": {
+        "source_seq": 0,
+        "requests": 0,
+        "responses": 0,
+        "reported": 0,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [],
+        "coverage": {
+          "accounted_runs": 0,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 0,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {},
+          "non_monetary": {},
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      },
+      "derive": {
+        "journal_prefix": 0,
+        "live_run_id": null
+      }
+    },
+    {
+      "name": "unknown live usage",
+      "event": {
+        "event_type": "usage_updated",
+        "content": {
+          "scope": "session",
+          "semantics": "snapshot",
+          "source_seq": 2,
+          "usage": {
+            "requests": 1,
+            "responses": 0,
+            "reported": 0,
+            "unreported": 0,
+            "failed": 0,
+            "open": 1,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 1,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "breakdown": [
+              {
+                "provider": "fixture-provider",
+                "model": "fixture-model",
+                "requests": 1,
+                "responses": 0,
+                "reported": 0,
+                "unreported": 0,
+                "failed": 0,
+                "open": 1,
+                "abandoned": 0,
+                "partial": 0,
+                "missing": 1,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_write_input_tokens": 0,
+                "reasoning_output_tokens": 0,
+                "known_requests": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "total_tokens": 0,
+                  "cache_read_input_tokens": 0,
+                  "cache_write_input_tokens": 0,
+                  "reasoning_output_tokens": 0
+                },
+                "costs": {
+                  "reported": 0,
+                  "estimated": 0,
+                  "missing": 1,
+                  "partial": 0,
+                  "missing_requests": 1,
+                  "partial_requests": 0,
+                  "currencies": {},
+                  "non_monetary": {},
+                  "complete": false
+                }
+              }
+            ],
+            "coverage": {
+              "accounted_runs": 1,
+              "pre_accounting_turns": 0,
+              "uninstrumented_turns": 0,
+              "legacy_turns": 0,
+              "legacy_requests": 0,
+              "legacy_identity_requests": 0,
+              "legacy_events": 0,
+              "ambiguous_legacy_ids": 0,
+              "uncovered_assistant_turns": 0,
+              "unclosed_runs": 0,
+              "orphan_runs": 0,
+              "malformed_facts": 0,
+              "lost_requests": 0,
+              "full": true
+            },
+            "detail": {
+              "reported_missing_cache_read": 0,
+              "reported_missing_cache_write": 0,
+              "reported_missing_reasoning": 0
+            },
+            "known_fields": {
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "total_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_write_input_tokens": 0,
+              "reasoning_output_tokens": 0
+            },
+            "complete": false,
+            "known_requests": {
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "total_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_write_input_tokens": 0,
+              "reasoning_output_tokens": 0
+            },
+            "detail_complete": {
+              "cache_read_input_tokens": false,
+              "cache_write_input_tokens": false,
+              "reasoning_output_tokens": false
+            },
+            "costs": {
+              "reported": 0,
+              "estimated": 0,
+              "missing": 1,
+              "partial": 0,
+              "missing_requests": 1,
+              "partial_requests": 0,
+              "currencies": {},
+              "non_monetary": {},
+              "complete": false
+            },
+            "persist_failures": 0,
+            "persistence": {
+              "persist_failures": 0,
+              "unclosed_runs": 0,
+              "lost_requests": 0,
+              "healthy": true
+            }
+          }
+        },
+        "seq": 3,
+        "elapsed_ms": 20
+      },
+      "expected_usage": {
+        "source_seq": 2,
+        "requests": 1,
+        "responses": 0,
+        "reported": 0,
+        "unreported": 0,
+        "failed": 0,
+        "open": 1,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 1,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 1,
+            "responses": 0,
+            "reported": 0,
+            "unreported": 0,
+            "failed": 0,
+            "open": 1,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 1,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "total_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_write_input_tokens": 0,
+              "reasoning_output_tokens": 0
+            },
+            "costs": {
+              "reported": 0,
+              "estimated": 0,
+              "missing": 1,
+              "partial": 0,
+              "missing_requests": 1,
+              "partial_requests": 0,
+              "currencies": {},
+              "non_monetary": {},
+              "complete": false
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0
+        },
+        "complete": false,
+        "known_requests": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": false,
+          "cache_write_input_tokens": false,
+          "reasoning_output_tokens": false
+        },
+        "costs": {
+          "reported": 0,
+          "estimated": 0,
+          "missing": 1,
+          "partial": 0,
+          "missing_requests": 1,
+          "partial_requests": 0,
+          "currencies": {},
+          "non_monetary": {},
+          "complete": false
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      },
+      "derive": {
+        "journal_prefix": 2,
+        "live_run_id": "run"
+      }
+    },
+    {
+      "name": "same source sequence closes the live run",
+      "event": {
+        "event_type": "usage_updated",
+        "content": {
+          "scope": "session",
+          "semantics": "snapshot",
+          "source_seq": 2,
+          "usage": {
+            "requests": 1,
+            "responses": 0,
+            "reported": 0,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 1,
+            "partial": 0,
+            "missing": 1,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "breakdown": [
+              {
+                "provider": "fixture-provider",
+                "model": "fixture-model",
+                "requests": 1,
+                "responses": 0,
+                "reported": 0,
+                "unreported": 0,
+                "failed": 0,
+                "open": 0,
+                "abandoned": 1,
+                "partial": 0,
+                "missing": 1,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_write_input_tokens": 0,
+                "reasoning_output_tokens": 0,
+                "known_requests": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "total_tokens": 0,
+                  "cache_read_input_tokens": 0,
+                  "cache_write_input_tokens": 0,
+                  "reasoning_output_tokens": 0
+                },
+                "costs": {
+                  "reported": 0,
+                  "estimated": 0,
+                  "missing": 1,
+                  "partial": 0,
+                  "missing_requests": 1,
+                  "partial_requests": 0,
+                  "currencies": {},
+                  "non_monetary": {},
+                  "complete": false
+                }
+              }
+            ],
+            "coverage": {
+              "accounted_runs": 1,
+              "pre_accounting_turns": 0,
+              "uninstrumented_turns": 0,
+              "legacy_turns": 0,
+              "legacy_requests": 0,
+              "legacy_identity_requests": 0,
+              "legacy_events": 0,
+              "ambiguous_legacy_ids": 0,
+              "uncovered_assistant_turns": 0,
+              "unclosed_runs": 1,
+              "orphan_runs": 0,
+              "malformed_facts": 0,
+              "lost_requests": 0,
+              "full": false
+            },
+            "detail": {
+              "reported_missing_cache_read": 0,
+              "reported_missing_cache_write": 0,
+              "reported_missing_reasoning": 0
+            },
+            "known_fields": {
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "total_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_write_input_tokens": 0,
+              "reasoning_output_tokens": 0
+            },
+            "complete": false,
+            "known_requests": {
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "total_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_write_input_tokens": 0,
+              "reasoning_output_tokens": 0
+            },
+            "detail_complete": {
+              "cache_read_input_tokens": false,
+              "cache_write_input_tokens": false,
+              "reasoning_output_tokens": false
+            },
+            "costs": {
+              "reported": 0,
+              "estimated": 0,
+              "missing": 1,
+              "partial": 0,
+              "missing_requests": 1,
+              "partial_requests": 0,
+              "currencies": {},
+              "non_monetary": {},
+              "complete": false
+            },
+            "persist_failures": 0,
+            "persistence": {
+              "persist_failures": 0,
+              "unclosed_runs": 1,
+              "lost_requests": 0,
+              "healthy": false
+            }
+          }
+        },
+        "seq": 4,
+        "elapsed_ms": 30
+      },
+      "expected_usage": {
+        "source_seq": 2,
+        "requests": 1,
+        "responses": 0,
+        "reported": 0,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 1,
+        "partial": 0,
+        "missing": 1,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 1,
+            "responses": 0,
+            "reported": 0,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 1,
+            "partial": 0,
+            "missing": 1,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "total_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_write_input_tokens": 0,
+              "reasoning_output_tokens": 0
+            },
+            "costs": {
+              "reported": 0,
+              "estimated": 0,
+              "missing": 1,
+              "partial": 0,
+              "missing_requests": 1,
+              "partial_requests": 0,
+              "currencies": {},
+              "non_monetary": {},
+              "complete": false
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 1,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": false
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0
+        },
+        "complete": false,
+        "known_requests": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "total_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": false,
+          "cache_write_input_tokens": false,
+          "reasoning_output_tokens": false
+        },
+        "costs": {
+          "reported": 0,
+          "estimated": 0,
+          "missing": 1,
+          "partial": 0,
+          "missing_requests": 1,
+          "partial_requests": 0,
+          "currencies": {},
+          "non_monetary": {},
+          "complete": false
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 1,
+          "lost_requests": 0,
+          "healthy": false
+        }
+      },
+      "derive": {
+        "journal_prefix": 2,
+        "live_run_id": null
+      }
+    },
+    {
+      "name": "partial known subtotal",
+      "event": {
+        "event_type": "usage_updated",
+        "content": {
+          "scope": "session",
+          "semantics": "snapshot",
+          "source_seq": 3,
+          "usage": {
+            "requests": 1,
+            "responses": 0,
+            "reported": 0,
+            "unreported": 0,
+            "failed": 0,
+            "open": 1,
+            "abandoned": 0,
+            "partial": 1,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "breakdown": [
+              {
+                "provider": "fixture-provider",
+                "model": "fixture-model",
+                "requests": 1,
+                "responses": 0,
+                "reported": 0,
+                "unreported": 0,
+                "failed": 0,
+                "open": 1,
+                "abandoned": 0,
+                "partial": 1,
+                "missing": 0,
+                "input_tokens": 7,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_write_input_tokens": 0,
+                "reasoning_output_tokens": 0,
+                "known_requests": {
+                  "input_tokens": 1,
+                  "output_tokens": 0,
+                  "total_tokens": 0,
+                  "cache_read_input_tokens": 0,
+                  "cache_write_input_tokens": 0,
+                  "reasoning_output_tokens": 0
+                },
+                "costs": {
+                  "reported": 0,
+                  "estimated": 1,
+                  "missing": 0,
+                  "partial": 1,
+                  "missing_requests": 0,
+                  "partial_requests": 1,
+                  "currencies": {
+                    "USD": {
+                      "reported": "0",
+                      "estimated": "1E-28",
+                      "total": "1E-28",
+                      "requests": 1,
+                      "reported_requests": 0,
+                      "estimated_requests": 1,
+                      "token_cost_subtotal": "1E-28"
+                    }
+                  },
+                  "non_monetary": {},
+                  "complete": false
+                }
+              }
+            ],
+            "coverage": {
+              "accounted_runs": 1,
+              "pre_accounting_turns": 0,
+              "uninstrumented_turns": 0,
+              "legacy_turns": 0,
+              "legacy_requests": 0,
+              "legacy_identity_requests": 0,
+              "legacy_events": 0,
+              "ambiguous_legacy_ids": 0,
+              "uncovered_assistant_turns": 0,
+              "unclosed_runs": 0,
+              "orphan_runs": 0,
+              "malformed_facts": 0,
+              "lost_requests": 0,
+              "full": true
+            },
+            "detail": {
+              "reported_missing_cache_read": 0,
+              "reported_missing_cache_write": 0,
+              "reported_missing_reasoning": 0
+            },
+            "known_fields": {
+              "input_tokens": 1,
+              "output_tokens": 0,
+              "total_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_write_input_tokens": 0,
+              "reasoning_output_tokens": 0
+            },
+            "complete": false,
+            "known_requests": {
+              "input_tokens": 1,
+              "output_tokens": 0,
+              "total_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_write_input_tokens": 0,
+              "reasoning_output_tokens": 0
+            },
+            "detail_complete": {
+              "cache_read_input_tokens": false,
+              "cache_write_input_tokens": false,
+              "reasoning_output_tokens": false
+            },
+            "costs": {
+              "reported": 0,
+              "estimated": 1,
+              "missing": 0,
+              "partial": 1,
+              "missing_requests": 0,
+              "partial_requests": 1,
+              "currencies": {
+                "USD": {
+                  "reported": "0",
+                  "estimated": "1E-28",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 0,
+                  "estimated_requests": 1,
+                  "token_cost_subtotal": "1E-28"
+                }
+              },
+              "non_monetary": {},
+              "complete": false
+            },
+            "persist_failures": 0,
+            "persistence": {
+              "persist_failures": 0,
+              "unclosed_runs": 0,
+              "lost_requests": 0,
+              "healthy": true
+            }
+          }
+        },
+        "seq": 5,
+        "elapsed_ms": 40
+      },
+      "expected_usage": {
+        "source_seq": 3,
+        "requests": 1,
+        "responses": 0,
+        "reported": 0,
+        "unreported": 0,
+        "failed": 0,
+        "open": 1,
+        "abandoned": 0,
+        "partial": 1,
+        "missing": 0,
+        "input_tokens": 7,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 1,
+            "responses": 0,
+            "reported": 0,
+            "unreported": 0,
+            "failed": 0,
+            "open": 1,
+            "abandoned": 0,
+            "partial": 1,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 1,
+              "output_tokens": 0,
+              "total_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_write_input_tokens": 0,
+              "reasoning_output_tokens": 0
+            },
+            "costs": {
+              "reported": 0,
+              "estimated": 1,
+              "missing": 0,
+              "partial": 1,
+              "missing_requests": 0,
+              "partial_requests": 1,
+              "currencies": {
+                "USD": {
+                  "reported": "0",
+                  "estimated": "1E-28",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 0,
+                  "estimated_requests": 1,
+                  "token_cost_subtotal": "1E-28"
+                }
+              },
+              "non_monetary": {},
+              "complete": false
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 1,
+          "output_tokens": 0,
+          "total_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0
+        },
+        "complete": false,
+        "known_requests": {
+          "input_tokens": 1,
+          "output_tokens": 0,
+          "total_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": false,
+          "cache_write_input_tokens": false,
+          "reasoning_output_tokens": false
+        },
+        "costs": {
+          "reported": 0,
+          "estimated": 1,
+          "missing": 0,
+          "partial": 1,
+          "missing_requests": 0,
+          "partial_requests": 1,
+          "currencies": {
+            "USD": {
+              "reported": "0",
+              "estimated": "1E-28",
+              "total": "1E-28",
+              "requests": 1,
+              "reported_requests": 0,
+              "estimated_requests": 1,
+              "token_cost_subtotal": "1E-28"
+            }
+          },
+          "non_monetary": {},
+          "complete": false
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      },
+      "derive": {
+        "journal_prefix": 3,
+        "live_run_id": "run"
+      }
+    },
+    {
+      "name": "explicit known zero replaces unknown",
+      "event": {
+        "event_type": "usage_updated",
+        "content": {
+          "scope": "session",
+          "semantics": "snapshot",
+          "source_seq": 4,
+          "usage": {
+            "requests": 1,
+            "responses": 1,
+            "reported": 1,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "breakdown": [
+              {
+                "provider": "fixture-provider",
+                "model": "fixture-model",
+                "requests": 1,
+                "responses": 1,
+                "reported": 1,
+                "unreported": 0,
+                "failed": 0,
+                "open": 0,
+                "abandoned": 0,
+                "partial": 0,
+                "missing": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_write_input_tokens": 0,
+                "reasoning_output_tokens": 0,
+                "known_requests": {
+                  "input_tokens": 1,
+                  "output_tokens": 1,
+                  "total_tokens": 1,
+                  "cache_read_input_tokens": 1,
+                  "cache_write_input_tokens": 1,
+                  "reasoning_output_tokens": 1
+                },
+                "costs": {
+                  "reported": 1,
+                  "estimated": 0,
+                  "missing": 0,
+                  "partial": 0,
+                  "missing_requests": 0,
+                  "partial_requests": 0,
+                  "currencies": {
+                    "USD": {
+                      "reported": "0",
+                      "estimated": "0",
+                      "total": "0",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    }
+                  },
+                  "non_monetary": {},
+                  "complete": true
+                }
+              }
+            ],
+            "coverage": {
+              "accounted_runs": 1,
+              "pre_accounting_turns": 0,
+              "uninstrumented_turns": 0,
+              "legacy_turns": 0,
+              "legacy_requests": 0,
+              "legacy_identity_requests": 0,
+              "legacy_events": 0,
+              "ambiguous_legacy_ids": 0,
+              "uncovered_assistant_turns": 0,
+              "unclosed_runs": 0,
+              "orphan_runs": 0,
+              "malformed_facts": 0,
+              "lost_requests": 0,
+              "full": true
+            },
+            "detail": {
+              "reported_missing_cache_read": 0,
+              "reported_missing_cache_write": 0,
+              "reported_missing_reasoning": 0
+            },
+            "known_fields": {
+              "input_tokens": 1,
+              "output_tokens": 1,
+              "total_tokens": 1,
+              "cache_read_input_tokens": 1,
+              "cache_write_input_tokens": 1,
+              "reasoning_output_tokens": 1
+            },
+            "complete": true,
+            "known_requests": {
+              "input_tokens": 1,
+              "output_tokens": 1,
+              "total_tokens": 1,
+              "cache_read_input_tokens": 1,
+              "cache_write_input_tokens": 1,
+              "reasoning_output_tokens": 1
+            },
+            "detail_complete": {
+              "cache_read_input_tokens": true,
+              "cache_write_input_tokens": true,
+              "reasoning_output_tokens": true
+            },
+            "costs": {
+              "reported": 1,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "USD": {
+                  "reported": "0",
+                  "estimated": "0",
+                  "total": "0",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {},
+              "complete": true
+            },
+            "persist_failures": 0,
+            "persistence": {
+              "persist_failures": 0,
+              "unclosed_runs": 0,
+              "lost_requests": 0,
+              "healthy": true
+            }
+          }
+        },
+        "seq": 6,
+        "elapsed_ms": 50
+      },
+      "expected_usage": {
+        "source_seq": 4,
+        "requests": 1,
+        "responses": 1,
+        "reported": 1,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 1,
+            "responses": 1,
+            "reported": 1,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 1,
+              "output_tokens": 1,
+              "total_tokens": 1,
+              "cache_read_input_tokens": 1,
+              "cache_write_input_tokens": 1,
+              "reasoning_output_tokens": 1
+            },
+            "costs": {
+              "reported": 1,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "USD": {
+                  "reported": "0",
+                  "estimated": "0",
+                  "total": "0",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {},
+              "complete": true
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 1,
+          "output_tokens": 1,
+          "total_tokens": 1,
+          "cache_read_input_tokens": 1,
+          "cache_write_input_tokens": 1,
+          "reasoning_output_tokens": 1
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 1,
+          "output_tokens": 1,
+          "total_tokens": 1,
+          "cache_read_input_tokens": 1,
+          "cache_write_input_tokens": 1,
+          "reasoning_output_tokens": 1
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 1,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {
+            "USD": {
+              "reported": "0",
+              "estimated": "0",
+              "total": "0",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "non_monetary": {},
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      },
+      "derive": {
+        "journal_prefix": 4,
+        "live_run_id": "run"
+      }
+    },
+    {
+      "name": "late high precision reported refinement",
+      "event": {
+        "event_type": "usage_updated",
+        "content": {
+          "scope": "session",
+          "semantics": "snapshot",
+          "source_seq": 5,
+          "usage": {
+            "requests": 1,
+            "responses": 1,
+            "reported": 1,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 12,
+            "output_tokens": 7,
+            "total_tokens": 19,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "breakdown": [
+              {
+                "provider": "fixture-provider",
+                "model": "fixture-model",
+                "requests": 1,
+                "responses": 1,
+                "reported": 1,
+                "unreported": 0,
+                "failed": 0,
+                "open": 0,
+                "abandoned": 0,
+                "partial": 0,
+                "missing": 0,
+                "input_tokens": 12,
+                "output_tokens": 7,
+                "total_tokens": 19,
+                "cache_read_input_tokens": 0,
+                "cache_write_input_tokens": 0,
+                "reasoning_output_tokens": 0,
+                "known_requests": {
+                  "input_tokens": 1,
+                  "output_tokens": 1,
+                  "total_tokens": 1,
+                  "cache_read_input_tokens": 1,
+                  "cache_write_input_tokens": 1,
+                  "reasoning_output_tokens": 1
+                },
+                "costs": {
+                  "reported": 1,
+                  "estimated": 0,
+                  "missing": 0,
+                  "partial": 0,
+                  "missing_requests": 0,
+                  "partial_requests": 0,
+                  "currencies": {
+                    "USD": {
+                      "reported": "0.1234567890123456789012345678",
+                      "estimated": "0",
+                      "total": "0.1234567890123456789012345678",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    }
+                  },
+                  "non_monetary": {},
+                  "complete": true
+                }
+              }
+            ],
+            "coverage": {
+              "accounted_runs": 1,
+              "pre_accounting_turns": 0,
+              "uninstrumented_turns": 0,
+              "legacy_turns": 0,
+              "legacy_requests": 0,
+              "legacy_identity_requests": 0,
+              "legacy_events": 0,
+              "ambiguous_legacy_ids": 0,
+              "uncovered_assistant_turns": 0,
+              "unclosed_runs": 0,
+              "orphan_runs": 0,
+              "malformed_facts": 0,
+              "lost_requests": 0,
+              "full": true
+            },
+            "detail": {
+              "reported_missing_cache_read": 0,
+              "reported_missing_cache_write": 0,
+              "reported_missing_reasoning": 0
+            },
+            "known_fields": {
+              "input_tokens": 1,
+              "output_tokens": 1,
+              "total_tokens": 1,
+              "cache_read_input_tokens": 1,
+              "cache_write_input_tokens": 1,
+              "reasoning_output_tokens": 1
+            },
+            "complete": true,
+            "known_requests": {
+              "input_tokens": 1,
+              "output_tokens": 1,
+              "total_tokens": 1,
+              "cache_read_input_tokens": 1,
+              "cache_write_input_tokens": 1,
+              "reasoning_output_tokens": 1
+            },
+            "detail_complete": {
+              "cache_read_input_tokens": true,
+              "cache_write_input_tokens": true,
+              "reasoning_output_tokens": true
+            },
+            "costs": {
+              "reported": 1,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "USD": {
+                  "reported": "0.1234567890123456789012345678",
+                  "estimated": "0",
+                  "total": "0.1234567890123456789012345678",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {},
+              "complete": true
+            },
+            "persist_failures": 0,
+            "persistence": {
+              "persist_failures": 0,
+              "unclosed_runs": 0,
+              "lost_requests": 0,
+              "healthy": true
+            }
+          }
+        },
+        "seq": 7,
+        "elapsed_ms": 60
+      },
+      "expected_usage": {
+        "source_seq": 5,
+        "requests": 1,
+        "responses": 1,
+        "reported": 1,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 12,
+        "output_tokens": 7,
+        "total_tokens": 19,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 1,
+            "responses": 1,
+            "reported": 1,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 12,
+            "output_tokens": 7,
+            "total_tokens": 19,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 1,
+              "output_tokens": 1,
+              "total_tokens": 1,
+              "cache_read_input_tokens": 1,
+              "cache_write_input_tokens": 1,
+              "reasoning_output_tokens": 1
+            },
+            "costs": {
+              "reported": 1,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "USD": {
+                  "reported": "0.1234567890123456789012345678",
+                  "estimated": "0",
+                  "total": "0.1234567890123456789012345678",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {},
+              "complete": true
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 1,
+          "output_tokens": 1,
+          "total_tokens": 1,
+          "cache_read_input_tokens": 1,
+          "cache_write_input_tokens": 1,
+          "reasoning_output_tokens": 1
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 1,
+          "output_tokens": 1,
+          "total_tokens": 1,
+          "cache_read_input_tokens": 1,
+          "cache_write_input_tokens": 1,
+          "reasoning_output_tokens": 1
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 1,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {
+            "USD": {
+              "reported": "0.1234567890123456789012345678",
+              "estimated": "0",
+              "total": "0.1234567890123456789012345678",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "non_monetary": {},
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      },
+      "derive": {
+        "journal_prefix": 5,
+        "live_run_id": "run"
+      }
+    },
+    {
+      "name": "separate currencies",
+      "event": {
+        "event_type": "usage_updated",
+        "content": {
+          "scope": "session",
+          "semantics": "snapshot",
+          "source_seq": 6,
+          "usage": {
+            "requests": 2,
+            "responses": 2,
+            "reported": 2,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 14,
+            "output_tokens": 10,
+            "total_tokens": 24,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "breakdown": [
+              {
+                "provider": "fixture-provider",
+                "model": "fixture-model",
+                "requests": 2,
+                "responses": 2,
+                "reported": 2,
+                "unreported": 0,
+                "failed": 0,
+                "open": 0,
+                "abandoned": 0,
+                "partial": 0,
+                "missing": 0,
+                "input_tokens": 14,
+                "output_tokens": 10,
+                "total_tokens": 24,
+                "cache_read_input_tokens": 0,
+                "cache_write_input_tokens": 0,
+                "reasoning_output_tokens": 0,
+                "known_requests": {
+                  "input_tokens": 2,
+                  "output_tokens": 2,
+                  "total_tokens": 2,
+                  "cache_read_input_tokens": 2,
+                  "cache_write_input_tokens": 2,
+                  "reasoning_output_tokens": 2
+                },
+                "costs": {
+                  "reported": 2,
+                  "estimated": 0,
+                  "missing": 0,
+                  "partial": 0,
+                  "missing_requests": 0,
+                  "partial_requests": 0,
+                  "currencies": {
+                    "EUR": {
+                      "reported": "2.50000000000000000001",
+                      "estimated": "0",
+                      "total": "2.50000000000000000001",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    },
+                    "USD": {
+                      "reported": "0.1234567890123456789012345678",
+                      "estimated": "0",
+                      "total": "0.1234567890123456789012345678",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    }
+                  },
+                  "non_monetary": {},
+                  "complete": true
+                }
+              }
+            ],
+            "coverage": {
+              "accounted_runs": 1,
+              "pre_accounting_turns": 0,
+              "uninstrumented_turns": 0,
+              "legacy_turns": 0,
+              "legacy_requests": 0,
+              "legacy_identity_requests": 0,
+              "legacy_events": 0,
+              "ambiguous_legacy_ids": 0,
+              "uncovered_assistant_turns": 0,
+              "unclosed_runs": 0,
+              "orphan_runs": 0,
+              "malformed_facts": 0,
+              "lost_requests": 0,
+              "full": true
+            },
+            "detail": {
+              "reported_missing_cache_read": 0,
+              "reported_missing_cache_write": 0,
+              "reported_missing_reasoning": 0
+            },
+            "known_fields": {
+              "input_tokens": 2,
+              "output_tokens": 2,
+              "total_tokens": 2,
+              "cache_read_input_tokens": 2,
+              "cache_write_input_tokens": 2,
+              "reasoning_output_tokens": 2
+            },
+            "complete": true,
+            "known_requests": {
+              "input_tokens": 2,
+              "output_tokens": 2,
+              "total_tokens": 2,
+              "cache_read_input_tokens": 2,
+              "cache_write_input_tokens": 2,
+              "reasoning_output_tokens": 2
+            },
+            "detail_complete": {
+              "cache_read_input_tokens": true,
+              "cache_write_input_tokens": true,
+              "reasoning_output_tokens": true
+            },
+            "costs": {
+              "reported": 2,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "0.1234567890123456789012345678",
+                  "estimated": "0",
+                  "total": "0.1234567890123456789012345678",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {},
+              "complete": true
+            },
+            "persist_failures": 0,
+            "persistence": {
+              "persist_failures": 0,
+              "unclosed_runs": 0,
+              "lost_requests": 0,
+              "healthy": true
+            }
+          }
+        },
+        "seq": 8,
+        "elapsed_ms": 70
+      },
+      "expected_usage": {
+        "source_seq": 6,
+        "requests": 2,
+        "responses": 2,
+        "reported": 2,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 14,
+        "output_tokens": 10,
+        "total_tokens": 24,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 2,
+            "responses": 2,
+            "reported": 2,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 14,
+            "output_tokens": 10,
+            "total_tokens": 24,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 2,
+              "output_tokens": 2,
+              "total_tokens": 2,
+              "cache_read_input_tokens": 2,
+              "cache_write_input_tokens": 2,
+              "reasoning_output_tokens": 2
+            },
+            "costs": {
+              "reported": 2,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "0.1234567890123456789012345678",
+                  "estimated": "0",
+                  "total": "0.1234567890123456789012345678",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {},
+              "complete": true
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 2,
+          "output_tokens": 2,
+          "total_tokens": 2,
+          "cache_read_input_tokens": 2,
+          "cache_write_input_tokens": 2,
+          "reasoning_output_tokens": 2
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 2,
+          "output_tokens": 2,
+          "total_tokens": 2,
+          "cache_read_input_tokens": 2,
+          "cache_write_input_tokens": 2,
+          "reasoning_output_tokens": 2
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 2,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {
+            "EUR": {
+              "reported": "2.50000000000000000001",
+              "estimated": "0",
+              "total": "2.50000000000000000001",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            },
+            "USD": {
+              "reported": "0.1234567890123456789012345678",
+              "estimated": "0",
+              "total": "0.1234567890123456789012345678",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "non_monetary": {},
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      },
+      "derive": {
+        "journal_prefix": 6,
+        "live_run_id": "run"
+      }
+    },
+    {
+      "name": "credits stay separate from currencies",
+      "event": {
+        "event_type": "usage_updated",
+        "content": {
+          "scope": "session",
+          "semantics": "snapshot",
+          "source_seq": 7,
+          "usage": {
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 18,
+            "output_tokens": 11,
+            "total_tokens": 29,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "breakdown": [
+              {
+                "provider": "fixture-provider",
+                "model": "fixture-model",
+                "requests": 3,
+                "responses": 3,
+                "reported": 3,
+                "unreported": 0,
+                "failed": 0,
+                "open": 0,
+                "abandoned": 0,
+                "partial": 0,
+                "missing": 0,
+                "input_tokens": 18,
+                "output_tokens": 11,
+                "total_tokens": 29,
+                "cache_read_input_tokens": 0,
+                "cache_write_input_tokens": 0,
+                "reasoning_output_tokens": 0,
+                "known_requests": {
+                  "input_tokens": 3,
+                  "output_tokens": 3,
+                  "total_tokens": 3,
+                  "cache_read_input_tokens": 3,
+                  "cache_write_input_tokens": 3,
+                  "reasoning_output_tokens": 3
+                },
+                "costs": {
+                  "reported": 3,
+                  "estimated": 0,
+                  "missing": 0,
+                  "partial": 0,
+                  "missing_requests": 0,
+                  "partial_requests": 0,
+                  "currencies": {
+                    "EUR": {
+                      "reported": "2.50000000000000000001",
+                      "estimated": "0",
+                      "total": "2.50000000000000000001",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    },
+                    "USD": {
+                      "reported": "0.1234567890123456789012345678",
+                      "estimated": "0",
+                      "total": "0.1234567890123456789012345678",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    }
+                  },
+                  "non_monetary": {
+                    "provider_credits": {
+                      "reported": "3.141592653589793238462643383",
+                      "estimated": "0",
+                      "total": "3.141592653589793238462643383",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    }
+                  },
+                  "complete": true
+                }
+              }
+            ],
+            "coverage": {
+              "accounted_runs": 1,
+              "pre_accounting_turns": 0,
+              "uninstrumented_turns": 0,
+              "legacy_turns": 0,
+              "legacy_requests": 0,
+              "legacy_identity_requests": 0,
+              "legacy_events": 0,
+              "ambiguous_legacy_ids": 0,
+              "uncovered_assistant_turns": 0,
+              "unclosed_runs": 0,
+              "orphan_runs": 0,
+              "malformed_facts": 0,
+              "lost_requests": 0,
+              "full": true
+            },
+            "detail": {
+              "reported_missing_cache_read": 0,
+              "reported_missing_cache_write": 0,
+              "reported_missing_reasoning": 0
+            },
+            "known_fields": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "complete": true,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "detail_complete": {
+              "cache_read_input_tokens": true,
+              "cache_write_input_tokens": true,
+              "reasoning_output_tokens": true
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "0.1234567890123456789012345678",
+                  "estimated": "0",
+                  "total": "0.1234567890123456789012345678",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            },
+            "persist_failures": 0,
+            "persistence": {
+              "persist_failures": 0,
+              "unclosed_runs": 0,
+              "lost_requests": 0,
+              "healthy": true
+            }
+          }
+        },
+        "seq": 9,
+        "elapsed_ms": 80
+      },
+      "expected_usage": {
+        "source_seq": 7,
+        "requests": 3,
+        "responses": 3,
+        "reported": 3,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 18,
+        "output_tokens": 11,
+        "total_tokens": 29,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 18,
+            "output_tokens": 11,
+            "total_tokens": 29,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "0.1234567890123456789012345678",
+                  "estimated": "0",
+                  "total": "0.1234567890123456789012345678",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 3,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {
+            "EUR": {
+              "reported": "2.50000000000000000001",
+              "estimated": "0",
+              "total": "2.50000000000000000001",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            },
+            "USD": {
+              "reported": "0.1234567890123456789012345678",
+              "estimated": "0",
+              "total": "0.1234567890123456789012345678",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "non_monetary": {
+            "provider_credits": {
+              "reported": "3.141592653589793238462643383",
+              "estimated": "0",
+              "total": "3.141592653589793238462643383",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      },
+      "derive": {
+        "journal_prefix": 7,
+        "live_run_id": "run"
+      }
+    },
+    {
+      "name": "downward correction replaces tokens and costs",
+      "event": {
+        "event_type": "usage_updated",
+        "content": {
+          "scope": "session",
+          "semantics": "snapshot",
+          "source_seq": 8,
+          "usage": {
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "total_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "breakdown": [
+              {
+                "provider": "fixture-provider",
+                "model": "fixture-model",
+                "requests": 3,
+                "responses": 3,
+                "reported": 3,
+                "unreported": 0,
+                "failed": 0,
+                "open": 0,
+                "abandoned": 0,
+                "partial": 0,
+                "missing": 0,
+                "input_tokens": 7,
+                "output_tokens": 5,
+                "total_tokens": 12,
+                "cache_read_input_tokens": 0,
+                "cache_write_input_tokens": 0,
+                "reasoning_output_tokens": 0,
+                "known_requests": {
+                  "input_tokens": 3,
+                  "output_tokens": 3,
+                  "total_tokens": 3,
+                  "cache_read_input_tokens": 3,
+                  "cache_write_input_tokens": 3,
+                  "reasoning_output_tokens": 3
+                },
+                "costs": {
+                  "reported": 3,
+                  "estimated": 0,
+                  "missing": 0,
+                  "partial": 0,
+                  "missing_requests": 0,
+                  "partial_requests": 0,
+                  "currencies": {
+                    "EUR": {
+                      "reported": "2.50000000000000000001",
+                      "estimated": "0",
+                      "total": "2.50000000000000000001",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    },
+                    "USD": {
+                      "reported": "1E-28",
+                      "estimated": "0",
+                      "total": "1E-28",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    }
+                  },
+                  "non_monetary": {
+                    "provider_credits": {
+                      "reported": "3.141592653589793238462643383",
+                      "estimated": "0",
+                      "total": "3.141592653589793238462643383",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    }
+                  },
+                  "complete": true
+                }
+              }
+            ],
+            "coverage": {
+              "accounted_runs": 1,
+              "pre_accounting_turns": 0,
+              "uninstrumented_turns": 0,
+              "legacy_turns": 0,
+              "legacy_requests": 0,
+              "legacy_identity_requests": 0,
+              "legacy_events": 0,
+              "ambiguous_legacy_ids": 0,
+              "uncovered_assistant_turns": 0,
+              "unclosed_runs": 0,
+              "orphan_runs": 0,
+              "malformed_facts": 0,
+              "lost_requests": 0,
+              "full": true
+            },
+            "detail": {
+              "reported_missing_cache_read": 0,
+              "reported_missing_cache_write": 0,
+              "reported_missing_reasoning": 0
+            },
+            "known_fields": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "complete": true,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "detail_complete": {
+              "cache_read_input_tokens": true,
+              "cache_write_input_tokens": true,
+              "reasoning_output_tokens": true
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "1E-28",
+                  "estimated": "0",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            },
+            "persist_failures": 0,
+            "persistence": {
+              "persist_failures": 0,
+              "unclosed_runs": 0,
+              "lost_requests": 0,
+              "healthy": true
+            }
+          }
+        },
+        "seq": 10,
+        "elapsed_ms": 90
+      },
+      "expected_usage": {
+        "source_seq": 8,
+        "requests": 3,
+        "responses": 3,
+        "reported": 3,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 7,
+        "output_tokens": 5,
+        "total_tokens": 12,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "total_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "1E-28",
+                  "estimated": "0",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 3,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {
+            "EUR": {
+              "reported": "2.50000000000000000001",
+              "estimated": "0",
+              "total": "2.50000000000000000001",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            },
+            "USD": {
+              "reported": "1E-28",
+              "estimated": "0",
+              "total": "1E-28",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "non_monetary": {
+            "provider_credits": {
+              "reported": "3.141592653589793238462643383",
+              "estimated": "0",
+              "total": "3.141592653589793238462643383",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      },
+      "derive": {
+        "journal_prefix": 8,
+        "live_run_id": "run"
+      }
+    },
+    {
+      "name": "closed run with complete evidence",
+      "event": {
+        "event_type": "usage_updated",
+        "content": {
+          "scope": "session",
+          "semantics": "snapshot",
+          "source_seq": 9,
+          "usage": {
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "total_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "breakdown": [
+              {
+                "provider": "fixture-provider",
+                "model": "fixture-model",
+                "requests": 3,
+                "responses": 3,
+                "reported": 3,
+                "unreported": 0,
+                "failed": 0,
+                "open": 0,
+                "abandoned": 0,
+                "partial": 0,
+                "missing": 0,
+                "input_tokens": 7,
+                "output_tokens": 5,
+                "total_tokens": 12,
+                "cache_read_input_tokens": 0,
+                "cache_write_input_tokens": 0,
+                "reasoning_output_tokens": 0,
+                "known_requests": {
+                  "input_tokens": 3,
+                  "output_tokens": 3,
+                  "total_tokens": 3,
+                  "cache_read_input_tokens": 3,
+                  "cache_write_input_tokens": 3,
+                  "reasoning_output_tokens": 3
+                },
+                "costs": {
+                  "reported": 3,
+                  "estimated": 0,
+                  "missing": 0,
+                  "partial": 0,
+                  "missing_requests": 0,
+                  "partial_requests": 0,
+                  "currencies": {
+                    "EUR": {
+                      "reported": "2.50000000000000000001",
+                      "estimated": "0",
+                      "total": "2.50000000000000000001",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    },
+                    "USD": {
+                      "reported": "1E-28",
+                      "estimated": "0",
+                      "total": "1E-28",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    }
+                  },
+                  "non_monetary": {
+                    "provider_credits": {
+                      "reported": "3.141592653589793238462643383",
+                      "estimated": "0",
+                      "total": "3.141592653589793238462643383",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    }
+                  },
+                  "complete": true
+                }
+              }
+            ],
+            "coverage": {
+              "accounted_runs": 1,
+              "pre_accounting_turns": 0,
+              "uninstrumented_turns": 0,
+              "legacy_turns": 0,
+              "legacy_requests": 0,
+              "legacy_identity_requests": 0,
+              "legacy_events": 0,
+              "ambiguous_legacy_ids": 0,
+              "uncovered_assistant_turns": 0,
+              "unclosed_runs": 0,
+              "orphan_runs": 0,
+              "malformed_facts": 0,
+              "lost_requests": 0,
+              "full": true
+            },
+            "detail": {
+              "reported_missing_cache_read": 0,
+              "reported_missing_cache_write": 0,
+              "reported_missing_reasoning": 0
+            },
+            "known_fields": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "complete": true,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "detail_complete": {
+              "cache_read_input_tokens": true,
+              "cache_write_input_tokens": true,
+              "reasoning_output_tokens": true
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "1E-28",
+                  "estimated": "0",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            },
+            "persist_failures": 0,
+            "persistence": {
+              "persist_failures": 0,
+              "unclosed_runs": 0,
+              "lost_requests": 0,
+              "healthy": true
+            }
+          }
+        },
+        "seq": 11,
+        "elapsed_ms": 100
+      },
+      "expected_usage": {
+        "source_seq": 9,
+        "requests": 3,
+        "responses": 3,
+        "reported": 3,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 7,
+        "output_tokens": 5,
+        "total_tokens": 12,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "total_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "1E-28",
+                  "estimated": "0",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 3,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {
+            "EUR": {
+              "reported": "2.50000000000000000001",
+              "estimated": "0",
+              "total": "2.50000000000000000001",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            },
+            "USD": {
+              "reported": "1E-28",
+              "estimated": "0",
+              "total": "1E-28",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "non_monetary": {
+            "provider_credits": {
+              "reported": "3.141592653589793238462643383",
+              "estimated": "0",
+              "total": "3.141592653589793238462643383",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      },
+      "derive": {
+        "journal_prefix": 9,
+        "live_run_id": null
+      }
+    },
+    {
+      "name": "identical repeated snapshot",
+      "event": {
+        "event_type": "usage_updated",
+        "content": {
+          "scope": "session",
+          "semantics": "snapshot",
+          "source_seq": 9,
+          "usage": {
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "total_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "breakdown": [
+              {
+                "provider": "fixture-provider",
+                "model": "fixture-model",
+                "requests": 3,
+                "responses": 3,
+                "reported": 3,
+                "unreported": 0,
+                "failed": 0,
+                "open": 0,
+                "abandoned": 0,
+                "partial": 0,
+                "missing": 0,
+                "input_tokens": 7,
+                "output_tokens": 5,
+                "total_tokens": 12,
+                "cache_read_input_tokens": 0,
+                "cache_write_input_tokens": 0,
+                "reasoning_output_tokens": 0,
+                "known_requests": {
+                  "input_tokens": 3,
+                  "output_tokens": 3,
+                  "total_tokens": 3,
+                  "cache_read_input_tokens": 3,
+                  "cache_write_input_tokens": 3,
+                  "reasoning_output_tokens": 3
+                },
+                "costs": {
+                  "reported": 3,
+                  "estimated": 0,
+                  "missing": 0,
+                  "partial": 0,
+                  "missing_requests": 0,
+                  "partial_requests": 0,
+                  "currencies": {
+                    "EUR": {
+                      "reported": "2.50000000000000000001",
+                      "estimated": "0",
+                      "total": "2.50000000000000000001",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    },
+                    "USD": {
+                      "reported": "1E-28",
+                      "estimated": "0",
+                      "total": "1E-28",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    }
+                  },
+                  "non_monetary": {
+                    "provider_credits": {
+                      "reported": "3.141592653589793238462643383",
+                      "estimated": "0",
+                      "total": "3.141592653589793238462643383",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    }
+                  },
+                  "complete": true
+                }
+              }
+            ],
+            "coverage": {
+              "accounted_runs": 1,
+              "pre_accounting_turns": 0,
+              "uninstrumented_turns": 0,
+              "legacy_turns": 0,
+              "legacy_requests": 0,
+              "legacy_identity_requests": 0,
+              "legacy_events": 0,
+              "ambiguous_legacy_ids": 0,
+              "uncovered_assistant_turns": 0,
+              "unclosed_runs": 0,
+              "orphan_runs": 0,
+              "malformed_facts": 0,
+              "lost_requests": 0,
+              "full": true
+            },
+            "detail": {
+              "reported_missing_cache_read": 0,
+              "reported_missing_cache_write": 0,
+              "reported_missing_reasoning": 0
+            },
+            "known_fields": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "complete": true,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "detail_complete": {
+              "cache_read_input_tokens": true,
+              "cache_write_input_tokens": true,
+              "reasoning_output_tokens": true
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "1E-28",
+                  "estimated": "0",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            },
+            "persist_failures": 0,
+            "persistence": {
+              "persist_failures": 0,
+              "unclosed_runs": 0,
+              "lost_requests": 0,
+              "healthy": true
+            }
+          }
+        },
+        "seq": 12,
+        "elapsed_ms": 110
+      },
+      "expected_usage": {
+        "source_seq": 9,
+        "requests": 3,
+        "responses": 3,
+        "reported": 3,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 7,
+        "output_tokens": 5,
+        "total_tokens": 12,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "total_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "1E-28",
+                  "estimated": "0",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 3,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {
+            "EUR": {
+              "reported": "2.50000000000000000001",
+              "estimated": "0",
+              "total": "2.50000000000000000001",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            },
+            "USD": {
+              "reported": "1E-28",
+              "estimated": "0",
+              "total": "1E-28",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "non_monetary": {
+            "provider_credits": {
+              "reported": "3.141592653589793238462643383",
+              "estimated": "0",
+              "total": "3.141592653589793238462643383",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      }
+    },
+    {
+      "name": "worker snapshot creates no activity",
+      "event": {
+        "event_type": "usage_updated",
+        "content": {
+          "scope": "session",
+          "semantics": "snapshot",
+          "source_seq": 9000,
+          "usage": {
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "total_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "breakdown": [
+              {
+                "provider": "fixture-provider",
+                "model": "fixture-model",
+                "requests": 3,
+                "responses": 3,
+                "reported": 3,
+                "unreported": 0,
+                "failed": 0,
+                "open": 0,
+                "abandoned": 0,
+                "partial": 0,
+                "missing": 0,
+                "input_tokens": 7,
+                "output_tokens": 5,
+                "total_tokens": 12,
+                "cache_read_input_tokens": 0,
+                "cache_write_input_tokens": 0,
+                "reasoning_output_tokens": 0,
+                "known_requests": {
+                  "input_tokens": 3,
+                  "output_tokens": 3,
+                  "total_tokens": 3,
+                  "cache_read_input_tokens": 3,
+                  "cache_write_input_tokens": 3,
+                  "reasoning_output_tokens": 3
+                },
+                "costs": {
+                  "reported": 3,
+                  "estimated": 0,
+                  "missing": 0,
+                  "partial": 0,
+                  "missing_requests": 0,
+                  "partial_requests": 0,
+                  "currencies": {
+                    "EUR": {
+                      "reported": "2.50000000000000000001",
+                      "estimated": "0",
+                      "total": "2.50000000000000000001",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    },
+                    "USD": {
+                      "reported": "1E-28",
+                      "estimated": "0",
+                      "total": "1E-28",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    }
+                  },
+                  "non_monetary": {
+                    "provider_credits": {
+                      "reported": "3.141592653589793238462643383",
+                      "estimated": "0",
+                      "total": "3.141592653589793238462643383",
+                      "requests": 1,
+                      "reported_requests": 1,
+                      "estimated_requests": 0
+                    }
+                  },
+                  "complete": true
+                }
+              }
+            ],
+            "coverage": {
+              "accounted_runs": 1,
+              "pre_accounting_turns": 0,
+              "uninstrumented_turns": 0,
+              "legacy_turns": 0,
+              "legacy_requests": 0,
+              "legacy_identity_requests": 0,
+              "legacy_events": 0,
+              "ambiguous_legacy_ids": 0,
+              "uncovered_assistant_turns": 0,
+              "unclosed_runs": 0,
+              "orphan_runs": 0,
+              "malformed_facts": 0,
+              "lost_requests": 0,
+              "full": true
+            },
+            "detail": {
+              "reported_missing_cache_read": 0,
+              "reported_missing_cache_write": 0,
+              "reported_missing_reasoning": 0
+            },
+            "known_fields": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "complete": true,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "detail_complete": {
+              "cache_read_input_tokens": true,
+              "cache_write_input_tokens": true,
+              "reasoning_output_tokens": true
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "1E-28",
+                  "estimated": "0",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            },
+            "persist_failures": 0,
+            "persistence": {
+              "persist_failures": 0,
+              "unclosed_runs": 0,
+              "lost_requests": 0,
+              "healthy": true
+            }
+          }
+        },
+        "seq": 13,
+        "elapsed_ms": 120,
+        "sub_agent_info": {
+          "agent_id": "unseen-worker",
+          "total_tokens": 999
+        }
+      },
+      "expected_usage": {
+        "source_seq": 9,
+        "requests": 3,
+        "responses": 3,
+        "reported": 3,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 7,
+        "output_tokens": 5,
+        "total_tokens": 12,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "total_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "1E-28",
+                  "estimated": "0",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 3,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {
+            "EUR": {
+              "reported": "2.50000000000000000001",
+              "estimated": "0",
+              "total": "2.50000000000000000001",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            },
+            "USD": {
+              "reported": "1E-28",
+              "estimated": "0",
+              "total": "1E-28",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "non_monetary": {
+            "provider_credits": {
+              "reported": "3.141592653589793238462643383",
+              "estimated": "0",
+              "total": "3.141592653589793238462643383",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      }
+    },
+    {
+      "name": "malformed aggregate is inert",
+      "event": {
+        "event_type": "usage_updated",
+        "content": {
+          "scope": "session",
+          "semantics": "snapshot",
+          "source_seq": 9001,
+          "usage": null
+        },
+        "seq": 14,
+        "elapsed_ms": 130
+      },
+      "expected_usage": {
+        "source_seq": 9,
+        "requests": 3,
+        "responses": 3,
+        "reported": 3,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 7,
+        "output_tokens": 5,
+        "total_tokens": 12,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "total_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "1E-28",
+                  "estimated": "0",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 3,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {
+            "EUR": {
+              "reported": "2.50000000000000000001",
+              "estimated": "0",
+              "total": "2.50000000000000000001",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            },
+            "USD": {
+              "reported": "1E-28",
+              "estimated": "0",
+              "total": "1E-28",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "non_monetary": {
+            "provider_credits": {
+              "reported": "3.141592653589793238462643383",
+              "estimated": "0",
+              "total": "3.141592653589793238462643383",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      }
+    },
+    {
+      "name": "decreasing source sequence is inert",
+      "event": {
+        "event_type": "usage_updated",
+        "content": {
+          "scope": "session",
+          "semantics": "snapshot",
+          "source_seq": 2,
+          "usage": {
+            "requests": 1,
+            "responses": 0,
+            "reported": 0,
+            "unreported": 0,
+            "failed": 0,
+            "open": 1,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 1,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "breakdown": [
+              {
+                "provider": "fixture-provider",
+                "model": "fixture-model",
+                "requests": 1,
+                "responses": 0,
+                "reported": 0,
+                "unreported": 0,
+                "failed": 0,
+                "open": 1,
+                "abandoned": 0,
+                "partial": 0,
+                "missing": 1,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_write_input_tokens": 0,
+                "reasoning_output_tokens": 0,
+                "known_requests": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "total_tokens": 0,
+                  "cache_read_input_tokens": 0,
+                  "cache_write_input_tokens": 0,
+                  "reasoning_output_tokens": 0
+                },
+                "costs": {
+                  "reported": 0,
+                  "estimated": 0,
+                  "missing": 1,
+                  "partial": 0,
+                  "missing_requests": 1,
+                  "partial_requests": 0,
+                  "currencies": {},
+                  "non_monetary": {},
+                  "complete": false
+                }
+              }
+            ],
+            "coverage": {
+              "accounted_runs": 1,
+              "pre_accounting_turns": 0,
+              "uninstrumented_turns": 0,
+              "legacy_turns": 0,
+              "legacy_requests": 0,
+              "legacy_identity_requests": 0,
+              "legacy_events": 0,
+              "ambiguous_legacy_ids": 0,
+              "uncovered_assistant_turns": 0,
+              "unclosed_runs": 0,
+              "orphan_runs": 0,
+              "malformed_facts": 0,
+              "lost_requests": 0,
+              "full": true
+            },
+            "detail": {
+              "reported_missing_cache_read": 0,
+              "reported_missing_cache_write": 0,
+              "reported_missing_reasoning": 0
+            },
+            "known_fields": {
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "total_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_write_input_tokens": 0,
+              "reasoning_output_tokens": 0
+            },
+            "complete": false,
+            "known_requests": {
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "total_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cache_write_input_tokens": 0,
+              "reasoning_output_tokens": 0
+            },
+            "detail_complete": {
+              "cache_read_input_tokens": false,
+              "cache_write_input_tokens": false,
+              "reasoning_output_tokens": false
+            },
+            "costs": {
+              "reported": 0,
+              "estimated": 0,
+              "missing": 1,
+              "partial": 0,
+              "missing_requests": 1,
+              "partial_requests": 0,
+              "currencies": {},
+              "non_monetary": {},
+              "complete": false
+            },
+            "persist_failures": 0,
+            "persistence": {
+              "persist_failures": 0,
+              "unclosed_runs": 0,
+              "lost_requests": 0,
+              "healthy": true
+            }
+          }
+        },
+        "seq": 15,
+        "elapsed_ms": 140
+      },
+      "expected_usage": {
+        "source_seq": 9,
+        "requests": 3,
+        "responses": 3,
+        "reported": 3,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 7,
+        "output_tokens": 5,
+        "total_tokens": 12,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "total_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "1E-28",
+                  "estimated": "0",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 3,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {
+            "EUR": {
+              "reported": "2.50000000000000000001",
+              "estimated": "0",
+              "total": "2.50000000000000000001",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            },
+            "USD": {
+              "reported": "1E-28",
+              "estimated": "0",
+              "total": "1E-28",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "non_monetary": {
+            "provider_credits": {
+              "reported": "3.141592653589793238462643383",
+              "estimated": "0",
+              "total": "3.141592653589793238462643383",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      }
+    },
+    {
+      "name": "turn start preserves lifetime usage",
+      "event": {
+        "event_type": "turn_started",
+        "content": {
+          "turn_id": "later",
+          "user_text": "Next"
+        },
+        "seq": 16,
+        "elapsed_ms": 150
+      },
+      "expected_usage": {
+        "source_seq": 9,
+        "requests": 3,
+        "responses": 3,
+        "reported": 3,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 7,
+        "output_tokens": 5,
+        "total_tokens": 12,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "total_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "1E-28",
+                  "estimated": "0",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 3,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {
+            "EUR": {
+              "reported": "2.50000000000000000001",
+              "estimated": "0",
+              "total": "2.50000000000000000001",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            },
+            "USD": {
+              "reported": "1E-28",
+              "estimated": "0",
+              "total": "1E-28",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "non_monetary": {
+            "provider_credits": {
+              "reported": "3.141592653589793238462643383",
+              "estimated": "0",
+              "total": "3.141592653589793238462643383",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      }
+    },
+    {
+      "name": "context is not lifetime usage",
+      "event": {
+        "event_type": "llm_context_update",
+        "content": {
+          "input_tokens": 2,
+          "max_tokens": 100
+        },
+        "seq": 17,
+        "elapsed_ms": 160
+      },
+      "expected_usage": {
+        "source_seq": 9,
+        "requests": 3,
+        "responses": 3,
+        "reported": 3,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 7,
+        "output_tokens": 5,
+        "total_tokens": 12,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "total_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "1E-28",
+                  "estimated": "0",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 3,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {
+            "EUR": {
+              "reported": "2.50000000000000000001",
+              "estimated": "0",
+              "total": "2.50000000000000000001",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            },
+            "USD": {
+              "reported": "1E-28",
+              "estimated": "0",
+              "total": "1E-28",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "non_monetary": {
+            "provider_credits": {
+              "reported": "3.141592653589793238462643383",
+              "estimated": "0",
+              "total": "3.141592653589793238462643383",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      }
+    },
+    {
+      "name": "task update preserves lifetime usage",
+      "event": {
+        "event_type": "task_list_updated",
+        "content": {
+          "markdown": "- [x] Done"
+        },
+        "seq": 18,
+        "elapsed_ms": 170
+      },
+      "expected_usage": {
+        "source_seq": 9,
+        "requests": 3,
+        "responses": 3,
+        "reported": 3,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 7,
+        "output_tokens": 5,
+        "total_tokens": 12,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "total_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "1E-28",
+                  "estimated": "0",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 3,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {
+            "EUR": {
+              "reported": "2.50000000000000000001",
+              "estimated": "0",
+              "total": "2.50000000000000000001",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            },
+            "USD": {
+              "reported": "1E-28",
+              "estimated": "0",
+              "total": "1E-28",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "non_monetary": {
+            "provider_credits": {
+              "reported": "3.141592653589793238462643383",
+              "estimated": "0",
+              "total": "3.141592653589793238462643383",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      }
+    },
+    {
+      "name": "compaction preserves lifetime usage",
+      "event": {
+        "event_type": "compaction_status",
+        "content": {
+          "phase": "finished"
+        },
+        "seq": 19,
+        "elapsed_ms": 180
+      },
+      "expected_usage": {
+        "source_seq": 9,
+        "requests": 3,
+        "responses": 3,
+        "reported": 3,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 7,
+        "output_tokens": 5,
+        "total_tokens": 12,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "total_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "1E-28",
+                  "estimated": "0",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 3,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {
+            "EUR": {
+              "reported": "2.50000000000000000001",
+              "estimated": "0",
+              "total": "2.50000000000000000001",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            },
+            "USD": {
+              "reported": "1E-28",
+              "estimated": "0",
+              "total": "1E-28",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "non_monetary": {
+            "provider_credits": {
+              "reported": "3.141592653589793238462643383",
+              "estimated": "0",
+              "total": "3.141592653589793238462643383",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      }
+    },
+    {
+      "name": "turn end preserves lifetime usage",
+      "event": {
+        "event_type": "turn_ended",
+        "content": {
+          "turn_id": "later",
+          "status": "completed"
+        },
+        "seq": 20,
+        "elapsed_ms": 190
+      },
+      "expected_usage": {
+        "source_seq": 9,
+        "requests": 3,
+        "responses": 3,
+        "reported": 3,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 7,
+        "output_tokens": 5,
+        "total_tokens": 12,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "total_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "1E-28",
+                  "estimated": "0",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 3,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {
+            "EUR": {
+              "reported": "2.50000000000000000001",
+              "estimated": "0",
+              "total": "2.50000000000000000001",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            },
+            "USD": {
+              "reported": "1E-28",
+              "estimated": "0",
+              "total": "1E-28",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "non_monetary": {
+            "provider_credits": {
+              "reported": "3.141592653589793238462643383",
+              "estimated": "0",
+              "total": "3.141592653589793238462643383",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      }
+    },
+    {
+      "name": "epoch boundary preserves lifetime usage",
+      "event": {
+        "event_type": "epoch.started",
+        "content": {
+          "epoch_id": "next"
+        },
+        "seq": 21,
+        "elapsed_ms": 200
+      },
+      "expected_usage": {
+        "source_seq": 9,
+        "requests": 3,
+        "responses": 3,
+        "reported": 3,
+        "unreported": 0,
+        "failed": 0,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 0,
+        "input_tokens": 7,
+        "output_tokens": 5,
+        "total_tokens": 12,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "breakdown": [
+          {
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "requests": 3,
+            "responses": 3,
+            "reported": 3,
+            "unreported": 0,
+            "failed": 0,
+            "open": 0,
+            "abandoned": 0,
+            "partial": 0,
+            "missing": 0,
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "total_tokens": 12,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "known_requests": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 3,
+              "cache_read_input_tokens": 3,
+              "cache_write_input_tokens": 3,
+              "reasoning_output_tokens": 3
+            },
+            "costs": {
+              "reported": 3,
+              "estimated": 0,
+              "missing": 0,
+              "partial": 0,
+              "missing_requests": 0,
+              "partial_requests": 0,
+              "currencies": {
+                "EUR": {
+                  "reported": "2.50000000000000000001",
+                  "estimated": "0",
+                  "total": "2.50000000000000000001",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                },
+                "USD": {
+                  "reported": "1E-28",
+                  "estimated": "0",
+                  "total": "1E-28",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "non_monetary": {
+                "provider_credits": {
+                  "reported": "3.141592653589793238462643383",
+                  "estimated": "0",
+                  "total": "3.141592653589793238462643383",
+                  "requests": 1,
+                  "reported_requests": 1,
+                  "estimated_requests": 0
+                }
+              },
+              "complete": true
+            }
+          }
+        ],
+        "coverage": {
+          "accounted_runs": 1,
+          "pre_accounting_turns": 0,
+          "uninstrumented_turns": 0,
+          "legacy_turns": 0,
+          "legacy_requests": 0,
+          "legacy_identity_requests": 0,
+          "legacy_events": 0,
+          "ambiguous_legacy_ids": 0,
+          "uncovered_assistant_turns": 0,
+          "unclosed_runs": 0,
+          "orphan_runs": 0,
+          "malformed_facts": 0,
+          "lost_requests": 0,
+          "full": true
+        },
+        "detail": {
+          "reported_missing_cache_read": 0,
+          "reported_missing_cache_write": 0,
+          "reported_missing_reasoning": 0
+        },
+        "known_fields": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "complete": true,
+        "known_requests": {
+          "input_tokens": 3,
+          "output_tokens": 3,
+          "total_tokens": 3,
+          "cache_read_input_tokens": 3,
+          "cache_write_input_tokens": 3,
+          "reasoning_output_tokens": 3
+        },
+        "detail_complete": {
+          "cache_read_input_tokens": true,
+          "cache_write_input_tokens": true,
+          "reasoning_output_tokens": true
+        },
+        "costs": {
+          "reported": 3,
+          "estimated": 0,
+          "missing": 0,
+          "partial": 0,
+          "missing_requests": 0,
+          "partial_requests": 0,
+          "currencies": {
+            "EUR": {
+              "reported": "2.50000000000000000001",
+              "estimated": "0",
+              "total": "2.50000000000000000001",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            },
+            "USD": {
+              "reported": "1E-28",
+              "estimated": "0",
+              "total": "1E-28",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "non_monetary": {
+            "provider_credits": {
+              "reported": "3.141592653589793238462643383",
+              "estimated": "0",
+              "total": "3.141592653589793238462643383",
+              "requests": 1,
+              "reported_requests": 1,
+              "estimated_requests": 0
+            }
+          },
+          "complete": true
+        },
+        "persist_failures": 0,
+        "persistence": {
+          "persist_failures": 0,
+          "unclosed_runs": 0,
+          "lost_requests": 0,
+          "healthy": true
+        }
+      }
+    }
+  ]
+}

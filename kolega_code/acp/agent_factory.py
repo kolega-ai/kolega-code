@@ -65,6 +65,7 @@ from kolega_code.llm.pricing import PricingResolver
 from kolega_code.mcp.config import MCPServerConfig, load_mcp_config
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest, normalize_permission_mode
 from kolega_code.session.recording import RecordingConnectionManager
+from kolega_code.session.usage import UsagePresentation
 from kolega_code.session.host_extensions import complete_task_list_update
 from kolega_code.tools import ToolError
 from kolega_code.session.composition import (
@@ -292,6 +293,8 @@ class AgentFactory:
             finally:
                 if session.accounting is not None:
                     await session.accounting.aclose()
+                if session.usage_presentation is not None:
+                    await session.usage_presentation.aclose()
                 session.client_mcp_servers.clear()
                 session.config = None
                 self._acp_sessions.pop(session_id, None)
@@ -595,6 +598,22 @@ class AgentFactory:
             accounting.ledger,
             mode="acp",
         )
+        manager = CliConnectionManager()
+        journal = self._store.journal(record.session_id)
+        presentation_recording = RecordingConnectionManager(
+            manager,
+            FileSessionEventStore(journal),
+            session_id=record.session_id,
+            artifact_store=FileArtifactStore(journal),
+        )
+        presentation = UsagePresentation(
+            journal,
+            presentation_recording.broadcast_event,
+            workspace_id=record.workspace_id,
+            thread_id=record.thread_id,
+            live_run_id=lambda: accounting.ledger.run_id,
+        )
+        agent = None
         try:
             await accounting.sink.start()
             accounting.ledger.observer = accounting.sink
@@ -606,9 +625,19 @@ class AgentFactory:
                 permission_mode=permission_mode,
                 question_state=question_state,
                 accounting=accounting,
+                manager=manager,
             )
+            await presentation_recording.prime_elapsed_offset()
+            await presentation.start()
         except BaseException:
-            await accounting.aclose()
+            try:
+                if agent is not None:
+                    await _finish_cleanup(agent.cleanup())
+            finally:
+                try:
+                    await accounting.aclose()
+                finally:
+                    await presentation.aclose()
             raise
         accounting.rebind(agent)
         session = AcpSession(
@@ -620,6 +649,7 @@ class AgentFactory:
             config=config,
             question_state=question_state,
             accounting=accounting,
+            usage_presentation=presentation,
             client_mcp_servers=client_mcp_servers or {},
         )
         self._acp_sessions[record.session_id] = session
@@ -635,11 +665,14 @@ class AgentFactory:
         permission_mode: PermissionMode | None = None,
         question_state: dict[str, Any] | None = None,
         accounting: AcpUsageAccounting | None = None,
+        manager: CliConnectionManager | None = None,
     ) -> tuple[CoderAgent, CliConnectionManager]:
         journal = self._store.journal(record.session_id)
         recorder = self._store.recorder(record.session_id)
         existing = self._acp_sessions.get(record.session_id)
-        manager = existing.manager if existing is not None else CliConnectionManager()
+        manager = (
+            existing.manager if existing is not None else (manager if manager is not None else CliConnectionManager())
+        )
         recording = _AcpRecordingConnectionManager(
             manager,
             FileSessionEventStore(journal),

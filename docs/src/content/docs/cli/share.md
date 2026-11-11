@@ -80,6 +80,7 @@ default — it has nothing to fetch.
 - Live context-window usage, sub-agent activity, and terminal output.
 - A read-only, session-wide task list with pending and completed tasks, a
   completion count, and the source Markdown.
+- Session-wide token and cost snapshots, including coverage and recording health.
 - A theme switcher covering every theme the TUI ships.
 
 Keyboard: <kbd>Space</kbd> plays and pauses, <kbd>←</kbd>/<kbd>→</kbd> seek five
@@ -109,6 +110,28 @@ show a list only where an update was actually captured. Resuming a session may
 record its saved list at that point, but does not invent earlier task-list
 history. Recording and displaying task updates does not add them to the model's
 conversation history or change its prompts.
+
+### Token and cost usage
+
+The read-only usage panel follows recorded session-wide snapshots during live
+viewing, replay and seeking. Opening a worker's thread does not narrow these
+totals. They include recorded requests across earlier turns and context resets;
+the separate context-window gauge is not a lifetime token counter.
+
+Unknown values appear as unavailable, not zero. Partial evidence is labelled as
+a known subtotal, and request coverage is shown separately from persistence
+health. An older recording without usage snapshots does not gain invented
+totals. Resuming it can record a current snapshot from the available evidence,
+but cannot reconstruct missing historical usage.
+
+Costs retain their recorded decimal precision and distinguish reported values
+from estimates. Currencies and non-monetary credits are displayed separately,
+without conversion or a combined balance. Missing costs are not treated as free
+requests. Sessions without full request accounting, including gateway sessions,
+can therefore show incomplete coverage.
+
+These snapshots are presentation data. They do not change model history,
+semantic JSON output, or ATIF exports, and viewers cannot edit them.
 
 ## What is removed before sharing
 

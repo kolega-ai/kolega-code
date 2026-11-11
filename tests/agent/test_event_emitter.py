@@ -107,3 +107,28 @@ async def test_task_list_update_retains_worker_attribution_for_consumer_exclusio
     await emitter.task_list_updated("- [ ] Not the shared list")
 
     assert _emitted(cm).sub_agent_info == SUB_AGENT_INFO
+
+
+@pytest.mark.asyncio
+async def test_usage_update_is_a_root_session_snapshot() -> None:
+    emitter, cm = _emitter(None)
+    usage = {"requests": 0, "costs": {"currencies": {}, "non_monetary": {}}}
+
+    await emitter.usage_updated(usage, source_seq=42)
+
+    event = _emitted(cm)
+    assert event.event_type == "usage_updated"
+    assert event.content == {"scope": "session", "semantics": "snapshot", "source_seq": 42, "usage": usage}
+    assert event.sub_agent_info is None
+    assert event.seq is None
+    assert event.is_streaming is False
+    assert cm.broadcast_event.await_args.args[1:] == ("ws", "th")
+
+
+@pytest.mark.asyncio
+async def test_usage_update_from_a_worker_is_not_emitted() -> None:
+    emitter, cm = _emitter(lambda: SUB_AGENT_INFO)
+
+    await emitter.usage_updated({"requests": 999}, source_seq=42)
+
+    cm.broadcast_event.assert_not_awaited()
