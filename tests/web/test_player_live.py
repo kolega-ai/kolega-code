@@ -13,7 +13,6 @@ from a unit test of either end.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 from pathlib import Path
 from typing import Any
@@ -58,16 +57,15 @@ async def _append(
     await events.append(event)
 
 
-async def _wait_for(page: Any, predicate, *, timeout: float = 10.0) -> Any:
-    """Poll the page until the live stream has delivered. Never assert on a sleep."""
-    deadline = asyncio.get_running_loop().time() + timeout
-    snapshot = await page.evaluate(_SNAPSHOT_JS)
-    while asyncio.get_running_loop().time() < deadline:
-        if predicate(snapshot):
-            return snapshot
-        await asyncio.sleep(0.1)
-        snapshot = await page.evaluate(_SNAPSHOT_JS)
-    return snapshot
+async def _wait_for(page: Any, predicate: str, *, timeout: float = 10.0) -> Any:
+    handle = await page.wait_for_function(
+        f"() => {{ const snapshot = ({_SNAPSHOT_JS})(); return ({predicate})(snapshot) && snapshot; }}",
+        timeout=timeout * 1000,
+    )
+    try:
+        return await handle.json_value()
+    finally:
+        await handle.dispose()
 
 
 @pytest.mark.asyncio
@@ -93,14 +91,16 @@ async def test_a_share_link_follows_the_session_as_it_runs(tmp_path: Path) -> No
             page = await browser.new_page()
             errors: list[str] = []
             page.on("pageerror", lambda error: errors.append(str(error)))
-            await page.goto(url)
+            async with page.expect_websocket() as attached_socket:
+                await page.goto(url)
+            stream = await attached_socket.value
             await page.wait_for_selector(".kc-entry")
 
             # Entries render from the initial HTTP fetch while the live socket is
             # still CONNECTING, so the first rendered state is "detached"; the
             # badge only flips to "following" when the socket opens. Asserting
             # right after the entries appeared raced on loaded CI runners.
-            opened = await _wait_for(page, lambda snap: snap["liveState"] == "following")
+            opened = await _wait_for(page, "snap => snap.liveState === 'following'")
             assert opened["liveState"] == "following", "the player never attached its live stream"
             assert not opened["liveHidden"], "a live session must advertise itself"
 
@@ -112,7 +112,7 @@ async def test_a_share_link_follows_the_session_as_it_runs(tmp_path: Path) -> No
                 events, KnownEventType.ASSISTANT_DELTA, elapsed_ms=300, uuid="as", text="Answered live.", complete=True
             )
 
-            arrived = await _wait_for(page, lambda snap: "Answered live." in snap["text"])
+            arrived = await _wait_for(page, "snap => snap.text.includes('Answered live.')")
             assert "before and after." in arrived["text"], "reasoning must accumulate across the join"
             assert "Answered live." in arrived["text"]
 
@@ -120,21 +120,24 @@ async def test_a_share_link_follows_the_session_as_it_runs(tmp_path: Path) -> No
             await page.eval_on_selector("#scrub", "(el) => { el.value = '0'; el.dispatchEvent(new Event('input')); }")
             behind = await page.evaluate(_SNAPSHOT_JS)
             assert behind["liveState"] == "behind"
-            await _append(
-                events,
-                KnownEventType.ASSISTANT_DELTA,
-                elapsed_ms=400,
-                uuid="as2",
-                text="Missed while reading.",
-                complete=True,
-            )
-            await asyncio.sleep(0.6)
+            async with stream.expect_event(
+                "framereceived", predicate=lambda payload: "Missed while reading." in str(payload)
+            ):
+                await _append(
+                    events,
+                    KnownEventType.ASSISTANT_DELTA,
+                    elapsed_ms=400,
+                    uuid="as2",
+                    text="Missed while reading.",
+                    complete=True,
+                )
+            await page.wait_for_function("() => document.getElementById('meta').textContent.startsWith('5 events')")
             held = await page.evaluate(_SNAPSHOT_JS)
             assert "Missed while reading." not in held["text"], "a viewer reading history must not be yanked forward"
 
             # ...and the button brings them back to the edge.
             await page.click("#live")
-            caught_up = await _wait_for(page, lambda snap: "Missed while reading." in snap["text"])
+            caught_up = await _wait_for(page, "snap => snap.text.includes('Missed while reading.')")
             assert caught_up["liveState"] == "following"
         finally:
             await browser.close()
@@ -313,7 +316,7 @@ async def test_user_images_load_and_fail_safely_in_served_sessions(tmp_path: Pat
                 await page.goto(url)
                 await page.wait_for_selector(".kc-entry")
                 if live:
-                    attached = await _wait_for(page, lambda snap: snap["liveState"] == "following")
+                    attached = await _wait_for(page, "snap => snap.liveState === 'following'")
                     assert attached["liveState"] == "following"
                     for event in later:
                         await events.append(event)
@@ -348,21 +351,19 @@ async def test_user_images_load_and_fail_safely_in_served_sessions(tmp_path: Pat
         await server.stop()
 
 
-async def _wait_for_image(page: Any, *, timeout: float = 10.0):
+async def _wait_for_image(page: Any, *, timeout: float = 10.0) -> Any:
     read = """
     () => {
       const image = document.querySelector('#transcript img.kc-artifact-image');
-      if (!image) return null;
+      if (!image || !image.complete) return false;
       return {src: image.getAttribute('src'), naturalWidth: image.naturalWidth, complete: image.complete};
     }
     """
-    deadline = asyncio.get_running_loop().time() + timeout
-    while asyncio.get_running_loop().time() < deadline:
-        found = await page.evaluate(read)
-        if found and found["complete"]:
-            return found
-        await asyncio.sleep(0.1)
-    return await page.evaluate(read)
+    handle = await page.wait_for_function(read, timeout=timeout * 1000)
+    try:
+        return await handle.json_value()
+    finally:
+        await handle.dispose()
 
 
 @pytest.mark.asyncio
@@ -394,16 +395,16 @@ async def test_losing_the_network_stops_the_badge_claiming_to_be_live(tmp_path: 
             page = await context.new_page()
             await page.goto(url)
             await page.wait_for_selector(".kc-entry")
-            attached = await _wait_for(page, lambda snap: snap["liveState"] == "following")
+            attached = await _wait_for(page, "snap => snap.liveState === 'following'")
             assert attached["liveState"] == "following", "the player never attached its live stream"
 
             await context.set_offline(True)
-            dropped = await _wait_for(page, lambda snapshot: snapshot["liveState"] != "following")
+            dropped = await _wait_for(page, "snap => snap.liveState !== 'following'")
             assert dropped["liveState"] == "detached", "an offline viewer was still told the session was live"
             assert "LIVE" not in dropped["live"]
 
             await context.set_offline(False)
-            back = await _wait_for(page, lambda snapshot: snapshot["liveState"] == "following", timeout=15.0)
+            back = await _wait_for(page, "snap => snap.liveState === 'following'", timeout=15.0)
             assert back["liveState"] == "following", "the viewer never reattached after the network returned"
         finally:
             await browser.close()

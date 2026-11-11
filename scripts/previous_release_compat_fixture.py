@@ -84,6 +84,40 @@ _SNAPSHOT = "compat-original-events.jsonl"
 _IMAGE = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 )
+_SUB_AGENTS = (
+    {
+        "info": {
+            "agent_id": "compat-parent",
+            "agent_name": "general",
+            "parent_agent_id": "root",
+            "parent_tool_call_id": "compat-dispatch-parent",
+            "depth": 1,
+            "background": True,
+            "requested_routing": None,
+            "effective_routing": {"provider": "openai", "model": "compat-child-model", "thinking_effort": "high"},
+        },
+        "command": "printf parent",
+        "output": "parent output\n",
+        "tool_call_id": "compat-parent-shell",
+        "total_tokens": 37,
+    },
+    {
+        "info": {
+            "agent_id": "compat-nested",
+            "agent_name": "general",
+            "parent_agent_id": "compat-parent",
+            "parent_tool_call_id": "compat-dispatch-nested",
+            "depth": 2,
+            "background": False,
+            "requested_routing": {"provider": "openai", "model": "compat-nested-model", "thinking_effort": None},
+            "effective_routing": {"provider": "openai", "model": "compat-nested-model", "thinking_effort": None},
+        },
+        "command": "printf nested",
+        "output": "nested output\n",
+        "tool_call_id": "compat-nested-shell",
+        "total_tokens": 0,
+    },
+)
 
 
 def _producer_inventory() -> set[str]:
@@ -195,6 +229,35 @@ async def _write_ui(store: FileSessionEventStore, session_id: str, image: Artifa
                 artifacts=[image] if phase == KnownEventType.TURN_STARTED else [],
             )
         )
+    for event_type, content in (
+        (KnownEventType.TERMINAL_COMMAND, {"command": "printf root", "tool_call_id": "compat-root-shell"}),
+        (KnownEventType.TERMINAL_OUTPUT, {"output": "root output\n", "tool_call_id": "compat-root-shell"}),
+    ):
+        await store.append(
+            AgentEvent(event_type=event_type, sender="compat-fixture", session_id=session_id, content=content)
+        )
+    for worker in _SUB_AGENTS:
+        for event_type, content in (
+            (KnownEventType.CHAT_MESSAGE, {"status": "GENERATING"}),
+            (
+                KnownEventType.TERMINAL_COMMAND,
+                {"command": worker["command"], "tool_call_id": worker["tool_call_id"]},
+            ),
+            (
+                KnownEventType.TERMINAL_OUTPUT,
+                {"output": worker["output"], "tool_call_id": worker["tool_call_id"]},
+            ),
+            (KnownEventType.CHAT_MESSAGE, {"status": "STOPPED", "total_tokens": worker["total_tokens"]}),
+        ):
+            await store.append(
+                AgentEvent(
+                    event_type=event_type,
+                    sender="compat-fixture",
+                    session_id=session_id,
+                    sub_agent_info=worker["info"],
+                    content=content,
+                )
+            )
 
 
 def _message(role: str, text: str) -> Message:
@@ -285,6 +348,7 @@ def create_fixture(root: Path) -> dict:
             "original_types": sorted({event.event_type for event in events}),
             "original_history": history,
             "image_sha256": hashlib.sha256(_IMAGE).hexdigest(),
+            "sub_agents": copy.deepcopy(_SUB_AGENTS),
         }
     finally:
         sessions.release_session_locks()
@@ -329,9 +393,33 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
         assert ref.sha256 == manifest["image_sha256"] == hashlib.sha256(_IMAGE).hexdigest()
         assert ref.purpose == ArtifactPurpose.IMAGE and ref.media_type == "image/png"
         assert asyncio.run(FileArtifactStore(sessions.journal(session_id)).open(ref)) == _IMAGE
-    image_rows = [item for item in replay(ui_events).conversation if item.kind == "user"]
+    state = replay(ui_events)
+    image_rows = [item for item in state.conversation if item.kind == "user"]
     assert [(item.text, item.image_count) for item in image_rows] == [("current-release user", 1), ("", 1)]
     assert all([ref.sha256 for ref in item.artifacts] == [manifest["image_sha256"]] for item in image_rows)
+    assert state.terminal == "$ printf root\nroot output\n", "Child terminal output escaped into the root terminal"
+    for worker in manifest["sub_agents"]:
+        info = worker["info"]
+        activity = state.to_dict()["sub_agents"].get(info["agent_id"])
+        assert activity is not None, "Previous writer lost a sub-agent activity"
+        assert all(activity[key] == value for key, value in info.items() if key != "agent_name"), (
+            "Previous writer lost sub-agent linkage or routing"
+        )
+        assert activity["status"] == "completed" and activity["total_tokens"] == worker["total_tokens"], (
+            "Previous writer lost sub-agent completion or token totals"
+        )
+        assert activity["terminal"] == f"$ {worker['command']}\n{worker['output']}", (
+            "Previous writer lost attributed sub-agent terminal output"
+        )
+        terminal_events = [
+            event
+            for event in ui_events
+            if event.sub_agent_info == info
+            and event.event_type in {KnownEventType.TERMINAL_COMMAND, KnownEventType.TERMINAL_OUTPUT}
+        ]
+        assert len(terminal_events) == 2 and all(
+            event.content.get("tool_call_id") == worker["tool_call_id"] for event in terminal_events
+        ), "Previous writer lost a child command's tool-call identity"
     history = sessions.load(session_id).history
     assert history[: len(manifest["original_history"])] == manifest["original_history"]
     appended_history = history[len(manifest["original_history"]) :]

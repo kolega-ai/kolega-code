@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import time
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
@@ -13,8 +14,9 @@ from typing import Any, Optional
 from kolega_code.permissions import PermissionMode, PermissionRequest, PermissionRuleOption
 
 from ..provider_registry import UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER
-from ..theme import Color
+from ..theme import Color, TOOL_FULL_CONTENT_CAP_CHARS
 from .constants import BUILD_INTERACTION_MODE
+from .terminal_display import TerminalDisplayNormalizer
 
 
 class TurnState(str, Enum):
@@ -116,6 +118,41 @@ class ConversationEntry:
         if self.stream_parts:
             self.content += "".join(self.stream_parts)
             self.stream_parts.clear()
+        return self.content
+
+
+@dataclass
+class SubAgentTerminalEntry(ConversationEntry):
+    output_limit: int = TOOL_FULL_CONTENT_CAP_CHARS
+    output_parts: deque[str] = field(default_factory=deque, compare=False, repr=False)
+    output_chars: int = field(default=0, compare=False, repr=False)
+    output_head_offset: int = field(default=0, compare=False, repr=False)
+    output_dirty: bool = field(default=False, compare=False, repr=False)
+    normalizer: TerminalDisplayNormalizer = field(default_factory=TerminalDisplayNormalizer, compare=False, repr=False)
+
+    def append_output(self, text: str) -> None:
+        text = self.normalizer.feed(text)
+        if not text:
+            return
+        text = text[-self.output_limit :]
+        self.output_parts.append(text)
+        self.output_chars += len(text)
+        while self.output_chars > self.output_limit:
+            excess = self.output_chars - self.output_limit
+            remaining = len(self.output_parts[0]) - self.output_head_offset
+            if remaining > excess:
+                self.output_head_offset += excess
+                self.output_chars -= excess
+            else:
+                self.output_parts.popleft()
+                self.output_head_offset = 0
+                self.output_chars -= remaining
+        self.output_dirty = True
+
+    def materialize(self) -> str:
+        if self.output_dirty:
+            self.content = self.full_content = "".join(self.output_parts)[self.output_head_offset :]
+            self.output_dirty = False
         return self.content
 
 
@@ -239,6 +276,7 @@ class SubAgentActivity:
     # (not in the top-level conversation) so the main transcript stays an append-only summary.
     steps: list[ConversationEntry] = field(default_factory=list)
     tool_steps: dict[str, ConversationEntry] = field(default_factory=dict)  # tool_call_id/name -> step
+    terminal_steps: dict[str, SubAgentTerminalEntry] = field(default_factory=dict)
     stream_steps: dict[str, ConversationEntry] = field(default_factory=dict)  # chunk uuid -> step
     pending_edit_previews: dict[str, dict] = field(default_factory=dict)  # tool_call_id -> preview payload
     tokens: Optional[int] = None  # cumulative tokens consumed, from lifecycle events
@@ -248,6 +286,8 @@ class SubAgentActivity:
     context_input_tokens: Optional[int] = None
     context_max_tokens: Optional[int] = None
     depth: int = 1
+    parent_agent_id: Optional[str] = None
+    parent_tool_call_id: Optional[str] = None
     routing: Optional[SubAgentRouting] = None  # effective model route, None when unreported
     current_action: str = ""  # live "now:" action while running
     workflow_run_id: str = ""  # set when dispatched by a workflow, for card rollup

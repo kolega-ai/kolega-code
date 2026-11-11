@@ -14,6 +14,7 @@ import json
 import time
 import uuid
 from collections import Counter
+from copy import copy, deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -207,6 +208,7 @@ class WorkflowTool(BaseTool):
         # the broadcast queue ahead of any phase/log the runtime fires — those go
         # through fire-and-forget _emit_soon and can't run until we next await.
         emit = self._make_emit(run_id, journal)
+        dispatch = self._make_dispatch(run_id, journal, accounting)
         await emit(
             "workflow_start",
             {
@@ -219,7 +221,7 @@ class WorkflowTool(BaseTool):
 
         read_only = self._workflow_is_read_only()
         runtime = WorkflowRuntime(
-            dispatch=self._make_dispatch(run_id, journal, accounting),
+            dispatch=dispatch,
             emit=emit,
             journal=journal,
             budget=budget,
@@ -394,6 +396,10 @@ class WorkflowTool(BaseTool):
         # commands) but cannot edit files, since read_only agents have no
         # file-edit tools.
         read_only = self._workflow_is_read_only()
+        agent_tool = copy(self._agent_tool)
+        agent_tool.caller = copy(self.caller)
+        agent_tool.caller.sub_agent_context = deepcopy(getattr(self.caller, "sub_agent_context", None))
+        parent_depth = agent_tool._parent_depth(agent_tool._launch_parent_context())
 
         async def dispatch(spec: AgentRunSpec) -> AgentRunResult:
             reservation = get_current_agent_reservation()
@@ -441,7 +447,7 @@ class WorkflowTool(BaseTool):
                 "phase": spec.phase,
                 "label": spec.label,
                 "call_index": spec.call_index,
-                "depth": 1,
+                "depth": parent_depth + 1,
                 "max_agent_depth": spec.max_agent_depth,
                 "requested_routing": requested_routing,
                 "effective_routing": effective_routing,
@@ -474,16 +480,16 @@ class WorkflowTool(BaseTool):
                     "artifact_metadata": artifact_metadata,
                 }
                 if agent_name == "browser-agent":
-                    browser_manager = self._agent_tool._resolve_browser_manager(spec.browser_target)
+                    browser_manager = agent_tool._resolve_browser_manager(spec.browser_target)
                     async with browser_manager_agent_lock(browser_manager):
-                        recap, tokens, structured = await self._agent_tool.dispatch_workflow_agent(
+                        recap, tokens, structured = await agent_tool.dispatch_workflow_agent(
                             agent_class,
                             spec.prompt,
                             browser_manager_override=browser_manager,
                             **dispatch_kwargs,
                         )
                 else:
-                    recap, tokens, structured = await self._agent_tool.dispatch_workflow_agent(
+                    recap, tokens, structured = await agent_tool.dispatch_workflow_agent(
                         agent_class,
                         spec.prompt,
                         **dispatch_kwargs,

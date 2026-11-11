@@ -1222,3 +1222,217 @@ async def test_background_browser_vision_validation_precedes_admission(
         await agent_tool.dispatch_browser_agent("work", background=True)
     assert not manager.jobs
     assert mock_caller.sub_agent_recorder.start_conversation.await_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("context", "is_child", "expected_parent", "expected_depth"),
+    [
+        (None, False, "root", 1),
+        ({}, False, "root", 1),
+        ({"agent_id": ""}, False, "root", 1),
+        ({"agent_id": "  "}, False, "root", 1),
+        ({"agent_id": 123}, False, "root", 1),
+        (None, True, "root", 2),
+        ({"agent_id": "parent", "depth": 4}, True, "parent", 5),
+        ({"agent_id": "parent", "depth": True}, True, "parent", 2),
+    ],
+)
+async def test_ordinary_child_emits_real_parent_linkage(
+    agent_tool: AgentTool,
+    mock_caller: Mock,
+    mock_connection_manager: AsyncMock,
+    background_dispatch: Any,
+    context: Any,
+    is_child: bool,
+    expected_parent: str,
+    expected_depth: int,
+) -> None:
+    _, _, release, instances = background_dispatch
+    mock_caller.sub_agent_context = context
+    mock_caller.sub_agent = is_child
+    mock_caller.current_tool_execution_id = "execution-id"
+    mock_caller.current_tool_call_id = "wire-id"
+    release.set()
+
+    await agent_tool.dispatch_general_agent("ordinary child")
+
+    child = instances[0]
+    assert child.sub_agent_context["parent_agent_id"] == expected_parent
+    assert child.sub_agent_context["depth"] == expected_depth
+    assert child.sub_agent_context["parent_tool_call_id"] == "execution-id"
+    assert child.sub_agent_context["background"] is False
+    assert child.sub_agent_context["effective_routing"]["model"] == "test-model"
+    events = [
+        call.args[0] for call in mock_connection_manager.broadcast_event.call_args_list if call.args[0].sub_agent_info
+    ]
+    assert [event.content["status"] for event in events] == ["GENERATING", "STOPPED"]
+    assert all(event.sub_agent_info == child.sub_agent_context for event in events)
+    assert events[-1].content["total_tokens"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("context", "expected_parent"),
+    [(None, "root"), ({"agent_id": ""}, "root"), ({"agent_id": "root-launch", "depth": 0}, "root-launch")],
+)
+async def test_background_child_captures_parent_linkage_before_queue(
+    agent_tool: AgentTool,
+    mock_caller: Mock,
+    mock_connection_manager: AsyncMock,
+    background_dispatch: Any,
+    context: Any,
+    expected_parent: str,
+) -> None:
+    manager, _, release, instances = background_dispatch
+    manager.start.clear()
+    mock_caller.sub_agent_context = context
+    mock_caller.current_tool_execution_id = "queued-execution"
+    receipt = json.loads(await agent_tool.dispatch_general_agent("queued child", background=True))
+    if isinstance(context, dict):
+        context.update(agent_id="wrong-parent", depth=99)
+    mock_caller.sub_agent_context = {"agent_id": "other-turn", "depth": 8}
+    mock_caller.current_tool_execution_id = "later-execution"
+    release.set()
+    manager.start.set()
+    await manager.settle()
+
+    info = instances[0].sub_agent_context
+    assert info["parent_agent_id"] == expected_parent
+    assert info["depth"] == 1
+    assert info["parent_tool_call_id"] == "queued-execution"
+    assert info["background"] is True
+    assert info["agent_id"] == receipt["job_id"]
+    statuses = [
+        call.args[0] for call in mock_connection_manager.broadcast_event.call_args_list if call.args[0].sub_agent_info
+    ]
+    assert len(statuses) == 2
+    assert all(event.sub_agent_info == info for event in statuses)
+
+
+@pytest.mark.asyncio
+async def test_parallel_foreground_dispatch_snapshots_parent_before_recorder_yield(
+    agent_tool: AgentTool, mock_caller: Mock, mock_connection_manager: AsyncMock, background_dispatch: Any
+) -> None:
+    _, _, release, instances = background_dispatch
+    admitted = asyncio.Event()
+    resume = asyncio.Event()
+    release.set()
+    context = {"agent_id": "first-parent", "depth": 3}
+    mock_caller.sub_agent_context = context
+    mock_caller.current_tool_execution_id = "first-execution"
+
+    async def start(payload: dict) -> str:
+        if payload["initial_task"] == "first":
+            admitted.set()
+            await resume.wait()
+        return payload["initial_task"]
+
+    mock_caller.sub_agent_recorder.start_conversation.side_effect = start
+    first = asyncio.create_task(agent_tool.dispatch_general_agent("first"))
+    await asyncio.wait_for(admitted.wait(), timeout=10)
+    context.update(agent_id="second-parent", depth=6)
+    mock_caller.current_tool_execution_id = "second-execution"
+    second = asyncio.create_task(agent_tool.dispatch_general_agent("second"))
+    try:
+        await asyncio.wait_for(second, timeout=10)
+    finally:
+        resume.set()
+        await asyncio.wait_for(first, timeout=10)
+
+    by_task = {child.sub_agent_context["task_full"]: child.sub_agent_context for child in instances}
+    assert by_task["first"]["parent_agent_id"] == "first-parent"
+    assert by_task["first"]["depth"] == 4
+    assert by_task["first"]["parent_tool_call_id"] == "first-execution"
+    assert by_task["second"]["parent_agent_id"] == "second-parent"
+    assert by_task["second"]["depth"] == 7
+    assert by_task["second"]["parent_tool_call_id"] == "second-execution"
+    assert by_task["first"]["agent_id"] != by_task["second"]["agent_id"]
+    for call in mock_connection_manager.broadcast_event.call_args_list:
+        info = call.args[0].sub_agent_info
+        if info:
+            assert info == by_task[info["task_full"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("context", "expected_parent", "expected_depth"),
+    [
+        (None, "root", 1),
+        ({"agent_id": ""}, "root", 1),
+        ({"agent_id": "workflow-parent", "depth": 4}, "workflow-parent", 5),
+    ],
+)
+async def test_workflow_child_linkage_is_foreground_and_not_overridden_by_extra(
+    agent_tool: AgentTool,
+    mock_caller: Mock,
+    mock_connection_manager: AsyncMock,
+    context: Any,
+    expected_parent: str,
+    expected_depth: int,
+) -> None:
+    mock_caller.sub_agent_context = context
+    mock_caller.sub_agent = context is not None and context.get("depth") == 4
+    mock_caller.current_tool_execution_id = "workflow-execution"
+    mock_caller.session_recorder = None
+    entered = asyncio.Event()
+    resume = asyncio.Event()
+    routing = {"provider": "supplied-provider", "model": "supplied-model", "effort": None}
+    extra = {
+        "workflow_run_id": "workflow-run",
+        "depth": 1,
+        "background": True,
+        "parent_agent_id": "forged",
+        "effective_routing": routing,
+        "requested_routing": None,
+    }
+
+    class WorkflowChild(MockAgent):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.total_tokens_used: int = 37
+
+        async def process_message_stream(self, task: str) -> Any:
+            yield {"type": "notice", "content": "workflow message", "complete": True}
+
+    async def start(payload: dict) -> str:
+        entered.set()
+        await resume.wait()
+        return "workflow-conversation"
+
+    mock_caller.sub_agent_recorder.start_conversation.side_effect = start
+    accounting = WorkflowRunAccounting(Budget(), 10)
+    task = asyncio.create_task(
+        agent_tool.dispatch_workflow_agent(
+            WorkflowChild,
+            "workflow child",
+            workflow_accounting=accounting,
+            reservation=accounting.reserve_agent(),
+            sub_agent_info_extra=extra,
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=10)
+    if isinstance(context, dict):
+        context.update(agent_id="late-parent", depth=90)
+    mock_caller.current_tool_execution_id = "late-execution"
+    routing["model"] = "late-model"
+    resume.set()
+    result, tokens, structured = await asyncio.wait_for(task, timeout=10)
+
+    assert result == "Mock agent completed"
+    assert tokens == 37
+    assert structured is None
+    events = [
+        call.args[0] for call in mock_connection_manager.broadcast_event.call_args_list if call.args[0].sub_agent_info
+    ]
+    assert len(events) == 3
+    for event in events:
+        info = event.sub_agent_info
+        assert info["parent_agent_id"] == expected_parent
+        assert info["depth"] == expected_depth
+        assert info["parent_tool_call_id"] == "workflow-execution"
+        assert info["background"] is False
+        assert info["workflow_run_id"] == "workflow-run"
+        assert info["effective_routing"] == {"provider": "supplied-provider", "model": "supplied-model", "effort": None}
+        assert info["requested_routing"] is None
+    assert events[-1].content["total_tokens"] == 37

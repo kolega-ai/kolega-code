@@ -1596,6 +1596,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
 
     def _render_event(self, event: AgentEvent) -> None:
         self._diag_tee(event)
+        if event.sub_agent_info:
+            self._ensure_sub_agent_activity(event)
         if self._consume_non_rendered_event(event):
             return
         if event.event_type in _TERMINAL_RENDER_EVENTS:
@@ -1657,6 +1659,14 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 break
 
     def _render_terminal_event(self, event: AgentEvent) -> None:
+        if event.sub_agent_info and event.event_type in (
+            KnownEventType.TERMINAL_COMMAND,
+            KnownEventType.TERMINAL_OUTPUT,
+        ):
+            self._render_sub_agent_terminal(event)
+            if event.event_type == KnownEventType.TERMINAL_OUTPUT:
+                self._mark_session_diff_dirty()
+            return
         if event.event_type == KnownEventType.LOG_MESSAGE:
             if self.show_logs:
                 level = str(event.content.get("level", "info"))

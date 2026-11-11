@@ -156,6 +156,16 @@ function cacheDom() {
   ]) {
     dom[id] = document.getElementById(id);
   }
+  dom.terminalOwner = document.createElement("div");
+  dom.terminalOwner.id = "terminalOwner";
+  dom.terminalOwner.className = "kc-terminal-owner";
+  dom.terminalTruncated = document.createElement("div");
+  dom.terminalTruncated.id = "terminalTruncated";
+  dom.terminalTruncated.className = "kc-terminal-truncated";
+  dom.terminalTruncated.textContent = "Older terminal output truncated.";
+  dom.terminal.before(dom.terminalOwner, dom.terminalTruncated);
+  dom.terminal.setAttribute("aria-labelledby", "terminalOwner");
+  renderTerminal();
 }
 
 async function fetchJson(path) {
@@ -247,6 +257,7 @@ function applyCount(target) {
   for (let index = appliedCount; index < target; index += 1) {
     fold(state, events[index]);
   }
+  mergedRows = null;
   appliedCount = target;
   render();
 }
@@ -564,7 +575,11 @@ function wireControls() {
     focusAgent(focusedAgent === row.dataset.agentKey ? null : row.dataset.agentKey);
   });
   document.addEventListener("keydown", (event) => {
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
+    if (
+      event.defaultPrevented ||
+      (event.target instanceof Element &&
+        event.target.closest("button, a, input, select, textarea, [contenteditable], [role='button']"))
+    ) return;
     if (event.code === "Space") {
       event.preventDefault();
       setFollowing(false);
@@ -633,8 +648,8 @@ function activitySeq(activity) {
  * card reports the agent and whether it is still going, and clicking it shows
  * that agent's thread on its own.
  *
- * A card sorts to its agent's first step and never moves afterwards, so the
- * list stays append-only and the render diff below can stay index-based.
+ * An agent first seen through metadata or terminal output may gain its first
+ * transcript step later, so the merge is rebuilt after each fold batch.
  */
 function transcriptRows() {
   if (mergedRows && mergedRows.length === transcriptSize()) return mergedRows;
@@ -672,6 +687,7 @@ function entrySnapshot(row) {
       status: row.agent.status,
       notice: row.agent.notice,
       steps: row.agent.steps.length,
+      metadata: agentMetadataSnapshot(row.agent),
     };
   }
   return {
@@ -696,7 +712,8 @@ function entryChanged(previous, row) {
       previous.agent !== row.agent ||
       previous.status !== row.agent.status ||
       previous.notice !== row.agent.notice ||
-      previous.steps !== row.agent.steps.length
+      previous.steps !== row.agent.steps.length ||
+      previous.metadata !== agentMetadataSnapshot(row.agent)
     );
   }
   const item = row.item;
@@ -737,6 +754,11 @@ function focusAgent(key) {
   focusedAgent = key;
   redrawTranscript();
   renderSubAgents();
+  renderTerminal();
+  if (!document.activeElement || document.activeElement === document.body) {
+    if (key === null) dom.subAgents.querySelector(".kc-sub-agent")?.focus({ preventScroll: true });
+    else document.querySelector(".kc-agent-back")?.focus({ preventScroll: true });
+  }
   if (key === null) return;
   // The list scrolls, so the selected agent can sit outside it after a redraw —
   // leaving whichever row happens to be under the cursor looking like the
@@ -762,65 +784,52 @@ function redrawTranscript() {
  * conversation and the only clue is a highlight in the rail.
  */
 function renderAgentHeader() {
-  const existing = document.getElementById("agentHeader");
+  let header = document.getElementById("agentHeader");
   const activity = focusedAgent === null ? null : state.subAgents.get(focusedAgent);
-  if (!activity) {
-    if (existing) existing.remove();
+  if (focusedAgent === null) {
+    header?.remove();
     return;
   }
-  if (existing) {
-    // Rebuilding every frame would drop keyboard focus from the back button, so
-    // only the part that actually changes is written while an agent runs.
-    const badge = existing.querySelector(".kc-tool-status");
-    if (badge) {
-      badge.dataset.status = activity.status === "running" ? "running" : activity.status;
-      badge.textContent = activity.status || "running";
-    }
-    let notice = existing.querySelector(".kc-agent-header-notice");
-    if (!activity.notice) {
-      notice?.remove();
-    } else {
-      if (!notice) {
-        notice = document.createElement("span");
-        notice.className = "kc-agent-header-notice";
-        existing.append(notice);
-      }
-      notice.textContent = activity.notice;
-    }
-    return;
-  }
-
-  const header = document.createElement("div");
-  header.className = "kc-agent-header";
-  header.id = "agentHeader";
-
-  const back = document.createElement("button");
-  back.type = "button";
-  back.className = "kc-agent-back";
-  back.textContent = "← Back to the session";
-  back.addEventListener("click", () => focusAgent(null));
-  header.append(back);
-
-  const title = document.createElement("div");
-  title.className = "kc-agent-header-title";
-  title.textContent = agentDisplayName(activity);
-  if (activity.task) title.title = activity.task;
-  header.append(title);
-
-  const status = document.createElement("span");
-  status.className = "kc-tool-status";
-  status.dataset.status = activity.status === "running" ? "running" : activity.status;
-  status.textContent = activity.status || "running";
-  header.append(status);
-
-  if (activity.notice) {
+  if (!header) {
+    header = document.createElement("div");
+    header.className = "kc-agent-header";
+    header.id = "agentHeader";
+    const back = document.createElement("button");
+    back.type = "button";
+    back.className = "kc-agent-back";
+    back.textContent = "← Back to the session";
+    back.addEventListener("click", () => focusAgent(null));
+    const title = document.createElement("div");
+    title.className = "kc-agent-header-title";
+    const status = document.createElement("span");
+    status.className = "kc-tool-status";
     const notice = document.createElement("span");
     notice.className = "kc-agent-header-notice";
-    notice.textContent = activity.notice;
-    header.append(notice);
+    const details = document.createElement("div");
+    details.className = "kc-agent-details";
+    header.append(back, title, status, notice, details);
+    dom.transcript.parentElement?.prepend(header);
   }
-
-  dom.transcript.parentElement?.prepend(header);
+  const title = header.querySelector(".kc-agent-header-title");
+  title.textContent = activity ? agentDisplayName(activity) : `${focusedAgent} (not present at this position)`;
+  title.title = activity?.task || "";
+  const status = header.querySelector(".kc-tool-status");
+  status.dataset.status = activity?.status || "unavailable";
+  status.textContent = activity?.status || "unavailable";
+  const notice = header.querySelector(".kc-agent-header-notice");
+  notice.textContent = activity?.notice || "";
+  notice.hidden = !activity?.notice;
+  const details = header.querySelector(".kc-agent-details");
+  const metadata = activity ? agentMetadataSnapshot(activity) : "";
+  if (details.dataset.snapshot !== metadata) {
+    const hadFocus = details.contains(document.activeElement);
+    details.replaceChildren();
+    if (activity) fillAgentDetails(details, activity, true);
+    details.dataset.snapshot = metadata;
+    if (hadFocus) {
+      (details.querySelector("button") || header.querySelector(".kc-agent-back")).focus({ preventScroll: true });
+    }
+  }
 }
 
 function renderTranscript() {
@@ -831,6 +840,7 @@ function renderTranscript() {
   // entry left those frozen mid-stream, spinner and all.
   const rows = visibleRows();
   renderAgentHeader();
+  const active = dom.transcript.contains(document.activeElement) ? document.activeElement : null;
   if (renderedCount > rows.length) {
     dom.transcript.replaceChildren();
     renderedCount = 0;
@@ -847,6 +857,12 @@ function renderTranscript() {
     renderedEntries[index] = entrySnapshot(rows[index]);
   }
   renderedCount = rows.length;
+  if (active && !active.isConnected) {
+    const selector = active.dataset.toolKey
+      ? `[data-tool-key="${CSS.escape(active.dataset.toolKey)}"]`
+      : `[data-agent-key="${CSS.escape(active.dataset.agentKey)}"]`;
+    dom.transcript.querySelector(selector)?.focus({ preventScroll: true });
+  }
   const atEnd = dom.transcript.parentElement;
   if (atEnd) atEnd.scrollTop = atEnd.scrollHeight;
 }
@@ -854,6 +870,77 @@ function renderTranscript() {
 /** The label is what tells one agent of a fan-out from the next; they share a name. */
 function agentDisplayName(activity) {
   return activity.label || activity.name || activity.key;
+}
+
+function agentParent(activity) {
+  const id = activity.parentAgentId;
+  if (id === null || id === undefined || id === "") return { text: "unknown", target: null };
+  if (id === "root") return { text: "root", target: null, root: true };
+  const byId = new Map();
+  for (const agent of state.subAgents.values()) {
+    if (agent.agentId) byId.set(agent.agentId, agent);
+  }
+  const parent = byId.get(id);
+  if (!parent) return { text: `${id} (unavailable)`, target: null };
+  const visited = new Set(activity.agentId ? [activity.agentId] : []);
+  let ancestor = parent;
+  let cyclic = false;
+  while (ancestor) {
+    if (visited.has(ancestor.agentId)) {
+      cyclic = true;
+      break;
+    }
+    visited.add(ancestor.agentId);
+    ancestor = byId.get(ancestor.parentAgentId);
+  }
+  const label = agentDisplayName(parent);
+  return {
+    text: `${id}${label !== id ? ` · ${label}` : ""}${cyclic ? " (cycle)" : ""}`,
+    target: agentKeyOf(parent),
+  };
+}
+
+function routeText(route) {
+  if (route === null || route === undefined) return "unknown";
+  return typeof route === "string" ? route : JSON.stringify(route);
+}
+
+function agentFacts(activity) {
+  return [
+    ["Agent", activity.agentId ?? "unknown"],
+    ["Parent", agentParent(activity).text],
+    ["Parent tool call", activity.parentToolCallId ?? "unknown"],
+    ["Depth", activity.depth ?? "unknown"],
+    ["Background", activity.background === true ? "yes" : activity.background === false ? "no" : "unknown"],
+    ["Requested routing", routeText(activity.requestedRouting)],
+    ["Effective routing", routeText(activity.effectiveRouting)],
+    ["Total tokens", activity.totalTokens === null || activity.totalTokens === undefined
+      ? "unknown" : activity.totalTokens.toLocaleString()],
+  ];
+}
+
+function agentMetadataSnapshot(activity) {
+  return JSON.stringify([
+    activity.key, activity.name, activity.label, activity.task, activity.phase, activity.workflowRunId, agentFacts(activity),
+  ]);
+}
+
+function fillAgentDetails(container, activity, interactive = false) {
+  for (const [label, value] of agentFacts(activity)) {
+    const fact = document.createElement("div");
+    fact.className = "kc-agent-fact";
+    const parent = label === "Parent" && interactive ? agentParent(activity) : null;
+    fact.textContent = `${label}: `;
+    const content = document.createElement(parent && (parent.root || parent.target !== null) ? "button" : "span");
+    content.textContent = String(value);
+    if (content instanceof HTMLButtonElement) {
+      content.type = "button";
+      content.className = "kc-agent-parent";
+      content.addEventListener("click", () => focusAgent(parent.target));
+    }
+    fact.append(content);
+    container.append(fact);
+  }
 }
 
 /**
@@ -915,6 +1002,10 @@ function renderAgentCard(activity) {
     notice.textContent = activity.notice;
     card.append(notice);
   }
+  const details = document.createElement("div");
+  details.className = "kc-agent-details";
+  fillAgentDetails(details, activity);
+  card.append(details);
   row.append(card);
   return row;
 }
@@ -1113,10 +1204,26 @@ function advanceSpinner() {
 function renderRail() {
   renderGauge();
   renderSubAgents();
-  dom.terminal.textContent = state.terminal || "";
-  if (!state.terminal) dom.terminal.innerHTML = '<span class="kc-empty">No terminal output yet.</span>';
+  renderTerminal();
   dom.status.textContent = state.status || "";
   dom.truncated.hidden = !state.recordingTruncated;
+}
+
+function renderTerminal() {
+  const activity = focusedAgent === null ? null : state.subAgents.get(focusedAgent);
+  const owner = focusedAgent === null ? "root" : activity?.agentId || focusedAgent;
+  const label = activity ? agentDisplayName(activity) : owner;
+  dom.terminalOwner.textContent = `Owner: ${label === owner ? owner : `${label} (${owner})`}`;
+  dom.terminalOwner.dataset.owner = owner;
+  const terminal = focusedAgent === null ? state.terminal : activity?.terminal;
+  dom.terminalTruncated.hidden = !(focusedAgent === null ? state.terminalTruncated : activity?.terminalTruncated);
+  dom.terminal.textContent = terminal || "";
+  if (!terminal) {
+    const empty = document.createElement("span");
+    empty.className = "kc-empty";
+    empty.textContent = "No terminal output yet.";
+    dom.terminal.append(empty);
+  }
 }
 
 function renderGauge() {
@@ -1145,31 +1252,42 @@ function renderSubAgents() {
   const entries = Array.from(state.subAgents.values());
   if (!entries.length) {
     dom.subAgents.innerHTML = '<p class="kc-empty">No sub-agents dispatched.</p>';
+    if (focusedAgent !== null && document.activeElement === document.body) {
+      document.querySelector(".kc-agent-back")?.focus({ preventScroll: true });
+    }
     return;
   }
-  dom.subAgents.replaceChildren();
-
-  // A fan-out puts a dozen delegated threads into one merged transcript, which
-  // reads as interleaved noise. Clicking an agent narrows the transcript to just
-  // that agent's work, which is the only way to follow one of them.
-  const all = document.createElement("button");
-  all.type = "button";
-  all.className = "kc-sub-agent-all";
+  const active = dom.subAgents.contains(document.activeElement) ? document.activeElement : null;
+  let all = dom.subAgents.querySelector(".kc-sub-agent-all");
+  if (!all) {
+    dom.subAgents.replaceChildren();
+    all = document.createElement("button");
+    all.type = "button";
+    all.className = "kc-sub-agent-all";
+    all.addEventListener("click", () => focusAgent(null));
+    dom.subAgents.append(all);
+  }
   all.textContent = focusedAgent === null ? `All agents (${entries.length})` : "← Back to the whole session";
   all.disabled = focusedAgent === null;
-  all.addEventListener("click", () => focusAgent(null));
-  dom.subAgents.append(all);
-
+  const retained = new Set([all]);
   for (const activity of entries) {
     const key = agentKeyOf(activity);
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "kc-sub-agent";
-    row.dataset.agentKey = key;
+    let row = dom.subAgents.querySelector(`[data-agent-key="${CSS.escape(key)}"]`);
+    if (!row) {
+      row = document.createElement("button");
+      row.type = "button";
+      row.className = "kc-sub-agent";
+      row.dataset.agentKey = key;
+      dom.subAgents.append(row);
+    }
+    retained.add(row);
     row.dataset.status = activity.status || "running";
-    if (focusedAgent === key) row.dataset.focused = "true";
+    row.dataset.focused = String(focusedAgent === key);
     row.setAttribute("aria-pressed", focusedAgent === key ? "true" : "false");
-
+    const snapshot = JSON.stringify([agentMetadataSnapshot(activity), activity.lastText, activity.notice]);
+    if (row.dataset.snapshot === snapshot) continue;
+    row.dataset.snapshot = snapshot;
+    row.replaceChildren();
     const name = document.createElement("div");
     name.className = "kc-sub-agent-name";
     // A workflow labels each agent; without it every agent in a fan-out is
@@ -1191,7 +1309,14 @@ function renderSubAgents() {
       notice.textContent = activity.notice;
       row.append(notice);
     }
-    dom.subAgents.append(row);
+  }
+  for (const child of Array.from(dom.subAgents.children)) {
+    if (!retained.has(child)) child.remove();
+  }
+  if (active?.isConnected && document.activeElement !== active && !active.disabled) {
+    active.focus({ preventScroll: true });
+  } else if (active && !active.isConnected) {
+    document.querySelector(".kc-agent-back")?.focus({ preventScroll: true });
   }
 }
 

@@ -101,8 +101,31 @@ class ConversationItem:
 ConversationItem.text = _StreamingText()  # type: ignore[assignment]
 
 
+@dataclass(kw_only=True)
+class _TerminalBuffer:
+    terminal_truncated: bool = False
+    _terminal_parts: deque[str] = field(default_factory=deque, repr=False, compare=False)
+    _terminal_offset: int = field(default=0, repr=False, compare=False)
+    _terminal_chars: int = field(default=0, repr=False, compare=False)
+    _terminal_text: Optional[str] = field(default=None, repr=False, compare=False)
+
+    @property
+    def terminal(self) -> str:
+        if self._terminal_text is None:
+            text = "".join(self._terminal_parts)
+            self._terminal_text = text[self._terminal_offset :] if self._terminal_offset else text
+        return self._terminal_text
+
+    @terminal.setter
+    def terminal(self, value: str) -> None:
+        self._terminal_parts = deque([value] if value else ())
+        self._terminal_offset = 0
+        self._terminal_chars = len(value)
+        self._terminal_text = value
+
+
 @dataclass
-class SubAgentActivity:
+class SubAgentActivity(_TerminalBuffer):
     """Live state of one delegated agent."""
 
     key: str
@@ -121,6 +144,14 @@ class SubAgentActivity:
     phase: str = ""
     #: Groups the agents belonging to one ``run_workflow`` call.
     workflow_run_id: str = ""
+    agent_id: Optional[str] = None
+    parent_agent_id: Optional[str] = None
+    parent_tool_call_id: Optional[str] = None
+    depth: int = 1
+    background: bool = False
+    requested_routing: Optional[dict] = None
+    effective_routing: Optional[dict] = None
+    total_tokens: Optional[int] = None
 
 
 @dataclass
@@ -177,13 +208,12 @@ class _PeerMessageRecord:
 
 
 @dataclass
-class PresentationState:
+class PresentationState(_TerminalBuffer):
     """Everything a frontend needs to draw a session at one point in time."""
 
     conversation: list[ConversationItem] = field(default_factory=list)
     sub_agents: dict[str, SubAgentActivity] = field(default_factory=dict)
     turns: list[TurnMarker] = field(default_factory=list)
-    terminal_truncated: bool = False
     logs: list[tuple[str, str]] = field(default_factory=list)
     edit_previews: list[dict] = field(default_factory=list)
     context: Optional[ContextStatus] = None
@@ -210,32 +240,6 @@ class PresentationState:
     _peer_messages: dict[str, _PeerMessageRecord] = field(default_factory=dict, repr=False)
     _pending_peer_turns: list[str] = field(default_factory=list, repr=False)
 
-    # -- Terminal text is chunked while folding and joined on demand --------
-    _terminal_parts: deque[str] = field(default_factory=deque, repr=False, compare=False)
-    #: Characters already dropped from the front of ``_terminal_parts[0]``.
-    _terminal_offset: int = field(default=0, repr=False, compare=False)
-    _terminal_chars: int = field(default=0, repr=False, compare=False)
-    _terminal_text: Optional[str] = field(default=None, repr=False, compare=False)
-
-    @property
-    def terminal(self) -> str:
-        """Retained terminal text.
-
-        Folding appends one chunk per output event, so materializing the whole
-        buffer on every append made replay quadratic in the session length.
-        """
-        if self._terminal_text is None:
-            text = "".join(self._terminal_parts)
-            self._terminal_text = text[self._terminal_offset :] if self._terminal_offset else text
-        return self._terminal_text
-
-    @terminal.setter
-    def terminal(self, value: str) -> None:
-        self._terminal_parts = deque([value] if value else ())
-        self._terminal_offset = 0
-        self._terminal_chars = len(value)
-        self._terminal_text = value
-
     def to_dict(self) -> dict:
         """JSON-safe view for transport to a web client or player.
 
@@ -257,6 +261,16 @@ class PresentationState:
                     "label": activity.label,
                     "phase": activity.phase,
                     "workflow_run_id": activity.workflow_run_id,
+                    "agent_id": activity.agent_id,
+                    "parent_agent_id": activity.parent_agent_id,
+                    "parent_tool_call_id": activity.parent_tool_call_id,
+                    "depth": activity.depth,
+                    "background": activity.background,
+                    "requested_routing": activity.requested_routing,
+                    "effective_routing": activity.effective_routing,
+                    "total_tokens": activity.total_tokens,
+                    "terminal": activity.terminal,
+                    "terminal_truncated": activity.terminal_truncated,
                     "steps": [_item_dict(step) for step in activity.steps],
                 }
                 for key, activity in self.sub_agents.items()
@@ -362,6 +376,12 @@ def fold(state: PresentationState, event: AgentEvent) -> PresentationState:
         state.last_seq = event.seq
     state.elapsed_ms = max(state.elapsed_ms, event.elapsed_ms)
 
+    # Peer lifecycle is session-scoped even when a producer attaches stale worker metadata.
+    if event.event_type not in (KnownEventType.PEER_MESSAGE_RECEIVED, KnownEventType.PEER_MESSAGE_DELIVERED):
+        key = _sub_agent_key(event)
+        if key is not None:
+            _merge_sub_agent_metadata(_sub_agent(state, key, event), event)
+
     handler = _HANDLERS.get(event.event_type)
     if handler is None:
         state.unknown_event_types.add(event.event_type)
@@ -382,9 +402,13 @@ def sub_agent_key(info: Optional[dict]) -> Optional[str]:
     ``dispatch_id`` unset, so keying on the name alone folded every agent of a
     fan-out into one activity.
     """
-    if not info:
+    if not isinstance(info, dict) or not info:
         return None
-    return str(info.get("dispatch_id") or info.get("agent_id") or info.get("agent_name") or "sub-agent")
+    for field_name in ("dispatch_id", "agent_id", "agent_name"):
+        value = info.get(field_name)
+        if isinstance(value, str) and value:
+            return value
+    return "sub-agent"
 
 
 def _sub_agent_key(event: AgentEvent) -> Optional[str]:
@@ -401,17 +425,46 @@ def _sub_agent_key(event: AgentEvent) -> Optional[str]:
 def _sub_agent(state: PresentationState, key: str, event: AgentEvent) -> SubAgentActivity:
     activity = state.sub_agents.get(key)
     if activity is None:
-        info = event.sub_agent_info or {}
-        activity = SubAgentActivity(
-            key=key,
-            name=str(info.get("agent_name") or key),
-            task=str(info.get("task") or ""),
-            label=str(info.get("label") or ""),
-            phase=str(info.get("phase") or ""),
-            workflow_run_id=str(info.get("workflow_run_id") or ""),
-        )
+        activity = SubAgentActivity(key=key, name=key)
         state.sub_agents[key] = activity
     return activity
+
+
+def _integer_metadata(value: Any, minimum: int = 0) -> Optional[int]:
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= minimum and value % 1 == 0:
+        return int(value)
+    return None
+
+
+def _merge_sub_agent_metadata(activity: SubAgentActivity, event: AgentEvent) -> None:
+    info = event.sub_agent_info or {}
+    for source, target in (
+        ("agent_name", "name"),
+        ("task", "task"),
+        ("label", "label"),
+        ("phase", "phase"),
+        ("workflow_run_id", "workflow_run_id"),
+        ("agent_id", "agent_id"),
+        ("parent_agent_id", "parent_agent_id"),
+        ("parent_tool_call_id", "parent_tool_call_id"),
+    ):
+        value = info.get(source)
+        if isinstance(value, str) and value:
+            setattr(activity, target, value)
+    depth = _integer_metadata(info.get("depth"), minimum=1)
+    if depth is not None:
+        activity.depth = depth
+    background = info.get("background")
+    if isinstance(background, bool):
+        activity.background = background
+    for name in ("requested_routing", "effective_routing"):
+        routing = info.get(name)
+        if isinstance(routing, dict):
+            setattr(activity, name, {**(getattr(activity, name) or {}), **routing})
+    for source in (info, event.content):
+        total = _integer_metadata(source.get("total_tokens"))
+        if total is not None:
+            activity.total_tokens = total
 
 
 def _append(state: PresentationState, item: ConversationItem, event: AgentEvent) -> ConversationItem:
@@ -687,17 +740,22 @@ def _on_tool_streaming_update(state: PresentationState, event: AgentEvent) -> No
 
 
 def _on_terminal_command(state: PresentationState, event: AgentEvent) -> None:
+    key = _sub_agent_key(event)
+    target = state.sub_agents[key] if key is not None else state
     command = _text_of(event, "command")
     if command:
-        _append_terminal(state, f"$ {command}\n")
-    state.activity = "running_tool"
+        _append_terminal(target, f"$ {command}\n")
+    if key is None:
+        state.activity = "running_tool"
 
 
 def _on_terminal_output(state: PresentationState, event: AgentEvent) -> None:
-    _append_terminal(state, _text_of(event, "display_output", "output"))
+    key = _sub_agent_key(event)
+    target = state.sub_agents[key] if key is not None else state
+    _append_terminal(target, _text_of(event, "display_output", "output"))
 
 
-def _append_terminal(state: PresentationState, text: str) -> None:
+def _append_terminal(state: _TerminalBuffer, text: str) -> None:
     if not text:
         return
     parts = state._terminal_parts
@@ -711,7 +769,7 @@ def _append_terminal(state: PresentationState, text: str) -> None:
         _compact_terminal(state)
 
 
-def _drop_terminal_prefix(state: PresentationState, excess: int) -> None:
+def _drop_terminal_prefix(state: _TerminalBuffer, excess: int) -> None:
     """Drop ``excess`` characters from the front of the retained terminal text.
 
     Advancing ``_terminal_offset`` instead of re-slicing keeps the head chunk
@@ -731,7 +789,7 @@ def _drop_terminal_prefix(state: PresentationState, excess: int) -> None:
             return
 
 
-def _compact_terminal(state: PresentationState) -> None:
+def _compact_terminal(state: _TerminalBuffer) -> None:
     """Merge retained chunks so a stream of tiny deltas cannot grow the list."""
     text = "".join(state._terminal_parts)
     if state._terminal_offset:
@@ -768,6 +826,10 @@ def _on_file_edit_preview(state: PresentationState, event: AgentEvent) -> None:
 
 def _on_context_update(state: PresentationState, event: AgentEvent) -> None:
     content = event.content
+    key = _sub_agent_key(event)
+    if key is not None:
+        _sub_agent(state, key, event).context = dict(content)
+        return
     status = ContextStatus(
         input_tokens=int(content.get("input_tokens") or 0),
         max_tokens=int(content.get("max_tokens") or 0),
@@ -776,10 +838,6 @@ def _on_context_update(state: PresentationState, event: AgentEvent) -> None:
         message=content.get("message"),
         will_compress_at=int(content.get("will_compress_at") or 0),
     )
-    key = _sub_agent_key(event)
-    if key is not None:
-        _sub_agent(state, key, event).context = dict(content)
-        return
     state.context = status
 
 

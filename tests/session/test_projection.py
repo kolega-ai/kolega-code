@@ -8,6 +8,8 @@ the log must give exactly the state the viewer would have reached by watching.
 from __future__ import annotations
 
 import json
+from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -19,6 +21,7 @@ from kolega_code.session.projection import (
     PresentationState,
     fold,
     replay,
+    sub_agent_key,
 )
 
 
@@ -327,6 +330,16 @@ def test_sub_agent_notice_does_not_overwrite_lifecycle_status(lifecycle: str, ex
         "label": "",
         "phase": "",
         "workflow_run_id": "",
+        "agent_id": None,
+        "parent_agent_id": None,
+        "parent_tool_call_id": None,
+        "depth": 1,
+        "background": False,
+        "requested_routing": None,
+        "effective_routing": None,
+        "total_tokens": None,
+        "terminal": "",
+        "terminal_truncated": False,
         "steps": [],
     }
 
@@ -787,3 +800,242 @@ def test_a_failed_workflow_reports_why() -> None:
 
     (item,) = replay(events).conversation
     assert item.text == "failed: budget exhausted"
+
+
+def test_subagent_linkage_independent_expected_state_at_every_prefix() -> None:
+    fixture = json.loads((Path(__file__).parents[1] / "fixtures" / "subagent_linkage.json").read_text())
+    expected = deepcopy(fixture["initial"])
+    state = PresentationState()
+    events = []
+    assert state.to_dict() == expected
+    for seq, step in enumerate(fixture["steps"], 1):
+        event = AgentEvent(session_id="s", sender="agent", seq=seq, elapsed_ms=seq * 10, **step["event"])
+        events.append(event)
+        patch = deepcopy(step["expect"])
+        for key, updates in patch.pop("sub_agents", {}).items():
+            if key not in expected["sub_agents"]:
+                expected["sub_agents"][key] = {**deepcopy(fixture["agent_defaults"]), "key": key, "name": key}
+            expected["sub_agents"][key].update(updates)
+        expected.update(patch)
+        expected.update(last_seq=seq, elapsed_ms=seq * 10)
+        fold(state, event)
+        assert state.to_dict() == expected, f"incremental prefix {seq}"
+        assert replay(events).to_dict() == expected, f"seek prefix {seq}"
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        KnownEventType.ASSISTANT_DELTA,
+        KnownEventType.THINKING_DELTA,
+        KnownEventType.CHAT_MESSAGE,
+        KnownEventType.TOOL_STREAMING_UPDATE,
+        KnownEventType.TERMINAL_COMMAND,
+        KnownEventType.TERMINAL_OUTPUT,
+        KnownEventType.TERMINAL_LAUNCHED,
+        KnownEventType.TERMINAL_CLOSED,
+        KnownEventType.LOG_MESSAGE,
+        KnownEventType.FILE_EDIT_PREVIEW,
+        KnownEventType.LLM_CONTEXT_UPDATE,
+        KnownEventType.COMPACTION_STATUS,
+        KnownEventType.LLM_STATUS_UPDATE,
+        KnownEventType.STATUS_UPDATE,
+        KnownEventType.TURN_STARTED,
+        KnownEventType.TURN_ENDED,
+        KnownEventType.BROWSER_LAUNCHED,
+        KnownEventType.BROWSER_CLOSED,
+        KnownEventType.STREAM_TRUNCATED,
+        KnownEventType.CONTROL_REQUESTED,
+        KnownEventType.CONTROL_RESOLVED,
+        KnownEventType.SYSTEM_MESSAGE,
+        KnownEventType.MEMORY_SUGGESTIONS,
+        KnownEventType.CREDIT_ALERT,
+        KnownEventType.LLM_ERROR,
+        KnownEventType.LLM_REQUEST,
+        "future_worker",
+    ],
+)
+def test_every_worker_event_merges_late_sparse_metadata(event_type: str) -> None:
+    state = replay([_delegated(_event(KnownEventType.LLM_REQUEST, 1))])
+    event = _delegated(
+        _event(event_type, 2),
+        agent_id="actual",
+        agent_name="late name",
+        task="late task",
+        label="late label",
+        phase="late phase",
+        workflow_run_id="late workflow",
+        parent_agent_id="root",
+        parent_tool_call_id="call",
+        depth=3,
+        background=True,
+        requested_routing={"model": "requested", "provider": "fake"},
+        effective_routing={"model": "effective"},
+        total_tokens=5,
+    )
+    fold(state, event)
+    activity = state.sub_agents["d1"]
+    assert activity.agent_id == "actual"
+    assert (activity.name, activity.task, activity.label, activity.phase, activity.workflow_run_id) == (
+        "late name",
+        "late task",
+        "late label",
+        "late phase",
+        "late workflow",
+    )
+    assert (activity.parent_agent_id, activity.parent_tool_call_id, activity.depth) == ("root", "call", 3)
+    assert activity.background is True
+    assert activity.total_tokens == 5
+    sparse = _event(event_type, 3, total_tokens=0)
+    sparse.sub_agent_info = {
+        "dispatch_id": "d1",
+        "background": False,
+        "requested_routing": {"model": "revised"},
+        "effective_routing": {},
+    }
+    fold(state, sparse)
+    assert activity.agent_id == "actual"
+    assert activity.name == "late name" and activity.task == "late task"
+    assert activity.label == "late label" and activity.phase == "late phase"
+    assert activity.workflow_run_id == "late workflow"
+    assert (activity.parent_agent_id, activity.parent_tool_call_id, activity.depth) == ("root", "call", 3)
+    assert activity.background is False
+    assert activity.total_tokens == 0
+    assert activity.requested_routing == {"model": "revised", "provider": "fake"}
+    assert activity.effective_routing == {"model": "effective"}
+
+
+@pytest.mark.parametrize(
+    "field,bad",
+    [
+        (field, bad)
+        for fields, values in [
+            (
+                [
+                    "agent_id",
+                    "parent_agent_id",
+                    "parent_tool_call_id",
+                    "agent_name",
+                    "task",
+                    "label",
+                    "phase",
+                    "workflow_run_id",
+                ],
+                [None, True, False, 2, [], {}, ""],
+            ),
+            (["depth"], [None, True, False, 0, -1, 1.5, "2", [], {}, float("nan"), float("inf")]),
+            (["total_tokens"], [None, True, False, -1, 1.5, "2", [], {}, float("nan"), float("inf")]),
+            (["background"], [None, 0, 1, "false", [], {}]),
+            (["requested_routing", "effective_routing"], [None, True, False, 0, "route", []]),
+        ]
+        for field in fields
+        for bad in values
+    ],
+)
+def test_malformed_worker_metadata_never_erases_valid_values(field: str, bad: Any) -> None:
+    first = _delegated(
+        _event(KnownEventType.LLM_REQUEST, 1),
+        agent_id="actual",
+        parent_agent_id="parent",
+        parent_tool_call_id="call",
+        depth=2,
+        background=True,
+        task="task",
+        label="label",
+        phase="phase",
+        workflow_run_id="workflow",
+        requested_routing={"model": "requested"},
+        effective_routing={"model": "effective"},
+        total_tokens=4,
+    )
+    state = replay([first])
+    expected = state.to_dict()["sub_agents"]["d1"]
+    corrupt = _event(KnownEventType.LLM_REQUEST, 2, **({"total_tokens": bad} if field == "total_tokens" else {}))
+    corrupt.sub_agent_info = {"dispatch_id": "d1", field: bad}
+    fold(state, corrupt)
+    assert state.to_dict()["sub_agents"]["d1"] == expected
+
+
+@pytest.mark.parametrize(
+    "info,expected",
+    [
+        (None, None),
+        ({}, None),
+        ([], None),
+        ("bad", None),
+        (False, None),
+        ({"dispatch_id": {}, "agent_id": "actual"}, "actual"),
+        ({"dispatch_id": True, "agent_id": [], "agent_name": "legacy"}, "legacy"),
+        ({"dispatch_id": 5, "agent_id": False, "agent_name": {}}, "sub-agent"),
+    ],
+)
+def test_worker_key_fallbacks_ignore_malformed_identity_types(info: Any, expected: str | None) -> None:
+    assert sub_agent_key(info) == expected
+
+
+@pytest.mark.parametrize("delegated", [False, True])
+def test_terminal_append_and_trim_do_not_materialize_per_event(
+    delegated: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kolega_code.session import projection
+
+    state = PresentationState()
+    cap = projection.TERMINAL_BUFFER_CHARS
+    event = _event(KnownEventType.TERMINAL_OUTPUT, 1, output="a" * cap)
+    if delegated:
+        event = _delegated(event)
+    fold(state, event)
+    target = state.sub_agents["d1"] if delegated else state
+    compactions = []
+    original = projection._compact_terminal
+
+    def compact(buffer: Any) -> None:
+        compactions.append(buffer._terminal_chars)
+        original(buffer)
+
+    def unexpected_read(_buffer: Any) -> str:
+        pytest.fail("fold must never materialize terminal text while appending or trimming")
+
+    count = projection.TERMINAL_MAX_PARTS * 12
+    with monkeypatch.context() as patch:
+        patch.setattr(projection, "_compact_terminal", compact)
+        patch.setattr(projection._TerminalBuffer, "terminal", property(unexpected_read))
+        for seq in range(2, count + 2):
+            event = _event(KnownEventType.TERMINAL_OUTPUT, seq, output="b")
+            fold(state, _delegated(event) if delegated else event)
+    assert len(compactions) <= 12
+    assert sum(compactions) <= cap * 12
+    assert len(target._terminal_parts) <= projection.TERMINAL_MAX_PARTS
+    assert target._terminal_chars == cap
+    assert target._terminal_text is None
+    assert target.terminal == "a" * (cap - count) + "b" * count
+    assert target.terminal_truncated is True
+    if delegated:
+        assert state.terminal == "" and state.terminal_truncated is False
+        assert state.sub_agents["d1"].steps == []
+
+
+def test_worker_terminals_have_independent_caps_and_assignment() -> None:
+    from kolega_code.session import projection
+
+    cap = projection.TERMINAL_BUFFER_CHARS
+    chunks = ["a" * (cap + projection.TERMINAL_MAX_DROPPED_PREFIX + 1), "b" * 7, "c" * (cap // 2)]
+    state = PresentationState()
+    fold(state, _event(KnownEventType.TERMINAL_OUTPUT, 1, output="root"))
+    fold(state, _delegated(_event(KnownEventType.TERMINAL_OUTPUT, 2, output="parallel"), dispatch_id="other"))
+    combined = ""
+    for seq, chunk in enumerate(chunks, 3):
+        combined += chunk
+        fold(state, _delegated(_event(KnownEventType.TERMINAL_OUTPUT, seq, output=chunk)))
+        activity = state.sub_agents["d1"]
+        assert activity.terminal == combined[-cap:]
+        assert activity.terminal_truncated is True
+        assert activity._terminal_offset <= projection.TERMINAL_MAX_DROPPED_PREFIX
+        assert activity._terminal_chars == cap
+        assert state.terminal == "root" and state.terminal_truncated is False
+        assert state.sub_agents["other"].terminal == "parallel"
+        assert state.sub_agents["other"].terminal_truncated is False
+    activity.terminal = "replacement"
+    fold(state, _delegated(_event(KnownEventType.TERMINAL_OUTPUT, 6, output=" tail")))
+    assert activity.terminal == "replacement tail"
+    assert activity.steps == []

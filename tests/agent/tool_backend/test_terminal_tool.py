@@ -2,6 +2,7 @@ import os
 import asyncio
 import shlex
 import sys
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -106,6 +107,7 @@ class TestTerminalTool:
             assert calls[1][0][0].content == {
                 "command": 'echo "Hello World"',
                 "workdir": str(terminal_tool.project_path.resolve()),
+                "tool_call_id": None,
             }
             assert calls[1][0][1] == "test_workspace"
 
@@ -583,3 +585,90 @@ class TestBackgroundExec:
         killed = await terminal_tool.kill_command(session_id)
         assert _result_field(killed, "Status") == "exited"
         assert f"Session: {session_id}" not in await terminal_tool.list_sessions()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("execution_id", ["stable-execution", None, "", "  ", 123])
+async def test_legacy_terminal_events_capture_launch_owner_and_execution_id(
+    terminal_tool: TerminalTool,
+    mock_base_agent: Mock,
+    mock_connection_manager: AsyncMock,
+    nested: bool,
+    execution_id: Any,
+) -> None:
+    context = {
+        "agent_id": "launch-child",
+        "parent_agent_id": "launch-parent",
+        "depth": 2,
+        "effective_routing": {"provider": "supplied", "model": "launch-model"},
+    }
+    mock_base_agent.sub_agent_context = context if nested else None
+    mock_base_agent.current_tool_execution_id = execution_id
+    mock_base_agent.current_tool_call_id = "fallback-execution"
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    process = AsyncMock()
+
+    async def communicate() -> tuple[bytes, bytes]:
+        entered.set()
+        await release.wait()
+        return b"legacy-owned-output", b""
+
+    process.communicate.side_effect = communicate
+    with patch("asyncio.create_subprocess_shell", return_value=process):
+        task = asyncio.create_task(terminal_tool.execute_terminal_command("legacy command"))
+        await asyncio.wait_for(entered.wait(), timeout=10)
+        context["effective_routing"]["model"] = "mutated-model"
+        context.update(agent_id="wrong-child", depth=99)
+        mock_base_agent.sub_agent_context = {"agent_id": "other-child"}
+        mock_base_agent.current_tool_execution_id = "later-execution"
+        release.set()
+        assert await asyncio.wait_for(task, timeout=10) == "legacy-owned-output"
+
+    events = [
+        call.args[0]
+        for call in mock_connection_manager.broadcast_event.call_args_list
+        if call.args[0].event_type in {"terminal_command", "terminal_output"}
+    ]
+    assert len(events) == 2
+    expected_id = "stable-execution" if execution_id == "stable-execution" else "fallback-execution"
+    for event in events:
+        assert event.content["tool_call_id"] == expected_id
+        if nested:
+            assert event.sub_agent_info == {
+                "agent_id": "launch-child",
+                "parent_agent_id": "launch-parent",
+                "depth": 2,
+                "effective_routing": {"provider": "supplied", "model": "launch-model"},
+            }
+        else:
+            assert event.sub_agent_info is None
+
+
+@pytest.mark.asyncio
+async def test_unified_exec_preserves_injected_service_signature(
+    terminal_tool: TerminalTool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = []
+
+    class InjectedService:
+        async def exec_command(
+            self,
+            command: str,
+            *,
+            workdir: str,
+            yield_time_ms: int,
+            max_output_tokens: int,
+            login: bool,
+            env: Any,
+            background: bool,
+        ) -> ExecResult:
+            calls.append((command, workdir, yield_time_ms, max_output_tokens, login, env, background))
+            return ExecResult(status="exited", exit_code=0, output="compatible")
+
+    monkeypatch.setattr(terminal_tool, "terminal_manager", InjectedService())
+    result = await terminal_tool.exec_command("signature check")
+    assert "Output:\ncompatible" in result
+    assert len(calls) == 1
+    assert calls[0][0] == "signature check"

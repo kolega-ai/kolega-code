@@ -13,6 +13,8 @@
 
 export const TERMINAL_BUFFER_CHARS = 2000000;
 export const LOG_BUFFER_LINES = 2000;
+export const TERMINAL_MAX_PARTS = 1024;
+export const TERMINAL_MAX_DROPPED_PREFIX = 512 * 1024;
 
 const TOOL_STATUS = {
   tool_call: "running",
@@ -34,13 +36,11 @@ const WORKFLOW_TONES = {
 };
 
 export function emptyState() {
-  return {
+  return withTerminal({
     conversation: [],
     subAgents: new Map(),
     turns: [],
     prompts: [],
-    terminal: "",
-    terminalTruncated: false,
     logs: [],
     editPreviews: [],
     context: null,
@@ -56,7 +56,7 @@ export function emptyState() {
     tools: new Map(),
     peerMessages: new Map(),
     pendingPeerTurns: [],
-  };
+  });
 }
 
 function textOf(event, ...keys) {
@@ -82,32 +82,73 @@ function stringContent(event, key) {
  */
 function subAgentKey(event) {
   const info = event.sub_agent_info;
-  if (!info) return null;
-  return String(info.dispatch_id || info.agent_id || info.agent_name || "sub-agent");
+  if (!isRecord(info) || Object.keys(info).length === 0) return null;
+  for (const field of ["dispatch_id", "agent_id", "agent_name"]) {
+    if (typeof info[field] === "string" && info[field]) return info[field];
+  }
+  return "sub-agent";
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function subAgent(state, key, event) {
   let activity = state.subAgents.get(key);
   if (!activity) {
-    const info = event.sub_agent_info || {};
-    activity = {
+    activity = withTerminal({
       key,
-      name: String(info.agent_name || key),
-      task: String(info.task || ""),
+      name: key,
+      task: "",
       status: "running",
       notice: "",
       steps: [],
       lastText: "",
       context: null,
-      // Every agent in a fan-out shares one name, so the workflow's label is
-      // the only thing that tells them apart.
-      label: String(info.label || ""),
-      phase: String(info.phase || ""),
-      workflowRunId: String(info.workflow_run_id || ""),
-    };
+      label: "",
+      phase: "",
+      workflowRunId: "",
+      agentId: null,
+      parentAgentId: null,
+      parentToolCallId: null,
+      depth: 1,
+      background: false,
+      requestedRouting: null,
+      effectiveRouting: null,
+      totalTokens: null,
+    });
     state.subAgents.set(key, activity);
   }
   return activity;
+}
+
+function mergeSubAgentMetadata(activity, event) {
+  const info = event.sub_agent_info || {};
+  for (const [source, target] of [
+    ["agent_name", "name"],
+    ["task", "task"],
+    ["label", "label"],
+    ["phase", "phase"],
+    ["workflow_run_id", "workflowRunId"],
+    ["agent_id", "agentId"],
+    ["parent_agent_id", "parentAgentId"],
+    ["parent_tool_call_id", "parentToolCallId"],
+  ]) {
+    if (typeof info[source] === "string" && info[source]) activity[target] = info[source];
+  }
+  if (Number.isInteger(info.depth) && info.depth >= 1) activity.depth = info.depth;
+  if (typeof info.background === "boolean") activity.background = info.background;
+  for (const [source, target] of [
+    ["requested_routing", "requestedRouting"],
+    ["effective_routing", "effectiveRouting"],
+  ]) {
+    if (isRecord(info[source])) activity[target] = { ...activity[target], ...info[source] };
+  }
+  for (const source of [info, event.content || {}]) {
+    if (Number.isInteger(source.total_tokens) && source.total_tokens >= 0) {
+      activity.totalTokens = source.total_tokens;
+    }
+  }
 }
 
 function newItem(fields) {
@@ -320,14 +361,68 @@ function onToolStreamingUpdate(state, event) {
   if (event.content && event.content.is_complete) target.status = "done";
 }
 
+function withTerminal(target) {
+  target.terminalTruncated = false;
+  target._terminalParts = [];
+  target._terminalHead = 0;
+  target._terminalOffset = 0;
+  target._terminalChars = 0;
+  target._terminalText = "";
+  Object.defineProperty(target, "terminal", {
+    enumerable: true,
+    get() {
+      if (this._terminalText === null) {
+        const text = this._terminalParts.slice(this._terminalHead).join("");
+        this._terminalText = this._terminalOffset ? text.slice(this._terminalOffset) : text;
+      }
+      return this._terminalText;
+    },
+    set(value) {
+      this._terminalParts = value ? [value] : [];
+      this._terminalHead = 0;
+      this._terminalOffset = 0;
+      this._terminalChars = value.length;
+      this._terminalText = value;
+    },
+  });
+  return target;
+}
+
 function appendTerminal(state, text) {
   if (!text) return;
-  let combined = state.terminal + text;
-  if (combined.length > TERMINAL_BUFFER_CHARS) {
-    combined = combined.slice(combined.length - TERMINAL_BUFFER_CHARS);
+  const parts = state._terminalParts;
+  parts.push(text);
+  state._terminalChars += text.length;
+  state._terminalText = null;
+  let excess = state._terminalChars - TERMINAL_BUFFER_CHARS;
+  if (excess > 0) {
     state.terminalTruncated = true;
+    while (excess > 0) {
+      const available = parts[state._terminalHead].length - state._terminalOffset;
+      if (available <= excess) {
+        // Release consumed chunks immediately; shifting the array would copy it on every trim.
+        parts[state._terminalHead++] = null;
+        state._terminalOffset = 0;
+        state._terminalChars -= available;
+        excess -= available;
+      } else {
+        state._terminalOffset += excess;
+        state._terminalChars -= excess;
+        excess = 0;
+      }
+    }
   }
-  state.terminal = combined;
+  if (parts.length > TERMINAL_MAX_PARTS || state._terminalOffset > TERMINAL_MAX_DROPPED_PREFIX) {
+    const retained = parts.slice(state._terminalHead).join("").slice(state._terminalOffset);
+    state._terminalParts = retained ? [retained] : [];
+    state._terminalHead = 0;
+    state._terminalOffset = 0;
+  }
+}
+
+function terminalTarget(state, event) {
+  const key = subAgentKey(event);
+  return key === null ? state : state.subAgents.get(key);
 }
 
 function onStatusUpdate(state, event) {
@@ -413,10 +508,11 @@ const HANDLERS = {
   tool_streaming_update: onToolStreamingUpdate,
   terminal_command: (state, event) => {
     const command = textOf(event, "command");
-    if (command) appendTerminal(state, `$ ${command}\n`);
-    state.activity = "running_tool";
+    if (command) appendTerminal(terminalTarget(state, event), `$ ${command}\n`);
+    if (subAgentKey(event) === null) state.activity = "running_tool";
   },
-  terminal_output: (state, event) => appendTerminal(state, textOf(event, "display_output", "output")),
+  terminal_output: (state, event) =>
+    appendTerminal(terminalTarget(state, event), textOf(event, "display_output", "output")),
   terminal_launched: () => {},
   terminal_closed: () => {},
   log_message: (state, event) => {
@@ -576,6 +672,12 @@ export function fold(state, event) {
   }
   state.elapsedMs = Math.max(state.elapsedMs, event.elapsed_ms || 0);
 
+  // Peer lifecycle is session-scoped even when a producer attaches stale worker metadata.
+  if (!["peer_message_received", "peer_message_delivered"].includes(event.event_type)) {
+    const key = subAgentKey(event);
+    if (key !== null) mergeSubAgentMetadata(subAgent(state, key, event), event);
+  }
+
   const handler = HANDLERS[event.event_type];
   if (!handler) {
     state.unknownEventTypes.add(event.event_type);
@@ -647,6 +749,16 @@ export function toDict(state) {
       label: activity.label,
       phase: activity.phase,
       workflow_run_id: activity.workflowRunId,
+      agent_id: activity.agentId,
+      parent_agent_id: activity.parentAgentId,
+      parent_tool_call_id: activity.parentToolCallId,
+      depth: activity.depth,
+      background: activity.background,
+      requested_routing: activity.requestedRouting,
+      effective_routing: activity.effectiveRouting,
+      total_tokens: activity.totalTokens,
+      terminal: activity.terminal,
+      terminal_truncated: activity.terminalTruncated,
       steps: activity.steps.map(itemDict),
     };
   }
