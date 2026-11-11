@@ -19,9 +19,9 @@ from packaging.version import Version
 from kolega_code.cli.session_event_store import FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import SettingsStore
-from kolega_code.events import AgentEvent
+from kolega_code.events import AGENT_EVENT_SCHEMA_VERSION, AgentEvent, KnownEventType
 from kolega_code.llm.models import ImageBlock, Message
-from kolega_code.session.projection import PresentationState, replay
+from kolega_code.session.projection import ConversationItem, PresentationState, replay
 from kolega_code.session.store import SessionStoreError
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
@@ -163,6 +163,40 @@ def test_previous_reader_must_replay_original_history_in_order() -> None:
             worker.verify_original_history(actual, expected)
 
 
+def test_previous_worker_must_read_original_session_metadata() -> None:
+    expected = {
+        "schema_version": 2,
+        "session_id": "compat-session",
+        "name": "compat fixture",
+        "config": {"compat": True},
+    }
+    worker.verify_original_metadata({**expected, "future_field": "ignored"}, expected)
+    for actual in ({}, {**expected, "name": "lost"}):
+        with pytest.raises(RuntimeError, match="original session metadata"):
+            worker.verify_original_metadata(actual, expected)
+
+
+@pytest.mark.parametrize("damage", ["missing", "truncated", "unknown_fields", "worker_tag", "schema"])
+def test_previous_worker_rejects_lost_or_changed_canonical_task_payloads(damage: str) -> None:
+    payload = fixture_module._TASK_LIST_INITIAL
+    event = AgentEvent(event_type="task_list_updated", sender="compat-fixture", content=payload)
+    worker.verify_task_list_payloads([event], [payload])
+    if damage == "missing":
+        actual = []
+    else:
+        actual = [event.model_copy(deep=True)]
+        if damage == "truncated":
+            actual[0].content["markdown"] = payload["markdown"][:-1]
+        elif damage == "unknown_fields":
+            del actual[0].content["compat_payload"]
+        elif damage == "worker_tag":
+            actual[0].sub_agent_info = {"agent_id": "worker"}
+        else:
+            actual[0].schema_version += 1
+    with pytest.raises(RuntimeError, match="task-list"):
+        worker.verify_task_list_payloads(actual, [payload])
+
+
 def _simulate_writer(root: Path, manifest: dict[str, Any]) -> None:
     settings_store = SettingsStore(root)
     settings = settings_store.load()
@@ -237,6 +271,62 @@ def test_roundtrip_retains_nested_background_linkage_and_terminal_output(
     }
     assert nested.terminal == "$ printf nested\nnested output\n"
     fixture_module.verify_after_previous(root, manifest)
+
+
+def test_roundtrip_retains_full_latest_task_list_without_conversation_prose(
+    completed_roundtrip: tuple[Path, dict[str, Any]],
+) -> None:
+    root, manifest = completed_roundtrip
+    store = SessionStore(root)
+    events = asyncio.run(FileSessionEventStore(store.journal(manifest["session_id"])).read(manifest["session_id"]))
+    tasks = [event for event in events if event.event_type == KnownEventType.TASK_LIST_UPDATED]
+    loaded = store.load(manifest["session_id"])
+    assert loaded.task_list_markdown == manifest["task_list"]["markdown"]
+    worker.verify_original_metadata(loaded.to_metadata_dict(), manifest["original_metadata"])
+    assert AGENT_EVENT_SCHEMA_VERSION == 2
+    assert all(event.schema_version == 2 and event.sub_agent_info is None for event in tasks)
+    assert [event.content for event in tasks] == manifest["task_list_payloads"]
+    initial = replay(events[: events.index(tasks[0]) + 1])
+    assert initial.task_list == {
+        "markdown": "- [ ] Original task list",
+        "entries": [{"text": "Original task list", "status": "pending"}],
+    }
+    legacy = next(event for event in events if event.content.get("message_type") == "task_list_update")
+    legacy_state = replay(events[: events.index(legacy) + 1])
+    assert legacy_state.task_list == {
+        "markdown": "- [x] Legacy task list",
+        "entries": [{"text": "Legacy task list", "status": "completed"}],
+    }
+    state = replay(events)
+    assert state.task_list == manifest["task_list"]
+    assert len(manifest["task_list"]["entries"][1]["text"]) > 500
+    task_sequences = {event.seq for event in [*tasks, legacy]}
+    assert all(item.seq not in task_sequences for item in state.conversation)
+    worker.verify_task_list_payloads(events, manifest["task_list_payloads"])
+    fixture_module.verify_after_previous(root, manifest)
+
+
+@pytest.mark.parametrize("damage", ["missing", "truncated", "prose"])
+def test_lost_or_duplicated_task_list_fails_roundtrip(
+    completed_roundtrip: tuple[Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    original_replay = fixture_module.replay
+
+    def damage_tasks(events: list[AgentEvent]) -> PresentationState:
+        state = original_replay(events)
+        if damage == "missing":
+            state.task_list = None
+        elif damage == "truncated":
+            assert state.task_list is not None
+            state.task_list["entries"][1]["text"] = state.task_list["entries"][1]["text"][:500]
+        else:
+            legacy = next(event for event in events if event.content.get("message_type") == "task_list_update")
+            state.conversation.append(ConversationItem(kind="system", text=legacy.content["text"], seq=legacy.seq))
+        return state
+
+    monkeypatch.setattr(fixture_module, "replay", damage_tasks)
+    with pytest.raises(AssertionError, match="task-list|Task-list"):
+        fixture_module.verify_after_previous(*completed_roundtrip)
 
 
 def test_lost_subagent_linkage_fails_roundtrip(

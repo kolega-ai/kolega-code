@@ -78,6 +78,8 @@ default — it has nothing to fetch.
 - A scrubber with a tick per turn, plus a turn list for jumping straight to a
   prompt.
 - Live context-window usage, sub-agent activity, and terminal output.
+- A read-only, session-wide task list with pending and completed tasks, a
+  completion count, and the source Markdown.
 - A theme switcher covering every theme the TUI ships.
 
 Keyboard: <kbd>Space</kbd> plays and pauses, <kbd>←</kbd>/<kbd>→</kbd> seek five
@@ -86,6 +88,27 @@ seconds, <kbd>Home</kbd>/<kbd>End</kbd> jump to the start or end.
 Older recordings remain playable, but missing parent, routing and terminal-owner
 metadata cannot be reconstructed. Untagged terminal output stays in the main
 terminal rather than being assigned to a guessed worker.
+
+### Task list
+
+The task-list panel shows the latest recorded update to the session's shared
+list. It stays session-wide when you open a delegated agent's thread; a worker's
+own updates do not replace it. Task-list updates do not appear again as prose in
+the transcript.
+
+The list follows playback and seeking, including when you seek backward or
+return to the live edge. It is available in live shares, single-file replays and
+directory bundles. Tasks and source Markdown are displayed as literal text,
+not executable HTML. The panel is **read-only**: viewers cannot edit tasks or
+check them off.
+
+Before any task-list update has been recorded, the panel says **No task list
+recorded yet**. That means the list is unknown, not empty or completed. An
+explicit empty update instead shows **Task list cleared**. Older recordings can
+show a list only where an update was actually captured. Resuming a session may
+record its saved list at that point, but does not invent earlier task-list
+history. Recording and displaying task updates does not add them to the model's
+conversation history or change its prompts.
 
 ## What is removed before sharing
 

@@ -1,0 +1,343 @@
+{
+  "initial": {
+    "conversation": [],
+    "sub_agents": {},
+    "turns": [],
+    "terminal": "",
+    "terminal_truncated": false,
+    "logs": [],
+    "edit_previews": [],
+    "context": null,
+    "compaction": null,
+    "task_list": null,
+    "prompts": [],
+    "status": "",
+    "activity": "idle",
+    "open_browsers": [],
+    "last_seq": 0,
+    "elapsed_ms": 0,
+    "recording_truncated": false,
+    "unknown_event_types": []
+  },
+  "steps": [
+    {
+      "event": {"event_type": "chat_message", "seq": 1, "elapsed_ms": 10, "content": {"text": "Old recording prose"}},
+      "expect": {
+        "conversation": [{"kind": "assistant", "text": "Old recording prose", "complete": true, "seq": 1, "elapsed_ms": 10}],
+        "last_seq": 1, "elapsed_ms": 10
+      }
+    },
+    {
+      "event": {"event_type": "task_list_updated", "seq": 2, "elapsed_ms": 20, "content": {}},
+      "expect": {"last_seq": 2, "elapsed_ms": 20}
+    },
+    {
+      "event": {"event_type": "chat_message", "seq": 3, "elapsed_ms": 30, "content": {"message_type": "task_list_update", "text": false}},
+      "expect": {"last_seq": 3, "elapsed_ms": 30}
+    },
+    {
+      "event": {
+        "event_type": "task_list_updated", "seq": 4, "elapsed_ms": 40, "content": {"markdown": "- [x] worker only"},
+        "sub_agent_info": {"agent_id": "unseen-worker", "agent_name": "not a new worker", "task": "ignored", "total_tokens": 8}
+      },
+      "expect": {"last_seq": 4, "elapsed_ms": 40}
+    },
+    {
+      "event": {
+        "event_type": "chat_message", "seq": 5, "elapsed_ms": 50,
+        "content": {"message_type": "task_list_update", "text": "- [ ] legacy worker", "status": "STOPPED"},
+        "sub_agent_info": {"agent_name": "legacy-worker"}
+      },
+      "expect": {"last_seq": 5, "elapsed_ms": 50}
+    },
+    {
+      "event": {
+        "event_type": "chat_message", "seq": 6, "elapsed_ms": 60,
+        "content": {"message_type": "task_list_update", "text": " \n- [ ] inspect\n- [x] planned\n "}
+      },
+      "expect": {
+        "task_list": {
+          "markdown": " \n- [ ] inspect\n- [x] planned\n ",
+          "entries": [{"text": "inspect", "status": "pending"}, {"text": "planned", "status": "completed"}]
+        },
+        "last_seq": 6, "elapsed_ms": 60
+      }
+    },
+    {
+      "event": {"event_type": "task_list_updated", "seq": 7, "elapsed_ms": 70, "content": {"markdown": "- [ ] replacement"}},
+      "expect": {
+        "task_list": {"markdown": "- [ ] replacement", "entries": [{"text": "replacement", "status": "pending"}]},
+        "last_seq": 7, "elapsed_ms": 70
+      }
+    },
+    {
+      "event": {"event_type": "task_list_updated", "seq": 8, "elapsed_ms": 80, "content": {"markdown": "- [X] replacement"}},
+      "expect": {
+        "task_list": {"markdown": "- [X] replacement", "entries": [{"text": "replacement", "status": "completed"}]},
+        "last_seq": 8, "elapsed_ms": 80
+      }
+    },
+    {
+      "event": {"event_type": "task_list_updated", "seq": 9, "elapsed_ms": 90, "content": {"text": "not the canonical field"}},
+      "expect": {"last_seq": 9, "elapsed_ms": 90}
+    },
+    {
+      "event": {"event_type": "task_list_updated", "seq": 10, "elapsed_ms": 100, "content": {"markdown": null}},
+      "expect": {"last_seq": 10, "elapsed_ms": 100}
+    },
+    {
+      "event": {"event_type": "task_list_updated", "seq": 11, "elapsed_ms": 110, "content": {"markdown": 0}},
+      "expect": {"last_seq": 11, "elapsed_ms": 110}
+    },
+    {
+      "event": {"event_type": "task_list_updated", "seq": 12, "elapsed_ms": 120, "content": {"markdown": false}},
+      "expect": {"last_seq": 12, "elapsed_ms": 120}
+    },
+    {
+      "event": {"event_type": "task_list_updated", "seq": 13, "elapsed_ms": 130, "content": {"markdown": ["- [ ] not text"]}},
+      "expect": {"last_seq": 13, "elapsed_ms": 130}
+    },
+    {
+      "event": {"event_type": "task_list_updated", "seq": 14, "elapsed_ms": 140, "content": {"markdown": {"text": "- [ ] not text"}}},
+      "expect": {"last_seq": 14, "elapsed_ms": 140}
+    },
+    {
+      "event": {"event_type": "chat_message", "seq": 15, "elapsed_ms": 150, "content": {"message_type": "task_list_update", "markdown": "not the legacy field"}},
+      "expect": {"last_seq": 15, "elapsed_ms": 150}
+    },
+    {
+      "event": {"event_type": "chat_message", "seq": 16, "elapsed_ms": 160, "content": {"message_type": "task_list_update", "text": null}},
+      "expect": {"last_seq": 16, "elapsed_ms": 160}
+    },
+    {
+      "event": {"event_type": "chat_message", "seq": 17, "elapsed_ms": 170, "content": {"message_type": "task_list_update", "text": 0}},
+      "expect": {"last_seq": 17, "elapsed_ms": 170}
+    },
+    {
+      "event": {"event_type": "chat_message", "seq": 18, "elapsed_ms": 180, "content": {"message_type": "task_list_update", "text": true}},
+      "expect": {"last_seq": 18, "elapsed_ms": 180}
+    },
+    {
+      "event": {"event_type": "chat_message", "seq": 19, "elapsed_ms": 190, "content": {"message_type": "task_list_update", "text": []}},
+      "expect": {"last_seq": 19, "elapsed_ms": 190}
+    },
+    {
+      "event": {"event_type": "chat_message", "seq": 20, "elapsed_ms": 200, "content": {"message_type": "task_list_update", "text": {}}},
+      "expect": {"last_seq": 20, "elapsed_ms": 200}
+    },
+    {
+      "event": {
+        "event_type": "task_list_updated", "seq": 21, "elapsed_ms": 210,
+        "content": {"markdown": "\u001f- [ ] <img src=x onerror='alert(1)'> & \"café 🐍 é\"\u00a0\r\n\u1680- [X]\t完成 <script>literal</script>\u3000\n- plain **task** [link](path)\n"}
+      },
+      "expect": {
+        "task_list": {
+          "markdown": "\u001f- [ ] <img src=x onerror='alert(1)'> & \"café 🐍 é\"\u00a0\r\n\u1680- [X]\t完成 <script>literal</script>\u3000\n- plain **task** [link](path)\n",
+          "entries": [
+            {"text": "<img src=x onerror='alert(1)'> & \"café 🐍 é\"", "status": "pending"},
+            {"text": "完成 <script>literal</script>", "status": "completed"},
+            {"text": "plain **task** [link](path)", "status": "pending"}
+          ]
+        },
+        "last_seq": 21, "elapsed_ms": 210
+      }
+    },
+    {
+      "event": {
+        "event_type": "task_list_updated", "seq": 22, "elapsed_ms": 220, "content": {"markdown": ""},
+        "sub_agent_info": {"unrecognized_worker_tag": true}
+      },
+      "expect": {"last_seq": 22, "elapsed_ms": 220}
+    },
+    {
+      "event": {
+        "event_type": "chat_message", "seq": 23, "elapsed_ms": 230,
+        "content": {"message_type": "task_list_update", "text": ""},
+        "sub_agent_info": {"dispatch_id": "unseen-worker"}
+      },
+      "expect": {"last_seq": 23, "elapsed_ms": 230}
+    },
+    {
+      "event": {"event_type": "task_list_updated", "seq": 24, "elapsed_ms": 240, "content": {"markdown": ""}},
+      "expect": {"task_list": {"markdown": "", "entries": []}, "last_seq": 24, "elapsed_ms": 240}
+    },
+    {
+      "event": {"event_type": "task_list_updated", "seq": 25, "elapsed_ms": 250, "content": {"markdown": null}},
+      "expect": {"last_seq": 25, "elapsed_ms": 250}
+    },
+    {
+      "event": {"event_type": "task_list_updated", "seq": 26, "elapsed_ms": 260, "content": {"markdown": "\u001f \t\u00a0"}},
+      "expect": {"task_list": {"markdown": "\u001f \t\u00a0", "entries": []}, "last_seq": 26, "elapsed_ms": 260}
+    },
+    {
+      "event": {
+        "event_type": "chat_message", "seq": 27, "elapsed_ms": 270,
+        "content": {"message_type": "task_list_update", "text": " \t\ufeffplain fallback\nsecond line <tag>\ufeff\u001f"}
+      },
+      "expect": {
+        "task_list": {
+          "markdown": " \t\ufeffplain fallback\nsecond line <tag>\ufeff\u001f",
+          "entries": [{"text": "\ufeffplain fallback\nsecond line <tag>\ufeff", "status": "pending"}]
+        },
+        "last_seq": 27, "elapsed_ms": 270
+      }
+    },
+    {
+      "event": {"event_type": "task_list_updated", "seq": null, "elapsed_ms": 200, "content": {"markdown": "- [x] live-only"}},
+      "expect": {
+        "task_list": {"markdown": "- [x] live-only", "entries": [{"text": "live-only", "status": "completed"}]},
+        "last_seq": 27, "elapsed_ms": 270
+      }
+    },
+    {
+      "event": {"event_type": "llm_request", "seq": 100, "elapsed_ms": 300, "content": {}},
+      "expect": {"last_seq": 100, "elapsed_ms": 300}
+    },
+    {
+      "event": {"event_type": "task_list_updated", "seq": 110, "elapsed_ms": 290, "content": {"markdown": "- [ ] after a gap"}},
+      "expect": {
+        "task_list": {"markdown": "- [ ] after a gap", "entries": [{"text": "after a gap", "status": "pending"}]},
+        "last_seq": 110, "elapsed_ms": 300
+      }
+    },
+    {
+      "event": {"event_type": "chat_message", "seq": 120, "elapsed_ms": 320, "content": {"message_type": "task_list_update", "text": ""}},
+      "expect": {"task_list": {"markdown": "", "entries": []}, "last_seq": 120, "elapsed_ms": 320}
+    },
+    {
+      "event": {
+        "event_type": "llm_request", "seq": 130, "elapsed_ms": 330, "content": {},
+        "sub_agent_info": {"dispatch_id": "worker", "agent_id": "worker-id", "agent_name": "real-worker", "task": "independent task", "total_tokens": 3}
+      },
+      "expect": {
+        "sub_agents": {"worker": {
+          "key": "worker", "name": "real-worker", "task": "independent task", "status": "running", "notice": "",
+          "last_text": "", "context": null, "label": "", "phase": "", "workflow_run_id": "",
+          "agent_id": "worker-id", "parent_agent_id": null, "parent_tool_call_id": null, "depth": 1,
+          "background": false, "requested_routing": null, "effective_routing": null, "total_tokens": 3,
+          "terminal": "", "terminal_truncated": false, "steps": []
+        }},
+        "last_seq": 130, "elapsed_ms": 330
+      }
+    },
+    {
+      "event": {
+        "event_type": "task_list_updated", "seq": 140, "elapsed_ms": 340,
+        "content": {"markdown": "- [x] overwrite root", "total_tokens": 99},
+        "sub_agent_info": {"dispatch_id": "worker", "agent_name": "poison", "task": "poison", "background": true}
+      },
+      "expect": {"last_seq": 140, "elapsed_ms": 340}
+    },
+    {
+      "event": {
+        "event_type": "chat_message", "seq": 150, "elapsed_ms": 350,
+        "content": {"message_type": "task_list_update", "text": "- legacy overwrite", "status": "STOPPED", "total_tokens": 99},
+        "sub_agent_info": {"dispatch_id": "worker", "agent_name": "poison", "label": "poison"}
+      },
+      "expect": {"last_seq": 150, "elapsed_ms": 350}
+    },
+    {
+      "event": {"event_type": "future_event", "seq": 160, "elapsed_ms": 360, "content": {"markdown": "- ignored"}},
+      "expect": {"unknown_event_types": ["future_event"], "last_seq": 160, "elapsed_ms": 360}
+    },
+    {
+      "event": {
+        "event_type": "assistant_delta", "seq": 170, "elapsed_ms": 370, "uuid": "root-prose",
+        "content": {"text": "before ", "complete": false}
+      },
+      "expect": {
+        "conversation": [
+          {"kind": "assistant", "text": "Old recording prose", "complete": true, "seq": 1, "elapsed_ms": 10},
+          {"kind": "assistant", "text": "before ", "complete": false, "seq": 170, "elapsed_ms": 370, "stream_id": "root-prose"}
+        ],
+        "activity": "idle", "last_seq": 170, "elapsed_ms": 370
+      }
+    },
+    {
+      "event": {"event_type": "task_list_updated", "seq": 180, "elapsed_ms": 380, "content": {"markdown": "- [X] final"}},
+      "expect": {
+        "task_list": {"markdown": "- [X] final", "entries": [{"text": "final", "status": "completed"}]},
+        "last_seq": 180, "elapsed_ms": 380
+      }
+    },
+    {
+      "event": {
+        "event_type": "assistant_delta", "seq": 190, "elapsed_ms": 390, "uuid": "root-prose",
+        "content": {"text": "after", "complete": true}
+      },
+      "expect": {
+        "conversation": [
+          {"kind": "assistant", "text": "Old recording prose", "complete": true, "seq": 1, "elapsed_ms": 10},
+          {"kind": "assistant", "text": "before after", "complete": true, "seq": 170, "elapsed_ms": 370, "stream_id": "root-prose"}
+        ],
+        "last_seq": 190, "elapsed_ms": 390
+      }
+    }
+  ],
+  "parser_cases": [
+    {"name": "empty", "markdown": "", "entries": []},
+    {
+      "name": "python_whitespace",
+      "markdown": "\t\n\u000b\u000c\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000",
+      "entries": []
+    },
+    {
+      "name": "checkbox_and_plain_dash",
+      "markdown": "# ignored heading\n\t- [x] done \n - [X] CAPS\n- [ ] todo\n- plain\n- [x]no space\n- [x]\n- [ ]\n",
+      "entries": [
+        {"text": "done", "status": "completed"},
+        {"text": "CAPS", "status": "completed"},
+        {"text": "todo", "status": "pending"},
+        {"text": "plain", "status": "pending"},
+        {"text": "no space", "status": "completed"}
+      ]
+    },
+    {
+      "name": "empty_bullets_fallback",
+      "markdown": " \n- [x]\n- [ ]\n- [X]\n- \n",
+      "entries": [{"text": "- [x]\n- [ ]\n- [X]\n-", "status": "pending"}]
+    },
+    {
+      "name": "unsupported_bullets_fallback",
+      "markdown": " \t* [x] star\n1. numbered\n+ plus  ",
+      "entries": [{"text": "* [x] star\n1. numbered\n+ plus", "status": "pending"}]
+    },
+    {
+      "name": "all_python_line_boundaries",
+      "markdown": "- alpha\r\n- beta\n- gamma\r- delta\u000b- epsilon\u000c- zeta\u001c- eta\u001d- theta\u001e- iota\u0085- kappa\u2028- lambda\u2029- mu\n",
+      "entries": [
+        {"text": "alpha", "status": "pending"}, {"text": "beta", "status": "pending"},
+        {"text": "gamma", "status": "pending"}, {"text": "delta", "status": "pending"},
+        {"text": "epsilon", "status": "pending"}, {"text": "zeta", "status": "pending"},
+        {"text": "eta", "status": "pending"}, {"text": "theta", "status": "pending"},
+        {"text": "iota", "status": "pending"}, {"text": "kappa", "status": "pending"},
+        {"text": "lambda", "status": "pending"}, {"text": "mu", "status": "pending"}
+      ]
+    },
+    {
+      "name": "unit_separator_is_not_a_line_boundary",
+      "markdown": "\u001f- one\u001f- two\u001f",
+      "entries": [{"text": "one\u001f- two", "status": "pending"}]
+    },
+    {
+      "name": "bom_is_not_whitespace",
+      "markdown": "\ufeff- [x] not a checkbox\ufeff",
+      "entries": [{"text": "\ufeff- [x] not a checkbox\ufeff", "status": "pending"}]
+    },
+    {
+      "name": "bom_inside_task",
+      "markdown": "- \ufeffpayload\ufeff",
+      "entries": [{"text": "\ufeffpayload\ufeff", "status": "pending"}]
+    },
+    {
+      "name": "unicode_strip_preserves_body",
+      "markdown": "\u001f\u1680- [X]\u00a0完成 <tag> & café 🐍 é\u202f\u3000\u001f",
+      "entries": [{"text": "完成 <tag> & café 🐍 é", "status": "completed"}]
+    },
+    {
+      "name": "noncheckbox_dash_is_pending",
+      "markdown": "- [y] not a checkbox\n-[x] not a dash-space bullet\n- [  ] also plain\n-\ttab is not dash-space",
+      "entries": [{"text": "[y] not a checkbox", "status": "pending"}, {"text": "[  ] also plain", "status": "pending"}]
+    }
+  ]
+}

@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
 from kolega_code.events import AgentEvent, ArtifactRef, KnownEventType
+from kolega_code.session.task_list import task_list_entries
 
 #: Cap on retained terminal text. Beyond this the oldest output is dropped and
 #: ``terminal_truncated`` is set, so a viewer is told rather than misled.
@@ -218,6 +219,7 @@ class PresentationState(_TerminalBuffer):
     edit_previews: list[dict] = field(default_factory=list)
     context: Optional[ContextStatus] = None
     compaction: Optional[dict] = None
+    task_list: Optional[dict] = None
     #: Decision points in the order they arose, resolved or not. A replay shows
     #: where the agent stopped to ask and what the answer was.
     prompts: list[PendingPrompt] = field(default_factory=list)
@@ -301,6 +303,7 @@ class PresentationState(_TerminalBuffer):
                 "will_compress_at": self.context.will_compress_at,
             },
             "compaction": self.compaction,
+            "task_list": self.task_list,
             "prompts": [
                 {
                     "request_id": prompt.request_id,
@@ -375,6 +378,16 @@ def fold(state: PresentationState, event: AgentEvent) -> PresentationState:
             )
         state.last_seq = event.seq
     state.elapsed_ms = max(state.elapsed_ms, event.elapsed_ms)
+
+    if event.event_type == KnownEventType.TASK_LIST_UPDATED or (
+        event.event_type == KnownEventType.CHAT_MESSAGE and event.content.get("message_type") == "task_list_update"
+    ):
+        if _sub_agent_key(event) is None:
+            field_name = "markdown" if event.event_type == KnownEventType.TASK_LIST_UPDATED else "text"
+            markdown = event.content.get(field_name)
+            if isinstance(markdown, str):
+                state.task_list = {"markdown": markdown, "entries": task_list_entries(markdown)}
+        return state
 
     # Peer lifecycle is session-scoped even when a producer attaches stale worker metadata.
     if event.event_type not in (KnownEventType.PEER_MESSAGE_RECEIVED, KnownEventType.PEER_MESSAGE_DELIVERED):

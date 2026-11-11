@@ -54,6 +54,7 @@ from kolega_code.session.inbox import (
     peer_origin,
 )
 from kolega_code.session.recording import RecordingConnectionManager
+from kolega_code.session.host_extensions import complete_task_list_update
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
 from kolega_code.session.background import BackgroundAgentManager
 from kolega_code.agent.prompt_dump import list_prompt_overrides
@@ -3505,26 +3506,31 @@ class KolegaCodeApp(
             if self.agent is not None:
                 self.agent.apply_loop(False)
         self._clear_runtime_output()
-        await self._save_session_async()
-        self._set_plan_actions_visible(False)
-        self._cancel_pending_question()
-        self._cancel_pending_approval()
-        self._cancel_pending_model_selection()
-        self._cancel_pending_effort_selection()
-        self._cancel_pending_theme_selection()
-        self._refresh_planning_sidebar()
-        self._clear_turn_status_strip()
-        self._turn_active = False
-        self._restore_composer_placeholder()
-        self._set_chat_enabled(self.agent is not None)
-        # A thread reset is not startup: the launch's one tip offer stays spent, so
-        # the rebuilt startup entry must not re-arm it.
-        self._discovery_tip_consumed = True
-        self._ensure_startup_entry(render=False)
-        self._add_conversation_entry(
-            tui_state.ConversationEntry(kind="progress", content=messages.THREAD_RESET_MESSAGE, complete=True)
-        )
-        await self._attach_background_jobs()
+
+        async def persist_reset() -> None:
+            await self._save_session_async()
+            self._set_plan_actions_visible(False)
+            self._cancel_pending_question()
+            self._cancel_pending_approval()
+            self._cancel_pending_model_selection()
+            self._cancel_pending_effort_selection()
+            self._cancel_pending_theme_selection()
+            self._refresh_planning_sidebar()
+            await self._task_list_event_emitter().task_list_updated("")
+            self._clear_turn_status_strip()
+            self._turn_active = False
+            self._restore_composer_placeholder()
+            self._set_chat_enabled(self.agent is not None)
+            # A thread reset is not startup: the launch's one tip offer stays spent, so
+            # the rebuilt startup entry must not re-arm it.
+            self._discovery_tip_consumed = True
+            self._ensure_startup_entry(render=False)
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(kind="progress", content=messages.THREAD_RESET_MESSAGE, complete=True)
+            )
+            await self._attach_background_jobs()
+
+        await complete_task_list_update(persist_reset())
 
     async def _handoff_session(self, document: str) -> None:
         """Switch to a fresh session whose entire context is ``document``.

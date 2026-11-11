@@ -8,6 +8,7 @@ from rich.markup import escape
 from textual.widgets.option_list import Option
 
 from kolega_code.agent import PromptExtension, ToolExtension
+from kolega_code.events import AgentEventEmitter
 from kolega_code.permissions import (
     PermissionDecision,
     PermissionRequest,
@@ -37,20 +38,46 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
         return shared_task_list_prompt_extension()
 
     def _shared_task_list_tool_extension(self) -> ToolExtension:
+        session = self.session
+        token = object()
+        self._task_list_extension_token = token
+        emitter = self._task_list_event_emitter()
+
+        def set_markdown(markdown: str) -> None:
+            if (
+                self.session is not session
+                or self._task_list_extension_token is not token
+                or self.agent is None
+                or self._exit
+            ):
+                raise ToolError("This task-list tool belongs to an inactive agent.")
+            session.task_list_markdown = markdown
+
         return shared_task_list_tool_extension(
-            get_task_list_markdown=lambda: self.session.task_list_markdown,
-            set_task_list_markdown=lambda markdown: setattr(self.session, "task_list_markdown", markdown),
+            get_task_list_markdown=lambda: session.task_list_markdown,
+            set_task_list_markdown=set_markdown,
             save_session=lambda: self._save_session_async(),
-            refresh_task_list=lambda: self._refresh_planning_sidebar(),
+            refresh_task_list=lambda: self._refresh_planning_sidebar() if self.session is session else None,
             empty_message=messages.TASK_LIST_EMPTY_MESSAGE,
+            emit_task_list=emitter.task_list_updated,
+        )
+
+    def _task_list_event_emitter(self) -> AgentEventEmitter:
+        return AgentEventEmitter(
+            self.recording_connection_manager,
+            self.session.workspace_id,
+            self.session.thread_id,
+            sender="cli",
         )
 
     def _shared_task_list_readonly_prompt_extension(self) -> PromptExtension:
         return shared_task_list_readonly_prompt_extension()
 
     def _shared_task_list_readonly_tool_extension(self) -> ToolExtension:
+        self._task_list_extension_token = object()
+        session = self.session
         return shared_task_list_readonly_tool_extension(
-            get_task_list_markdown=lambda: self.session.task_list_markdown,
+            get_task_list_markdown=lambda: session.task_list_markdown,
             empty_message=messages.TASK_LIST_EMPTY_MESSAGE,
         )
 

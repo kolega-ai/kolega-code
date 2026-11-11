@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from textual.worker import Worker
 
     from kolega_code.agent import AgentConfig, AgentEvent, BaseAgent, PromptExtension, ToolExtension
+    from kolega_code.events import AgentEventEmitter
     from kolega_code.extensions import ExtensionSelection, KolegaExtensionBundle
     from kolega_code.hooks import HookDispatcher
     from kolega_code.llm.ledger import UsageLedger, UsageSnapshot
@@ -124,6 +125,7 @@ class KolegaAppBase(App):
         #: Wraps ``connection_manager`` to persist and sequence what it broadcasts.
         #: Agents are built against this one so their output is replayable.
         recording_connection_manager: RecordingConnectionManager
+        _task_list_extension_token: object
         _recording_primed: bool
         #: Serves this session over HTTP while /share is active, on this event
         #: loop. None until the user asks to share.
@@ -441,6 +443,7 @@ class KolegaAppBase(App):
         def _shared_task_list_readonly_prompt_extension(self) -> PromptExtension: ...
         def _shared_task_list_readonly_tool_extension(self) -> ToolExtension: ...
         def _shared_task_list_tool_extension(self) -> ToolExtension: ...
+        def _task_list_event_emitter(self) -> AgentEventEmitter: ...
         def _show_effort_options(self) -> None: ...
         def _show_model_options(self) -> None: ...
         def _show_theme_options(self) -> None: ...

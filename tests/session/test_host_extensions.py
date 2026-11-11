@@ -133,6 +133,115 @@ async def test_failed_task_list_save_does_not_refresh() -> None:
     refresh.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_task_list_publishes_the_written_snapshot_after_save_and_refresh() -> None:
+    state = {"markdown": ""}
+    events: list[tuple[str, str]] = []
+
+    async def save() -> None:
+        events.append(("save", state["markdown"]))
+        state["markdown"] = "a later in-memory value"
+
+    async def emit(markdown: str) -> None:
+        events.append(("emit", markdown))
+
+    extension = shared_task_list_tool_extension(
+        get_task_list_markdown=lambda: state["markdown"],
+        set_task_list_markdown=lambda markdown: state.update(markdown=markdown),
+        save_session=save,
+        refresh_task_list=lambda: events.append(("refresh", state["markdown"])),
+        emit_task_list=emit,
+    )
+
+    assert await extension.tools["update_task_list"](" \n- [ ] Inspect\n ") == "Task list updated."
+    assert events == [
+        ("save", "- [ ] Inspect"),
+        ("refresh", "a later in-memory value"),
+        ("emit", "- [ ] Inspect"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_failed_task_list_save_does_not_publish() -> None:
+    emit = AsyncMock()
+    extension = shared_task_list_tool_extension(
+        get_task_list_markdown=lambda: "",
+        set_task_list_markdown=Mock(),
+        save_session=AsyncMock(side_effect=RuntimeError("save failed")),
+        refresh_task_list=Mock(),
+        emit_task_list=emit,
+    )
+
+    with pytest.raises(RuntimeError, match="save failed"):
+        await extension.tools["update_task_list"]("task")
+    emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked_stage", ["save", "emit"])
+async def test_task_list_update_drains_repeated_cancellation_before_returning(blocked_stage: str) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    state = {"markdown": ""}
+    events: list[str] = []
+    owners: list[asyncio.Task | None] = []
+
+    def mark(stage: str) -> None:
+        events.append(stage)
+        owners.append(asyncio.current_task())
+
+    def set_markdown(markdown: str) -> None:
+        state["markdown"] = markdown
+        mark("set")
+
+    async def save() -> None:
+        mark("save")
+        if blocked_stage == "save":
+            entered.set()
+            await release.wait()
+        mark("saved")
+
+    def refresh() -> None:
+        mark("refresh")
+
+    async def emit(markdown: str) -> None:
+        assert markdown == "- [x] saved"
+        mark("emit")
+        if blocked_stage == "emit":
+            entered.set()
+            await release.wait()
+        mark("emitted")
+
+    extension = shared_task_list_tool_extension(
+        get_task_list_markdown=lambda: state["markdown"],
+        set_task_list_markdown=set_markdown,
+        save_session=save,
+        refresh_task_list=refresh,
+        emit_task_list=emit,
+    )
+    caller = asyncio.create_task(extension.tools["update_task_list"](" \n- [x] saved\n "))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=10)
+        for _ in range(3):
+            caller.cancel()
+            await asyncio.sleep(0)
+            assert not caller.done()
+        assert state["markdown"] == "- [x] saved"
+        assert events == (["set", "save"] if blocked_stage == "save" else ["set", "save", "saved", "refresh", "emit"])
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(caller, timeout=10)
+        assert events == ["set", "save", "saved", "refresh", "emit", "emitted"]
+        owner = owners[0]
+        assert owner is not None and owner is not caller and owner.done()
+        assert all(task is owner for task in owners)
+        await asyncio.sleep(0)
+        assert events.count("emitted") == 1
+    finally:
+        release.set()
+        await asyncio.gather(caller, return_exceptions=True)
+
+
 def question(text: str, header: str = "") -> dict:
     return {
         "question": text,

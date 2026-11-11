@@ -9,6 +9,7 @@ stored volume without losing any streamed text.
 from __future__ import annotations
 
 import base64
+import asyncio
 from copy import deepcopy
 from typing import Any
 from unittest.mock import AsyncMock
@@ -519,6 +520,86 @@ async def test_failed_event_append_still_delivers_normalized_live_images() -> No
     assert live.seq is None
     assert artifacts.put.await_count == 1
     assert await artifacts.open(live.artifacts[0]) == b"image"
+
+
+@pytest.mark.asyncio
+async def test_task_list_snapshots_are_durable_complete_and_ordered_between_streams() -> None:
+    artifacts = InMemoryArtifactStore()
+    manager, inner, store = _manager(
+        policy=RetentionPolicy(inline_payload_chars=32, stream_checkpoint_chars=10**9, stream_checkpoint_ms=10**9),
+        artifacts=artifacts,
+    )
+    markdown = "# Keep the full source\n- [ ] " + "完整 task text " * 2_000 + "LAST TASK CHARACTER"
+    try:
+        await manager.broadcast_event(_delta("assistant_delta", "answer", "Before", streaming=True), "w", "t")
+        await manager.broadcast_event(_event("task_list_updated", markdown=markdown), "w", "t")
+        await manager.broadcast_event(_delta("assistant_delta", "answer", " after", streaming=False), "w", "t")
+        await manager.broadcast_event(_event("task_list_updated", markdown=""), "w", "t")
+
+        recorded = await store.read(SESSION_ID)
+        assert [event.event_type for event in recorded] == [
+            "assistant_delta",
+            "task_list_updated",
+            "assistant_delta",
+            "task_list_updated",
+        ]
+        assert [event.seq for event in recorded] == [1, 2, 3, 4]
+        assert [event.content for event in recorded] == [
+            {"text": "Before", "complete": False},
+            {"markdown": markdown},
+            {"text": " after", "complete": True},
+            {"markdown": ""},
+        ]
+        assert all(not event.artifacts for event in recorded)
+        assert inner.seq_at_broadcast == [None, 2, 3, 4]
+        assert inner.events[1].content == {"markdown": markdown}
+        assert inner.events[3].content == {"markdown": ""}
+    finally:
+        await manager.flush()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked_stage", ["append", "delivery"])
+async def test_task_list_recording_keeps_ownership_through_repeated_cancellation(blocked_stage: str) -> None:
+    manager, inner, store = _manager()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    append = store.append
+    deliver = inner.broadcast_event
+
+    async def blocked_append(event: AgentEvent) -> int:
+        if blocked_stage == "append":
+            started.set()
+            await release.wait()
+        return await append(event)
+
+    async def blocked_delivery(event: AgentEvent, workspace_id: str, thread_id: str) -> None:
+        if blocked_stage == "delivery":
+            started.set()
+            await release.wait()
+        await deliver(event, workspace_id, thread_id)
+
+    store.append = AsyncMock(side_effect=blocked_append)
+    inner.broadcast_event = AsyncMock(side_effect=blocked_delivery)
+    task = asyncio.create_task(manager.broadcast_event(_event("task_list_updated", markdown=""), "w", "t"))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=10)
+        for _ in range(3):
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done(), "a cancelled snapshot must retain its writer and delivery owner"
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=10)
+        (stored,) = await store.read(SESSION_ID)
+        assert stored.event_type == "task_list_updated"
+        assert stored.content == {"markdown": ""}
+        assert len(inner.events) == 1
+        assert inner.events[0].content == {"markdown": ""}
+        assert store.append.await_count == inner.broadcast_event.await_count == 1
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.asyncio

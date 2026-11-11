@@ -638,10 +638,7 @@ class AcpAgent(Agent):
                     session, update_agent_thought_text(f"Conversation compacted:\n{summary}")
                 )
         task_list = (session.record.task_list_markdown or "").strip()
-        if task_list:
-            entries = task_entries_from_markdown(task_list)
-            if entries:
-                await self._send_session_update(session, update_plan(entries))
+        await self._send_session_update(session, update_plan(task_entries_from_markdown(task_list)))
 
     # -- turn machinery ----------------------------------------------------
 
@@ -654,6 +651,7 @@ class AcpAgent(Agent):
                 diff_provider=AcpDiffProvider.for_session(session),
                 agent=session.agent,
                 accounting=session.accounting,
+                task_list_markdown=lambda: session.record.task_list_markdown,
             )
             session.event_task = asyncio.create_task(
                 self._pump_events(session, session.bridge), name=f"acp-events-{session.session_id}"

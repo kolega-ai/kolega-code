@@ -152,11 +152,11 @@ class RecordingConnectionManager(AgentConnectionManager):
 
     async def broadcast_event(self, event: AgentEvent, workspace_id: str, thread_id: str) -> None:
         self._stamp(event, workspace_id, thread_id)
-        if IMAGE_PAYLOAD_KEY not in event.content:
+        if IMAGE_PAYLOAD_KEY not in event.content and event.event_type != KnownEventType.TASK_LIST_UPDATED:
             await self._broadcast_recorded_event(event, workspace_id, thread_id)
             return
-        # An image write may own a worker thread; cancellation must not drop its
-        # turn boundary or release the caller while that writer is still live.
+        # Image writes and task snapshots may own journal threads; cancellation
+        # must not release the caller before persistence and live delivery finish.
         operation = asyncio.create_task(
             self._broadcast_recorded_event(event.model_copy(deep=True), workspace_id, thread_id)
         )
@@ -498,7 +498,10 @@ class RecordingConnectionManager(AgentConnectionManager):
         oversized = {
             key: value
             for key, value in event.content.items()
-            if isinstance(value, str) and len(value) > self.policy.inline_payload_chars
+            if isinstance(value, str)
+            and len(value) > self.policy.inline_payload_chars
+            # The fold needs the complete snapshot, not an artifact preview.
+            and not (event.event_type == KnownEventType.TASK_LIST_UPDATED and key == "markdown")
         }
         if not oversized:
             return event
