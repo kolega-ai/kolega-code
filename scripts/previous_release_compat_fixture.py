@@ -93,6 +93,47 @@ _TASK_LIST: dict[str, Any] = {
         {"text": _TASK_LIST_TEXT, "status": "pending"},
     ],
 }
+
+
+def _usage_payload(*, populated: bool) -> dict[str, Any]:
+    usage = session_usage.derive_session_usage(())
+    if populated:
+        usage.update(requests=2, responses=2, reported=2)
+        usage["known_requests"] = {name: 2 for name in usage["known_requests"]}
+        usage["known_fields"] = copy.deepcopy(usage["known_requests"])
+        usage["costs"].update(
+            reported=1,
+            estimated=1,
+            currencies={
+                "USD": {
+                    "reported": "0.000000000000000000123456789",
+                    "estimated": "0",
+                    "total": "0.000000000000000000123456789",
+                    "requests": 1,
+                    "reported_requests": 1,
+                    "estimated_requests": 0,
+                }
+            },
+            non_monetary={
+                "api_credits": {
+                    "reported": "0",
+                    "estimated": "0.002",
+                    "total": "0.002",
+                    "requests": 1,
+                    "reported_requests": 0,
+                    "estimated_requests": 1,
+                }
+            },
+        )
+    return {
+        "scope": "session",
+        "semantics": "snapshot",
+        "source_seq": int(populated),
+        "usage": usage,
+        "compat_payload": {"preserve": [False, None, "future café 🐍 <literal>"]},
+    }
+
+
 _IMAGE = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 )
@@ -220,6 +261,8 @@ async def _write_ui(store: FileSessionEventStore, session_id: str, image: Artifa
             content.update(turn_id="compat-mixed", user_text="current-release user", image_count=1)
         elif event_type == KnownEventType.TASK_LIST_UPDATED:
             content = copy.deepcopy(_TASK_LIST_INITIAL)
+        elif event_type == KnownEventType.USAGE_UPDATED:
+            content = _usage_payload(populated=False)
         await store.append(
             AgentEvent(
                 event_type=event_type,
@@ -251,6 +294,7 @@ async def _write_ui(store: FileSessionEventStore, session_id: str, image: Artifa
             {"message_type": "task_list_update", "text": "- [x] Legacy task list"},
         ),
         (KnownEventType.TASK_LIST_UPDATED, {"markdown": _TASK_LIST["markdown"]}),
+        (KnownEventType.USAGE_UPDATED, _usage_payload(populated=True)),
     ):
         await store.append(
             AgentEvent(event_type=event_type, sender="compat-fixture", session_id=session_id, content=content)
@@ -386,6 +430,8 @@ def create_fixture(root: Path) -> dict:
             },
             "task_list_payloads": [copy.deepcopy(_TASK_LIST_INITIAL), {"markdown": _TASK_LIST["markdown"]}],
             "task_list": copy.deepcopy(_TASK_LIST),
+            "usage_payloads": [_usage_payload(populated=False), _usage_payload(populated=True)],
+            "usage": {"source_seq": 1, **_usage_payload(populated=True)["usage"]},
             "image_sha256": hashlib.sha256(_IMAGE).hexdigest(),
             "sub_agents": copy.deepcopy(_SUB_AGENTS),
         }
@@ -424,6 +470,13 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
     assert all(event.sub_agent_info is None and event.schema_version == 2 for event in task_events), (
         "Task-list events changed scope or schema version"
     )
+    usage_events = [event for event in ui_events if event.event_type == KnownEventType.USAGE_UPDATED]
+    assert [event.content for event in usage_events] == manifest["usage_payloads"], (
+        "Previous writer lost canonical usage payloads"
+    )
+    assert all(event.sub_agent_info is None and event.schema_version == 2 for event in usage_events), (
+        "Usage events changed scope or schema version"
+    )
     image_turns = [
         event
         for event in ui_events
@@ -441,6 +494,7 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
         assert asyncio.run(FileArtifactStore(sessions.journal(session_id)).open(ref)) == _IMAGE
     state = replay(ui_events)
     assert state.task_list == manifest["task_list"], "Previous writer lost the complete latest task-list projection"
+    assert state.usage == manifest["usage"], "Previous writer lost the latest usage projection"
     image_rows = [item for item in state.conversation if item.kind == "user"]
     assert [(item.text, item.image_count) for item in image_rows] == [("current-release user", 1), ("", 1)]
     assert all([ref.sha256 for ref in item.artifacts] == [manifest["image_sha256"]] for item in image_rows)

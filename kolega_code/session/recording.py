@@ -152,10 +152,13 @@ class RecordingConnectionManager(AgentConnectionManager):
 
     async def broadcast_event(self, event: AgentEvent, workspace_id: str, thread_id: str) -> None:
         self._stamp(event, workspace_id, thread_id)
-        if IMAGE_PAYLOAD_KEY not in event.content and event.event_type != KnownEventType.TASK_LIST_UPDATED:
+        if IMAGE_PAYLOAD_KEY not in event.content and event.event_type not in (
+            KnownEventType.TASK_LIST_UPDATED,
+            KnownEventType.USAGE_UPDATED,
+        ):
             await self._broadcast_recorded_event(event, workspace_id, thread_id)
             return
-        # Image writes and task snapshots may own journal threads; cancellation
+        # Image writes and snapshots may own journal threads; cancellation
         # must not release the caller before persistence and live delivery finish.
         operation = asyncio.create_task(
             self._broadcast_recorded_event(event.model_copy(deep=True), workspace_id, thread_id)

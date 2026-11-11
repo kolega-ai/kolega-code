@@ -311,15 +311,26 @@ class SessionJournal:
     def root_stamp(self) -> AgentStamp:
         return self._root_stamp
 
-    def add_listener(self, listener: Callable[[SessionEvent], None]) -> None:
+    def add_listener(self, listener: Callable[[SessionEvent], None]) -> Callable[[], None]:
         """Tee every successfully appended event to ``listener``.
 
         Listeners receive the exact persisted ``SessionEvent`` object, so a live
         consumer and the saved record share id, seq, and timestamp. Listener
-        failures are logged and never fail the append.
+        failures are logged and never fail the append. Returns an idempotent
+        unsubscribe callback.
         """
         with self._lock:
             self._listeners.append(listener)
+        removed = False
+
+        def unsubscribe() -> None:
+            nonlocal removed
+            with self._lock:
+                if not removed:
+                    self._listeners.remove(listener)
+                    removed = True
+
+        return unsubscribe
 
     @property
     def epoch_id(self) -> str:
@@ -441,7 +452,7 @@ class SessionJournal:
         self._next_seq += 1
         if event_type == "context.epoch_started":
             self._epoch_id = resolved_epoch
-        for listener in self._listeners:
+        for listener in tuple(self._listeners):
             try:
                 listener(event)
             except Exception:

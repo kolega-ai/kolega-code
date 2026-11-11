@@ -197,6 +197,25 @@ def test_previous_worker_rejects_lost_or_changed_canonical_task_payloads(damage:
         worker.verify_task_list_payloads(actual, [payload])
 
 
+@pytest.mark.parametrize("damage", ["missing", "decimal", "unknown_fields", "worker_tag", "schema"])
+def test_previous_worker_rejects_lost_or_changed_canonical_usage_payloads(damage: str) -> None:
+    payload = fixture_module._usage_payload(populated=True)
+    event = AgentEvent(event_type="usage_updated", sender="compat-fixture", content=payload)
+    worker.verify_usage_payloads([event], [payload])
+    actual = [] if damage == "missing" else [event.model_copy(deep=True)]
+    if actual:
+        if damage == "decimal":
+            actual[0].content["usage"]["costs"]["currencies"]["USD"]["total"] = "0"
+        elif damage == "unknown_fields":
+            del actual[0].content["compat_payload"]
+        elif damage == "worker_tag":
+            actual[0].sub_agent_info = {"agent_id": "worker"}
+        else:
+            actual[0].schema_version += 1
+    with pytest.raises(RuntimeError, match="usage"):
+        worker.verify_usage_payloads(actual, [payload])
+
+
 def _simulate_writer(root: Path, manifest: dict[str, Any]) -> None:
     settings_store = SettingsStore(root)
     settings = settings_store.load()
@@ -304,6 +323,43 @@ def test_roundtrip_retains_full_latest_task_list_without_conversation_prose(
     assert all(item.seq not in task_sequences for item in state.conversation)
     worker.verify_task_list_payloads(events, manifest["task_list_payloads"])
     fixture_module.verify_after_previous(root, manifest)
+
+
+def test_roundtrip_retains_usage_precision_zero_provenance_and_separate_credits(
+    completed_roundtrip: tuple[Path, dict[str, Any]],
+) -> None:
+    root, manifest = completed_roundtrip
+    store = SessionStore(root)
+    events = asyncio.run(FileSessionEventStore(store.journal(manifest["session_id"])).read(manifest["session_id"]))
+    usage_events = [event for event in events if event.event_type == KnownEventType.USAGE_UPDATED]
+    assert len(usage_events) == 2
+    assert [event.content for event in usage_events] == manifest["usage_payloads"]
+    state = replay(events)
+    assert state.usage is not None
+    assert state.usage["requests"] == state.usage["known_requests"]["total_tokens"] == 2
+    assert state.usage["total_tokens"] == 0
+    assert state.usage["costs"]["currencies"]["USD"]["total"] == "0.000000000000000000123456789"
+    assert state.usage["costs"]["currencies"]["USD"]["estimated_requests"] == 0
+    assert state.usage["costs"]["non_monetary"]["api_credits"]["total"] == "0.002"
+    assert state.usage["costs"]["non_monetary"]["api_credits"]["reported_requests"] == 0
+    assert all(item.seq not in {event.seq for event in usage_events} for item in state.conversation)
+    worker.verify_usage_payloads(events, manifest["usage_payloads"])
+    fixture_module.verify_after_previous(root, manifest)
+
+
+def test_lost_usage_projection_fails_roundtrip(
+    completed_roundtrip: tuple[Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_replay = fixture_module.replay
+
+    def drop_usage(events: list[AgentEvent]) -> PresentationState:
+        state = original_replay(events)
+        state.usage = None
+        return state
+
+    monkeypatch.setattr(fixture_module, "replay", drop_usage)
+    with pytest.raises(AssertionError, match="usage projection"):
+        fixture_module.verify_after_previous(*completed_roundtrip)
 
 
 @pytest.mark.parametrize("damage", ["missing", "truncated", "prose"])

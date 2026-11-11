@@ -56,6 +56,7 @@ from kolega_code.session.inbox import (
 from kolega_code.session.recording import RecordingConnectionManager
 from kolega_code.session.host_extensions import complete_task_list_update
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
+from kolega_code.session.usage import UsagePresentation
 from kolega_code.session.background import BackgroundAgentManager
 from kolega_code.agent.prompt_dump import list_prompt_overrides
 from kolega_code.agent.prompt_provider import AgentMode
@@ -380,6 +381,7 @@ class KolegaCodeApp(
         # journal sink is attached in on_mount, once the UI loop exists.
         self._usage_ledger = UsageLedger(pricing_resolver=PricingResolver(config.usage_pricing if config else None))
         self._usage_sink: Optional[SessionUsageSink] = None
+        self._usage_presentation: UsagePresentation | None = None
         self._goal: Optional[GoalState] = GoalState.from_dict(self.session.goal) if self.session.goal else None
         # Checkpoint for goal token accounting: drains advance it, so a resumed
         # goal continues from the persisted tokens_spent without recounting.
@@ -840,6 +842,7 @@ class KolegaCodeApp(
             return
         if not self.is_running or self._startup_cancelled:
             return
+        await self._start_usage_presentation()
         # No minimum duration or final animation: hand over as soon as the
         # generation is usable, before any onboarding/loop/discovery prompt.
         self._dismiss_boot_splash()
@@ -860,6 +863,18 @@ class KolegaCodeApp(
 
     def _startup_recent_sessions(self) -> tuple[RecentSessionItem, ...]:
         return self._recent_sessions if self._recent_sessions_available else ()
+
+    async def _start_usage_presentation(self) -> None:
+        await self._prime_recording_offset()
+        presentation = UsagePresentation(
+            self.store.journal(self.session.session_id),
+            self.recording_connection_manager.broadcast_event,
+            workspace_id=self.session.workspace_id,
+            thread_id=self.session.thread_id,
+            live_run_id=lambda: self._usage_ledger.run_id,
+        )
+        self._usage_presentation = presentation
+        await presentation.start()
 
     async def _load_recent_sessions(self) -> None:
         try:
@@ -2867,6 +2882,8 @@ class KolegaCodeApp(
                     # the ledger first, so the drain below captures them.
                     if turns_settled and self._usage_sink is not None:
                         await self._usage_sink.wait_closed()
+                    if turns_settled and self._usage_presentation is not None:
+                        await self._usage_presentation.aclose()
                 finally:
                     await self._stop_inbox_socket()
                     self._unregister_from_inbox()
@@ -3577,6 +3594,9 @@ class KolegaCodeApp(
         if self._usage_sink is not None:
             await self._usage_sink.wait_closed()
             self._usage_sink = None
+        if self._usage_presentation is not None:
+            await self._usage_presentation.aclose()
+            self._usage_presentation = None
         self._unregister_from_inbox()
         await self._stop_inbox_socket()
 
@@ -3657,6 +3677,7 @@ class KolegaCodeApp(
         self._usage_sink = usage_sink
         self._usage_ledger.observer = usage_sink
         await usage_sink.start()
+        await self._start_usage_presentation()
 
         # 11) Persist the new session and announce the switch.
         await self._save_session_async()

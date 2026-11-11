@@ -10,6 +10,7 @@
     "context": null,
     "compaction": null,
     "task_list": null,
+    "usage": null,
     "prompts": [],
     "status": "",
     "activity": "idle",

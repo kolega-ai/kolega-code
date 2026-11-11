@@ -19,7 +19,9 @@ between two independent folds. Use :func:`replay` to build state from scratch.
 from __future__ import annotations
 
 from collections import deque
+from copy import deepcopy
 from dataclasses import dataclass, field
+import re
 from typing import Any, Iterable, Optional
 
 from kolega_code.events import AgentEvent, ArtifactRef, KnownEventType
@@ -220,6 +222,7 @@ class PresentationState(_TerminalBuffer):
     context: Optional[ContextStatus] = None
     compaction: Optional[dict] = None
     task_list: Optional[dict] = None
+    usage: Optional[dict] = None
     #: Decision points in the order they arose, resolved or not. A replay shows
     #: where the agent stopped to ask and what the answer was.
     prompts: list[PendingPrompt] = field(default_factory=list)
@@ -304,6 +307,7 @@ class PresentationState(_TerminalBuffer):
             },
             "compaction": self.compaction,
             "task_list": self.task_list,
+            "usage": self.usage,
             "prompts": [
                 {
                     "request_id": prompt.request_id,
@@ -379,6 +383,19 @@ def fold(state: PresentationState, event: AgentEvent) -> PresentationState:
         state.last_seq = event.seq
     state.elapsed_ms = max(state.elapsed_ms, event.elapsed_ms)
 
+    if event.event_type == KnownEventType.USAGE_UPDATED:
+        content = event.content
+        if (
+            _sub_agent_key(event) is None
+            and content.get("scope") == "session"
+            and content.get("semantics") == "snapshot"
+            and _usage_count(content.get("source_seq"))
+            and _valid_usage(content.get("usage"))
+            and (state.usage is None or content["source_seq"] >= state.usage["source_seq"])
+        ):
+            state.usage = {**deepcopy(content["usage"]), "source_seq": content["source_seq"]}
+        return state
+
     if event.event_type == KnownEventType.TASK_LIST_UPDATED or (
         event.event_type == KnownEventType.CHAT_MESSAGE and event.content.get("message_type") == "task_list_update"
     ):
@@ -406,6 +423,66 @@ def fold(state: PresentationState, event: AgentEvent) -> PresentationState:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+_USAGE_COUNTS = ("requests", "responses", "reported", "unreported", "failed", "open", "abandoned", "partial", "missing")
+_USAGE_TOKENS = (
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "cache_read_input_tokens",
+    "cache_write_input_tokens",
+    "reasoning_output_tokens",
+)
+_USAGE_DECIMAL = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+
+
+def _usage_count(value: Any) -> bool:
+    return type(value) is int and 0 <= value <= 9_007_199_254_740_991
+
+
+def _usage_decimal(value: Any) -> bool:
+    if not isinstance(value, str) or _USAGE_DECIMAL.fullmatch(value) is None:
+        return False
+    mantissa = value.lower().split("e")[0]
+    return not value.startswith("-") or not mantissa[1:].replace(".", "").strip("0")
+
+
+def _valid_usage_costs(costs: Any) -> bool:
+    if not isinstance(costs, dict) or type(costs.get("complete")) is not bool:
+        return False
+    if not all(
+        _usage_count(costs.get(name))
+        for name in ("reported", "estimated", "missing", "partial", "missing_requests", "partial_requests")
+    ):
+        return False
+    for name in ("currencies", "non_monetary"):
+        buckets = costs.get(name)
+        if not isinstance(buckets, dict):
+            return False
+        for denomination, row in buckets.items():
+            if not isinstance(denomination, str) or not denomination or not isinstance(row, dict):
+                return False
+            if not all(_usage_decimal(row.get(field)) for field in ("reported", "estimated", "total")):
+                return False
+            if not all(
+                _usage_count(row.get(field)) for field in ("requests", "reported_requests", "estimated_requests")
+            ):
+                return False
+            if "token_cost_subtotal" in row and not _usage_decimal(row["token_cost_subtotal"]):
+                return False
+    return True
+
+
+def _valid_usage(usage: Any) -> bool:
+    if not isinstance(usage, dict) or type(usage.get("complete")) is not bool:
+        return False
+    known = usage.get("known_requests")
+    return (
+        all(_usage_count(usage.get(name)) for name in (*_USAGE_COUNTS, *_USAGE_TOKENS))
+        and isinstance(known, dict)
+        and all(_usage_count(known.get(name)) for name in _USAGE_TOKENS)
+        and _valid_usage_costs(usage.get("costs"))
+    )
 
 
 def sub_agent_key(info: Optional[dict]) -> Optional[str]:

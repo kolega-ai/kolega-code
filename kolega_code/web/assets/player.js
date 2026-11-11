@@ -81,6 +81,7 @@ let renderedCount = 0;
 /** Per-index snapshot of the mutable fields renderEntry draws, for change detection. */
 let renderedEntries = [];
 let renderedTaskList;
+let renderedUsage;
 /** Tool entries the viewer has opened. Tool output is collapsed by default. */
 const expandedTools = new Set();
 /** Sub-agent key the transcript is narrowed to, or null for the whole thread. */
@@ -143,6 +144,7 @@ function cacheDom() {
     "turns",
     "subAgents",
     "taskList",
+    "usage",
     "terminal",
     "gauge",
     "gaugeLabel",
@@ -169,6 +171,7 @@ function cacheDom() {
   dom.terminal.setAttribute("aria-labelledby", "terminalOwner");
   renderTerminal();
   renderTaskList();
+  renderUsage();
 }
 
 async function fetchJson(path) {
@@ -255,6 +258,7 @@ function applyCount(target) {
     renderedCount = 0;
     renderedEntries = [];
     renderedTaskList = undefined;
+    renderedUsage = undefined;
     mergedRows = null;
     dom.transcript.replaceChildren();
   }
@@ -1208,10 +1212,143 @@ function advanceSpinner() {
 function renderRail() {
   renderGauge();
   renderTaskList();
+  renderUsage();
   renderSubAgents();
   renderTerminal();
   dom.status.textContent = state.status || "";
   dom.truncated.hidden = !state.recordingTruncated;
+}
+
+function usageText(parent, tag, className, text) {
+  const node = document.createElement(tag);
+  node.className = className;
+  node.textContent = text;
+  parent.append(node);
+  return node;
+}
+
+function usageRow(parent, field, label, value) {
+  const row = document.createElement("div");
+  row.className = "kc-usage-row";
+  row.dataset.field = field;
+  usageText(row, "span", "kc-usage-label", label);
+  usageText(row, "span", "kc-usage-value", value ?? "Unavailable");
+  parent.append(row);
+}
+
+function usageGroup(field, title) {
+  const group = document.createElement("section");
+  group.className = "kc-usage-group";
+  group.dataset.group = field;
+  usageText(group, "h3", "kc-usage-heading", title);
+  dom.usage.append(group);
+  return group;
+}
+
+function usageCompleteness(parent, complete, subject) {
+  const note = usageText(parent, "p", "kc-usage-note",
+    complete === true ? `Complete ${subject}` :
+      complete === false ? `Incomplete ${subject} · known subtotals only` : `${subject} unavailable`);
+  note.dataset.state = complete === true ? "complete" : complete === false ? "incomplete" : "unknown";
+}
+
+function renderUsage() {
+  const usage = state.usage ?? null;
+  const snapshot = JSON.stringify(usage);
+  if (renderedUsage === snapshot) return;
+  renderedUsage = snapshot;
+  dom.usage.replaceChildren();
+  dom.usage.dataset.state = usage === null ? "unknown" : "recorded";
+  usageText(dom.usage, "p", "kc-usage-summary", "Session-wide · lifetime across all agents and epochs");
+  if (usage === null) {
+    usageText(dom.usage, "p", "kc-empty", "Usage unavailable. No usage recorded.");
+    return;
+  }
+
+  const requests = usageGroup("requests", "Requests");
+  for (const [field, label] of [
+    ["requests", "Total requests"], ["responses", "Responses"], ["reported", "Complete token reports"],
+    ["unreported", "Responses without complete tokens"], ["failed", "Failed / cancelled"],
+    ["open", "Open"], ["abandoned", "Abandoned"], ["partial", "Partial token reports"],
+    ["missing", "Missing token reports"],
+  ]) {
+    usageRow(requests, field, label, usage[field]);
+  }
+
+  const tokens = usageGroup("tokens", "Tokens");
+  usageCompleteness(tokens, usage.complete, "primary token evidence");
+  const known = usage.known_requests ?? usage.known_fields ?? {};
+  for (const [field, label] of [
+    ["input_tokens", "Input"], ["output_tokens", "Output"], ["total_tokens", "Total"],
+    ["cache_read_input_tokens", "Cache read"], ["cache_write_input_tokens", "Cache write"],
+    ["reasoning_output_tokens", "Reasoning output"],
+  ]) {
+    const count = known[field];
+    const available = usage[field] != null && (count > 0 || usage.requests === 0);
+    const coverage = count != null && usage.requests != null ? ` · ${count}/${usage.requests} requests` : "";
+    const partial = available && count < usage.requests ? " · partial subtotal" : "";
+    usageRow(tokens, field, label, `${available ? usage[field] : "Unavailable"}${coverage}${partial}`);
+  }
+
+  const coverage = usageGroup("coverage", "Recording coverage");
+  const full = usage.coverage?.full;
+  const coverageNote = usageText(coverage, "p", "kc-usage-note",
+    full === true ? "Full recording coverage" :
+      full === false ? "Incomplete recording coverage" : "Recording coverage unavailable");
+  coverageNote.dataset.state = full === true ? "complete" : full === false ? "incomplete" : "unknown";
+  for (const [field, count] of Object.entries(usage.coverage ?? {})) {
+    if (field !== "full" && (count || field === "accounted_runs")) {
+      usageRow(coverage, field, field.replaceAll("_", " "), count);
+    }
+  }
+
+  const costs = usage.costs ?? {};
+  const costGroup = usageGroup("costs", "Cost evidence");
+  usageCompleteness(costGroup, costs.complete, "cost evidence");
+  for (const [field, label, count] of [
+    ["reported", "Provider-reported requests", costs.reported],
+    ["estimated", "Estimated requests", costs.estimated],
+    ["missing", "Missing cost requests", costs.missing_requests ?? costs.missing],
+    ["partial", "Partial cost requests", costs.partial_requests ?? costs.partial],
+  ]) {
+    usageRow(costGroup, field, label, count);
+  }
+  for (const [field, title] of [["currencies", "Monetary cost"], ["non_monetary", "Non-monetary credits"]]) {
+    const group = usageGroup(field, title);
+    const rows = Object.entries(costs[field] ?? {});
+    if (!rows.length) usageText(group, "p", "kc-empty", "Unavailable · no cost recorded.");
+    for (const [denomination, amounts] of rows) {
+      const row = document.createElement("section");
+      row.className = "kc-usage-group";
+      row.dataset.denomination = denomination;
+      usageText(row, "h4", "kc-usage-heading", denomination);
+      const decimal = (value) => typeof value === "string" ? value : "Unavailable";
+      usageRow(row, "total", costs.complete === true ? "Total" : "Known subtotal", decimal(amounts.total));
+      for (const [source, label] of [["reported", "Provider-reported"], ["estimated", "Estimated"]]) {
+        const count = amounts[`${source}_requests`];
+        const amount = count === 0 ? "Unavailable" : decimal(amounts[source]);
+        usageRow(row, source, label, `${amount} · ${count ?? "unknown"} requests`);
+      }
+      usageRow(row, "requests", "Requests in this denomination", amounts.requests);
+      if (amounts.token_cost_subtotal != null) {
+        usageRow(row, "token_cost_subtotal", "Token cost subtotal", decimal(amounts.token_cost_subtotal));
+      }
+      group.append(row);
+    }
+  }
+
+  const persistence = usageGroup("persistence", "Persistence health");
+  const health = usage.persistence?.healthy;
+  const healthNote = usageText(persistence, "p", "kc-usage-note",
+    health === true ? "Healthy" : health === false ? "Persistence issues recorded" : "Persistence health unavailable");
+  healthNote.dataset.state = health === true ? "healthy" : health === false ? "unhealthy" : "unknown";
+  for (const [field, label, count] of [
+    ["persist_failures", "Persistence failures", usage.persistence?.persist_failures ?? usage.persist_failures],
+    ["unclosed_runs", "Unclosed runs", usage.persistence?.unclosed_runs ?? usage.coverage?.unclosed_runs],
+    ["lost_requests", "Lost requests", usage.persistence?.lost_requests ?? usage.coverage?.lost_requests],
+  ]) {
+    usageRow(persistence, field, label, count);
+  }
 }
 
 function renderTaskList() {

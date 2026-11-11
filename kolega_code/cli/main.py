@@ -1341,8 +1341,20 @@ async def _close_tui_app(app: Any) -> None:
                 await cast(Any, wait_closed)()
             else:
                 await usage_sink.aclose()
+        except asyncio.CancelledError as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
         except Exception as exc:  # noqa: BLE001 — reported, never masks the primary exception
             print(f"Warning: usage sink close failed: {exc}", file=sys.stderr)
+    usage_presentation = getattr(app, "_usage_presentation", None)
+    if usage_presentation is not None:
+        try:
+            await usage_presentation.aclose()
+        except asyncio.CancelledError as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        except Exception as exc:  # noqa: BLE001 — presentation must not mask the primary exception
+            print(f"Warning: usage presentation close failed: {exc}", file=sys.stderr)
     if cleanup_error is not None:
         raise cleanup_error
 

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from kolega_code.acp.control import AcpControlAdapter
     from kolega_code.mcp.config import MCPServerConfig
     from kolega_code.session.runtime import SessionRuntime
+    from kolega_code.session.usage import UsagePresentation
 
 
 @dataclass
@@ -59,6 +60,7 @@ class AcpSession:
     retired_agents: list[Any] = field(default_factory=list, repr=False)
     cleanup_tasks: dict[int, asyncio.Task[None]] = field(default_factory=dict, repr=False)
     accounting: AcpUsageAccounting | None = field(default=None, repr=False)
+    usage_presentation: UsagePresentation | None = field(default=None, repr=False)
 
     def idle(self) -> bool:
         return (
