@@ -16,7 +16,9 @@ class GoogleStreamWrapper:
     def __init__(self, gemini_stream, model: Optional[str] = None):
         self.gemini_stream = gemini_stream
         self.model = model
-        self.final_content = ""
+        # ``self.final_content += chunk`` is O(n^2): an instance attribute never gets
+        # CPython's in-place concat, so long Gemini streams copy the whole buffer per chunk.
+        self._content_parts: List[str] = []
         # Maps a running index -> (FunctionCall, thought_signature). The signature is a
         # part-level field (Gemini 3.x), so we read it off the parts, not chunk.function_calls.
         self.final_tool_calls = {}
@@ -27,6 +29,10 @@ class GoogleStreamWrapper:
 
         self._closed = False
         self._usage_complete = False
+
+    @property
+    def final_content(self) -> str:
+        return "".join(self._content_parts)
 
     def get_usage_observation(self) -> UsageObservation:
         return observation_from_metadata(self.usage_metadata, "google", self.model, complete=self._usage_complete)
@@ -58,7 +64,8 @@ class GoogleStreamWrapper:
             if isinstance(resolved, str):
                 self.usage_metadata["resolved_model"] = resolved
             content = chunk.text or ""
-            self.final_content += content
+            if content:
+                self._content_parts.append(content)
 
             # Read function calls off the parts so we also capture each part's thought_signature
             # (Gemini 3.x requires it echoed back). Accumulate across chunks with a running index.
