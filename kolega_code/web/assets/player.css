@@ -563,6 +563,60 @@ button.kc-tool-name:focus-visible {
   margin-top: 0.25rem;
 }
 
+#taskList {
+  max-height: 20rem;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
+.kc-task-summary,
+.kc-task-source-label {
+  margin: 0 0 0.4rem;
+  font-size: 0.7rem;
+  color: color-mix(in srgb, var(--kc-foreground) 66%, var(--kc-text-muted));
+}
+
+.kc-task-entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.kc-task-entry {
+  display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr);
+  gap: 0.4rem;
+  padding: 0.3rem 0;
+  font-size: 0.76rem;
+}
+
+.kc-task-mark {
+  color: var(--kc-accent);
+}
+
+.kc-task-entry[data-status="completed"] .kc-task-mark {
+  color: var(--kc-success);
+}
+
+.kc-task-text,
+.kc-task-source {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.kc-task-source-label {
+  margin-top: 0.65rem;
+}
+
+.kc-task-source {
+  margin: 0;
+  padding-left: 0.65rem;
+  border-left: 1px solid var(--kc-hairline-strong);
+  font: inherit;
+  font-size: 0.72rem;
+  color: color-mix(in srgb, var(--kc-foreground) 70%, var(--kc-text-muted));
+}
+
 .kc-turn {
   display: block;
   width: 100%;

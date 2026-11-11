@@ -22,6 +22,7 @@ from kolega_code.session.inbox import PeerMessage, peer_model_text
 from kolega_code.session.projection import replay
 
 ASSET_DIR = Path(__file__).resolve().parents[2] / "kolega_code" / "web" / "assets"
+TASK_LIST_FIXTURE = json.loads((Path(__file__).parents[1] / "fixtures" / "task_list.json").read_text(encoding="utf-8"))
 
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node is required for fold parity")
 
@@ -343,6 +344,7 @@ def test_folds_agree_at_every_prefix(tmp_path: Path) -> None:
 def test_subagent_linkage_independent_expected_state_at_every_prefix(tmp_path: Path) -> None:
     fixture = json.loads((Path(__file__).parents[1] / "fixtures" / "subagent_linkage.json").read_text())
     expected = deepcopy(fixture["initial"])
+    expected["task_list"] = None
     expected_prefixes = [deepcopy(expected)]
     events = []
     for seq, step in enumerate(fixture["steps"], 1):
@@ -385,6 +387,118 @@ process.stdout.write(JSON.stringify({{ incremental, seek }}));
         assert replay([AgentEvent.model_validate(event) for event in events[:cut]]).to_dict() == expected, (
             f"Python prefix {cut}"
         )
+
+
+def test_task_list_independent_expected_state_at_every_prefix(tmp_path: Path) -> None:
+    expected = deepcopy(TASK_LIST_FIXTURE["initial"])
+    expected_prefixes = [deepcopy(expected)]
+    events = []
+    for step in TASK_LIST_FIXTURE["steps"]:
+        event = AgentEvent(session_id="s", sender="agent", **step["event"])
+        events.append(event)
+        expected.update(deepcopy(step["expect"]))
+        expected_prefixes.append(deepcopy(expected))
+    harness = tmp_path / "task-list-prefixes.mjs"
+    payload = tmp_path / "task-list-events.json"
+    payload.write_text(json.dumps([event.model_dump(mode="json") for event in events]), encoding="utf-8")
+    harness.write_text(
+        f"""
+import {{ emptyState, fold, replay, toDict }} from {json.dumps(str(ASSET_DIR / "fold.js"))};
+import {{ readFileSync }} from "node:fs";
+const events = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const state = emptyState();
+const incremental = [toDict(state)];
+const seek = [toDict(replay([]))];
+for (let index = 0; index < events.length; index++) {{
+  fold(state, events[index]);
+  incremental.push(toDict(state));
+  seek.push(toDict(replay(events.slice(0, index + 1))));
+}}
+process.stdout.write(JSON.stringify({{ incremental, seek }}));
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(["node", str(harness), str(payload)], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    actual = json.loads(result.stdout)
+    for cut, expected in enumerate(expected_prefixes):
+        assert actual["incremental"][cut] == expected, f"JavaScript incremental prefix {cut}"
+        assert actual["seek"][cut] == expected, f"JavaScript seek prefix {cut}"
+        assert replay(events[:cut]).to_dict() == expected, f"Python seek prefix {cut}"
+
+
+def test_task_list_parser_and_full_text_in_javascript(tmp_path: Path) -> None:
+    cases = deepcopy(TASK_LIST_FIXTURE["parser_cases"])
+    text = ('完成 🐍 <tag> & "quoted" é ' * 100).strip()
+    for prefix, status in [
+        ("- [x]", "completed"),
+        ("- [X]", "completed"),
+        ("- [ ]", "pending"),
+        ("-", "pending"),
+        ("", "pending"),
+    ]:
+        cases.append({"markdown": f" \t{prefix} {text}\n ", "entries": [{"text": text, "status": status}]})
+    payload = tmp_path / "task-list-parser.json"
+    payload.write_text(json.dumps(cases), encoding="utf-8")
+    harness = tmp_path / "task-list-parser.mjs"
+    harness.write_text(
+        f"""
+import assert from "node:assert/strict";
+import {{ emptyState, fold, toDict, taskListEntries }} from {json.dumps(str(ASSET_DIR / "fold.js"))};
+import {{ readFileSync }} from "node:fs";
+for (const testCase of JSON.parse(readFileSync(process.argv[2], "utf8"))) {{
+  assert.deepEqual(taskListEntries(testCase.markdown), testCase.entries, testCase.name);
+  const expected = {{ markdown: testCase.markdown, entries: testCase.entries }};
+  for (const legacy of [false, true]) {{
+    const state = emptyState();
+    fold(state, {{
+      event_type: legacy ? "chat_message" : "task_list_updated",
+      content: legacy ? {{ message_type: "task_list_update", text: testCase.markdown }} :
+        {{ markdown: testCase.markdown }},
+    }});
+    assert.deepEqual(state.taskList, expected, testCase.name);
+    assert.deepEqual(toDict(state).task_list, expected, testCase.name);
+    assert.deepEqual(state.conversation, []);
+    assert.deepEqual([...state.unknownEventTypes], []);
+  }}
+}}
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(["node", str(harness), str(payload)], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+
+
+def test_task_update_seq_rejection_in_javascript(tmp_path: Path) -> None:
+    harness = tmp_path / "task-list-seq.mjs"
+    harness.write_text(
+        f"""
+import assert from "node:assert/strict";
+import {{ emptyState, fold, toDict }} from {json.dumps(str(ASSET_DIR / "fold.js"))};
+for (const seq of [1, 3]) {{
+  for (const worker of [false, true]) {{
+    for (const [eventType, content] of [
+      ["task_list_updated", {{ markdown: "- replacement" }}],
+      ["task_list_updated", {{ markdown: null }}],
+      ["chat_message", {{ message_type: "task_list_update", text: "" }}],
+      ["chat_message", {{ message_type: "task_list_update", text: false }}],
+    ]) {{
+      const state = emptyState();
+      fold(state, {{ event_type: "task_list_updated", content: {{ markdown: "- known" }}, seq: 3 }});
+      const expected = toDict(state);
+      assert.throws(() => fold(state, {{
+        event_type: eventType, content, seq, elapsed_ms: 100,
+        sub_agent_info: worker ? {{ agent_id: "ignored-worker" }} : null,
+      }}), /ascending order/);
+      assert.deepEqual(toDict(state), expected);
+    }}
+  }}
+}}
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(["node", str(harness)], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
 
 
 def test_worker_metadata_validation_and_every_handler_in_javascript(tmp_path: Path) -> None:

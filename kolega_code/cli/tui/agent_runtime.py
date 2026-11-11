@@ -100,6 +100,7 @@ _RECORDING_ONLY_EVENTS = frozenset(
         KnownEventType.TURN_STARTED,
         KnownEventType.TURN_ENDED,
         KnownEventType.STREAM_TRUNCATED,
+        KnownEventType.TASK_LIST_UPDATED,
     }
 )
 
@@ -2187,6 +2188,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             # initialized lsp_manager) exists. Without this the status is stale
             # from startup, when it was computed before the agent was built.
             self._update_lsp_settings_status()
+            await self._task_list_event_emitter().task_list_updated(self.session.task_list_markdown)
         except BaseException:
             # Reclaim the partial generation (bundle is already installed on
             # self; the agent may or may not be) before surfacing the failure.

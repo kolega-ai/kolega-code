@@ -81,6 +81,18 @@ _STATUSES = {
 _UNKNOWN_SEMANTIC = "compat.future_semantic"
 _UNKNOWN_UI = "compat_future_ui"
 _SNAPSHOT = "compat-original-events.jsonl"
+_TASK_LIST_INITIAL: dict[str, Any] = {
+    "markdown": "- [ ] Original task list",
+    "compat_payload": {"preserve": [1, False, None, {"text": "future café 🐍 <literal>"}]},
+}
+_TASK_LIST_TEXT = "Preserve the full task text — café 🐍 " + "without truncation " * 40 + "COMPAT END"
+_TASK_LIST: dict[str, Any] = {
+    "markdown": f"## Session tasks\nKeep this source note.\n\n- [x] Read the requirements\n- [ ] {_TASK_LIST_TEXT}\n",
+    "entries": [
+        {"text": "Read the requirements", "status": "completed"},
+        {"text": _TASK_LIST_TEXT, "status": "pending"},
+    ],
+}
 _IMAGE = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 )
@@ -206,6 +218,8 @@ async def _write_ui(store: FileSessionEventStore, session_id: str, image: Artifa
         content: dict[str, Any] = {"compat_payload": {"preserve": [1, "future"]}}
         if event_type == KnownEventType.TURN_STARTED:
             content.update(turn_id="compat-mixed", user_text="current-release user", image_count=1)
+        elif event_type == KnownEventType.TASK_LIST_UPDATED:
+            content = copy.deepcopy(_TASK_LIST_INITIAL)
         await store.append(
             AgentEvent(
                 event_type=event_type,
@@ -232,6 +246,11 @@ async def _write_ui(store: FileSessionEventStore, session_id: str, image: Artifa
     for event_type, content in (
         (KnownEventType.TERMINAL_COMMAND, {"command": "printf root", "tool_call_id": "compat-root-shell"}),
         (KnownEventType.TERMINAL_OUTPUT, {"output": "root output\n", "tool_call_id": "compat-root-shell"}),
+        (
+            KnownEventType.CHAT_MESSAGE,
+            {"message_type": "task_list_update", "text": "- [x] Legacy task list"},
+        ),
+        (KnownEventType.TASK_LIST_UPDATED, {"markdown": _TASK_LIST["markdown"]}),
     ):
         await store.append(
             AgentEvent(event_type=event_type, sender="compat-fixture", session_id=session_id, content=content)
@@ -289,6 +308,8 @@ def create_fixture(root: Path) -> dict:
     record = sessions.create(project_path=root, mode="build", config={"compat": True}, name="compat fixture")
     session_id = record.session_id
     try:
+        record.task_list_markdown = _TASK_LIST["markdown"]
+        sessions.save(record)
         recorder = sessions.recorder(session_id)
         journal = recorder.journal
         image = ImageBlock("base64", "image/png", base64.b64encode(_IMAGE).decode("ascii"))
@@ -334,7 +355,8 @@ def create_fixture(root: Path) -> dict:
         events = journal.read_events(repair_tail=False)
         assert semantic_types | {_UNKNOWN_SEMANTIC} <= {event.event_type for event in events}
         assert {f"ui.{value}" for value in _ui_types() | {_UNKNOWN_UI}} <= {event.event_type for event in events}
-        history = sessions.load(session_id).history
+        loaded = sessions.load(session_id)
+        history = loaded.history
         assert any(_has_message(m, "user", "current-release user") for m in history)
         assert any(_has_message(m, "assistant", "current-release assistant") for m in history)
         expected = copy.deepcopy(document)
@@ -347,6 +369,23 @@ def create_fixture(root: Path) -> dict:
             "event_types": [event.event_type for event in events],
             "original_types": sorted({event.event_type for event in events}),
             "original_history": history,
+            "original_metadata": {
+                key: value
+                for key, value in loaded.to_metadata_dict().items()
+                if key
+                in {
+                    "schema_version",
+                    "session_id",
+                    "project_path",
+                    "mode",
+                    "name",
+                    "title",
+                    "config",
+                    "task_list_markdown",
+                }
+            },
+            "task_list_payloads": [copy.deepcopy(_TASK_LIST_INITIAL), {"markdown": _TASK_LIST["markdown"]}],
+            "task_list": copy.deepcopy(_TASK_LIST),
             "image_sha256": hashlib.sha256(_IMAGE).hexdigest(),
             "sub_agents": copy.deepcopy(_SUB_AGENTS),
         }
@@ -378,6 +417,13 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
     assert len(events) == len(actual.splitlines()), "Journal contains unreadable records"
     ui_events = asyncio.run(FileSessionEventStore(sessions.journal(session_id)).read(session_id))
     assert _ui_types() | {_UNKNOWN_UI} <= {event.event_type for event in ui_events}
+    task_events = [event for event in ui_events if event.event_type == KnownEventType.TASK_LIST_UPDATED]
+    assert [event.content for event in task_events] == manifest["task_list_payloads"], (
+        "Previous writer lost canonical task-list payloads"
+    )
+    assert all(event.sub_agent_info is None and event.schema_version == 2 for event in task_events), (
+        "Task-list events changed scope or schema version"
+    )
     image_turns = [
         event
         for event in ui_events
@@ -394,9 +440,20 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
         assert ref.purpose == ArtifactPurpose.IMAGE and ref.media_type == "image/png"
         assert asyncio.run(FileArtifactStore(sessions.journal(session_id)).open(ref)) == _IMAGE
     state = replay(ui_events)
+    assert state.task_list == manifest["task_list"], "Previous writer lost the complete latest task-list projection"
     image_rows = [item for item in state.conversation if item.kind == "user"]
     assert [(item.text, item.image_count) for item in image_rows] == [("current-release user", 1), ("", 1)]
     assert all([ref.sha256 for ref in item.artifacts] == [manifest["image_sha256"]] for item in image_rows)
+    task_sequences = {
+        event.seq
+        for event in ui_events
+        if event.event_type == KnownEventType.TASK_LIST_UPDATED
+        or event.event_type == KnownEventType.CHAT_MESSAGE
+        and event.content.get("message_type") == "task_list_update"
+    }
+    assert all(item.seq not in task_sequences for item in state.conversation), (
+        "Task-list updates duplicated into conversation prose"
+    )
     assert state.terminal == "$ printf root\nroot output\n", "Child terminal output escaped into the root terminal"
     for worker in manifest["sub_agents"]:
         info = worker["info"]
@@ -420,7 +477,12 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
         assert len(terminal_events) == 2 and all(
             event.content.get("tool_call_id") == worker["tool_call_id"] for event in terminal_events
         ), "Previous writer lost a child command's tool-call identity"
-    history = sessions.load(session_id).history
+    loaded = sessions.load(session_id)
+    metadata = loaded.to_metadata_dict()
+    assert {key: metadata[key] for key in manifest["original_metadata"]} == manifest["original_metadata"], (
+        "Previous writer changed original session metadata"
+    )
+    history = loaded.history
     assert history[: len(manifest["original_history"])] == manifest["original_history"]
     appended_history = history[len(manifest["original_history"]) :]
     assert any(

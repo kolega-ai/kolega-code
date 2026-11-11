@@ -45,6 +45,7 @@ export function emptyState() {
     editPreviews: [],
     context: null,
     compaction: null,
+    taskList: null,
     status: "",
     activity: "idle",
     openBrowsers: new Set(),
@@ -70,6 +71,40 @@ function textOf(event, ...keys) {
 function stringContent(event, key) {
   const value = event.content ? event.content[key] : undefined;
   return typeof value === "string" ? value : "";
+}
+
+// Match Python str.strip(), which includes U+001C–U+001F and excludes the BOM.
+const TASK_LIST_WHITESPACE =
+  "[\\u0009-\\u000d\\u001c-\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a" +
+  "\\u2028\\u2029\\u202f\\u205f\\u3000]";
+const TASK_LIST_STRIP = new RegExp(`^${TASK_LIST_WHITESPACE}+|${TASK_LIST_WHITESPACE}+$`, "g");
+
+function stripTaskText(text) {
+  return text.replace(TASK_LIST_STRIP, "");
+}
+
+export function taskListEntries(markdown) {
+  const entries = [];
+  for (const line of markdown.split(/\r\n|[\n\v\f\r\u001c-\u001e\u0085\u2028\u2029]/)) {
+    const stripped = stripTaskText(line);
+    let text;
+    let status = "pending";
+    if (stripped.startsWith("- [x]") || stripped.startsWith("- [X]")) {
+      text = stripTaskText(stripped.slice(5));
+      status = "completed";
+    } else if (stripped.startsWith("- [ ]")) {
+      text = stripTaskText(stripped.slice(5));
+    } else if (stripped.startsWith("- ")) {
+      text = stripTaskText(stripped.slice(2));
+    } else {
+      continue;
+    }
+    if (text) entries.push({ text, status });
+  }
+  if (!entries.length && stripTaskText(markdown)) {
+    entries.push({ text: stripTaskText(markdown), status: "pending" });
+  }
+  return entries;
 }
 
 /**
@@ -672,6 +707,20 @@ export function fold(state, event) {
   }
   state.elapsedMs = Math.max(state.elapsedMs, event.elapsed_ms || 0);
 
+  if (
+    event.event_type === "task_list_updated" ||
+    (event.event_type === "chat_message" && event.content?.message_type === "task_list_update")
+  ) {
+    if (subAgentKey(event) === null) {
+      const field = event.event_type === "task_list_updated" ? "markdown" : "text";
+      const markdown = event.content?.[field];
+      if (typeof markdown === "string") {
+        state.taskList = { markdown, entries: taskListEntries(markdown) };
+      }
+    }
+    return state;
+  }
+
   // Peer lifecycle is session-scoped even when a producer attaches stale worker metadata.
   if (!["peer_message_received", "peer_message_delivered"].includes(event.event_type)) {
     const key = subAgentKey(event);
@@ -779,6 +828,7 @@ export function toDict(state) {
     edit_previews: state.editPreviews,
     context: state.context,
     compaction: state.compaction,
+    task_list: state.taskList,
     prompts: state.prompts.map((prompt) => ({
       request_id: prompt.request_id,
       kind: prompt.kind,

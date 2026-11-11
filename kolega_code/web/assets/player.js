@@ -80,6 +80,7 @@ let lastFrame = 0;
 let renderedCount = 0;
 /** Per-index snapshot of the mutable fields renderEntry draws, for change detection. */
 let renderedEntries = [];
+let renderedTaskList;
 /** Tool entries the viewer has opened. Tool output is collapsed by default. */
 const expandedTools = new Set();
 /** Sub-agent key the transcript is narrowed to, or null for the whole thread. */
@@ -141,6 +142,7 @@ function cacheDom() {
     "transcript",
     "turns",
     "subAgents",
+    "taskList",
     "terminal",
     "gauge",
     "gaugeLabel",
@@ -166,6 +168,7 @@ function cacheDom() {
   dom.terminal.before(dom.terminalOwner, dom.terminalTruncated);
   dom.terminal.setAttribute("aria-labelledby", "terminalOwner");
   renderTerminal();
+  renderTaskList();
 }
 
 async function fetchJson(path) {
@@ -251,6 +254,7 @@ function applyCount(target) {
     appliedCount = 0;
     renderedCount = 0;
     renderedEntries = [];
+    renderedTaskList = undefined;
     mergedRows = null;
     dom.transcript.replaceChildren();
   }
@@ -1203,10 +1207,63 @@ function advanceSpinner() {
 
 function renderRail() {
   renderGauge();
+  renderTaskList();
   renderSubAgents();
   renderTerminal();
   dom.status.textContent = state.status || "";
   dom.truncated.hidden = !state.recordingTruncated;
+}
+
+function renderTaskList() {
+  const taskList = state.taskList ?? null;
+  const snapshot = JSON.stringify(taskList);
+  if (renderedTaskList === snapshot) return;
+  renderedTaskList = snapshot;
+  dom.taskList.replaceChildren();
+  const summary = document.createElement("p");
+  summary.className = "kc-task-summary";
+  summary.textContent = "Session-wide";
+  dom.taskList.append(summary);
+  if (taskList === null || (taskList.markdown === "" && taskList.entries.length === 0)) {
+    dom.taskList.dataset.state = taskList === null ? "unknown" : "cleared";
+    const empty = document.createElement("p");
+    empty.className = "kc-empty";
+    empty.textContent = taskList === null ? "No task list recorded yet." : "Task list cleared.";
+    dom.taskList.append(empty);
+    return;
+  }
+  dom.taskList.dataset.state = "populated";
+  const completed = taskList.entries.filter((entry) => entry.status === "completed").length;
+  summary.textContent += ` · ${completed}/${taskList.entries.length} completed`;
+  if (taskList.entries.length) {
+    const list = document.createElement("ul");
+    list.className = "kc-task-entries";
+    list.setAttribute("aria-label", "Session tasks");
+    for (const entry of taskList.entries) {
+      const row = document.createElement("li");
+      row.className = "kc-task-entry";
+      row.dataset.status = entry.status;
+      const mark = document.createElement("span");
+      mark.className = "kc-task-mark";
+      mark.textContent = entry.status === "completed" ? "✓" : "○";
+      mark.setAttribute("role", "img");
+      mark.setAttribute("aria-label", entry.status === "completed" ? "Completed" : "Pending");
+      const text = document.createElement("span");
+      text.className = "kc-task-text";
+      text.textContent = entry.text;
+      row.append(mark, text);
+      list.append(row);
+    }
+    dom.taskList.append(list);
+  }
+  const label = document.createElement("p");
+  label.className = "kc-task-source-label";
+  label.textContent = "Full content";
+  const source = document.createElement("pre");
+  source.className = "kc-task-source";
+  source.setAttribute("aria-label", "Full task list content");
+  source.textContent = taskList.markdown;
+  dom.taskList.append(label, source);
 }
 
 function renderTerminal() {

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import logging
+from collections.abc import Callable
 from typing import Any
 from typing import TYPE_CHECKING
 
@@ -37,7 +38,7 @@ from acp.schema import ImageContentBlock, TextContentBlock, ToolCallStatus, Tool
 from kolega_code.acp.diffs import AcpDiffProvider
 from kolega_code.acp.plans import task_entries_from_markdown
 from kolega_code.acp.usage import build_context_usage_update
-from kolega_code.events import AgentEvent
+from kolega_code.events import AgentEvent, KnownEventType
 from kolega_code.session.projection import ConversationItem
 from kolega_code.session.store import ArtifactStore, SessionStoreError
 
@@ -114,6 +115,7 @@ class AcpBridge:
         accounting: AcpUsageAccounting | None = None,
         *,
         artifact_store: ArtifactStore | None = None,
+        task_list_markdown: Callable[[], str] | None = None,
     ) -> None:
         self._conn = conn
         self._diffs = diff_provider
@@ -121,6 +123,7 @@ class AcpBridge:
         self._accounting = accounting
         # Only the caller can supply the replay session's confined artifact store.
         self._artifact_store: ArtifactStore | None = artifact_store
+        self._task_list_markdown = task_list_markdown
         self._terminal_text: dict[str, str] = {}
         self._active_execute_tool: str | None = None
         self._latest_context_tokens: int | None = None
@@ -272,6 +275,18 @@ class AcpBridge:
         if event.sub_agent_info:
             await self._handle_sub_agent_event(session_id, event)
             return
+        if event.event_type == KnownEventType.TASK_LIST_UPDATED:
+            generation = getattr(self._agent, "_acp_generation", None)
+            markdown = event.content.get("markdown")
+            if not isinstance(markdown, str):
+                return
+            if self._task_list_markdown is not None:
+                # Session metadata outlives the pump's bound agent and queued snapshots.
+                markdown = self._task_list_markdown()
+            elif generation is not None and event.content.get("acp_generation") != generation:
+                return
+            await self.send(session_id, update_plan(task_entries_from_markdown(markdown)))
+            return
         if event.event_type in ("terminal_command", "terminal_output"):
             await self._handle_terminal_event(session_id, event)
             return
@@ -307,8 +322,9 @@ class AcpBridge:
                 start.field_meta = _subagent_meta(session_id, tool_call_id, name)
             await self.send(session_id, start)
         elif message_type == "task_list_update":
-            entries = task_entries_from_markdown(str(content.get("text") or ""))
-            await self.send(session_id, update_plan(entries))
+            markdown = content.get("text")
+            if isinstance(markdown, str):
+                await self.send(session_id, update_plan(task_entries_from_markdown(markdown)))
         elif message_type in ("tool_result", "tool_error"):
             if self._active_execute_tool == tool_call_id:
                 self._active_execute_tool = None

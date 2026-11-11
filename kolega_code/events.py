@@ -83,6 +83,7 @@ class KnownEventType:
     # consumers, which treat unrecognized types as inert like any other.
     PEER_MESSAGE_RECEIVED = "peer_message_received"
     PEER_MESSAGE_DELIVERED = "peer_message_delivered"
+    TASK_LIST_UPDATED = "task_list_updated"
 
 
 class ArtifactPurpose:
@@ -333,6 +334,17 @@ class AgentEventEmitter:
                 uuid=stream_uuid,
                 content={"text": text, "complete": complete},
                 is_streaming=not complete,
+                sub_agent_info=sub_agent_info,
+            )
+        )
+
+    async def task_list_updated(self, markdown: str) -> None:
+        sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
+        await self.emit(
+            AgentEvent(
+                sender=self.sender,
+                event_type=KnownEventType.TASK_LIST_UPDATED,
+                content={"markdown": markdown},
                 sub_agent_info=sub_agent_info,
             )
         )
