@@ -44,7 +44,6 @@ class ResolvedReplacement:
     start: int
     end: int
     replace_text: str
-    pass_name: str
 
 
 class EditTool(BaseTool):
@@ -715,14 +714,14 @@ class EditTool(BaseTool):
         return paths
 
     def _resolve_replacement(self, content: str, block: SearchReplaceBlock) -> ResolvedReplacement:
-        passes: list[tuple[str, Callable[[str, str], list[tuple[int, int]]]]] = [
-            ("exact", self._exact_spans),
-            ("line_strip", self._line_strip_spans),
-            ("line_endings", self._line_ending_spans),
-            ("unicode_punctuation", self._unicode_punctuation_spans),
+        passes: list[Callable[[str, str], list[tuple[int, int]]]] = [
+            self._exact_spans,
+            self._line_strip_spans,
+            self._line_ending_spans,
+            self._unicode_punctuation_spans,
         ]
 
-        for pass_name, matcher in passes:
+        for matcher in passes:
             spans = matcher(content, block.search_text)
             if len(spans) > 1:
                 raise ValueError(f"Search block #{block.block_number} matched {len(spans)} occurrences in the file.")
@@ -733,7 +732,6 @@ class EditTool(BaseTool):
                     start=start,
                     end=end,
                     replace_text=block.replace_text,
-                    pass_name=pass_name,
                 )
 
         preview = block.search_text[:100] + ("..." if len(block.search_text) > 100 else "")
