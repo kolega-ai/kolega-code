@@ -12,6 +12,7 @@ and ordering live behind the protocols in :mod:`kolega_code.session.store`;
 """
 
 import abc
+from copy import deepcopy
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
@@ -85,6 +86,7 @@ class KnownEventType:
     PEER_MESSAGE_DELIVERED = "peer_message_delivered"
     TASK_LIST_UPDATED = "task_list_updated"
     USAGE_UPDATED = "usage_updated"
+    BACKGROUND_JOB_DELIVERED = "background_job_delivered"
 
 
 class ArtifactPurpose:
@@ -359,6 +361,26 @@ class AgentEventEmitter:
                 sender=self.sender,
                 event_type=KnownEventType.USAGE_UPDATED,
                 content={"scope": "session", "semantics": "snapshot", "source_seq": source_seq, "usage": usage},
+            )
+        )
+
+    async def background_job_delivered(self, completion: dict[str, Any]) -> None:
+        """Present a settled root insertion or archive, not worker termination."""
+        await self.emit(
+            AgentEvent(
+                sender=self.sender,
+                event_type=KnownEventType.BACKGROUND_JOB_DELIVERED,
+                content={
+                    "job_id": completion["job_id"],
+                    "completion_id": completion["completion_id"],
+                    "agent_type": completion["agent_type"],
+                    "status": completion["status"],
+                    "task": completion.get("task", ""),
+                    "text": completion["result"],
+                    "disposition": "archived" if completion.get("archived") else "context",
+                    "epoch_id": completion.get("epoch_id"),
+                    "metadata": deepcopy(completion.get("metadata", {})),
+                },
             )
         )
 

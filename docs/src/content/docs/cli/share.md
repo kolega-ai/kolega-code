@@ -90,6 +90,32 @@ Older recordings remain playable, but missing parent, routing and terminal-owner
 metadata cannot be reconstructed. Untagged terminal output stays in the main
 terminal rather than being assigned to a guessed worker.
 
+### Background reports
+
+Live shares, single-file replays and directory exports show recorded background
+reports in the main session transcript, separately from the worker's own steps.
+Each entry retains the full report, task, job and completion IDs, and whether
+the job completed, failed, was cancelled or was interrupted. Recorded launch,
+model-routing and workspace details remain available when present; missing
+metadata does not create a guessed worker.
+
+A report appears when its delivery is recorded, not merely when the worker
+finishes. **Context** means it was inserted into the live main-agent context.
+**Archived** means it was retained while retiring that context, without being
+inserted into the successor's live context. Both are read-only and follow
+playback and seeking; repeated delivery records for the same completion appear
+only once.
+
+Large reports load their complete recorded text, including in single-file
+exports. If those bytes are unavailable, the player labels the recorded preview
+instead. Recording and displaying a report does not add another semantic
+completion or change usage accounting, `ask --json`, or ATIF exports.
+
+Older recordings without delivery events cannot establish whether or when a
+report reached the main agent. That evidence is **unknown**, not proof that the
+job failed or was never delivered. Resuming or exporting a session does not
+backfill missing delivery history.
+
 ### Task list
 
 The task-list panel shows the latest recorded update to the session's shared

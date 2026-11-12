@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Collection, Optional
 
-from kolega_code.events import AgentEvent, ArtifactRef
+from kolega_code.events import AgentEvent, ArtifactRef, KnownEventType
 from kolega_code.session.store import (
     ArtifactStore,
     SessionEventMeta,
@@ -117,11 +117,16 @@ class FileSessionEventStore(SessionEventStore):
         an hour. Recording is an enhancement to live delivery, so the await is
         bounded: on timeout the caller continues and the thread still finishes
         the write (the row lands, possibly late, with a correct seq).
+
+        Background delivery receipts instead drain under the retained broadcast
+        owner: retirement must not release a journal with its writer still active.
         """
         started = time.monotonic()
         write = asyncio.ensure_future(asyncio.to_thread(self._append_sync, event))
         try:
-            if self._append_timeout is None:
+            # Delivery retirement cannot release its journal owner while this
+            # receipt's writer is still running.
+            if self._append_timeout is None or event.event_type == KnownEventType.BACKGROUND_JOB_DELIVERED:
                 seq = await asyncio.shield(write)
             else:
                 seq = await asyncio.wait_for(asyncio.shield(write), timeout=self._append_timeout)

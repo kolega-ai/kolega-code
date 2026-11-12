@@ -16,11 +16,12 @@ from textual.worker import WorkerCancelled
 
 from kolega_code.cli.config import config_summary
 from kolega_code.cli import messages
+from kolega_code.cli.session_event_store import FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.tui import agent_runtime as agent_runtime_module
 from kolega_code.cli.tui.state import ConversationEntry, TurnState
 from kolega_code.cli.tui.widgets import ChatComposer, ConversationEntryWidget, ToolEntryWidget
-from kolega_code.events import AgentEvent
+from kolega_code.events import AgentEvent, AgentEventEmitter
 from kolega_code.llm.models import Message, TextBlock
 from kolega_code.session.background import BackgroundAgentManager
 
@@ -56,6 +57,9 @@ class BackgroundHarnessAgent(FakeCoderAgent):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self.emitter = AgentEventEmitter(
+            kwargs["connection_manager"], kwargs["workspace_id"], kwargs["thread_id"], "test-root"
+        )
         self.background_jobs: BackgroundAgentManager | None = None
         self.background_needs_turn = False
         self.turn_gate: asyncio.Event | None = None
@@ -395,7 +399,7 @@ async def test_explicit_stop_delivers_background_completion_without_restarting_p
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    app, _, _ = _build_background_app(tmp_path, monkeypatch)
+    app, _, session = _build_background_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -424,17 +428,31 @@ async def test_explicit_stop_delivers_background_completion_without_restarting_p
         await wait_for_turn_idle(app, pilot)
         await _wait_for(
             pilot,
-            lambda: manager.pending_count == 0,
-            description="the cancelled turn's queued completion to be delivered",
+            lambda: (
+                manager.pending_count == 0
+                and any(
+                    entry.origin == {"kind": "subagent_completion", "job_id": "job-stop"}
+                    for entry in app.conversation_entries
+                )
+            ),
+            description="the cancelled turn's completion presentation and frontend callback to settle",
         )
 
         assert agent.messages == ["work"]
         assert agent.continuations == 0
         assert any("stop-path child report" in text for text in agent.appended_user_texts)
         completion_entries = [entry for entry in app.conversation_entries if entry.origin is not None]
-        assert any(
-            entry.origin == {"kind": "subagent_completion", "job_id": "job-stop"} for entry in completion_entries
+        assert (
+            sum(entry.origin == {"kind": "subagent_completion", "job_id": "job-stop"} for entry in completion_entries)
+            == 1
         )
+        assert app._session_recorder is not None
+        deliveries = [
+            event
+            for event in await FileSessionEventStore(app._session_recorder.journal).read(session.session_id)
+            if event.event_type == "background_job_delivered"
+        ]
+        assert len(deliveries) == 1 and deliveries[0].content["job_id"] == "job-stop"
 
 
 @pytest.mark.asyncio
@@ -637,6 +655,25 @@ async def test_agent_rebuild_keeps_background_manager_and_retires_old_generation
         release.set()
         await asyncio.wait_for(new_agent.continued.wait(), 2)
         await wait_for_turn_idle(app, pilot)
+        deliveries = [
+            event
+            for event in await FileSessionEventStore(app._session_recorder.journal).read(app.session.session_id)
+            if event.event_type == "background_job_delivered"
+        ]
+        assert len(deliveries) == 1
+        assert deliveries[0].content["job_id"] == "job-rebuild"
+        assert deliveries[0].content["text"] == "rebuilt child report"
+        assert deliveries[0].sub_agent_info is None
+        assert (
+            len(
+                [
+                    entry
+                    for entry in app.conversation_entries
+                    if entry.origin == {"kind": "subagent_completion", "job_id": "job-rebuild"}
+                ]
+            )
+            == 1
+        )
         await pilot.pause(0.05)
 
         assert new_agent.continuations == 1
@@ -1173,6 +1210,11 @@ async def test_failed_retirement_retains_report_policy_and_resource_generations_
         assert app._background_retirement == (manager, agent, archive)
         assert old_agent.cleanup_calls == 0
         assert cleaned_bundles == []
+        assert not [
+            event
+            for event in await FileSessionEventStore(app._session_recorder.journal).read(session.session_id)
+            if event.event_type == "background_job_delivered"
+        ]
         app._background_rebuilding = False
         await app._cleanup_retired_agent_generations()
         assert old_agent.cleanup_calls == 0
@@ -1209,6 +1251,15 @@ async def test_failed_retirement_retains_report_policy_and_resource_generations_
         assert _history_contains(store.load(session.session_id).history, report) is not archive
         assert not agent.background_needs_turn
         assert not app._background_resume_needed
+        deliveries = [
+            event
+            for event in await FileSessionEventStore(app._session_recorder.journal).read(session.session_id)
+            if event.event_type == "background_job_delivered"
+        ]
+        assert len(deliveries) == 1
+        assert deliveries[0].content["job_id"] == "job-retained-report"
+        assert deliveries[0].content["disposition"] == ("archived" if archive else "context")
+        assert deliveries[0].content["text"] == report
         await pilot.pause(0.05)
         assert agent.messages == []
         assert agent.continuations == 0

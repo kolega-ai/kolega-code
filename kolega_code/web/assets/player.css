@@ -186,6 +186,38 @@ body::after {
   color: var(--kc-agent);
 }
 
+.kc-entry[data-kind="background_delivery"] .kc-glyph {
+  color: var(--kc-agent);
+}
+.kc-background-delivery {
+  border-left: 2px solid var(--kc-agent);
+  padding-left: 0.75rem;
+}
+.kc-background-heading {
+  font-weight: 600;
+}
+.kc-background-disposition,
+.kc-background-details,
+.kc-background-artifact-notice {
+  color: var(--kc-text-muted);
+}
+.kc-background-delivery[data-disposition="archived"] .kc-background-disposition {
+  font-weight: 600;
+}
+.kc-background-details {
+  margin: 0.35rem 0;
+  white-space: normal;
+}
+.kc-background-details div,
+.kc-background-metadata,
+.kc-background-report {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.kc-background-metadata {
+  font: inherit;
+}
+
 .kc-entry[data-kind="thinking"] .kc-glyph,
 .kc-entry[data-kind="thinking"] .kc-body {
   /* The raw thinking token is deliberately dim in a terminal, but on a full
