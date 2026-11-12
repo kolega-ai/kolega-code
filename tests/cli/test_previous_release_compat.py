@@ -244,6 +244,59 @@ def test_roundtrip_checks_current_event_coverage(completed_roundtrip: tuple[Path
     fixture_module.verify_after_previous(root, manifest)
 
 
+def test_roundtrip_preserves_ordered_queue_without_semantic_delivery(
+    completed_roundtrip: tuple[Path, dict[str, Any]],
+) -> None:
+    root, manifest = completed_roundtrip
+    store = SessionStore(root)
+    events = asyncio.run(FileSessionEventStore(store.journal(manifest["session_id"])).read(manifest["session_id"]))
+    queue = [event for event in events if event.event_type == "queue_updated"]
+    worker.verify_queue_payloads(events, manifest["queue_payloads"])
+    assert [event.content["revision"] for event in queue] == [0, 1]
+    assert queue[0].content["items"] == []
+    state = replay(events)
+    assert state.queue is not None
+    assert [item["queue_id"] for item in state.queue["items"]] == ["compat-local", "compat-peer"]
+    assert [item["text"] for item in state.queue["items"]] == ["Literal pending café 🐍 <preview>", "Peer preview"]
+    assert [item["image_count"] for item in state.queue["items"]] == [2, 0]
+    assert not any("Literal pending" in item.text or item.text == "Peer preview" for item in state.conversation)
+    assert not any(
+        "Literal pending" in str(message) or "Peer preview" in str(message)
+        for message in store.load(manifest["session_id"]).history
+    )
+    fixture_module.verify_after_previous(root, manifest)
+
+
+@pytest.mark.parametrize("damage", ["payload", "worker", "projection"])
+def test_lost_or_misattributed_queue_fails_roundtrip(
+    completed_roundtrip: tuple[Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    if damage == "projection":
+        original_replay = fixture_module.replay
+
+        def broken_replay(events: list[AgentEvent]) -> PresentationState:
+            state = original_replay(events)
+            state.queue = None
+            return state
+
+        monkeypatch.setattr(fixture_module, "replay", broken_replay)
+    else:
+        original_read = FileSessionEventStore.read
+
+        async def broken_read(self: FileSessionEventStore, session_id: str, **kwargs: Any) -> list[AgentEvent]:
+            events = await original_read(self, session_id, **kwargs)
+            target = next(event for event in events if event.event_type == "queue_updated")
+            if damage == "payload":
+                target.content["revision"] = 99
+            else:
+                target.sub_agent_info = {"agent_id": "child"}
+            return events
+
+        monkeypatch.setattr(FileSessionEventStore, "read", broken_read)
+    with pytest.raises(AssertionError, match="[Qq]ueue"):
+        fixture_module.verify_after_previous(*completed_roundtrip)
+
+
 def test_roundtrip_retains_real_mixed_and_image_only_user_history(
     completed_roundtrip: tuple[Path, dict[str, Any]],
 ) -> None:

@@ -63,6 +63,17 @@ def verify_usage_payloads(events: list, expected: list) -> None:
     )
 
 
+def verify_queue_payloads(events: list, expected: list) -> None:
+    queue = [event for event in events if event.event_type == "queue_updated"]
+    require(
+        [event.content for event in queue] == expected, "Previous release did not preserve canonical queue payloads"
+    )
+    require(
+        all(event.sub_agent_info is None and event.schema_version == 2 for event in queue),
+        "Previous release changed queue scope or schema version",
+    )
+
+
 def main() -> None:
     root = Path(sys.argv[1])
     manifest = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
@@ -98,6 +109,7 @@ def main() -> None:
     require([event.event_type for event in presentation] == expected_ui, "Previous release did not read UI events")
     verify_task_list_payloads(presentation, manifest["task_list_payloads"])
     verify_usage_payloads(presentation, manifest["usage_payloads"])
+    verify_queue_payloads(presentation, manifest["queue_payloads"])
 
     # Exercise real mutations, not a load-and-save no-op or a synthetic append.
     settings.active_theme = "compat-previous-theme"
@@ -117,6 +129,7 @@ def main() -> None:
         asyncio.run(FileSessionEventStore(journal).read(session_id)), manifest["task_list_payloads"]
     )
     verify_usage_payloads(asyncio.run(FileSessionEventStore(journal).read(session_id)), manifest["usage_payloads"])
+    verify_queue_payloads(asyncio.run(FileSessionEventStore(journal).read(session_id)), manifest["queue_payloads"])
     print(f"Previous release read {len(before)} records and appended {len(after) - len(before)} records", flush=True)
 
 

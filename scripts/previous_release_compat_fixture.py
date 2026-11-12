@@ -94,6 +94,31 @@ _TASK_LIST: dict[str, Any] = {
     ],
 }
 
+_QUEUE_INITIAL: dict[str, Any] = {
+    "queue_id": "compat-queue",
+    "revision": 0,
+    "source": "tui",
+    "reason": "snapshot",
+    "items": [],
+    "compat_payload": {"preserve": [False, None, "future queue"]},
+}
+_QUEUE: dict[str, Any] = {
+    "queue_id": "compat-queue",
+    "revision": 1,
+    "source": "tui",
+    "reason": "enqueued",
+    "items": [
+        {"queue_id": "compat-local", "text": "Literal pending café 🐍 <preview>", "image_count": 2, "origin": None},
+        {
+            "queue_id": "compat-peer",
+            "text": "Peer preview",
+            "image_count": 0,
+            "origin": {"kind": "peer", "session_id": "compat-sender", "title": "Peer <literal>"},
+        },
+    ],
+    "compat_payload": {"preserve": [1, False, None, {"text": "future queue"}]},
+}
+
 
 def _usage_payload(*, populated: bool) -> dict[str, Any]:
     usage = session_usage.derive_session_usage(())
@@ -300,6 +325,8 @@ async def _write_ui(
             content = copy.deepcopy(_TASK_LIST_INITIAL)
         elif event_type == KnownEventType.USAGE_UPDATED:
             content = _usage_payload(populated=False)
+        elif event_type == KnownEventType.QUEUE_UPDATED:
+            content = copy.deepcopy(_QUEUE_INITIAL)
         await store.append(
             AgentEvent(
                 event_type=event_type,
@@ -332,6 +359,7 @@ async def _write_ui(
         ),
         (KnownEventType.TASK_LIST_UPDATED, {"markdown": _TASK_LIST["markdown"]}),
         (KnownEventType.USAGE_UPDATED, _usage_payload(populated=True)),
+        (KnownEventType.QUEUE_UPDATED, copy.deepcopy(_QUEUE)),
     ):
         await store.append(
             AgentEvent(event_type=event_type, sender="compat-fixture", session_id=session_id, content=content)
@@ -497,6 +525,8 @@ def create_fixture(root: Path) -> dict:
             "task_list": copy.deepcopy(_TASK_LIST),
             "usage_payloads": [_usage_payload(populated=False), _usage_payload(populated=True)],
             "usage": {"source_seq": 1, **_usage_payload(populated=True)["usage"]},
+            "queue_payloads": [copy.deepcopy(_QUEUE_INITIAL), copy.deepcopy(_QUEUE)],
+            "queue": {key: copy.deepcopy(value) for key, value in _QUEUE.items() if key != "compat_payload"},
             "image_sha256": hashlib.sha256(_IMAGE).hexdigest(),
             "sub_agents": copy.deepcopy(_SUB_AGENTS),
             "background_delivery_payloads": copy.deepcopy(background_payloads),
@@ -551,6 +581,13 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
     assert all(event.sub_agent_info is None and event.schema_version == 2 for event in background_events), (
         "Background-delivery events changed scope or schema version"
     )
+    queue_events = [event for event in ui_events if event.event_type == KnownEventType.QUEUE_UPDATED]
+    assert [event.content for event in queue_events] == manifest["queue_payloads"], (
+        "Previous writer lost canonical queue payloads"
+    )
+    assert all(event.sub_agent_info is None and event.schema_version == 2 for event in queue_events), (
+        "Queue events changed scope or schema version"
+    )
     image_turns = [
         event
         for event in ui_events
@@ -569,6 +606,12 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
     state = replay(ui_events)
     assert state.task_list == manifest["task_list"], "Previous writer lost the complete latest task-list projection"
     assert state.usage == manifest["usage"], "Previous writer lost the latest usage projection"
+    assert state.queue == manifest["queue"], "Previous writer lost the latest queue projection"
+    queue_sequences = {event.seq for event in queue_events}
+    assert all(item.seq not in queue_sequences for item in state.conversation), (
+        "Queue observations invented transcript rows"
+    )
+    assert KnownEventType.QUEUE_UPDATED not in state.unknown_event_types, "Queue observation treated as unknown"
     for delivery in manifest["background_deliveries"]:
         rows = [item for item in state.conversation if delivery["text"] in item.text]
         assert len(rows) == 1, "Background-delivery projection lost, truncated or duplicated a full report"

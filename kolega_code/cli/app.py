@@ -57,6 +57,7 @@ from kolega_code.session.recording import RecordingConnectionManager
 from kolega_code.session.host_extensions import complete_task_list_update
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
 from kolega_code.session.usage import UsagePresentation
+from kolega_code.session.queue import QueuePresentation, QueueReason, queue_item
 from kolega_code.session.background import BackgroundAgentManager
 from kolega_code.agent.prompt_dump import list_prompt_overrides
 from kolega_code.agent.prompt_provider import AgentMode
@@ -382,6 +383,7 @@ class KolegaCodeApp(
         self._usage_ledger = UsageLedger(pricing_resolver=PricingResolver(config.usage_pricing if config else None))
         self._usage_sink: Optional[SessionUsageSink] = None
         self._usage_presentation: UsagePresentation | None = None
+        self._queue_presentation: QueuePresentation | None = None
         self._goal: Optional[GoalState] = GoalState.from_dict(self.session.goal) if self.session.goal else None
         # Checkpoint for goal token accounting: drains advance it, so a resumed
         # goal continues from the persisted tokens_spent without recounting.
@@ -843,6 +845,7 @@ class KolegaCodeApp(
         if not self.is_running or self._startup_cancelled:
             return
         await self._start_usage_presentation()
+        await self._start_queue_presentation()
         # No minimum duration or final animation: hand over as soon as the
         # generation is usable, before any onboarding/loop/discovery prompt.
         self._dismiss_boot_splash()
@@ -875,6 +878,30 @@ class KolegaCodeApp(
         )
         self._usage_presentation = presentation
         await presentation.start()
+
+    def _publish_queue(self, reason: QueueReason) -> None:
+        if self._queue_presentation is None:
+            # Capture the current recorder, not a getter that could follow a
+            # handoff while this publisher still owns an in-flight snapshot.
+            self._queue_presentation = QueuePresentation(self._task_list_event_emitter().queue_updated, source="tui")
+        self._queue_presentation.publish(
+            [
+                queue_item(
+                    item.queue_id,
+                    item.display_text,
+                    image_count=sum(attachment.get("type") == "image" for attachment in item.attachments or []),
+                    origin=item.origin,
+                )
+                for item in self._queued_messages
+            ],
+            reason=reason,
+        )
+
+    async def _start_queue_presentation(self) -> None:
+        await self._prime_recording_offset()
+        self._publish_queue("snapshot")
+        assert self._queue_presentation is not None
+        await self._queue_presentation.flush()
 
     async def _load_recent_sessions(self) -> None:
         try:
@@ -2762,6 +2789,8 @@ class KolegaCodeApp(
             except RuntimeError:
                 pass
         self._unregister_from_inbox()
+        if self._queue_presentation is not None:
+            await self._queue_presentation.aclose()
         self._close_memory_manager()
         self._discard_session_diff_tracker(self._session_diff_tracker)
 
@@ -2886,6 +2915,8 @@ class KolegaCodeApp(
                         await self._usage_presentation.aclose()
                 finally:
                     await self._stop_inbox_socket()
+                    if self._queue_presentation is not None:
+                        await self._queue_presentation.aclose()
                     self._unregister_from_inbox()
                     self._close_memory_manager()
                 # Relaunch is allowed only after both persistence and teardown
@@ -3599,6 +3630,12 @@ class KolegaCodeApp(
             self._usage_presentation = None
         self._unregister_from_inbox()
         await self._stop_inbox_socket()
+        # Removal belongs to the old queue/session, never the successor. Drain
+        # its captured recorder before rebinding any session-owned surface.
+        self._clear_queued_messages()
+        if self._queue_presentation is not None:
+            await self._queue_presentation.aclose()
+            self._queue_presentation = None
 
         # 6) Rebind the session-bound surface to the new id.
         self.session = new_record
@@ -3636,7 +3673,6 @@ class KolegaCodeApp(
         self.session.task_list_markdown = ""
         self._session_file_changes = []
         self._session_diff_dirty = True
-        self._clear_queued_messages()
         self._latest_plan = None
         self._plan_pending = False
         self._plan_reofferable = False
@@ -3678,6 +3714,7 @@ class KolegaCodeApp(
         self._usage_ledger.observer = usage_sink
         await usage_sink.start()
         await self._start_usage_presentation()
+        await self._start_queue_presentation()
 
         # 11) Persist the new session and announce the switch.
         await self._save_session_async()

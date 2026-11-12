@@ -47,6 +47,7 @@ export function emptyState() {
     compaction: null,
     taskList: null,
     usage: null,
+    queue: null,
     status: "",
     activity: "idle",
     openBrowsers: new Set(),
@@ -59,6 +60,7 @@ export function emptyState() {
     peerMessages: new Map(),
     pendingPeerTurns: [],
     backgroundCompletions: new Set(),
+    retiredQueueIds: new Set(),
   });
 }
 
@@ -128,6 +130,44 @@ function subAgentKey(event) {
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function onQueueUpdated(state, event) {
+  const content = event.content;
+  if (event.sub_agent_info != null || !isRecord(content)) return;
+  if (typeof content.queue_id !== "string" || !content.queue_id || !usageCount(content.revision)) return;
+  if (!["tui", "ask"].includes(content.source)) return;
+  if (!["snapshot", "enqueued", "dequeued", "cleared", "removed"].includes(content.reason)) return;
+  if (!Array.isArray(content.items)) return;
+  const items = [];
+  const itemIds = new Set();
+  for (const item of content.items) {
+    if (!isRecord(item) || typeof item.queue_id !== "string" || !item.queue_id || itemIds.has(item.queue_id)) return;
+    if (typeof item.text !== "string" || !usageCount(item.image_count)) return;
+    let origin = item.origin;
+    if (origin !== null) {
+      if (!isRecord(origin) || origin.kind !== "peer" ||
+        typeof origin.session_id !== "string" || typeof origin.title !== "string") return;
+      origin = { kind: origin.kind, session_id: origin.session_id, title: origin.title };
+    }
+    items.push({ queue_id: item.queue_id, text: item.text, image_count: item.image_count, origin });
+    itemIds.add(item.queue_id);
+  }
+  if (state.retiredQueueIds.has(content.queue_id)) return;
+  if (state.queue !== null) {
+    if (content.queue_id === state.queue.queue_id) {
+      if (content.revision <= state.queue.revision) return;
+    } else {
+      state.retiredQueueIds.add(state.queue.queue_id);
+    }
+  }
+  state.queue = {
+    queue_id: content.queue_id,
+    revision: content.revision,
+    source: content.source,
+    reason: content.reason,
+    items,
+  };
 }
 
 function onBackgroundDelivery(state, event) {
@@ -781,6 +821,11 @@ export function fold(state, event) {
   }
   state.elapsedMs = Math.max(state.elapsedMs, event.elapsed_ms || 0);
 
+  if (event.event_type === "queue_updated") {
+    onQueueUpdated(state, event);
+    return state;
+  }
+
   if (event.event_type === "background_job_delivered") {
     onBackgroundDelivery(state, event);
     return state;
@@ -920,6 +965,7 @@ export function toDict(state) {
     compaction: state.compaction,
     task_list: state.taskList,
     usage: state.usage,
+    queue: state.queue === null ? null : JSON.parse(JSON.stringify(state.queue)),
     prompts: state.prompts.map((prompt) => ({
       request_id: prompt.request_id,
       kind: prompt.kind,

@@ -83,6 +83,7 @@ let renderedCount = 0;
 let renderedEntries = [];
 let renderedTaskList;
 let renderedUsage;
+let renderedQueue;
 /** Tool entries the viewer has opened. Tool output is collapsed by default. */
 const expandedTools = new Set();
 /** Sub-agent key the transcript is narrowed to, or null for the whole thread. */
@@ -145,6 +146,7 @@ function cacheDom() {
     "turns",
     "subAgents",
     "taskList",
+    "queue",
     "usage",
     "terminal",
     "gauge",
@@ -172,6 +174,7 @@ function cacheDom() {
   dom.terminal.setAttribute("aria-labelledby", "terminalOwner");
   renderTerminal();
   renderTaskList();
+  renderQueue();
   renderUsage();
 }
 
@@ -1309,6 +1312,7 @@ function advanceSpinner() {
 function renderRail() {
   renderGauge();
   renderTaskList();
+  renderQueue();
   renderUsage();
   renderSubAgents();
   renderTerminal();
@@ -1446,6 +1450,58 @@ function renderUsage() {
   ]) {
     usageRow(persistence, field, label, count);
   }
+}
+
+function renderQueue() {
+  const queue = state.queue ?? null;
+  const snapshot = JSON.stringify(queue);
+  if (renderedQueue === snapshot) return;
+  renderedQueue = snapshot;
+  dom.queue.replaceChildren();
+  dom.queue.dataset.state = queue === null ? "unknown" : queue.items.length ? "populated" : "empty";
+  const text = (parent, tag, className, value) => {
+    const node = document.createElement(tag);
+    node.className = className;
+    node.textContent = value;
+    parent.append(node);
+    return node;
+  };
+  text(dom.queue, "p", "kc-queue-summary",
+    queue === null ? "Session-wide" :
+      `Session-wide · ${queue.items.length} recorded pending ${queue.items.length === 1 ? "input" : "inputs"}`);
+  text(dom.queue, "p", "kc-queue-caveat",
+    "Historical preview only — not recoverable pending input or semantic-delivery confirmation.");
+  if (queue === null) {
+    text(dom.queue, "p", "kc-empty", "Queue unknown. No queue recorded yet.");
+    return;
+  }
+  const reasons = {
+    snapshot: "Snapshot recorded.",
+    enqueued: "Input enqueued.",
+    dequeued: "Dequeued — removed for processing, not delivery confirmation.",
+    cleared: "Queue cleared.",
+    removed: "Input removed.",
+  };
+  text(dom.queue, "p", "kc-queue-observation",
+    `${queue.source === "tui" ? "TUI" : "ask"} · ${reasons[queue.reason]}`);
+  if (!queue.items.length) {
+    text(dom.queue, "p", "kc-empty", "Recorded queue is empty.");
+    return;
+  }
+  const list = document.createElement("ol");
+  list.className = "kc-queue-entries";
+  list.setAttribute("aria-label", "Recorded pending inputs in queue order");
+  for (const item of queue.items) {
+    const row = document.createElement("li");
+    row.className = "kc-queue-entry";
+    text(row, "p", "kc-queue-text", item.text);
+    text(row, "p", "kc-queue-origin", item.origin === null
+      ? "Origin not recorded"
+      : `Peer: ${item.origin.title} (${item.origin.session_id})`);
+    text(row, "p", "kc-queue-images", `${item.image_count} ${item.image_count === 1 ? "image" : "images"}`);
+    list.append(row);
+  }
+  dom.queue.append(list);
 }
 
 function renderTaskList() {
