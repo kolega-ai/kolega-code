@@ -411,6 +411,17 @@ class BackgroundAgentManager:
             del self._pending[job_id]
             delivered += 1
             self._notify_changed()
+            # Resolve the current target's emitter: managers survive agent rebuilds,
+            # and frontend callbacks are replaceable (and disabled on retirement).
+            emitter = getattr(agent, "emitter", None)
+            present: Callable[[dict[str, Any]], Awaitable[None]] | None = getattr(
+                emitter, "background_job_delivered", None
+            )
+            if callable(present):
+                try:
+                    await present(copy.deepcopy(data))
+                except (Exception, asyncio.CancelledError):
+                    logger.exception("Background delivery presentation failed")
             if not self._closed and self._on_delivered is not None:
                 try:
                     self._on_delivered(copy.deepcopy(data))

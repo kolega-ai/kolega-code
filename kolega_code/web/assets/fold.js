@@ -58,6 +58,7 @@ export function emptyState() {
     tools: new Map(),
     peerMessages: new Map(),
     pendingPeerTurns: [],
+    backgroundCompletions: new Set(),
   });
 }
 
@@ -127,6 +128,33 @@ function subAgentKey(event) {
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function onBackgroundDelivery(state, event) {
+  const content = event.content || {};
+  const required = ["job_id", "completion_id", "agent_type", "status", "task", "text", "disposition"];
+  if (event.sub_agent_info != null || !required.every((key) => typeof content[key] === "string")) return;
+  if (!["job_id", "completion_id", "agent_type"].every((key) => content[key])) return;
+  if (!["completed", "failed", "cancelled", "interrupted"].includes(content.status)) return;
+  if (!["context", "archived"].includes(content.disposition)) return;
+  const epochId = content.epoch_id ?? null;
+  const metadata = content.metadata === undefined ? {} : content.metadata;
+  if ((epochId !== null && typeof epochId !== "string") || !isRecord(metadata)) return;
+  if (state.backgroundCompletions.has(content.completion_id)) return;
+  state.backgroundCompletions.add(content.completion_id);
+  const delivery = {};
+  for (const key of required) {
+    if (key !== "text") delivery[key] = content[key];
+  }
+  delivery.epoch_id = epochId;
+  delivery.metadata = JSON.parse(JSON.stringify(metadata));
+  append(state, newItem({
+    kind: "background_delivery",
+    text: content.text,
+    status: content.status,
+    backgroundDelivery: delivery,
+    artifacts: event.artifacts || [],
+  }), event);
 }
 
 const USAGE_COUNTS = [
@@ -248,6 +276,7 @@ function newItem(fields) {
     artifacts: fields.artifacts || [],
     imageCount: fields.imageCount || 0,
     editPreview: null,
+    backgroundDelivery: fields.backgroundDelivery ?? null,
   };
 }
 
@@ -752,6 +781,11 @@ export function fold(state, event) {
   }
   state.elapsedMs = Math.max(state.elapsedMs, event.elapsed_ms || 0);
 
+  if (event.event_type === "background_job_delivered") {
+    onBackgroundDelivery(state, event);
+    return state;
+  }
+
   if (event.event_type === "usage_updated") {
     const content = event.content || {};
     if (subAgentKey(event) === null && content.scope === "session" &&
@@ -829,6 +863,7 @@ function itemDict(item) {
     ["tone", item.tone],
     ["sub_agent", item.subAgent],
     ["edit_preview", item.editPreview],
+    ["background_delivery", item.backgroundDelivery],
   ];
   for (const [key, value] of optional) {
     if (value !== null && value !== undefined) payload[key] = value;

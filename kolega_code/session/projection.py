@@ -74,7 +74,7 @@ class _StreamingText:
 class ConversationItem:
     """One block in the transcript."""
 
-    #: "user" | "peer_message" | "assistant" | "thinking" | "tool" | "system" | "status"
+    #: "user" | "peer_message" | "background_delivery" | "assistant" | "thinking" | "tool" | "system" | "status"
     kind: str
     text: str = ""
     complete: bool = True
@@ -97,6 +97,7 @@ class ConversationItem:
     tool_subject: Optional[str] = None
     #: Complete safe paths / command for expanded details (never raw arguments).
     tool_display: Optional[dict[str, list[str] | str]] = None
+    background_delivery: Optional[dict] = None
 
 
 # ``dataclass`` generates ``__init__`` from the field declared above; install the
@@ -244,6 +245,7 @@ class PresentationState(_TerminalBuffer):
     _tools: dict[str, int] = field(default_factory=dict, repr=False)
     _peer_messages: dict[str, _PeerMessageRecord] = field(default_factory=dict, repr=False)
     _pending_peer_turns: list[str] = field(default_factory=list, repr=False)
+    _background_completions: set[str] = field(default_factory=set, repr=False)
 
     def to_dict(self) -> dict:
         """JSON-safe view for transport to a web client or player.
@@ -350,6 +352,7 @@ def _item_dict(item: ConversationItem) -> dict:
         ("tone", item.tone),
         ("sub_agent", item.sub_agent),
         ("edit_preview", item.edit_preview),
+        ("background_delivery", item.background_delivery),
     ):
         if value is not None:
             payload[key] = value
@@ -382,6 +385,10 @@ def fold(state: PresentationState, event: AgentEvent) -> PresentationState:
             )
         state.last_seq = event.seq
     state.elapsed_ms = max(state.elapsed_ms, event.elapsed_ms)
+
+    if event.event_type == KnownEventType.BACKGROUND_JOB_DELIVERED:
+        _on_background_delivery(state, event)
+        return state
 
     if event.event_type == KnownEventType.USAGE_UPDATED:
         content = event.content
@@ -423,6 +430,41 @@ def fold(state: PresentationState, event: AgentEvent) -> PresentationState:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _on_background_delivery(state: PresentationState, event: AgentEvent) -> None:
+    content = event.content
+    required = ("job_id", "completion_id", "agent_type", "status", "task", "text", "disposition")
+    if event.sub_agent_info is not None or not all(isinstance(content.get(key), str) for key in required):
+        return
+    if not all(content[key] for key in ("job_id", "completion_id", "agent_type")):
+        return
+    if content["status"] not in ("completed", "failed", "cancelled", "interrupted"):
+        return
+    if content["disposition"] not in ("context", "archived"):
+        return
+    epoch_id = content.get("epoch_id")
+    metadata = content.get("metadata", {})
+    if (epoch_id is not None and not isinstance(epoch_id, str)) or not isinstance(metadata, dict):
+        return
+    completion_id = content["completion_id"]
+    if completion_id in state._background_completions:
+        return
+    state._background_completions.add(completion_id)
+    delivery = {key: content[key] for key in required if key != "text"}
+    delivery.update(epoch_id=epoch_id, metadata=deepcopy(metadata))
+    _append(
+        state,
+        ConversationItem(
+            kind="background_delivery",
+            text=content["text"],
+            status=content["status"],
+            background_delivery=delivery,
+            artifacts=list(event.artifacts),
+        ),
+        event,
+    )
+
 
 _USAGE_COUNTS = ("requests", "responses", "reported", "unreported", "failed", "open", "abandoned", "partial", "missing")
 _USAGE_TOKENS = (

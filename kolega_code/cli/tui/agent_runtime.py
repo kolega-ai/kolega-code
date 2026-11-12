@@ -102,6 +102,7 @@ _RECORDING_ONLY_EVENTS = frozenset(
         KnownEventType.STREAM_TRUNCATED,
         KnownEventType.TASK_LIST_UPDATED,
         KnownEventType.USAGE_UPDATED,
+        KnownEventType.BACKGROUND_JOB_DELIVERED,
     }
 )
 

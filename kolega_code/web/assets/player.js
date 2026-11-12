@@ -48,6 +48,7 @@ const GLYPHS = {
   system: "·",
   workflow: "◆",
   agent: "◈",
+  background_delivery: "↳",
 };
 const BAR_FILLED = "█";
 const BAR_EMPTY = "░";
@@ -1036,6 +1037,8 @@ function renderEntry(entry) {
   body.className = "kc-body";
   if (item.kind === "tool") {
     body.append(renderToolBody(item));
+  } else if (item.kind === "background_delivery") {
+    body.append(renderBackgroundDelivery(item));
   } else {
     body.textContent = item.text;
     if (item.kind === "user") {
@@ -1052,6 +1055,99 @@ function renderEntry(entry) {
   }
   row.append(body);
   return row;
+}
+
+function renderBackgroundDelivery(item) {
+  const delivery = item.background_delivery || item.backgroundDelivery;
+  const metadata = delivery.metadata || {};
+  const wrapper = document.createElement("section");
+  wrapper.className = "kc-background-delivery";
+  wrapper.dataset.completionId = delivery.completion_id;
+  wrapper.dataset.disposition = delivery.disposition;
+
+  const heading = document.createElement("div");
+  heading.className = "kc-background-heading";
+  heading.textContent = `Background report · ${delivery.agent_type} · ${delivery.status}`;
+  const disposition = document.createElement("div");
+  disposition.className = "kc-background-disposition";
+  disposition.textContent = delivery.disposition === "archived"
+    ? "Archived — NOT added to live context."
+    : "Delivered — added to live context.";
+  const task = document.createElement("div");
+  task.className = "kc-background-task";
+  task.textContent = `Task: ${delivery.task}`;
+  wrapper.append(heading, disposition, task);
+
+  const details = document.createElement("details");
+  details.className = "kc-background-details";
+  const summary = document.createElement("summary");
+  summary.textContent = "Report attribution";
+  details.append(summary);
+  const facts = [
+    ["Job", delivery.job_id],
+    ["Completion", delivery.completion_id],
+    ["Epoch", delivery.epoch_id],
+    ["Launch turn", metadata.turn_id],
+    ["Parent tool call", metadata.parent_tool_call_id],
+    ["Effective routing", metadata.effective_routing],
+    ["Workspace", metadata.workspace_id],
+    ["Thread", metadata.thread_id],
+    ["Project", metadata.project_path],
+  ];
+  for (const [label, value] of facts) {
+    const fact = document.createElement("div");
+    fact.textContent = `${label}: ${value == null ? "unknown" :
+      typeof value === "object" ? JSON.stringify(value) : String(value)}`;
+    details.append(fact);
+  }
+  const durable = document.createElement("pre");
+  durable.className = "kc-background-metadata";
+  durable.textContent = JSON.stringify(metadata, null, 2);
+  details.append(durable);
+  wrapper.append(details);
+
+  const report = document.createElement("div");
+  report.className = "kc-background-report";
+  report.textContent = item.text;
+  wrapper.append(report);
+  hydrateBackgroundReport(report, item, wrapper);
+  return wrapper;
+}
+
+const backgroundReportLoads = new Map();
+
+function hydrateBackgroundReport(report, item, wrapper) {
+  const ref = (item.artifacts || []).find((candidate) =>
+    candidate.purpose === "tool_result" &&
+    String(candidate.media_type || "").startsWith("text/plain") &&
+    item.text.includes(`characters elided; full payload sha256 ${candidate.sha256} …]`),
+  );
+  if (!ref) return;
+  const notice = document.createElement("div");
+  notice.className = "kc-background-artifact-notice";
+  notice.textContent = "Loading complete report…";
+  wrapper.append(notice);
+  const source = artifactSource(ref, true);
+  if (!source) {
+    notice.textContent = "Complete report unavailable; recorded preview shown.";
+    return;
+  }
+  let loaded = backgroundReportLoads.get(ref.sha256);
+  if (!loaded) {
+    loaded = fetch(source).then((response) => {
+      if (!response.ok) throw new Error("Report unavailable");
+      return response.text();
+    }).catch(() => null);
+    backgroundReportLoads.set(ref.sha256, loaded);
+  }
+  loaded.then((text) => {
+    if (text === null) {
+      notice.textContent = "Complete report unavailable; recorded preview shown.";
+    } else {
+      report.textContent = text;
+      notice.remove();
+    }
+  });
 }
 
 /** Identity for remembering whether one tool entry is open across re-renders. */
@@ -1135,12 +1231,13 @@ function renderToolBody(item) {
  * them from the artifact endpoint — which is gated on the same token and the
  * same shareable-purpose allowlist as everything else.
  */
-function artifactSource(ref) {
+function artifactSource(ref, text = false) {
   if (!/^[a-f0-9]{64}$/.test(ref.sha256)) return null;
   const inlined = globalThis.__KC_REPLAY__;
   if (inlined && inlined.artifacts && inlined.artifacts[ref.sha256]) {
     const source = inlined.artifacts[ref.sha256];
-    return typeof source === "string" && /^data:image\/[^,]+;base64,/i.test(source) ? source : null;
+    const allowed = text ? /^data:text\/plain(?:;\s*charset=utf-8)?;base64,/i : /^data:image\/[^,]+;base64,/i;
+    return typeof source === "string" && allowed.test(source) ? source : null;
   }
   // A single-file export has no sibling files, so an artifact missing from the
   // inline map above is simply unreachable — never a relative path that 404s.

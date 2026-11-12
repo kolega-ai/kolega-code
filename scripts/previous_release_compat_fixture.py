@@ -173,6 +173,41 @@ _SUB_AGENTS = (
 )
 
 
+def _background_deliveries(epoch_id: str, turn_id: str, root: Path) -> list[dict[str, Any]]:
+    return [
+        {
+            "job_id": job_id,
+            "completion_id": f"compat-completion-{status}",
+            "agent_type": "general",
+            "status": status,
+            "task": f"Inspect the {status} background task — café 🐍",
+            "text": f"{status} report — café 🐍 <literal>\n" + "Preserve the complete report. " * 40 + f"{status} END",
+            "disposition": disposition,
+            "epoch_id": epoch_id,
+            "metadata": (
+                {
+                    "parent_tool_call_id": "compat-dispatch-parent",
+                    "turn_id": turn_id,
+                    "effective_routing": copy.deepcopy(_SUB_AGENTS[0]["info"]["effective_routing"]),
+                    "project_path": str(root.resolve()),
+                    "workspace_id": "compat-workspace",
+                    "thread_id": "compat-thread",
+                    "compat_future_metadata": {"preserve": [False, None, "future café 🐍"]},
+                }
+                if status == "completed"
+                else {}
+            ),
+            "compat_payload": {"preserve": [False, None, {"text": "future café 🐍 <literal>"}]},
+        }
+        for job_id, status, disposition in (
+            ("compat-parent", "completed", "context"),
+            ("compat-failed", "failed", "context"),
+            ("compat-cancelled", "cancelled", "context"),
+            ("compat-archived", "interrupted", "archived"),
+        )
+    ]
+
+
 def _producer_inventory() -> set[str]:
     package = Path(kolega_code.__file__).resolve().parent
     found: set[str] = set()
@@ -254,8 +289,10 @@ def _ui_types() -> set[str]:
     return {value for name, value in vars(KnownEventType).items() if name.isupper() and isinstance(value, str)}
 
 
-async def _write_ui(store: FileSessionEventStore, session_id: str, image: ArtifactRef) -> None:
-    for event_type in sorted(_ui_types() | {_UNKNOWN_UI}):
+async def _write_ui(
+    store: FileSessionEventStore, session_id: str, image: ArtifactRef, background_payloads: list[dict[str, Any]]
+) -> None:
+    for event_type in sorted((_ui_types() | {_UNKNOWN_UI}) - {KnownEventType.BACKGROUND_JOB_DELIVERED}):
         content: dict[str, Any] = {"compat_payload": {"preserve": [1, "future"]}}
         if event_type == KnownEventType.TURN_STARTED:
             content.update(turn_id="compat-mixed", user_text="current-release user", image_count=1)
@@ -321,6 +358,15 @@ async def _write_ui(store: FileSessionEventStore, session_id: str, image: Artifa
                     content=content,
                 )
             )
+    for content in background_payloads:
+        await store.append(
+            AgentEvent(
+                event_type=KnownEventType.BACKGROUND_JOB_DELIVERED,
+                sender="compat-fixture",
+                session_id=session_id,
+                content=copy.deepcopy(content),
+            )
+        )
 
 
 def _message(role: str, text: str) -> Message:
@@ -357,12 +403,30 @@ def create_fixture(root: Path) -> dict:
         recorder = sessions.recorder(session_id)
         journal = recorder.journal
         image = ImageBlock("base64", "image/png", base64.b64encode(_IMAGE).decode("ascii"))
-        recorder.start_turn(Message(role="user", content=[TextBlock("current-release user"), image]))
+        launch_turn = recorder.start_turn(Message(role="user", content=[TextBlock("current-release user"), image]))
+        background_deliveries = _background_deliveries(journal.epoch_id, launch_turn, root)
+        background_jobs: list[dict[str, Any]] = []
+        for delivery in background_deliveries:
+            job = {
+                key: copy.deepcopy(delivery[key])
+                for key in ("job_id", "completion_id", "agent_type", "task", "metadata", "epoch_id")
+            }
+            job.update(status="queued", result="", delivered=False)
+            recorder.record_background_job_submitted(job, epoch_id=journal.epoch_id)
+            background_jobs.append(job)
         recorder.record_assistant(_message("assistant", "current-release assistant"))
         recorder.finish_turn("completed")
         recorder.start_turn(Message(role="user", content=[image]))
         recorder.record_assistant(_message("assistant", "current-release image response"))
         recorder.finish_turn("completed")
+        for job, delivery in zip(background_jobs, background_deliveries):
+            job.update(status=delivery["status"], result=delivery["text"])
+            recorder.record_background_job_terminal(job, epoch_id=journal.epoch_id)
+            job["archived"] = delivery["disposition"] == "archived"
+            inserted = recorder.record_background_completion(
+                job, _message("user", delivery["text"]), epoch_id=journal.epoch_id
+            )
+            assert inserted
         existing = {event.event_type for event in journal.read_events(repair_tail=False)}
         message = _message("user", "compat context").to_dict()
         for event_type in sorted(semantic_types - existing):
@@ -382,7 +446,8 @@ def create_fixture(root: Path) -> dict:
         image_ref = ArtifactRef(
             **journal.put_artifact(_IMAGE, media_type="image/png", purpose=ArtifactPurpose.IMAGE, encoding="base64")
         )
-        asyncio.run(_write_ui(FileSessionEventStore(journal), session_id, image_ref))
+        background_payloads = [*background_deliveries, copy.deepcopy(background_deliveries[0])]
+        asyncio.run(_write_ui(FileSessionEventStore(journal), session_id, image_ref, background_payloads))
         path = sessions.events_path_for(session_id)
         lines = path.read_bytes().splitlines()
         for index, line in enumerate(lines):
@@ -434,6 +499,8 @@ def create_fixture(root: Path) -> dict:
             "usage": {"source_seq": 1, **_usage_payload(populated=True)["usage"]},
             "image_sha256": hashlib.sha256(_IMAGE).hexdigest(),
             "sub_agents": copy.deepcopy(_SUB_AGENTS),
+            "background_delivery_payloads": copy.deepcopy(background_payloads),
+            "background_deliveries": copy.deepcopy(background_deliveries),
         }
     finally:
         sessions.release_session_locks()
@@ -477,6 +544,13 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
     assert all(event.sub_agent_info is None and event.schema_version == 2 for event in usage_events), (
         "Usage events changed scope or schema version"
     )
+    background_events = [event for event in ui_events if event.event_type == KnownEventType.BACKGROUND_JOB_DELIVERED]
+    assert [event.content for event in background_events] == manifest["background_delivery_payloads"], (
+        "Previous writer lost canonical background-delivery payloads"
+    )
+    assert all(event.sub_agent_info is None and event.schema_version == 2 for event in background_events), (
+        "Background-delivery events changed scope or schema version"
+    )
     image_turns = [
         event
         for event in ui_events
@@ -495,6 +569,30 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
     state = replay(ui_events)
     assert state.task_list == manifest["task_list"], "Previous writer lost the complete latest task-list projection"
     assert state.usage == manifest["usage"], "Previous writer lost the latest usage projection"
+    for delivery in manifest["background_deliveries"]:
+        rows = [item for item in state.conversation if delivery["text"] in item.text]
+        assert len(rows) == 1, "Background-delivery projection lost, truncated or duplicated a full report"
+        row = rows[0]
+        first = next(
+            event for event in background_events if event.content["completion_id"] == delivery["completion_id"]
+        )
+        assert row.sub_agent is None and row.seq == first.seq, "Background-delivery projection lost root attribution"
+        assert (
+            row.kind == "background_delivery" and row.text == delivery["text"] and row.status == delivery["status"]
+        ), "Background-delivery projection changed report text or status"
+        assert row.background_delivery == {
+            key: value for key, value in delivery.items() if key not in {"text", "compat_payload"}
+        }, "Background-delivery projection lost identity, disposition or admission metadata"
+    background_sequences = {event.seq for event in background_events}
+    assert all(
+        item.seq not in background_sequences for activity in state.sub_agents.values() for item in activity.steps
+    ), "Background-delivery projection duplicated reports into worker steps"
+    assert set(state.sub_agents) == {worker["info"]["agent_id"] for worker in manifest["sub_agents"]}, (
+        "Background-delivery projection invented a worker from missing metadata"
+    )
+    assert KnownEventType.BACKGROUND_JOB_DELIVERED not in state.unknown_event_types, (
+        "Background-delivery projection treated a canonical event as unknown"
+    )
     image_rows = [item for item in state.conversation if item.kind == "user"]
     assert [(item.text, item.image_count) for item in image_rows] == [("current-release user", 1), ("", 1)]
     assert all([ref.sha256 for ref in item.artifacts] == [manifest["image_sha256"]] for item in image_rows)

@@ -13,10 +13,12 @@ from kolega_code.acp.server import AcpAgent
 from kolega_code.acp.agent_factory import AgentFactory
 from kolega_code.acp.session import AcpSession
 from kolega_code.cli.connection import CliConnectionManager
+from kolega_code.cli.session_event_store import FileSessionEventStore
 from kolega_code.cli.session_journal import SessionJournal, SessionRecorder
 from kolega_code.cli.session_store import SessionRecord
 from kolega_code.events import AgentEvent
 from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult
+from kolega_code.session.recording import RecordingConnectionManager
 from tests.acp.test_server import EventStream, StreamingLLM, _FakeConn, _text_event
 from tests.agent.compaction_helpers import build_agent
 from tests.background_job_helpers import HostAgent
@@ -194,6 +196,8 @@ async def test_running_base_agent_consumes_report_without_extra_continuation(tmp
     journal = SessionJournal(agent.thread_id, tmp_path / "journal")
     journal.start_epoch("test")
     agent.session_recorder = SessionRecorder(journal, recover=False)
+    presentation = FileSessionEventStore(journal)
+    agent.emitter.connection_manager = RecordingConnectionManager(manager, presentation, session_id=journal.session_id)
     tool_started = asyncio.Event()
     release_tool = asyncio.Event()
 
@@ -233,6 +237,11 @@ async def test_running_base_agent_consumes_report_without_extra_continuation(tmp
         await jobs.submit("job-1", child, agent_type="investigation", task="research")
         await asyncio.wait_for(jobs.wait_for_completion(), 3)
         assert jobs.pending_count == 1
+        assert not [
+            event
+            for event in await presentation.read(journal.session_id)
+            if event.event_type == "background_job_delivered"
+        ]
         release_tool.set()
         assert (await asyncio.wait_for(prompt, 3)).stop_reason == "end_turn"
         if fail_notice:
@@ -265,6 +274,16 @@ async def test_running_base_agent_consumes_report_without_extra_continuation(tmp
             )
             assert conn.updates.count(notice) == 1
             assert conn.presented.empty()
+            deliveries = [
+                event
+                for event in await presentation.read(journal.session_id)
+                if event.event_type == "background_job_delivered"
+            ]
+            assert len(deliveries) == 1
+            assert deliveries[0].sub_agent_info is None
+            assert deliveries[0].content["job_id"] == "job-1"
+            assert deliveries[0].content["text"] == "child report"
+            assert deliveries[0].content["disposition"] == "context"
             parent_chunks = [
                 update.content.text
                 for update in conn.updates
