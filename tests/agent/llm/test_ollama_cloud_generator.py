@@ -8,6 +8,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import httpx
 import pytest
 
 from kolega_code.llm.specs import ollama_cloud_catalog as oc
@@ -224,7 +225,7 @@ def test_fetch_models_uses_all_ids_and_optional_authorization(
             return Response({"capabilities": ["completion", "tools"], "model_info": {"x.context_length": 1000}})
 
     monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
-    monkeypatch.setattr(oc.httpx, "Client", Client)
+    monkeypatch.setattr(httpx, "Client", Client)
     result = oc.fetch_models(api_key=api_key)
     assert list(result["details"]) == ["z-model", "a-model"]
     assert calls == [
@@ -263,7 +264,7 @@ def test_fetch_models_reports_the_model_whose_detail_failed(monkeypatch: pytest.
         def post(self, _url: str, *, json: dict[str, str]) -> Response:
             return Response({}, fails=json["model"] == "broken")
 
-    monkeypatch.setattr(oc.httpx, "Client", Client)
+    monkeypatch.setattr(httpx, "Client", Client)
     with pytest.raises(oc.OllamaCloudCatalogError, match="'broken'.*detail unavailable"):
         oc.fetch_models()
 

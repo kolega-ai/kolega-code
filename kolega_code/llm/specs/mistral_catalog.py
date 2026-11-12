@@ -14,8 +14,6 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-import httpx
-
 from .catalog.mistral import MISTRAL_REASONING, MISTRAL_SPECS
 from .pricing import pricing_is_newer, pricing_to_json
 from .pricing_feeds import CHECKED_AT
@@ -188,6 +186,9 @@ def catalog_entries(payload: Any) -> list[tuple[str, dict[str, Any]]]:
 
 def fetch_models(*, api_key: str, timeout: float = 30.0) -> Any:
     """Fetch the account-visible Mistral model list."""
+    # Refresh-only helper: keep httpx off the CLI start path.
+    import httpx
+
     response = httpx.get(
         MODELS_URL,
         timeout=timeout,

@@ -17,8 +17,10 @@ to lower them are on a bad link: ``KOLEGA_STREAM_FIRST_CHUNK_TIMEOUT``,
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
-import httpx
+if TYPE_CHECKING:
+    import httpx
 
 STREAM_CONNECT_TIMEOUT = 10.0
 STREAM_WRITE_TIMEOUT = 30.0
@@ -68,6 +70,10 @@ def llm_retry_budget_seconds() -> float:
 
 def streaming_timeout() -> httpx.Timeout:
     """httpx.Timeout for streaming requests (bounded per-read inter-chunk wait)."""
+    # httpx is only needed to build the timeout for an actual streaming request;
+    # importing it at module scope added ~50 ms to every CLI start.
+    import httpx
+
     return httpx.Timeout(
         connect=STREAM_CONNECT_TIMEOUT,
         read=max(STREAM_READ_TIMEOUT, stream_idle_timeout() + 30.0),
