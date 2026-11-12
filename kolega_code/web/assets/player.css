@@ -693,6 +693,44 @@ button.kc-tool-name:focus-visible {
   color: color-mix(in srgb, var(--kc-foreground) 70%, var(--kc-text-muted));
 }
 
+#goal {
+  overflow-wrap: anywhere;
+  font-size: 0.76rem;
+}
+
+.kc-goal-summary,
+.kc-goal-caveat,
+.kc-goal-observation {
+  margin: 0 0 0.4rem;
+  font-size: 0.7rem;
+  color: color-mix(in srgb, var(--kc-foreground) 66%, var(--kc-text-muted));
+}
+
+.kc-goal-condition,
+.kc-goal-value {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.kc-goal-condition {
+  margin: 0 0 0.6rem;
+}
+
+.kc-goal-details {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.3rem 0.5rem;
+  margin: 0;
+}
+
+.kc-goal-label {
+  color: var(--kc-text-muted);
+}
+
+.kc-goal-value {
+  margin: 0;
+}
+
 #queue {
   overflow-wrap: anywhere;
   font-size: 0.76rem;

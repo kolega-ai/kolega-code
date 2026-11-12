@@ -84,6 +84,7 @@ let renderedEntries = [];
 let renderedTaskList;
 let renderedUsage;
 let renderedQueue;
+let renderedGoal;
 /** Tool entries the viewer has opened. Tool output is collapsed by default. */
 const expandedTools = new Set();
 /** Sub-agent key the transcript is narrowed to, or null for the whole thread. */
@@ -147,6 +148,7 @@ function cacheDom() {
     "subAgents",
     "taskList",
     "queue",
+    "goal",
     "usage",
     "terminal",
     "gauge",
@@ -175,6 +177,7 @@ function cacheDom() {
   renderTerminal();
   renderTaskList();
   renderQueue();
+  renderGoal();
   renderUsage();
 }
 
@@ -1313,6 +1316,7 @@ function renderRail() {
   renderGauge();
   renderTaskList();
   renderQueue();
+  renderGoal();
   renderUsage();
   renderSubAgents();
   renderTerminal();
@@ -1450,6 +1454,58 @@ function renderUsage() {
   ]) {
     usageRow(persistence, field, label, count);
   }
+}
+
+function renderGoal() {
+  const envelope = state.goal ?? null;
+  const snapshot = JSON.stringify(envelope);
+  if (renderedGoal === snapshot) return;
+  renderedGoal = snapshot;
+  const goal = envelope?.goal ?? null;
+  const status = envelope === null ? "unknown" : goal === null ? "no-goal" :
+    goal.met ? "met" : envelope.reason === "completed" ? "ended-unmet" : goal.paused ? "paused" : "active";
+  const labels = {
+    unknown: "Goal unknown",
+    "no-goal": "No goal",
+    active: "Active",
+    paused: "Paused",
+    met: "Met",
+    "ended-unmet": "Ended — unmet",
+  };
+  dom.goal.replaceChildren();
+  dom.goal.dataset.state = status;
+  const text = (parent, tag, className, value) => {
+    const node = document.createElement(tag);
+    node.className = className;
+    node.textContent = value;
+    parent.append(node);
+    return node;
+  };
+  text(dom.goal, "p", "kc-goal-summary", `Session-wide · ${labels[status]}`);
+  text(dom.goal, "p", "kc-goal-caveat",
+    "Read-only historical observation — not execution authority or recoverable goal state.");
+  text(dom.goal, "p", "kc-goal-observation", envelope === null ? "Source / reason unavailable" :
+    `${envelope.source === "tui" ? "TUI" : "ask"} · ${envelope.reason}`);
+  text(dom.goal, "p", "kc-goal-condition", goal?.condition ?? "Condition unavailable.");
+  const boolean = (value) => value === true ? "Yes" : value === false ? "No" : "Unavailable";
+  const details = document.createElement("dl");
+  details.className = "kc-goal-details";
+  for (const [field, label, value] of [
+    ["turns_evaluated", "Turns evaluated", goal?.turns_evaluated],
+    ["tokens_spent", "Tokens spent", goal?.tokens_spent],
+    ["max_turns", "Maximum turns", goal?.max_turns],
+    ["run_to_completion", "Run to completion", boolean(goal?.run_to_completion)],
+    ["evaluation_met", "Last verifier verdict", boolean(envelope?.evaluation_met)],
+    ["last_reason", "Last verifier reason", goal?.last_reason || "Unavailable"],
+    ["status_note", "Status note", goal?.status_note || "Unavailable"],
+    ["started_at", "Started at", goal?.started_at || "Unavailable"],
+    ["last_evaluated_at", "Last evaluated at", goal?.last_evaluated_at || "Unavailable"],
+  ]) {
+    text(details, "dt", "kc-goal-label", label);
+    const node = text(details, "dd", "kc-goal-value", value ?? "Unavailable");
+    node.dataset.field = field;
+  }
+  dom.goal.append(details);
 }
 
 function renderQueue() {

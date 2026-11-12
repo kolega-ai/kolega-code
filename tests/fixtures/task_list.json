@@ -12,6 +12,7 @@
     "task_list": null,
     "usage": null,
     "queue": null,
+    "goal": null,
     "prompts": [],
     "status": "",
     "activity": "idle",

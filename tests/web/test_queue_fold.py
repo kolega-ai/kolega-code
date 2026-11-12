@@ -26,6 +26,7 @@ EMPTY_STATE = {
     "task_list": None,
     "usage": None,
     "queue": None,
+    "goal": None,
     "prompts": [],
     "status": "",
     "activity": "idle",

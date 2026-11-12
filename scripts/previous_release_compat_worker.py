@@ -74,6 +74,15 @@ def verify_queue_payloads(events: list, expected: list) -> None:
     )
 
 
+def verify_goal_payloads(events: list, expected: list) -> None:
+    goals = [event for event in events if event.event_type == "goal_updated"]
+    require([event.content for event in goals] == expected, "Previous release did not preserve canonical goal payloads")
+    require(
+        all(event.sub_agent_info is None and event.schema_version == 2 for event in goals),
+        "Previous release changed goal scope or schema version",
+    )
+
+
 def main() -> None:
     root = Path(sys.argv[1])
     manifest = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
@@ -110,6 +119,7 @@ def main() -> None:
     verify_task_list_payloads(presentation, manifest["task_list_payloads"])
     verify_usage_payloads(presentation, manifest["usage_payloads"])
     verify_queue_payloads(presentation, manifest["queue_payloads"])
+    verify_goal_payloads(presentation, manifest["goal_payloads"])
 
     # Exercise real mutations, not a load-and-save no-op or a synthetic append.
     settings.active_theme = "compat-previous-theme"
@@ -130,6 +140,7 @@ def main() -> None:
     )
     verify_usage_payloads(asyncio.run(FileSessionEventStore(journal).read(session_id)), manifest["usage_payloads"])
     verify_queue_payloads(asyncio.run(FileSessionEventStore(journal).read(session_id)), manifest["queue_payloads"])
+    verify_goal_payloads(asyncio.run(FileSessionEventStore(journal).read(session_id)), manifest["goal_payloads"])
     print(f"Previous release read {len(before)} records and appended {len(after) - len(before)} records", flush=True)
 
 

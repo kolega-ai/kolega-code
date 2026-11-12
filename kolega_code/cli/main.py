@@ -52,6 +52,7 @@ from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config
 from kolega_code.llm.exceptions import LLMError, LLMBillingError, billing_error_message, llm_error_message
 from kolega_code.llm.models import Message, TextBlock
 from kolega_code.events import AgentEvent, KnownEventType
+from kolega_code.session.goal import GoalPresentation
 
 from .peer_messaging import start_headless_peer_inbox
 from .session_event_store import FileSessionEventStore
@@ -1955,6 +1956,34 @@ def _prepare_ask_journal(
     return session, journal, recorder
 
 
+def _create_ask_goal_presentation(
+    journal: SessionJournal, session_id: str, goal: GoalState | None, *, json_mode: bool
+) -> GoalPresentation | None:
+    if json_mode:
+        return None
+    events = FileSessionEventStore(journal)
+
+    async def record(snapshot: dict[str, Any]) -> None:
+        await events.append(
+            AgentEvent(sender="ask", event_type=KnownEventType.GOAL_UPDATED, session_id=session_id, content=snapshot)
+        )
+
+    presentation = GoalPresentation(record, source="ask")
+    presentation.publish(
+        goal.to_dict() if goal is not None else None, reason="started" if goal is not None else "snapshot"
+    )
+    return presentation
+
+
+async def _close_ask_goal_presentation(
+    presentation: GoalPresentation | None, goal: GoalState | None, *, paused: bool
+) -> None:
+    if presentation is not None:
+        if paused and goal is not None:
+            presentation.publish(goal.to_dict(), reason="paused")
+        await presentation.aclose()
+
+
 async def _run_ask(args: argparse.Namespace) -> int:
     tearing_down = asyncio.Event()
     # Binding and cleanup must share a task for task-affine extension contexts.
@@ -2157,6 +2186,7 @@ async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) 
     goal_state: Optional[GoalState] = None
     drain_goal_tokens: Optional[Callable[[GoalState], None]] = None
     persist_failed_goal_after_cleanup = False
+    goal_presentation: GoalPresentation | None = None
 
     async def _close_generation() -> None:
         # At most once; agent before bundle; each step guarded so a cleanup
@@ -2315,6 +2345,7 @@ async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) 
             )
             if not prompt:
                 prompt = build_goal_task_prompt(goal_condition)
+        goal_presentation = _create_ask_goal_presentation(journal, session.session_id, goal_state, json_mode=args.json)
 
         # --loop / --loop-cron: arm the schedule and apply the loop-aware prompt
         # extension. The prompt itself is sent verbatim on every iteration.
@@ -2455,6 +2486,7 @@ async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) 
             drain_tokens=_drain_tokens,
             drain_peer_turns=_drain_pending_peer_turns,
             background_jobs=background_jobs,
+            goal_presentation=goal_presentation,
         )
 
         if args.save or args.session:
@@ -2521,6 +2553,7 @@ async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) 
             if args.save or args.session:
                 session.goal = goal_state.to_dict()
                 session.config = summary
+        await _close_ask_goal_presentation(goal_presentation, goal_state, paused=persist_failed_goal_after_cleanup)
         failed_goal_save_error: Optional[Exception] = None
         if persist_failed_goal_after_cleanup and (args.save or args.session):
             try:
@@ -2590,6 +2623,7 @@ async def _run_worker_modes(
     drain_tokens,
     drain_peer_turns,
     background_jobs: _AskBackgroundJobs | None = None,
+    goal_presentation: GoalPresentation | None = None,
 ) -> int:
     """Run --loop / --goal after the first turn, then drain the peer inbox.
 
@@ -2624,6 +2658,7 @@ async def _run_worker_modes(
             consume_turn=consume_turn,
             drain_tokens=drain_tokens,
             drain_peer_turns=drain_peer_turns,
+            goal_presentation=goal_presentation,
         )
 
     await drain_peer_turns()
@@ -2701,6 +2736,7 @@ async def _run_ask_goal_iterations(
     consume_turn,
     drain_tokens,
     drain_peer_turns,
+    goal_presentation: GoalPresentation | None = None,
 ) -> int:
     """Evaluate and auto-continue until the goal is met or the turn cap is hit.
 
@@ -2719,6 +2755,8 @@ async def _run_ask_goal_iterations(
         session_recorder.record_goal_evaluated(
             {"met": verdict.met, "turns": goal_state.turns_evaluated, "reason": verdict.reason}
         )
+        if goal_presentation is not None:
+            goal_presentation.publish(goal_state.to_dict(), reason="evaluated", evaluation_met=verdict.met)
         if not json_mode:
             tag = "MET" if verdict.met else f"not met — {verdict.reason}"
             print(f"[goal] turn {goal_state.turns_evaluated}: {tag}", file=sys.stderr)
@@ -2735,6 +2773,8 @@ async def _run_ask_goal_iterations(
     session_recorder.record_goal_completed(
         {"met": goal_state.met, "turns": goal_state.turns_evaluated, "reason": goal_state.last_reason}
     )
+    if goal_presentation is not None:
+        goal_presentation.publish(goal_state.to_dict(), reason="completed")
     if not json_mode:
         status = "met" if goal_state.met else "not met (turn cap reached)"
         print(f"[goal] {status} after {goal_state.turns_evaluated} turn(s)", file=sys.stderr)

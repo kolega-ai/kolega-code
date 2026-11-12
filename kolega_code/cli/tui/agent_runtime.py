@@ -105,6 +105,7 @@ _RECORDING_ONLY_EVENTS = frozenset(
         KnownEventType.USAGE_UPDATED,
         KnownEventType.BACKGROUND_JOB_DELIVERED,
         KnownEventType.QUEUE_UPDATED,
+        KnownEventType.GOAL_UPDATED,
     }
 )
 
@@ -607,6 +608,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 self._goal.paused = False
                 self._goal.status_note = ""
                 self._sync_goal_to_session()
+                self._publish_goal("resumed")
             if self._goal is not None and self._goal.is_active:
                 await self._run_goal_loop()
             else:
@@ -880,12 +882,15 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             raise ValueError("Goal condition must not be empty.")
 
         replacing = bool(self._goal is not None and self._goal.condition and not self._goal.met)
+        had_goal = self._goal is not None
         self._set_goal_state(GoalState.create(clean_condition, run_to_completion=run_to_completion))
+        self._publish_goal("replaced" if had_goal else "started")
         await self._persist_goal_async()
         return replacing
 
     async def _clear_active_goal(self, *, note: str | None = None) -> None:
         self._goal = None
+        self._publish_goal("cleared")
         if self.agent is not None:
             self.agent.apply_goal(None)
         self._refresh_status_dashboard()
@@ -931,10 +936,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 if self.agent_worker is not owner:
                     return
                 if verdict.met:
+                    self._publish_goal("evaluated", evaluation_met=verdict.met)
                     await self._complete_goal(verdict)
                     break
                 self._goal.turns_evaluated += 1
                 self._sync_goal_to_session()
+                self._publish_goal("evaluated", evaluation_met=verdict.met)
                 if self._goal.turns_evaluated >= self._goal.max_turns:
                     await self._abort_goal()
                     break
@@ -978,6 +985,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         condition = self._goal.condition
         self._goal.met = True
         self._goal.status_note = ""
+        self._publish_goal("completed")
         self._refresh_status_dashboard()
         await self._persist_goal_async()
         self._add_conversation_entry(
@@ -995,6 +1003,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         turns = self._goal.turns_evaluated
         self._goal.paused = True
         self._goal.status_note = f"Reached the turn cap ({self._goal.max_turns})."
+        self._publish_goal("paused")
         self._refresh_status_dashboard()
         await self._persist_goal_async()
         self._add_conversation_entry(
@@ -1019,6 +1028,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         self._drain_goal_tokens()  # count the cancelled nudge turn's spend
         self._goal.paused = True
         self._goal.status_note = status_note
+        self._publish_goal("paused")
         self._refresh_status_dashboard()
         await self._persist_goal_async()
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=note, tone="warning"))
@@ -1604,7 +1614,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             pass
 
     def _render_event(self, event: AgentEvent) -> None:
-        if event.event_type == KnownEventType.QUEUE_UPDATED:
+        if event.event_type in (KnownEventType.QUEUE_UPDATED, KnownEventType.GOAL_UPDATED):
             return  # root host observations, never child activity or transcript
         self._diag_tee(event)
         if event.sub_agent_info:

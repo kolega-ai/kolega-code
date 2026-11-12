@@ -58,6 +58,7 @@ from kolega_code.session.host_extensions import complete_task_list_update
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
 from kolega_code.session.usage import UsagePresentation
 from kolega_code.session.queue import QueuePresentation, QueueReason, queue_item
+from kolega_code.session.goal import GoalPresentation, GoalReason
 from kolega_code.session.background import BackgroundAgentManager
 from kolega_code.agent.prompt_dump import list_prompt_overrides
 from kolega_code.agent.prompt_provider import AgentMode
@@ -384,6 +385,7 @@ class KolegaCodeApp(
         self._usage_sink: Optional[SessionUsageSink] = None
         self._usage_presentation: UsagePresentation | None = None
         self._queue_presentation: QueuePresentation | None = None
+        self._goal_presentation: GoalPresentation | None = None
         self._goal: Optional[GoalState] = GoalState.from_dict(self.session.goal) if self.session.goal else None
         # Checkpoint for goal token accounting: drains advance it, so a resumed
         # goal continues from the persisted tokens_spent without recounting.
@@ -846,6 +848,7 @@ class KolegaCodeApp(
             return
         await self._start_usage_presentation()
         await self._start_queue_presentation()
+        await self._start_goal_presentation()
         # No minimum duration or final animation: hand over as soon as the
         # generation is usable, before any onboarding/loop/discovery prompt.
         self._dismiss_boot_splash()
@@ -902,6 +905,21 @@ class KolegaCodeApp(
         self._publish_queue("snapshot")
         assert self._queue_presentation is not None
         await self._queue_presentation.flush()
+
+    def _publish_goal(self, reason: GoalReason, *, evaluation_met: bool | None = None) -> None:
+        if self._goal_presentation is None:
+            self._goal_presentation = GoalPresentation(self._task_list_event_emitter().goal_updated, source="tui")
+        self._goal_presentation.publish(
+            self._goal.to_dict() if self._goal is not None else None,
+            reason=reason,
+            evaluation_met=evaluation_met,
+        )
+
+    async def _start_goal_presentation(self) -> None:
+        await self._prime_recording_offset()
+        self._publish_goal("snapshot")
+        assert self._goal_presentation is not None
+        await self._goal_presentation.flush()
 
     async def _load_recent_sessions(self) -> None:
         try:
@@ -2791,6 +2809,8 @@ class KolegaCodeApp(
         self._unregister_from_inbox()
         if self._queue_presentation is not None:
             await self._queue_presentation.aclose()
+        if self._goal_presentation is not None:
+            await self._goal_presentation.aclose()
         self._close_memory_manager()
         self._discard_session_diff_tracker(self._session_diff_tracker)
 
@@ -2917,6 +2937,8 @@ class KolegaCodeApp(
                     await self._stop_inbox_socket()
                     if self._queue_presentation is not None:
                         await self._queue_presentation.aclose()
+                    if self._goal_presentation is not None:
+                        await self._goal_presentation.aclose()
                     self._unregister_from_inbox()
                     self._close_memory_manager()
                 # Relaunch is allowed only after both persistence and teardown
@@ -3540,6 +3562,7 @@ class KolegaCodeApp(
         self._plan_decision_active = False
         self._goal = None
         self.session.goal = {}
+        self._publish_goal("cleared")
         if self.agent is not None:
             self.agent.apply_goal(None)
         if preserve_loop:
@@ -3636,6 +3659,9 @@ class KolegaCodeApp(
         if self._queue_presentation is not None:
             await self._queue_presentation.aclose()
             self._queue_presentation = None
+        if self._goal_presentation is not None:
+            await self._goal_presentation.aclose()
+            self._goal_presentation = None
 
         # 6) Rebind the session-bound surface to the new id.
         self.session = new_record
@@ -3715,6 +3741,7 @@ class KolegaCodeApp(
         await usage_sink.start()
         await self._start_usage_presentation()
         await self._start_queue_presentation()
+        await self._start_goal_presentation()
 
         # 11) Persist the new session and announce the switch.
         await self._save_session_async()

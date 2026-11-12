@@ -18,6 +18,7 @@ from typing import Any
 
 import kolega_code
 from kolega_code.cli import session_usage
+from kolega_code.cli.goal import GoalState
 from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import SettingsStore
@@ -117,6 +118,38 @@ _QUEUE: dict[str, Any] = {
         },
     ],
     "compat_payload": {"preserve": [1, False, None, {"text": "future queue"}]},
+}
+_GOAL_INITIAL: dict[str, Any] = {
+    "generation_id": "compat-goal-generation",
+    "revision": 0,
+    "source": "tui",
+    "reason": "snapshot",
+    "goal": None,
+    "evaluation_met": None,
+    "compat_payload": {"preserve": [False, None, {"text": "future goal café 🐍 <literal>"}]},
+}
+_GOAL: dict[str, Any] = {
+    "generation_id": "compat-goal-generation",
+    "revision": 1,
+    "source": "tui",
+    "reason": "paused",
+    "goal": GoalState(
+        condition="Preserve literal goal — café 🐍 <literal> **unchanged**\n  "
+        + "without truncation " * 40
+        + "GOAL COMPAT END",
+        started_at="2026-11-12T10:00:00+00:00",
+        turns_evaluated=3,
+        tokens_spent=321,
+        last_reason="Remaining gap — café 🐍 <literal>\n" + "Keep the complete reason. " * 40 + "REASON COMPAT END",
+        last_evaluated_at="2026-11-12T10:01:00+00:00",
+        max_turns=17,
+        run_to_completion=True,
+        paused=True,
+        met=False,
+        status_note="Stopped by user — café 🐍 <literal>",
+    ).to_dict(),
+    "evaluation_met": False,
+    "compat_payload": {"preserve": [1, False, None, {"text": "future goal café 🐍 <literal>"}]},
 }
 
 
@@ -327,6 +360,8 @@ async def _write_ui(
             content = _usage_payload(populated=False)
         elif event_type == KnownEventType.QUEUE_UPDATED:
             content = copy.deepcopy(_QUEUE_INITIAL)
+        elif event_type == KnownEventType.GOAL_UPDATED:
+            content = copy.deepcopy(_GOAL_INITIAL)
         await store.append(
             AgentEvent(
                 event_type=event_type,
@@ -360,6 +395,7 @@ async def _write_ui(
         (KnownEventType.TASK_LIST_UPDATED, {"markdown": _TASK_LIST["markdown"]}),
         (KnownEventType.USAGE_UPDATED, _usage_payload(populated=True)),
         (KnownEventType.QUEUE_UPDATED, copy.deepcopy(_QUEUE)),
+        (KnownEventType.GOAL_UPDATED, copy.deepcopy(_GOAL)),
     ):
         await store.append(
             AgentEvent(event_type=event_type, sender="compat-fixture", session_id=session_id, content=content)
@@ -527,6 +563,8 @@ def create_fixture(root: Path) -> dict:
             "usage": {"source_seq": 1, **_usage_payload(populated=True)["usage"]},
             "queue_payloads": [copy.deepcopy(_QUEUE_INITIAL), copy.deepcopy(_QUEUE)],
             "queue": {key: copy.deepcopy(value) for key, value in _QUEUE.items() if key != "compat_payload"},
+            "goal_payloads": [copy.deepcopy(_GOAL_INITIAL), copy.deepcopy(_GOAL)],
+            "goal": {key: copy.deepcopy(value) for key, value in _GOAL.items() if key != "compat_payload"},
             "image_sha256": hashlib.sha256(_IMAGE).hexdigest(),
             "sub_agents": copy.deepcopy(_SUB_AGENTS),
             "background_delivery_payloads": copy.deepcopy(background_payloads),
@@ -588,6 +626,13 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
     assert all(event.sub_agent_info is None and event.schema_version == 2 for event in queue_events), (
         "Queue events changed scope or schema version"
     )
+    goal_events = [event for event in ui_events if event.event_type == KnownEventType.GOAL_UPDATED]
+    assert [event.content for event in goal_events] == manifest["goal_payloads"], (
+        "Previous writer lost canonical goal payloads"
+    )
+    assert all(event.sub_agent_info is None and event.schema_version == 2 for event in goal_events), (
+        "Goal events changed scope or schema version"
+    )
     image_turns = [
         event
         for event in ui_events
@@ -607,6 +652,15 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
     assert state.task_list == manifest["task_list"], "Previous writer lost the complete latest task-list projection"
     assert state.usage == manifest["usage"], "Previous writer lost the latest usage projection"
     assert state.queue == manifest["queue"], "Previous writer lost the latest queue projection"
+    assert state.goal == manifest["goal"], "Previous writer lost the complete latest goal projection"
+    goal_sequences = {event.seq for event in goal_events}
+    assert all(item.seq not in goal_sequences for item in state.conversation), (
+        "Goal observations invented transcript rows"
+    )
+    assert all(item.seq not in goal_sequences for activity in state.sub_agents.values() for item in activity.steps), (
+        "Goal observations invented worker steps"
+    )
+    assert KnownEventType.GOAL_UPDATED not in state.unknown_event_types, "Goal observation treated as unknown"
     queue_sequences = {event.seq for event in queue_events}
     assert all(item.seq not in queue_sequences for item in state.conversation), (
         "Queue observations invented transcript rows"
@@ -678,6 +732,9 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
         "Previous writer changed original session metadata"
     )
     history = loaded.history
+    assert all(manifest["goal"]["goal"]["condition"] not in str(message) for message in history), (
+        "Goal observations inflated semantic history"
+    )
     assert history[: len(manifest["original_history"])] == manifest["original_history"]
     appended_history = history[len(manifest["original_history"]) :]
     assert any(

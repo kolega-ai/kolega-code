@@ -88,6 +88,7 @@ class KnownEventType:
     USAGE_UPDATED = "usage_updated"
     BACKGROUND_JOB_DELIVERED = "background_job_delivered"
     QUEUE_UPDATED = "queue_updated"
+    GOAL_UPDATED = "goal_updated"
 
 
 class ArtifactPurpose:
@@ -375,6 +376,13 @@ class AgentEventEmitter:
                 event_type=KnownEventType.QUEUE_UPDATED,
                 content=deepcopy(snapshot),
             )
+        )
+
+    async def goal_updated(self, snapshot: dict[str, Any]) -> None:
+        if self._sub_agent_info_provider and self._sub_agent_info_provider() is not None:
+            return
+        await self.emit(
+            AgentEvent(sender=self.sender, event_type=KnownEventType.GOAL_UPDATED, content=deepcopy(snapshot))
         )
 
     async def background_job_delivered(self, completion: dict[str, Any]) -> None:
