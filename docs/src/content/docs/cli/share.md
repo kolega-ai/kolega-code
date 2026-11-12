@@ -81,6 +81,7 @@ default — it has nothing to fetch.
 - A read-only, session-wide task list with pending and completed tasks, a
   completion count, and the source Markdown.
 - A read-only, session-wide queue showing recorded pending-input previews in order.
+- A read-only, session-wide Goal panel showing the latest recorded goal observation.
 - Session-wide token and cost snapshots, including coverage and recording health.
 - A theme switcher covering every theme the TUI ships.
 
@@ -158,6 +159,34 @@ Before any queue observation was recorded, the queue is **unknown**, not empty.
 An explicitly recorded empty snapshot is shown as empty. Older sessions do not
 gain invented queue history. Export redaction also applies to queue previews and
 peer attribution; live shares remain unredacted.
+
+### Goal
+
+The Goal panel shows recorded goal observations: started, replaced, evaluated,
+paused, resumed, completed and cleared, as well as saved-state snapshots. It
+follows live updates, playback and seeking in live shares, single-file replays
+and directory bundles. Opening a worker's thread does not narrow the panel or
+replace the session's goal with a worker's state. Goal observations do not add
+transcript rows or conversation turns.
+
+The panel retains the full recorded condition, evaluation reason, counters,
+timestamps, flags and status note. Text is displayed literally, not as
+executable HTML. This is **read-only evidence**: there are no start, clear, pause
+or resume controls. A recorded evaluation result or completion is not a new
+verification by the player, and the panel cannot execute work, resume a goal or
+recover goal-loop state.
+
+Before the first recorded observation, the goal is **unknown**, not absent or
+completed. An explicit snapshot with no goal or a recorded clear instead
+establishes that no goal was set at that point. Older recordings do not gain
+invented goal history. A saved-state snapshot records what was observed when
+the session opened; it does not backfill earlier lifecycle events.
+
+Normal `ask` can record goal observations without changing its existing goal
+execution or recovery semantics. `ask --json` writes **no goal presentation
+events**, preserving its semantic-only, gaplessly sequenced stream. Goal
+observations do not change model history, semantic goal accounting or ATIF
+exports. Export redaction applies to goal text; live shares remain unredacted.
 
 ### Token and cost usage
 

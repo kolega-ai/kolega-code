@@ -19,6 +19,7 @@ polling several times a second.
 from __future__ import annotations
 
 import asyncio
+from contextvars import copy_context
 import json
 import os
 import time
@@ -118,16 +119,32 @@ class FileSessionEventStore(SessionEventStore):
         bounded: on timeout the caller continues and the thread still finishes
         the write (the row lands, possibly late, with a correct seq).
 
-        Background delivery receipts and queue observations instead drain under
+        Background delivery receipts, queue and goal observations drain under
         their retained owner: retirement must not release a journal with its
         writer still active.
         """
         started = time.monotonic()
-        write = asyncio.ensure_future(asyncio.to_thread(self._append_sync, event))
+        if event.event_type == KnownEventType.GOAL_UPDATED:
+            # Unlike to_thread Tasks, executor futures survive runner-wide cancellation.
+            context = copy_context()
+
+            def append_goal() -> int:
+                return context.run(self._append_sync, event)
+
+            write = asyncio.get_running_loop().run_in_executor(None, append_goal)
+        else:
+            write = asyncio.ensure_future(asyncio.to_thread(self._append_sync, event))
         try:
+            if event.event_type == KnownEventType.GOAL_UPDATED:
+                while not write.done():
+                    try:
+                        await asyncio.shield(write)
+                    except asyncio.CancelledError:
+                        pass
+                seq = write.result()
             # Delivery retirement cannot release its journal owner while this
             # receipt's writer is still running.
-            if self._append_timeout is None or event.event_type in (
+            elif self._append_timeout is None or event.event_type in (
                 KnownEventType.BACKGROUND_JOB_DELIVERED,
                 KnownEventType.QUEUE_UPDATED,
             ):

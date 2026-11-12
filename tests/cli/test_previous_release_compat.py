@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import importlib.util
 import io
@@ -16,6 +17,7 @@ from typing import Any
 import pytest
 from packaging.version import Version
 
+from kolega_code.cli.goal import GoalState
 from kolega_code.cli.session_event_store import FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import SettingsStore
@@ -216,6 +218,52 @@ def test_previous_worker_rejects_lost_or_changed_canonical_usage_payloads(damage
         worker.verify_usage_payloads(actual, [payload])
 
 
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing",
+        "truncated",
+        "counter",
+        "reason",
+        "verdict",
+        "unknown_fields",
+        "nested_payload",
+        "worker_tag",
+        "empty_worker_tag",
+        "schema",
+    ],
+)
+def test_previous_worker_rejects_lost_or_changed_canonical_goal_payloads(damage: str) -> None:
+    expected = [fixture_module._GOAL_INITIAL, fixture_module._GOAL]
+    events = [
+        AgentEvent(event_type="goal_updated", sender="compat-fixture", content=copy.deepcopy(payload))
+        for payload in expected
+    ]
+    worker.verify_goal_payloads(events, expected)
+    if damage == "missing":
+        events.pop()
+    else:
+        target = events[-1]
+        if damage == "truncated":
+            target.content["goal"]["condition"] = target.content["goal"]["condition"][:500]
+        elif damage == "counter":
+            target.content["goal"]["tokens_spent"] += 1
+        elif damage == "reason":
+            target.content["reason"] = "resumed"
+        elif damage == "verdict":
+            target.content["evaluation_met"] = True
+        elif damage == "unknown_fields":
+            del target.content["compat_payload"]
+        elif damage == "nested_payload":
+            target.content["compat_payload"]["preserve"][-1]["text"] = "lost"
+        elif damage in {"worker_tag", "empty_worker_tag"}:
+            target.sub_agent_info = {"agent_id": "worker"} if damage == "worker_tag" else {}
+        else:
+            target.schema_version += 1
+    with pytest.raises(RuntimeError, match="goal"):
+        worker.verify_goal_payloads(events, expected)
+
+
 def _simulate_writer(root: Path, manifest: dict[str, Any]) -> None:
     settings_store = SettingsStore(root)
     settings = settings_store.load()
@@ -294,6 +342,127 @@ def test_lost_or_misattributed_queue_fails_roundtrip(
 
         monkeypatch.setattr(FileSessionEventStore, "read", broken_read)
     with pytest.raises(AssertionError, match="[Qq]ueue"):
+        fixture_module.verify_after_previous(*completed_roundtrip)
+
+
+def test_roundtrip_preserves_full_goal_observations_without_conversation_or_recovery_authority(
+    completed_roundtrip: tuple[Path, dict[str, Any]],
+) -> None:
+    root, manifest = completed_roundtrip
+    store = SessionStore(root)
+    session_id = manifest["session_id"]
+    events = asyncio.run(FileSessionEventStore(store.journal(session_id)).read(session_id))
+    goals = [event for event in events if event.event_type == KnownEventType.GOAL_UPDATED]
+    worker.verify_goal_payloads(events, manifest["goal_payloads"])
+    assert AGENT_EVENT_SCHEMA_VERSION == 2
+    assert [event.content["revision"] for event in goals] == [0, 1]
+    assert all(event.sub_agent_info is None and event.schema_version == 2 for event in goals)
+    first = events.index(goals[0])
+    assert replay(events[:first]).goal is None
+    initial = replay(events[: first + 1])
+    assert initial.goal is not None
+    assert initial.goal == {
+        key: value for key, value in manifest["goal_payloads"][0].items() if key != "compat_payload"
+    }
+    assert initial.goal["goal"] is None and initial.goal["evaluation_met"] is None
+    state = replay(events)
+    assert state.goal is not None
+    assert state.goal == manifest["goal"]
+    goal = state.goal["goal"]
+    assert set(goal) == set(GoalState(condition="", started_at="").to_dict())
+    assert len(goal["condition"]) > 500 and goal["condition"].endswith("GOAL COMPAT END")
+    assert "<literal> **unchanged**\n  " in goal["condition"]
+    assert len(goal["last_reason"]) > 500 and goal["last_reason"].endswith("REASON COMPAT END")
+    assert (goal["turns_evaluated"], goal["tokens_spent"], goal["max_turns"]) == (3, 321, 17)
+    assert goal["started_at"] == "2026-11-12T10:00:00+00:00"
+    assert goal["last_evaluated_at"] == "2026-11-12T10:01:00+00:00"
+    assert goal["run_to_completion"] is True and goal["paused"] is True and goal["met"] is False
+    assert goal["status_note"] == "Stopped by user — café 🐍 <literal>"
+    assert state.goal["evaluation_met"] is False and state.goal["reason"] == "paused"
+    assert "compat_payload" not in state.goal
+    without_goals = replay([event for event in events if event.event_type != KnownEventType.GOAL_UPDATED])
+    assert without_goals.goal is None
+    assert state.conversation == without_goals.conversation
+    assert state.turns == without_goals.turns
+    assert {key: activity.steps for key, activity in state.sub_agents.items()} == {
+        key: activity.steps for key, activity in without_goals.sub_agents.items()
+    }
+    loaded = store.load(session_id)
+    assert loaded.goal == {}
+    assert not any(goal["condition"] in str(message) for message in loaded.history)
+    original = (root / manifest["snapshot"]).read_bytes()
+    actual = store.events_path_for(session_id).read_bytes()
+    assert len(actual) > len(original) and actual.startswith(original)
+    raw_goals = [
+        json.loads(line)["payload"]["event"]["content"]
+        for line in actual.splitlines()
+        if json.loads(line)["type"] == "ui.goal_updated"
+    ]
+    assert raw_goals == manifest["goal_payloads"]
+    assert raw_goals[-1]["compat_payload"]["preserve"] == [
+        1,
+        False,
+        None,
+        {"text": "future goal café 🐍 <literal>"},
+    ]
+    fixture_module.verify_after_previous(root, manifest)
+
+
+@pytest.mark.parametrize("damage", ["missing", "truncated", "nested_payload", "worker_tag", "schema"])
+def test_lost_or_changed_goal_payload_fails_roundtrip(
+    completed_roundtrip: tuple[Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    original_read = FileSessionEventStore.read
+
+    async def damage_goal(self: FileSessionEventStore, session_id: str, **kwargs: Any) -> list[AgentEvent]:
+        events = await original_read(self, session_id, **kwargs)
+        target = [event for event in events if event.event_type == KnownEventType.GOAL_UPDATED][-1]
+        if damage == "missing":
+            events.remove(target)
+        elif damage == "truncated":
+            target.content["goal"]["condition"] = target.content["goal"]["condition"][:500]
+        elif damage == "nested_payload":
+            target.content["compat_payload"]["preserve"][-1]["text"] = "lost"
+        elif damage == "worker_tag":
+            target.sub_agent_info = {"agent_id": "compat-parent"}
+        else:
+            target.schema_version += 1
+        return events
+
+    monkeypatch.setattr(FileSessionEventStore, "read", damage_goal)
+    with pytest.raises(AssertionError, match="[Gg]oal"):
+        fixture_module.verify_after_previous(*completed_roundtrip)
+
+
+@pytest.mark.parametrize("damage", ["missing", "truncated", "extension", "unknown", "prose", "worker_steps"])
+def test_lost_or_inflated_goal_projection_fails_roundtrip(
+    completed_roundtrip: tuple[Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    original_replay = fixture_module.replay
+
+    def damage_goal(events: list[AgentEvent]) -> PresentationState:
+        state = original_replay(events)
+        if damage == "missing":
+            state.goal = None
+        elif damage == "truncated":
+            assert state.goal is not None
+            state.goal["goal"]["condition"] = state.goal["goal"]["condition"][:500]
+        elif damage == "extension":
+            assert state.goal is not None
+            state.goal["compat_payload"] = {"should": "be ignored"}
+        elif damage == "unknown":
+            state.unknown_event_types.add(KnownEventType.GOAL_UPDATED)
+        else:
+            event = next(event for event in events if event.event_type == KnownEventType.GOAL_UPDATED)
+            row = ConversationItem(kind="system", text="Goal observation", seq=event.seq)
+            if damage == "prose":
+                state.conversation.append(row)
+            else:
+                state.sub_agents["compat-parent"].steps.append(row)
+        return state
+
+    monkeypatch.setattr(fixture_module, "replay", damage_goal)
+    with pytest.raises(AssertionError, match="[Gg]oal"):
         fixture_module.verify_after_previous(*completed_roundtrip)
 
 

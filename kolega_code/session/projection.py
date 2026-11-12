@@ -225,6 +225,7 @@ class PresentationState(_TerminalBuffer):
     task_list: Optional[dict] = None
     usage: Optional[dict] = None
     queue: Optional[dict] = None
+    goal: Optional[dict] = None
     #: Decision points in the order they arose, resolved or not. A replay shows
     #: where the agent stopped to ask and what the answer was.
     prompts: list[PendingPrompt] = field(default_factory=list)
@@ -248,6 +249,7 @@ class PresentationState(_TerminalBuffer):
     _pending_peer_turns: list[str] = field(default_factory=list, repr=False)
     _background_completions: set[str] = field(default_factory=set, repr=False)
     _retired_queue_ids: set[str] = field(default_factory=set, repr=False)
+    _retired_goal_generation_ids: set[str] = field(default_factory=set, repr=False)
 
     def to_dict(self) -> dict:
         """JSON-safe view for transport to a web client or player.
@@ -313,6 +315,7 @@ class PresentationState(_TerminalBuffer):
             "task_list": self.task_list,
             "usage": self.usage,
             "queue": deepcopy(self.queue),
+            "goal": deepcopy(self.goal),
             "prompts": [
                 {
                     "request_id": prompt.request_id,
@@ -391,6 +394,10 @@ def fold(state: PresentationState, event: AgentEvent) -> PresentationState:
 
     if event.event_type == "queue_updated":
         _on_queue_updated(state, event)
+        return state
+
+    if event.event_type == "goal_updated":
+        _on_goal_updated(state, event)
         return state
 
     if event.event_type == KnownEventType.BACKGROUND_JOB_DELIVERED:
@@ -498,6 +505,67 @@ def _on_queue_updated(state: PresentationState, event: AgentEvent) -> None:
         "source": content["source"],
         "reason": content["reason"],
         "items": items,
+    }
+
+
+def _on_goal_updated(state: PresentationState, event: AgentEvent) -> None:
+    content = event.content
+    if event.sub_agent_info is not None or not isinstance(content, dict):
+        return
+    generation_id = content.get("generation_id")
+    revision = content.get("revision")
+    if not isinstance(generation_id, str) or not generation_id or not _queue_count(revision):
+        return
+    if content.get("source") not in ("tui", "ask"):
+        return
+    reason = content.get("reason")
+    if reason not in ("snapshot", "started", "replaced", "evaluated", "paused", "resumed", "completed", "cleared"):
+        return
+    if "goal" not in content or "evaluation_met" not in content:
+        return
+    if content["evaluation_met"] is not None and type(content["evaluation_met"]) is not bool:
+        return
+    goal = content["goal"]
+    if goal is None:
+        if reason not in ("snapshot", "cleared"):
+            return
+    else:
+        if reason == "cleared" or not isinstance(goal, dict):
+            return
+        strings = ("condition", "started_at", "last_reason", "status_note")
+        counts = ("turns_evaluated", "tokens_spent", "max_turns")
+        flags = ("run_to_completion", "paused", "met")
+        if not all(isinstance(goal.get(key), str) for key in strings):
+            return
+        if not all(_queue_count(goal.get(key)) for key in counts):
+            return
+        if not all(type(goal.get(key)) is bool for key in flags):
+            return
+        if "last_evaluated_at" not in goal or (
+            goal["last_evaluated_at"] is not None and not isinstance(goal["last_evaluated_at"], str)
+        ):
+            return
+        goal = {
+            **{key: goal[key] for key in strings},
+            **{key: int(goal[key]) for key in counts},
+            **{key: goal[key] for key in flags},
+            "last_evaluated_at": goal["last_evaluated_at"],
+        }
+    if generation_id in state._retired_goal_generation_ids:
+        return
+    if state.goal is not None:
+        if generation_id == state.goal["generation_id"]:
+            if revision <= state.goal["revision"]:
+                return
+        else:
+            state._retired_goal_generation_ids.add(state.goal["generation_id"])
+    state.goal = {
+        "generation_id": generation_id,
+        "revision": int(revision),
+        "source": content["source"],
+        "reason": reason,
+        "goal": goal,
+        "evaluation_met": content["evaluation_met"],
     }
 
 

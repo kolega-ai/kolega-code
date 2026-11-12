@@ -157,6 +157,7 @@ class RecordingConnectionManager(AgentConnectionManager):
             KnownEventType.USAGE_UPDATED,
             KnownEventType.BACKGROUND_JOB_DELIVERED,
             KnownEventType.QUEUE_UPDATED,
+            KnownEventType.GOAL_UPDATED,
         ):
             await self._broadcast_recorded_event(event, workspace_id, thread_id)
             return

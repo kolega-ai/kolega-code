@@ -48,6 +48,7 @@ export function emptyState() {
     taskList: null,
     usage: null,
     queue: null,
+    goal: null,
     status: "",
     activity: "idle",
     openBrowsers: new Set(),
@@ -61,6 +62,7 @@ export function emptyState() {
     pendingPeerTurns: [],
     backgroundCompletions: new Set(),
     retiredQueueIds: new Set(),
+    retiredGoalGenerationIds: new Set(),
   });
 }
 
@@ -167,6 +169,47 @@ function onQueueUpdated(state, event) {
     source: content.source,
     reason: content.reason,
     items,
+  };
+}
+
+function onGoalUpdated(state, event) {
+  const content = event.content;
+  if (event.sub_agent_info != null || !isRecord(content)) return;
+  if (typeof content.generation_id !== "string" || !content.generation_id || !usageCount(content.revision)) return;
+  if (!["tui", "ask"].includes(content.source)) return;
+  if (!["snapshot", "started", "replaced", "evaluated", "paused", "resumed", "completed", "cleared"]
+    .includes(content.reason)) return;
+  if (!("goal" in content) || !("evaluation_met" in content)) return;
+  if (content.evaluation_met !== null && typeof content.evaluation_met !== "boolean") return;
+  let goal = content.goal;
+  if (goal === null) {
+    if (!["snapshot", "cleared"].includes(content.reason)) return;
+  } else {
+    if (content.reason === "cleared" || !isRecord(goal)) return;
+    const strings = ["condition", "started_at", "last_reason", "status_note"];
+    const counts = ["turns_evaluated", "tokens_spent", "max_turns"];
+    const flags = ["run_to_completion", "paused", "met"];
+    if (!strings.every((key) => typeof goal[key] === "string")) return;
+    if (!counts.every((key) => usageCount(goal[key]))) return;
+    if (!flags.every((key) => typeof goal[key] === "boolean")) return;
+    if (goal.last_evaluated_at !== null && typeof goal.last_evaluated_at !== "string") return;
+    goal = Object.fromEntries([...strings, ...counts, ...flags, "last_evaluated_at"].map((key) => [key, goal[key]]));
+  }
+  if (state.retiredGoalGenerationIds.has(content.generation_id)) return;
+  if (state.goal !== null) {
+    if (content.generation_id === state.goal.generation_id) {
+      if (content.revision <= state.goal.revision) return;
+    } else {
+      state.retiredGoalGenerationIds.add(state.goal.generation_id);
+    }
+  }
+  state.goal = {
+    generation_id: content.generation_id,
+    revision: content.revision,
+    source: content.source,
+    reason: content.reason,
+    goal,
+    evaluation_met: content.evaluation_met,
   };
 }
 
@@ -826,6 +869,11 @@ export function fold(state, event) {
     return state;
   }
 
+  if (event.event_type === "goal_updated") {
+    onGoalUpdated(state, event);
+    return state;
+  }
+
   if (event.event_type === "background_job_delivered") {
     onBackgroundDelivery(state, event);
     return state;
@@ -966,6 +1014,7 @@ export function toDict(state) {
     task_list: state.taskList,
     usage: state.usage,
     queue: state.queue === null ? null : JSON.parse(JSON.stringify(state.queue)),
+    goal: state.goal === null ? null : JSON.parse(JSON.stringify(state.goal)),
     prompts: state.prompts.map((prompt) => ({
       request_id: prompt.request_id,
       kind: prompt.kind,

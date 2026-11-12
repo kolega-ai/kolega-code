@@ -345,6 +345,7 @@ def test_subagent_linkage_independent_expected_state_at_every_prefix(tmp_path: P
     fixture = json.loads((Path(__file__).parents[1] / "fixtures" / "subagent_linkage.json").read_text())
     expected = deepcopy(fixture["initial"])
     expected["task_list"] = None
+    expected["goal"] = None
     expected_prefixes = [deepcopy(expected)]
     events = []
     for seq, step in enumerate(fixture["steps"], 1):
@@ -391,6 +392,7 @@ process.stdout.write(JSON.stringify({{ incremental, seek }}));
 
 def test_task_list_independent_expected_state_at_every_prefix(tmp_path: Path) -> None:
     expected = deepcopy(TASK_LIST_FIXTURE["initial"])
+    expected["goal"] = None
     expected_prefixes = [deepcopy(expected)]
     events = []
     for step in TASK_LIST_FIXTURE["steps"]:
