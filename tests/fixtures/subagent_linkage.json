@@ -11,6 +11,7 @@
     "compaction": null,
     "task_list": null,
     "usage": null,
+    "queue": null,
     "prompts": [],
     "status": "",
     "activity": "idle",

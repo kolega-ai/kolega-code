@@ -693,6 +693,42 @@ button.kc-tool-name:focus-visible {
   color: color-mix(in srgb, var(--kc-foreground) 70%, var(--kc-text-muted));
 }
 
+#queue {
+  overflow-wrap: anywhere;
+  font-size: 0.76rem;
+}
+
+.kc-queue-summary,
+.kc-queue-caveat,
+.kc-queue-observation,
+.kc-queue-origin,
+.kc-queue-images {
+  margin: 0 0 0.4rem;
+  font-size: 0.7rem;
+  color: color-mix(in srgb, var(--kc-foreground) 66%, var(--kc-text-muted));
+}
+
+.kc-queue-entries {
+  max-height: 20rem;
+  overflow-y: auto;
+  margin: 0;
+  padding-left: 1.5rem;
+}
+
+.kc-queue-entry {
+  padding: 0.3rem 0;
+}
+
+.kc-queue-text,
+.kc-queue-origin {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.kc-queue-text {
+  margin: 0 0 0.3rem;
+}
+
 .kc-turn {
   display: block;
   width: 100%;

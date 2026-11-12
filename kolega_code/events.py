@@ -87,6 +87,7 @@ class KnownEventType:
     TASK_LIST_UPDATED = "task_list_updated"
     USAGE_UPDATED = "usage_updated"
     BACKGROUND_JOB_DELIVERED = "background_job_delivered"
+    QUEUE_UPDATED = "queue_updated"
 
 
 class ArtifactPurpose:
@@ -361,6 +362,18 @@ class AgentEventEmitter:
                 sender=self.sender,
                 event_type=KnownEventType.USAGE_UPDATED,
                 content={"scope": "session", "semantics": "snapshot", "source_seq": source_seq, "usage": usage},
+            )
+        )
+
+    async def queue_updated(self, snapshot: dict[str, Any]) -> None:
+        """Present a root host queue observation, not a delivery acknowledgement."""
+        if self._sub_agent_info_provider and self._sub_agent_info_provider():
+            return
+        await self.emit(
+            AgentEvent(
+                sender=self.sender,
+                event_type=KnownEventType.QUEUE_UPDATED,
+                content=deepcopy(snapshot),
             )
         )
 

@@ -80,6 +80,7 @@ default — it has nothing to fetch.
 - Live context-window usage, sub-agent activity, and terminal output.
 - A read-only, session-wide task list with pending and completed tasks, a
   completion count, and the source Markdown.
+- A read-only, session-wide queue showing recorded pending-input previews in order.
 - Session-wide token and cost snapshots, including coverage and recording health.
 - A theme switcher covering every theme the TUI ships.
 
@@ -136,6 +137,27 @@ show a list only where an update was actually captured. Resuming a session may
 record its saved list at that point, but does not invent earlier task-list
 history. Recording and displaying task updates does not add them to the model's
 conversation history or change its prompts.
+
+### Queue
+
+The Queue panel shows the latest recorded observation of pending inputs, in queue
+order. It follows live updates, playback and seeking in live shares, single-file
+replays and directory bundles, and stays session-wide when viewing a worker.
+Entries show bounded literal text previews, attachment image counts and recorded
+peer attribution—not raw attachment bytes, local paths or model framing. The
+panel does not load images or offer downloads or queue controls.
+
+These are **read-only historical previews**, not recoverable pending inputs, a
+durable queue or a way to resume queued work. A **dequeued** observation means an
+input was removed for processing, **not** that semantic delivery succeeded; no
+queue observation is a delivery acknowledgment. Queue updates do not create
+conversation turns.
+
+Before any queue observation was recorded, the queue is **unknown**, not empty.
+`ask --json` remains semantic-only and does not record queue observations.
+An explicitly recorded empty snapshot is shown as empty. Older sessions do not
+gain invented queue history. Export redaction also applies to queue previews and
+peer attribution; live shares remain unredacted.
 
 ### Token and cost usage
 

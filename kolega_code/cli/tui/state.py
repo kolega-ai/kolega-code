@@ -173,12 +173,8 @@ class QueuedMessage:
     text: str
     attachments: list[dict] | None
     entry: ConversationEntry
-    display_text: str = ""
+    display_text: str
     origin: Optional[dict] = None
-
-    def __post_init__(self) -> None:
-        if not self.display_text:
-            self.display_text = self.text
 
     @property
     def is_peer(self) -> bool:

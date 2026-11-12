@@ -46,6 +46,7 @@ from kolega_code.session.inbox import (
     validate_peer_text as validate_peer_message_text,
 )
 from kolega_code.session.runtime import deserialize_permission_request, deserialize_permission_rule_options
+from kolega_code.session.queue import queue_preview
 from kolega_code.session.background import BackgroundAgentManager
 from kolega_code.session.composition import (
     CompositionHost,
@@ -103,6 +104,7 @@ _RECORDING_ONLY_EVENTS = frozenset(
         KnownEventType.TASK_LIST_UPDATED,
         KnownEventType.USAGE_UPDATED,
         KnownEventType.BACKGROUND_JOB_DELIVERED,
+        KnownEventType.QUEUE_UPDATED,
     }
 )
 
@@ -1289,6 +1291,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         # Keep the future transcript entry unmounted while pending; the queue
         # widget is the only waiting-message preview until this item starts.
         self._queued_messages.append(queued)
+        self._publish_queue("enqueued")
         self._refresh_queued_messages_panel()
         if queued.is_peer:
             sender = str((origin or {}).get("title") or "peer")
@@ -1301,9 +1304,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             return messages.QUEUE_EMPTY
         lines = [f"{messages.QUEUE_LIST_TITLE} {len(self._queued_messages)}"]
         for index, queued in enumerate(self._queued_messages, start=1):
-            preview = " ".join(queued.display_text.strip().split()) or "(empty)"
-            if len(preview) > 120:
-                preview = preview[:117] + "…"
+            preview = queue_preview(queued.display_text)
             suffix = ""
             if queued.is_peer:
                 sender = str((queued.origin or {}).get("title") or "peer")
@@ -1337,6 +1338,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
     def _clear_queued_messages(self) -> int:
         queued = list(self._queued_messages)
         self._queued_messages.clear()
+        self._publish_queue("cleared")
         self._remove_queued_entries_from_transcript(queued)
         self._refresh_queued_messages_panel()
         return len(queued)
@@ -1356,6 +1358,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
 
         if not own:
             self._queued_messages.clear()
+            self._publish_queue("removed")
             self._remove_queued_entries_from_transcript(queued)
             self._refresh_queued_messages_panel()
             return 0
@@ -1370,6 +1373,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             pass
 
         self._queued_messages.clear()
+        self._publish_queue("removed")
         self._remove_queued_entries_from_transcript(queued)
         self._refresh_queued_messages_panel()
         return len(own)
@@ -1444,6 +1448,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             return True
 
         queued = self._queued_messages.pop(0)
+        self._publish_queue("dequeued")
         if queued.is_peer:
             queued.entry.kind = "peer_message"
         else:
@@ -1492,6 +1497,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         if not taken:
             return []
         self._queued_messages.clear()
+        self._publish_queue("dequeued")
         inputs: list[QueuedUserInput] = []
         for queued in taken:
             if queued.is_peer:
@@ -1598,6 +1604,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             pass
 
     def _render_event(self, event: AgentEvent) -> None:
+        if event.event_type == KnownEventType.QUEUE_UPDATED:
+            return  # root host observations, never child activity or transcript
         self._diag_tee(event)
         if event.sub_agent_info:
             self._ensure_sub_agent_activity(event)

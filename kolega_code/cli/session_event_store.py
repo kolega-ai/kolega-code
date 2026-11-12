@@ -118,15 +118,19 @@ class FileSessionEventStore(SessionEventStore):
         bounded: on timeout the caller continues and the thread still finishes
         the write (the row lands, possibly late, with a correct seq).
 
-        Background delivery receipts instead drain under the retained broadcast
-        owner: retirement must not release a journal with its writer still active.
+        Background delivery receipts and queue observations instead drain under
+        their retained owner: retirement must not release a journal with its
+        writer still active.
         """
         started = time.monotonic()
         write = asyncio.ensure_future(asyncio.to_thread(self._append_sync, event))
         try:
             # Delivery retirement cannot release its journal owner while this
             # receipt's writer is still running.
-            if self._append_timeout is None or event.event_type == KnownEventType.BACKGROUND_JOB_DELIVERED:
+            if self._append_timeout is None or event.event_type in (
+                KnownEventType.BACKGROUND_JOB_DELIVERED,
+                KnownEventType.QUEUE_UPDATED,
+            ):
                 seq = await asyncio.shield(write)
             else:
                 seq = await asyncio.wait_for(asyncio.shield(write), timeout=self._append_timeout)

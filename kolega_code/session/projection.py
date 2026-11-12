@@ -22,7 +22,7 @@ from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass, field
 import re
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Optional, TypeGuard
 
 from kolega_code.events import AgentEvent, ArtifactRef, KnownEventType
 from kolega_code.session.task_list import task_list_entries
@@ -224,6 +224,7 @@ class PresentationState(_TerminalBuffer):
     compaction: Optional[dict] = None
     task_list: Optional[dict] = None
     usage: Optional[dict] = None
+    queue: Optional[dict] = None
     #: Decision points in the order they arose, resolved or not. A replay shows
     #: where the agent stopped to ask and what the answer was.
     prompts: list[PendingPrompt] = field(default_factory=list)
@@ -246,6 +247,7 @@ class PresentationState(_TerminalBuffer):
     _peer_messages: dict[str, _PeerMessageRecord] = field(default_factory=dict, repr=False)
     _pending_peer_turns: list[str] = field(default_factory=list, repr=False)
     _background_completions: set[str] = field(default_factory=set, repr=False)
+    _retired_queue_ids: set[str] = field(default_factory=set, repr=False)
 
     def to_dict(self) -> dict:
         """JSON-safe view for transport to a web client or player.
@@ -310,6 +312,7 @@ class PresentationState(_TerminalBuffer):
             "compaction": self.compaction,
             "task_list": self.task_list,
             "usage": self.usage,
+            "queue": deepcopy(self.queue),
             "prompts": [
                 {
                     "request_id": prompt.request_id,
@@ -386,6 +389,10 @@ def fold(state: PresentationState, event: AgentEvent) -> PresentationState:
         state.last_seq = event.seq
     state.elapsed_ms = max(state.elapsed_ms, event.elapsed_ms)
 
+    if event.event_type == "queue_updated":
+        _on_queue_updated(state, event)
+        return state
+
     if event.event_type == KnownEventType.BACKGROUND_JOB_DELIVERED:
         _on_background_delivery(state, event)
         return state
@@ -430,6 +437,68 @@ def fold(state: PresentationState, event: AgentEvent) -> PresentationState:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _queue_count(value: Any) -> TypeGuard[int | float]:
+    # Integral JSON numbers can decode as floats in Python but Numbers in JavaScript.
+    return type(value) in (int, float) and 0 <= value <= 9_007_199_254_740_991 and value == int(value)
+
+
+def _on_queue_updated(state: PresentationState, event: AgentEvent) -> None:
+    content = event.content
+    if event.sub_agent_info is not None or not isinstance(content, dict):
+        return
+    queue_id = content.get("queue_id")
+    revision = content.get("revision")
+    if not isinstance(queue_id, str) or not queue_id or not _queue_count(revision):
+        return
+    if content.get("source") not in ("tui", "ask"):
+        return
+    if content.get("reason") not in ("snapshot", "enqueued", "dequeued", "cleared", "removed"):
+        return
+    if not isinstance(content.get("items"), list):
+        return
+    items = []
+    item_ids: set[str] = set()
+    for item in content["items"]:
+        if not isinstance(item, dict):
+            return
+        item_id = item.get("queue_id")
+        if not isinstance(item_id, str) or not item_id or item_id in item_ids:
+            return
+        if not isinstance(item.get("text"), str) or not _queue_count(item.get("image_count")):
+            return
+        if "origin" not in item:
+            return
+        origin = item["origin"]
+        if origin is not None:
+            if (
+                not isinstance(origin, dict)
+                or origin.get("kind") != "peer"
+                or not isinstance(origin.get("session_id"), str)
+                or not isinstance(origin.get("title"), str)
+            ):
+                return
+            origin = {key: origin[key] for key in ("kind", "session_id", "title")}
+        items.append(
+            {"queue_id": item_id, "text": item["text"], "image_count": int(item["image_count"]), "origin": origin}
+        )
+        item_ids.add(item_id)
+    if queue_id in state._retired_queue_ids:
+        return
+    if state.queue is not None:
+        if queue_id == state.queue["queue_id"]:
+            if revision <= state.queue["revision"]:
+                return
+        else:
+            state._retired_queue_ids.add(state.queue["queue_id"])
+    state.queue = {
+        "queue_id": queue_id,
+        "revision": int(revision),
+        "source": content["source"],
+        "reason": content["reason"],
+        "items": items,
+    }
 
 
 def _on_background_delivery(state: PresentationState, event: AgentEvent) -> None:
