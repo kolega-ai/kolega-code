@@ -615,7 +615,9 @@ async def test_retained_startup_admission_is_bounded(
             await release.wait()
 
     monkeypatch.setattr(sessions, "CoderAgent", Agent)
-    monkeypatch.setattr(sessions, "LIFECYCLE_WAIT_SECONDS", 0.05)
+    # The wait returns as soon as the injected failure publishes; a 0.05 s
+    # deadline raced the startup path and cancelled before cleanup was entered.
+    monkeypatch.setattr(sessions, "LIFECYCLE_WAIT_SECONDS", 60.0)
     requests = [asyncio.create_task(gateway._ensure_session(chat_ref(str(index)))) for index in range(2)]
     try:
         await asyncio.wait_for(asyncio.gather(*(event.wait() for event in entered)), 10)
