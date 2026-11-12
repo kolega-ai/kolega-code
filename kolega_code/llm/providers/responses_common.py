@@ -1115,7 +1115,7 @@ class ResponsesProviderBase(OpenAIProvider):
     """Shared logic for OpenAI Responses-API providers.
 
     Subclasses wire the transport in ``__init__`` (auth, ``base_url``,
-    ``async_client``, ``sync_client=None``) and set ``self.provider_name`` and
+    ``async_client``) and set ``self.provider_name`` and
     ``self._session_id``; they override :meth:`_default_model`. Request building,
     streaming, response parsing, and reasoning continuity are all shared here.
     ``count_tokens`` is inherited from :class:`OpenAIProvider` (tiktoken-based,

@@ -101,8 +101,6 @@ class ChatGPTOAuthProvider(ResponsesProviderBase):
                 timeout=httpx.Timeout(connect=10.0, read=600.0, write=30.0, pool=10.0),
             ),
         )
-        # The Responses path is async-only; the sync client is unused.
-        self.sync_client = None
 
     def _default_model(self) -> str:
         return chatgpt_constants.DEFAULT_MODEL
