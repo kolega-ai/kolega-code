@@ -9,8 +9,6 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Optional, TextIO
 
-import httpx
-
 from .config import MCPServerConfig
 from .oauth import OAuthInteraction, build_oauth_provider
 from .state import MCPOAuthTokenStore
@@ -115,6 +113,10 @@ async def _streamable_http_client(server: MCPServerConfig, *, auth=None):
     client_context_factory: Any = streamable_http_client
     signature = inspect.signature(client_context_factory)
     params = signature.parameters
+    # httpx is only needed once an MCP HTTP session opens; importing it at module
+    # scope put ~45 ms of client/SSL setup on every CLI start.
+    import httpx
+
     timeout = httpx.Timeout(server.timeout_seconds)
 
     if "http_client" in params:

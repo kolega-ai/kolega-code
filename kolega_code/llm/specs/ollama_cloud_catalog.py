@@ -24,8 +24,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
-import httpx
-
 from .types import ThinkingEffortSpec
 from .validation import validate_model_spec
 from .pricing_feeds import reviewed_pricing, sanitize_spec_pricing
@@ -200,6 +198,9 @@ def catalog_entries(payload: Any) -> list[tuple[str, dict[str, Any]]]:
 
 def fetch_models(*, timeout: float = 30.0, api_key: Optional[str] = None) -> dict[str, Any]:
     """Fetch `/v1/models` plus every matching `/api/show` detail response."""
+    # Refresh-only helper: keep httpx off the CLI start path.
+    import httpx
+
     token = api_key if api_key is not None else os.environ.get("OLLAMA_API_KEY")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 

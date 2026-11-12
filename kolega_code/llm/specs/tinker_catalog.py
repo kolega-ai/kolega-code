@@ -27,8 +27,6 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-import httpx
-
 from .types import ThinkingEffortSpec
 from .validation import validate_model_spec
 from .pricing_feeds import feed_pricing, sanitize_spec_pricing
@@ -145,6 +143,9 @@ def catalog_entries(payload: Any) -> list[tuple[str, dict[str, Any]]]:
 
 def fetch_models(*, timeout: float = 30.0) -> Any:
     """Fetch Tinker's published ``models.json``."""
+    # Refresh-only helper: keep httpx off the CLI start path.
+    import httpx
+
     response = httpx.get(MODELS_URL, timeout=timeout, headers={"User-Agent": _USER_AGENT}, follow_redirects=True)
     response.raise_for_status()
     return response.json()

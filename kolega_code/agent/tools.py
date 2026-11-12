@@ -24,8 +24,6 @@ from .tool_backend.network_status import ConnectFailureTracker
 from .tool_backend.read_file_tool import ReadFileTool
 from .tool_backend.read_image_tool import ReadImageTool
 from .tool_backend.snapshot_tool import SnapshotTool
-from .tool_backend.web_fetch_tool import WebFetchTool
-from .tool_backend.web_search_tool import WebSearchTool
 from .tool_backend.terminal_tool import TerminalTool
 from .tool_backend.workflow_tool import WorkflowTool
 from .edit_protocols import EDIT_HANDLER_NAMES, edit_protocol_spec
@@ -556,6 +554,10 @@ class ToolCollection(LogMixin):
             memory_manager = None
         self.memory_tool = MemoryTool(memory_manager, self.caller)
         connect_failures = ConnectFailureTracker()
+        # Deferred: web_fetch pulls in httpx (~50 ms), and the tool collection is
+        # built for every agent, not just when a fetch is requested.
+        from .tool_backend.web_fetch_tool import WebFetchTool
+
         self.web_fetch_tool = WebFetchTool(
             self.project_path,
             self.workspace_id,
@@ -566,6 +568,10 @@ class ToolCollection(LogMixin):
             self.filesystem,
             connect_failures=connect_failures,
         )
+        # Deferred for the same reason as web_fetch: every search backend
+        # module imports httpx for a request that may never be made.
+        from .tool_backend.web_search_tool import WebSearchTool
+
         self.web_search_tool = WebSearchTool(
             self.project_path,
             self.workspace_id,
