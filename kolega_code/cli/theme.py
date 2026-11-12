@@ -15,11 +15,35 @@ from functools import lru_cache
 from typing import Optional
 
 
+#: Rich spells the bright ANSI palette ``bright_<name>``; Textual's style parser
+#: only knows ``ansi_bright_<name>``. Parsing a tag in the wrong spelling drops
+#: the colour and runs a difflib scan over the whole colour table, so markup
+#: handed to a Textual widget must use the Textual spelling.
+_BRIGHT_ANSI_NAMES = (
+    "black",
+    "red",
+    "green",
+    "yellow",
+    "blue",
+    "magenta",
+    "cyan",
+    "white",
+)
+_TEXTUAL_BRIGHT: dict[str, str] = {f"bright_{name}": f"ansi_bright_{name}" for name in _BRIGHT_ANSI_NAMES}
+
+
+def textual_color(value: str) -> str:
+    """The Textual spelling of a bright ANSI colour name (other values pass through)."""
+    return _TEXTUAL_BRIGHT.get(value, value)
+
+
 class Color:
     """Semantic color roles as Rich style strings.
 
     Values are (re)assigned by :func:`apply_theme`; the defaults below mirror the
     Kolega Dark theme so the class is usable even before a theme is applied.
+    Textual spells the bright ANSI palette ``ansi_bright_*``; markup handed to a
+    Textual widget must go through :func:`textual_color` (see :func:`styled_textual`).
     """
 
     ACCENT: str = "cyan"
@@ -145,6 +169,12 @@ def log_level_color(level: str) -> str:
 
 def styled(text: str, style: str) -> str:
     """Wrap text in Rich markup for the given style."""
+    return f"[{style}]{text}[/{style}]"
+
+
+def styled_textual(text: str, style: str) -> str:
+    """Wrap text in markup for a Textual widget, in the spelling it parses."""
+    style = textual_color(style)
     return f"[{style}]{text}[/{style}]"
 
 

@@ -317,12 +317,12 @@ async def test_status_dashboard_context_note_uses_alert_level(tmp_path: Path, mo
 
         app._render_event(context_event("info"))
         dashboard = app._format_status_dashboard()
-        warn = theme.Color.WARNING
+        warn = theme.textual_color(theme.Color.WARNING)
         assert f"[{warn}]Context is getting large.[/{warn}]" in dashboard
 
         app._render_event(context_event("critical"))
         dashboard = app._format_status_dashboard()
-        err = theme.Color.ERROR
+        err = theme.textual_color(theme.Color.ERROR)
         assert f"[{err}]Context is getting large.[/{err}]" in dashboard
 
 
