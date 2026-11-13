@@ -1,7 +1,7 @@
 """The agent session host: one Kolega session per chat, driven headlessly.
 
 This is the gateway's real turn handler. Each chat gets a durable Kolega
-session — a ``SessionRuntime`` owning a ``CoderAgent`` built with the same
+session — a ``SessionRuntime`` owning a build or planning agent built with the same
 recipe the ACP server uses (``CliConnectionManager`` + recording + journal) —
 so recording, export, redaction, and the permission machinery all work
 exactly as they do in the TUI.
@@ -17,13 +17,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
-from kolega_code.agent import CoderAgent, PromptExtension, ToolExtension
+from kolega_code.agent import CoderAgent, PlanningAgent, PromptExtension, ToolExtension
 from kolega_code.agent.prompt_provider import AgentMode
-from kolega_code.agent.prompts import BUILD_QUESTION_PROMPT
+from kolega_code.agent.prompts import BUILD_QUESTION_PROMPT, PLANNING_QUESTION_PROMPT, build_implement_plan_prompt
 from kolega_code.cli.config import CliConfigError, CliConfigOverrides, build_agent_config, config_summary
 from kolega_code.cli.connection import CliConnectionManager
 from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
@@ -43,6 +43,7 @@ from kolega_code.gateway.bridge import TurnRenderer
 from kolega_code.gateway.commands import (
     COMMAND_HELP,
     COMMAND_MODEL,
+    COMMAND_MODE,
     COMMAND_NEW,
     COMMAND_PERMISSIONS,
     COMMAND_RESET,
@@ -73,6 +74,7 @@ from kolega_code.session.composition import (
     HostExtensions,
     construct_agent,
     prepare_composition,
+    select_agent_class,
 )
 
 logger = logging.getLogger(__name__)
@@ -154,6 +156,8 @@ class ChatSession:
     closed: bool = False
     retired_agents: list[Any] = field(default_factory=list)
     usage_presentation: UsagePresentation | None = None
+    plan_approval_task: asyncio.Task[None] | None = None
+    plan_approval_generation: int = 0
 
 
 class AgentTurnHandler:
@@ -185,6 +189,7 @@ class AgentTurnHandler:
             is_pinned=lambda entry: (
                 entry.chat_ref.key in self._operations
                 or entry.turn_task is not None
+                or entry.plan_approval_task is not None
                 or entry.turn_lock.locked()
                 or entry.background_queued
                 or bool(entry.background_jobs is not None and entry.background_jobs.has_work)
@@ -286,7 +291,8 @@ class AgentTurnHandler:
         if command is not None:
             await self._run_command(chat_ref, message, command)
             return
-        await self._ensure_session(chat_ref)  # also prunes idle sessions
+        entry = await self._ensure_session(chat_ref)  # also prunes idle sessions
+        self._invalidate_plan_approval(entry)
         self._check_admission(chat_ref)
         queue = self._queues.setdefault(chat_ref.key, asyncio.Queue())
         queue.put_nowait(message)
@@ -323,6 +329,8 @@ class AgentTurnHandler:
     async def _shutdown(self) -> None:
         owners = list(self._operations.values())
         entries = self._registry.take_all()
+        for entry in entries:
+            self._invalidate_plan_approval(entry.payload)
 
         async def close(entry: ChatSession) -> None:
             owner = self._operations.get(entry.chat_ref.key)
@@ -470,6 +478,10 @@ class AgentTurnHandler:
                 if chat_ref.key in self._operations:
                     continue
                 if message is not None:
+                    self._invalidate_plan_approval(entry)
+                    task = entry.plan_approval_task
+                    if task is not None:
+                        await asyncio.gather(task, return_exceptions=True)
                     entry.auto_continue_paused = False
                     await self._run_turn(entry, chat_ref, message)
                     return
@@ -500,6 +512,7 @@ class AgentTurnHandler:
                 if (
                     completions
                     and not entry.auto_continue_paused
+                    and entry.plan_approval_task is None
                     and getattr(entry.runtime.agent, "background_needs_turn", True)
                 ):
                     agent = entry.runtime.agent
@@ -511,8 +524,11 @@ class AgentTurnHandler:
                         chunk_limit=self._adapter.capabilities.text_chunk_limit,
                         edit_throttle_seconds=self._config.edit_throttle_seconds,
                     )
-                    await renderer.run(self._scrub_chunks(agent.continue_from_history_stream()))
+                    response: list[str] = []
+                    await renderer.run(self._scrub_chunks(agent.continue_from_history_stream(), response))
+                    self._capture_plan(entry, response)
                 self._persist(entry)
+                self._start_plan_approval(entry)
                 if not jobs.active_count and entry.retired_agents:
                     owner = self._start_operation(
                         chat_ref, "retire", lambda op: self._cleanup_retired(entry, op), cleaning=True
@@ -575,8 +591,133 @@ class AgentTurnHandler:
             edit_throttle_seconds=self._config.edit_throttle_seconds,
         )
         stream = entry.runtime.send_message(text, attachments or None)
-        await renderer.run(self._scrub_chunks(stream))
+        response: list[str] = []
+        await renderer.run(self._scrub_chunks(stream, response))
+        self._capture_plan(entry, response)
         self._persist(entry)
+        self._start_plan_approval(entry)
+
+    def _capture_plan(self, entry: ChatSession, response: list[str]) -> None:
+        if entry.record.interaction_mode != "plan":
+            return
+        consume = getattr(entry.runtime.agent, "consume_completed_plan", None)
+        plan = consume() if callable(consume) else None
+        if not isinstance(plan, str) or not plan.strip():
+            plan = "".join(response)
+        if plan.strip():
+            self._invalidate_plan_approval(entry)
+            entry.record.latest_plan_markdown = plan
+            entry.record.plan_pending = True
+            entry.record.plan_reofferable = True
+
+    def _invalidate_plan_approval(self, entry: ChatSession) -> None:
+        entry.plan_approval_generation += 1
+        for request in entry.runtime.control.pending():
+            if request.kind == "plan_approval":
+                entry.runtime.answer_plan_approval(request.request_id, None, client_id=entry.chat_ref.key)
+        task = entry.plan_approval_task
+        if task is not None and task is not asyncio.current_task() and not task.cancelling():
+            task.cancel()
+
+    def _start_plan_approval(self, entry: ChatSession, *, restored: bool = False) -> None:
+        task = entry.plan_approval_task
+        if task is not None and task.done():
+            # Completion can precede the queued callback; reclaim only its finished owner.
+            if not task.cancelled():
+                task.exception()
+            if entry.plan_approval_task is task:
+                entry.plan_approval_task = None
+        if (
+            self._closing
+            or entry.closed
+            or entry.auto_continue_paused
+            or entry.plan_approval_task is not None
+            or (entry.record.interaction_mode != "plan" and not restored)
+            or not entry.record.plan_pending
+            or not entry.record.latest_plan_markdown.strip()
+        ):
+            return
+        generation = entry.plan_approval_generation
+        plan = entry.record.latest_plan_markdown
+
+        async def offer() -> None:
+            # Never enter a replacement while the planning turn still owns its lock.
+            await asyncio.sleep(0)
+            await self._wait_for_lifecycle(entry.chat_ref)
+            if not self._plan_acceptance_live(entry, generation, plan):
+                return
+            try:
+                action = await entry.runtime.request_plan_approval(plan)
+                if not self._plan_acceptance_live(entry, generation, plan):
+                    return
+                if action == "discuss_plan":
+                    if entry.record.interaction_mode != "plan":
+                        owner = self._start_operation(
+                            entry.chat_ref,
+                            "plan",
+                            lambda op: self._replace_mode_owned(entry, "plan", op, acceptance=(generation, plan)),
+                        )
+                        await self._wait_operation(owner)
+                        if not self._plan_acceptance_live(entry, generation, plan):
+                            return
+                    entry.record.plan_pending = False
+                    entry.record.plan_reofferable = True
+                    self._store.save(entry.record)
+                elif action in ("implement_plan", "implement_plan_clear"):
+                    owner = self._start_operation(
+                        entry.chat_ref,
+                        "plan",
+                        lambda op: self._replace_mode_owned(
+                            entry, "build", op, clear=action == "implement_plan_clear", acceptance=(generation, plan)
+                        ),
+                    )
+                    await self._wait_operation(owner)
+                    async with entry.turn_lock:
+                        if not self._plan_acceptance_live(entry, generation, plan):
+                            return
+                        entry.record.plan_pending = False
+                        entry.record.plan_reofferable = False
+                        self._persist(entry)
+                        await self._run_turn(
+                            entry,
+                            entry.chat_ref,
+                            InboundMessage(
+                                channel=entry.chat_ref.channel,
+                                chat_id=entry.chat_ref.chat_id,
+                                sender_id="",
+                                message_id="",
+                                text=build_implement_plan_prompt(plan),
+                            ),
+                        )
+            except asyncio.CancelledError:
+                if entry.plan_approval_generation == generation:
+                    self._invalidate_plan_approval(entry)
+                raise
+            except Exception:
+                if entry.plan_approval_generation == generation:
+                    self._invalidate_plan_approval(entry)
+                logger.exception("gateway: plan approval failed for chat %s", entry.chat_ref.key)
+
+        def settled(task: asyncio.Task[None]) -> None:
+            if not task.cancelled():
+                task.exception()
+            if entry.plan_approval_task is task:
+                entry.plan_approval_task = None
+            if entry.completions:
+                self._wake_background(entry)
+
+        entry.plan_approval_task = asyncio.create_task(offer(), name=f"gateway-plan-{entry.session_id}")
+        entry.plan_approval_task.add_done_callback(settled)
+
+    def _plan_acceptance_live(self, entry: ChatSession, generation: int, plan: str) -> bool:
+        return (
+            not self._closing
+            and not entry.closed
+            and not entry.auto_continue_paused
+            and entry.plan_approval_generation == generation
+            and entry.record.plan_pending
+            and entry.record.latest_plan_markdown == plan
+        )
 
     async def _transcribe(self, chat_ref: ChatRef, source: str) -> Optional[str]:
         """Transcribe a voice note.
@@ -624,9 +765,11 @@ class AgentTurnHandler:
         note = f"[document: {label} saved at {attachment.source}]"
         return f"{note}\n\n{text}" if text else note
 
-    async def _scrub_chunks(self, stream: Any) -> AsyncIterator[dict[str, Any]]:
+    async def _scrub_chunks(self, stream: Any, response: list[str] | None = None) -> AsyncIterator[dict[str, Any]]:
         async for chunk in stream:
             content = chunk.get("content")
+            if response is not None and chunk.get("type") == "response" and isinstance(content, str):
+                response.append(content)
             if content:
                 chunk["content"] = scrub(content, self._secret_values)
             yield chunk
@@ -635,7 +778,7 @@ class AgentTurnHandler:
 
     async def _run_command(self, chat_ref: ChatRef, _message: InboundMessage, command: tuple[str, str]) -> None:
         name, args = command
-        if name not in (COMMAND_STOP, COMMAND_HELP, COMMAND_STATUS, "help"):
+        if name not in (COMMAND_STOP, COMMAND_NEW, COMMAND_RESET, COMMAND_HELP, COMMAND_STATUS, "help"):
             self._check_admission(chat_ref)
         if name == COMMAND_HELP or name == "help":
             await self._adapter.send_text(chat_ref.chat_id, HELP_TEXT)
@@ -643,6 +786,8 @@ class AgentTurnHandler:
             await self._adapter.send_text(chat_ref.chat_id, await self._status_text(chat_ref))
         elif name == COMMAND_MODEL:
             await self._model_command(chat_ref, args)
+        elif name == COMMAND_MODE:
+            await self._mode_command(chat_ref, args)
         elif name == COMMAND_PERMISSIONS:
             await self._permissions_command(chat_ref, args)
         elif name in (COMMAND_NEW, COMMAND_RESET):
@@ -673,10 +818,18 @@ class AgentTurnHandler:
             f"Session {payload.session_id}\n"
             f"Model: {primary.provider.value}/{primary.model}\n"
             f"Permissions: {payload.runtime.permission_mode.value}\n"
+            f"Mode: {payload.record.interaction_mode}\n"
             f"Project: {payload.record.project_path}"
         )
 
     async def _reset_session(self, chat_ref: ChatRef) -> None:
+        current = self._operations.get(chat_ref.key)
+        if current is not None and current.kind == "plan":
+            await self._stop_turn(chat_ref)
+            try:
+                await asyncio.wait_for(current.released.wait(), timeout=LIFECYCLE_WAIT_SECONDS)
+            except asyncio.TimeoutError as exc:
+                raise ChatLifecycleIncomplete("Plan preparation cleanup is still owned.") from exc
         self._check_admission(chat_ref)
         owner = self._start_operation(
             chat_ref, "reset", lambda op: self._reset_session_owned(chat_ref, op), cleaning=True
@@ -701,14 +854,17 @@ class AgentTurnHandler:
         payload = entry.payload if entry is not None else owner.entry if owner is not None else None
         if payload is not None:
             payload.auto_continue_paused = True
+            self._invalidate_plan_approval(payload)
+        plan_running = payload is not None and payload.plan_approval_task is not None
         if owner is not None:
             owner.interrupt()
             return True
         if entry is None:
             return False
         if entry.payload.turn_task is None:
-            return False
-        entry.payload.turn_task.cancel()
+            return plan_running
+        if not entry.payload.turn_task.cancelling():
+            entry.payload.turn_task.cancel()
         return True
 
     async def _model_command(self, chat_ref: ChatRef, args: str) -> None:
@@ -728,10 +884,129 @@ class AgentTurnHandler:
 
     async def _apply_model(self, chat_ref: ChatRef, entry: ChatSession, spec: str) -> None:
         self._check_admission(chat_ref)
+        self._invalidate_plan_approval(entry)
         owner = self._start_operation(
             chat_ref, "rebuild", lambda op: self._apply_model_owned(chat_ref, entry, spec, op)
         )
         await self._wait_operation(owner)
+        self._start_plan_approval(entry)
+
+    async def _mode_command(self, chat_ref: ChatRef, args: str) -> None:
+        mode = args.strip().lower()
+        if mode and mode not in ("build", "plan"):
+            await self._adapter.send_text(chat_ref.chat_id, "Usage: /mode build|plan")
+            return
+        entry = await self._ensure_session(chat_ref)
+        if not mode:
+            await self._adapter.send_text(
+                chat_ref.chat_id, f"Mode: {entry.record.interaction_mode}\nChange with /mode build|plan."
+            )
+            return
+        if entry.turn_task is not None and not entry.turn_task.done():
+            await self._adapter.send_text(chat_ref.chat_id, "A turn is running — /stop it first, then switch modes.")
+            return
+        self._invalidate_plan_approval(entry)
+        if mode != entry.record.interaction_mode:
+            owner = self._start_operation(chat_ref, "mode", lambda op: self._replace_mode_owned(entry, mode, op))
+            await self._wait_operation(owner)
+        if mode == "plan" and entry.record.plan_reofferable:
+            entry.record.plan_pending = True
+            self._store.save(entry.record)
+        entry.auto_continue_paused = False
+        # The invalidated request may not have finished its cancellation callback yet.
+        task = entry.plan_approval_task
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+        self._start_plan_approval(entry)
+        await self._adapter.send_text(chat_ref.chat_id, f"Mode: {mode}")
+
+    async def _replace_mode_owned(
+        self,
+        entry: ChatSession,
+        mode: str,
+        owner: _LifecycleOperation,
+        *,
+        clear: bool = False,
+        acceptance: tuple[int, str] | None = None,
+    ) -> None:
+        owner.entry = entry
+
+        def check_acceptance() -> None:
+            if (
+                self._closing
+                or entry.closed
+                or owner.stopping
+                or (acceptance is not None and not self._plan_acceptance_live(entry, *acceptance))
+            ):
+                raise asyncio.CancelledError()
+
+        async with entry.turn_lock:
+            check_acceptance()
+            self._persist(entry)
+            old = entry.runtime.agent
+            jobs = entry.background_jobs
+            jobs_settled = False
+            try:
+                if clear and jobs is not None:
+                    owner.cleaning = True
+                    await jobs.close()
+                    await jobs.deliver(old)
+                    jobs_settled = True
+                    owner.cleaning = False
+                    check_acceptance()
+                    self._persist(entry)
+                entry.config_holder["record"] = replace(entry.record, interaction_mode=mode)
+                rebuilt = await entry.runtime.start()
+                check_acceptance()
+                if clear:
+                    rebuilt.reset_volatile_context()
+                    rebuilt.history = []
+                    rebuilt.last_compression_index = None
+                    rebuilt.restore_compaction_state({})
+                    rebuilt.session_recorder.start_epoch("gateway_implement_plan_clear")
+            except BaseException:
+                if old is not None and entry.runtime.agent is not old:
+                    try:
+                        entry.runtime.adopt(old)
+                    except BaseException:
+                        owner.cleanup_failed = True
+                        logger.exception("gateway: could not restore the old generation's policy")
+                await self._cleanup_partial(owner)
+                if clear and jobs is not None:
+                    if not jobs_settled or old is None:
+                        owner.cleanup_failed = True
+                    else:
+                        try:
+                            jobs.set_callbacks(on_ready=None, on_delivered=None)
+                            old.background_jobs = None
+                            entry.background_jobs = None
+                            await self._attach_background(entry)
+                            self._persist(entry)
+                        except BaseException:
+                            owner.cleanup_failed = True
+                            logger.exception("gateway: could not recover the old generation's background supervisor")
+                raise
+            finally:
+                entry.config_holder.pop("record", None)
+            owner.partial_agent = None
+            owner.cleaning = True
+            if old is not None:
+                entry.retired_agents.append(old)
+            if jobs is not None:
+                if clear:
+                    jobs.set_callbacks(on_ready=None, on_delivered=None)
+                    entry.background_jobs = None
+                else:
+                    rebuilt.background_jobs = jobs
+                    rebuilt.background_needs_turn = getattr(old, "background_needs_turn", False)
+                if old is not None:
+                    old.background_jobs = None
+            entry.record.interaction_mode = mode
+            self._persist(entry)
+            if not jobs or clear or not jobs.active_count:
+                await self._cleanup_retired(entry, owner)
+            if clear:
+                await self._attach_background(entry)
 
     async def _apply_model_owned(
         self, chat_ref: ChatRef, entry: ChatSession, spec: str, owner: _LifecycleOperation
@@ -890,6 +1165,7 @@ class AgentTurnHandler:
         self._registry.put(chat_ref, payload)
         async with payload.turn_lock:
             await self._registry.prune()
+        self._start_plan_approval(payload, restored=restore)
         return payload
 
     async def _build_chat_session(
@@ -940,7 +1216,7 @@ class AgentTurnHandler:
 
         async def factory() -> Any:
             built = await builder(
-                record,
+                config_holder.get("record", record),
                 config_holder["config"],
                 manager=manager,
                 recording=recording,
@@ -1033,8 +1309,10 @@ class AgentTurnHandler:
             project_path=Path(record.project_path),
             active_project_path=Path(record.project_path),
             state_dir=self._settings_store.root,
-            interaction_mode="build",
-            agent_class=CoderAgent,
+            interaction_mode=record.interaction_mode,
+            agent_class=select_agent_class(
+                record.interaction_mode, build_agent_class=CoderAgent, planning_agent_class=PlanningAgent
+            ),
             workspace_id=record.workspace_id,
             thread_id=record.thread_id,
             connection_manager=recording,
@@ -1053,7 +1331,7 @@ class AgentTurnHandler:
                 PromptExtension(
                     id="gateway-questions",
                     title="Asking the User",
-                    markdown=BUILD_QUESTION_PROMPT,
+                    markdown=PLANNING_QUESTION_PROMPT if record.interaction_mode == "plan" else BUILD_QUESTION_PROMPT,
                     modes=[AgentMode.CLI],
                     propagate_to_sub_agents=False,
                 ),
@@ -1165,6 +1443,9 @@ class AgentTurnHandler:
 
     async def _close_entry_impl(self, chat_session: ChatSession, owner: _LifecycleOperation) -> None:
         chat_session.closed = True
+        self._invalidate_plan_approval(chat_session)
+        if chat_session.plan_approval_task is not None:
+            await asyncio.gather(chat_session.plan_approval_task, return_exceptions=True)
         worker = self._workers.get(chat_session.chat_ref.key)
         if worker is not None and worker is not asyncio.current_task():
             if not worker.cancelling():

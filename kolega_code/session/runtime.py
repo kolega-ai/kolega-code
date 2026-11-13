@@ -42,6 +42,7 @@ from kolega_code.permissions import (
 )
 
 from .control import ControlChannel, ControlRequest
+from .plans import PlanApprovalAction, plan_approval_action, plan_approval_payload
 
 #: Builds the agent for this session. Called on start and on every rebuild.
 AgentFactory = Callable[[], Awaitable[Any]]
@@ -351,6 +352,44 @@ class SessionRuntime:
     ) -> bool:
         """Answer an outstanding non-permission prompt."""
         return self.control.respond(request_id, answer, client_id=client_id)
+
+    async def request_plan_approval(self, plan: str) -> PlanApprovalAction | None:
+        agent = self._agent
+        response = await self.control.request(
+            "plan_approval",
+            plan_approval_payload(plan),
+            default={"action": None},
+        )
+        if self._agent is not agent or not isinstance(response, dict):
+            return None
+        return plan_approval_action(response.get("action"))
+
+    def answer_plan_approval(
+        self,
+        request_id: str,
+        action: PlanApprovalAction | None,
+        *,
+        client_id: Optional[str] = None,
+    ) -> bool:
+        if action is not None and plan_approval_action(action) is None:
+            return False
+        request = next(
+            (
+                request
+                for request in self.control.pending()
+                if request.request_id == request_id and request.kind == "plan_approval"
+            ),
+            None,
+        )
+        if request is None:
+            return False
+        if action is not None:
+            options = request.payload.get("options")
+            if not isinstance(options, list) or not any(
+                isinstance(option, dict) and option.get("id") == action for option in options
+            ):
+                return False
+        return self.control.respond(request_id, {"action": action}, client_id=client_id)
 
     def set_permission_mode(self, mode: PermissionMode) -> None:
         self.permission_mode = mode

@@ -153,6 +153,38 @@ _GOAL: dict[str, Any] = {
 }
 
 
+def _plan_approval_events() -> list[tuple[str, dict[str, Any]]]:
+    events: list[tuple[str, dict[str, Any]]] = []
+    for index, action in enumerate(("implement_plan", "implement_plan_clear", "discuss_plan", None)):
+        request = {
+            "request_id": f"compat-plan-{index}",
+            "kind": "plan_approval",
+            "payload": {
+                "plan": "## Literal plan — café 🐍 <literal>\n" + "Preserve every step. " * 1000 + "PLAN COMPAT END",
+                "options": [
+                    {"id": "implement_plan", "label": "Implement plan"},
+                    {"id": "implement_plan_clear", "label": "Clear context and implement plan"},
+                    {"id": "discuss_plan", "label": "Discuss further"},
+                ],
+                "compat_payload": {"preserve": [False, None, {"text": "future plan"}]},
+            },
+        }
+        events.extend(
+            (
+                (KnownEventType.CONTROL_REQUESTED, {**copy.deepcopy(request), "has_controller": True}),
+                (
+                    KnownEventType.CONTROL_RESOLVED,
+                    {
+                        **copy.deepcopy(request),
+                        "response": {"action": action},
+                        "reason": "answered" if action is not None else "cancelled",
+                    },
+                ),
+            )
+        )
+    return events
+
+
 def _usage_payload(*, populated: bool) -> dict[str, Any]:
     usage = session_usage.derive_session_usage(())
     if populated:
@@ -396,6 +428,7 @@ async def _write_ui(
         (KnownEventType.USAGE_UPDATED, _usage_payload(populated=True)),
         (KnownEventType.QUEUE_UPDATED, copy.deepcopy(_QUEUE)),
         (KnownEventType.GOAL_UPDATED, copy.deepcopy(_GOAL)),
+        *_plan_approval_events(),
     ):
         await store.append(
             AgentEvent(event_type=event_type, sender="compat-fixture", session_id=session_id, content=content)
@@ -565,6 +598,7 @@ def create_fixture(root: Path) -> dict:
             "queue": {key: copy.deepcopy(value) for key, value in _QUEUE.items() if key != "compat_payload"},
             "goal_payloads": [copy.deepcopy(_GOAL_INITIAL), copy.deepcopy(_GOAL)],
             "goal": {key: copy.deepcopy(value) for key, value in _GOAL.items() if key != "compat_payload"},
+            "plan_approval_events": _plan_approval_events(),
             "image_sha256": hashlib.sha256(_IMAGE).hexdigest(),
             "sub_agents": copy.deepcopy(_SUB_AGENTS),
             "background_delivery_payloads": copy.deepcopy(background_payloads),
@@ -632,6 +666,13 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
     )
     assert all(event.sub_agent_info is None and event.schema_version == 2 for event in goal_events), (
         "Goal events changed scope or schema version"
+    )
+    plan_events = [event for event in ui_events if event.content.get("kind") == "plan_approval"]
+    assert [[event.event_type, event.content] for event in plan_events] == [
+        list(event) for event in manifest["plan_approval_events"]
+    ], "Previous writer lost complete plan-approval requests or resolutions"
+    assert all(event.sub_agent_info is None and event.schema_version == 2 for event in plan_events), (
+        "Plan-approval events changed scope or schema version"
     )
     image_turns = [
         event

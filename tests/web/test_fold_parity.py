@@ -341,6 +341,64 @@ def test_folds_agree_at_every_prefix(tmp_path: Path) -> None:
         assert actual == expected, f"folds diverged after {cut} events"
 
 
+@pytest.mark.parametrize(
+    ("action", "reason"),
+    [
+        ("implement_plan", "answered"),
+        ("implement_plan_clear", "answered"),
+        ("discuss_plan", "answered"),
+        (None, "timeout"),
+        (None, "no_controller"),
+        (None, "controller_left"),
+        (None, "cancelled"),
+    ],
+)
+@pytest.mark.parametrize("announced", [False, True])
+def test_plan_approval_independent_activity_and_full_payload_at_every_prefix(
+    tmp_path: Path, action: str | None, reason: str, announced: bool
+) -> None:
+    payload = {
+        "plan": "# Exact plan\n\n<literal> & **Markdown**\n" + "Unabridged step.\n" * 1000,
+        "options": [
+            {"id": "implement_plan", "label": "Implement plan"},
+            {"id": "implement_plan_clear", "label": "Clear context and implement plan"},
+            {"id": "discuss_plan", "label": "Discuss further"},
+        ],
+    }
+    events = [
+        _event(KnownEventType.TURN_STARTED, 1, turn_id="plan", user_text="Make a plan."),
+        _event(KnownEventType.TURN_ENDED, 2, turn_id="plan", status="completed"),
+        _event(KnownEventType.CONTROL_REQUESTED, 3, request_id="approval", kind="plan_approval", payload=payload),
+        _event(
+            KnownEventType.CONTROL_RESOLVED,
+            4,
+            request_id="approval",
+            kind="plan_approval",
+            response={"action": action},
+            reason=reason,
+        ),
+        _event(KnownEventType.TURN_STARTED, 5, turn_id="followup", user_text="A real subsequent turn."),
+    ]
+    activities = ["generating", "idle", "waiting_for_user", "idle", "generating"]
+    if not announced:
+        events.pop(2)
+        activities.pop(2)
+    serialized = [event.model_dump(mode="json") for event in events]
+    for cut, activity in enumerate(activities, 1):
+        python = replay(events[:cut]).to_dict()
+        javascript = _run_js_fold(serialized[:cut], tmp_path)
+        assert python["activity"] == javascript["activity"] == activity
+        assert python == javascript
+        if announced and cut >= 3:
+            for state in (python, javascript):
+                assert state["prompts"][0]["kind"] == "plan_approval"
+                assert state["prompts"][0]["payload"] == payload
+                assert state["prompts"][0]["response"] == ({"action": action} if cut >= 4 else None)
+                assert state["prompts"][0]["reason"] == (reason if cut >= 4 else None)
+        elif not announced:
+            assert python["prompts"] == javascript["prompts"] == []
+
+
 def test_subagent_linkage_independent_expected_state_at_every_prefix(tmp_path: Path) -> None:
     fixture = json.loads((Path(__file__).parents[1] / "fixtures" / "subagent_linkage.json").read_text())
     expected = deepcopy(fixture["initial"])

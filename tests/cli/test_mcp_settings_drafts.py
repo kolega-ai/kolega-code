@@ -476,11 +476,17 @@ async def test_new_server_can_be_saved_before_navigation_without_overwriting_exi
             screen.action_close()
         await _wait_for_layout(pilot, lambda: isinstance(app.screen, ConfirmMCPDraftScreen) and app.screen.is_mounted)
         await _press(pilot, app.screen, "#mcp_draft_save")
-        await _wait_for_layout(pilot, lambda: not screen.mcp_busy)
         if navigation == "close":
             await _wait_for_layout(pilot, lambda: app._settings_screen is None)
         else:
-            assert picker.value == ("second" if navigation == "select" else "first-2")
+            expected = "second" if navigation == "select" else "first-2"
+            await _wait_for_layout(
+                pilot,
+                lambda: (
+                    app.screen is screen and picker.value == expected and not screen.mcp_busy and not screen.mcp_dirty
+                ),
+            )
+            assert picker.value == expected
             assert not screen.mcp_dirty
         assert _saved_url(path, "first-2") == "https://new.invalid/mcp"
         assert _saved_url(path, "first") == "https://first.invalid/mcp"
