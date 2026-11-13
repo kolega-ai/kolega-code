@@ -431,7 +431,7 @@ def test_headless_observations_preserve_verifier_nudge_terminal_and_gapless_json
     code = main_module.main(args)
     assert code == (0 if outcome == "met" else 1)
     agent = GoalAskFakeAgent.instances[-1]
-    expected_calls = {"met": (2, 2), "cap": (2, 3), "failed-first": (0, 1), "failed-nudge": (1, 2)}
+    expected_calls = {"met": (2, 2), "cap": (2, 2), "failed-first": (0, 1), "failed-nudge": (1, 2)}
     assert (agent.evaluate_calls, agent.stream_calls) == expected_calls[outcome]
     if outcome != "failed-first":
         assert agent.messages[0] == build_goal_task_prompt("deliverables")

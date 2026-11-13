@@ -3833,7 +3833,8 @@ class KolegaCodeApp(
         self._sub_agent_by_tool_call = {}
         self._sub_agent_seq = 0
         self._workflow_activities = {}
-        self._clear_queued_messages()
+        if not preserve_loop:
+            self._clear_queued_messages()
         self._latest_plan = None
         self._plan_pending = False
         self._plan_reofferable = False

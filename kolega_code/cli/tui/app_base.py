@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from kolega_code.session.inbox import InboxRegistry
     from kolega_code.session.recording import RecordingConnectionManager
     from kolega_code.session.runtime import SessionRuntime
-    from kolega_code.session.turns import TurnController
+    from kolega_code.session.turns import TurnController, TurnResult
     from kolega_code.session.queue import QueueReason
     from kolega_code.session.goal import GoalReason
     from kolega_code.session.background import BackgroundAgentManager
@@ -394,8 +394,13 @@ class KolegaAppBase(App):
         def _format_lsp_status(self) -> str: ...
         async def _persist_goal_async(self) -> None: ...
         async def _process_message(
-            self, message: str, attachments: list[dict] | None = None, *, turn_label: str | None = None
-        ) -> bool: ...
+            self,
+            message: str,
+            attachments: list[dict] | None = None,
+            *,
+            turn_label: str | None = None,
+            release_owner: bool = True,
+        ) -> TurnResult: ...
         def _schedule_maybe_start_queued_message(self) -> None: ...
         def _set_goal_state(self, goal: GoalState) -> None: ...
 
