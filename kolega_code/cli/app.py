@@ -57,6 +57,7 @@ from kolega_code.session.inbox import (
 from kolega_code.session.recording import RecordingConnectionManager
 from kolega_code.session.host_extensions import complete_task_list_update
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
+from kolega_code.session.turns import TurnController
 from kolega_code.session.control import ControlChannel
 from kolega_code.session.plans import PLAN_APPROVAL_OPTIONS, PlanApprovalAction, plan_approval_action
 from kolega_code.session.usage import UsagePresentation
@@ -275,6 +276,8 @@ class KolegaCodeApp(
         # would. The channel announces on the recording transport, which is what
         # puts decision points into the session's replayable history.
         self.control_channel = self._new_control_channel()
+        self._turn_controller: TurnController[tui_state.QueuedMessage] = TurnController()
+        self._turn_controller.on_finished = self._agent_execution_finished
         self.session_runtime = SessionRuntime(
             session_id=session.session_id,
             # Saved permission rules are launch-scoped like trust: they are
@@ -285,6 +288,7 @@ class KolegaCodeApp(
             control=self.control_channel,
             permission_mode=self.permission_mode,
             on_notice=lambda text: self._notify_user(text, severity="warning"),
+            turns=self._turn_controller,
         )
         # A single client holds control; viewers of a shared session may watch a
         # prompt appear but never answer it.
@@ -318,12 +322,9 @@ class KolegaCodeApp(
         self._extension_bundle = None
         self.agent = None
         self.agent_worker = None
-        self._agent_execution_task: asyncio.Task | None = None
-        self._draining_agent_tasks: set[asyncio.Task] = set()
         #: Stop escalation state: a cancel that cannot land inside the worker
         #: (parked journal write, shielded finalizer) must still free the UI.
         self._stop_pending = False
-        self._stop_watchdog = None
         self._stop_force_after_seconds = tui_constants.STOP_FORCE_AFTER_SECONDS
         #: Bound on the post-turn history save; a stalled journal write must not
         #: keep the turn's result (a captured plan) off screen.
@@ -401,7 +402,6 @@ class KolegaCodeApp(
         self._pending_question: Optional[tui_state.PendingQuestion] = None
         self._pending_approval: Optional[tui_state.PendingApproval] = None
         self._pending_image_attachments: list[dict] = []
-        self._queued_messages: list[tui_state.QueuedMessage] = []
         self._queued_message_seq = 0
         # Dedup flag: one vision-mismatch system message per non-vision model
         # session. Reset in _switch_model so a new model gets a fresh warning.
@@ -2852,6 +2852,7 @@ class KolegaCodeApp(
         # All callers share one teardown, which survives cancellation of any
         # individual caller and is also awaited by the launcher.
         if self._session_shutdown_task is None:
+            self._turn_controller.close_admission()
             self._invalidate_plan_approval()
             if self._on_shutdown_requested is not None:
                 self._on_shutdown_requested()
@@ -2865,27 +2866,19 @@ class KolegaCodeApp(
 
     async def _wait_for_agent_shutdown(self) -> bool:
         worker = self.agent_worker
-        waiters = set(self._draining_agent_tasks)
-        waiters.update(self._plan_approval_tasks)
-        task = self._agent_execution_task
-        if task is not None and not task.done():
-            waiters.add(task)
+        waiters = set(self._plan_approval_tasks)
         if worker is not None:
             worker.cancel()
             waiter = asyncio.create_task(worker.wait())
             self._shutdown_worker_waiters.add(waiter)
             waiter.add_done_callback(self._shutdown_worker_wait_finished)
             waiters.add(waiter)
-        if not waiters:
+        if await self._turn_controller.wait_settled(timeout=max(1.0, self._stop_force_after_seconds), extra=waiters):
             return True
-        _, pending = await asyncio.wait(waiters, timeout=max(1.0, self._stop_force_after_seconds))
-        if not pending:
-            return True
-        task = self._agent_execution_task
-        if task is not None and not task.done():
-            self._draining_agent_tasks.add(task)
         if self.agent_worker is worker:
-            self.agent_worker = None
+            # Cancellation was already requested before waiting. Keep the
+            # execution owned without interrupting its in-flight cleanup again.
+            self._turn_controller.detach(cancel_execution=False)
         return False
 
     async def _shutdown_session(self) -> None:
@@ -3968,6 +3961,7 @@ class KolegaCodeApp(
             control=self.control_channel,
             permission_mode=self.permission_mode,
             on_notice=lambda text: self._notify_user(text, severity="warning"),
+            turns=self._turn_controller,
         )
         self._register_with_inbox()
         await self._start_inbox_socket()
