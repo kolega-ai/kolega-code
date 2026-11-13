@@ -10,6 +10,7 @@ from kolega_code.config import AgentConfig, EditProtocol, ModelConfig, ModelProv
 from kolega_code.events import AgentConnectionManager
 from kolega_code.agent.tool_backend.memory_tool import MemoryTool
 from kolega_code.agent.tools import ToolCollection, ToolDefinition, ToolCollectionConfig
+from kolega_code.services.lsp import LspConfig
 
 
 @pytest.fixture
@@ -175,8 +176,12 @@ class TestScratchpadPathExpansion:
         # Real (unmocked) handlers: the expansion must reach the actual tools.
         # A real tool-call id keeps the snapshot-service records serializable.
         mock_base_agent.current_tool_execution_id = "test-call-id"
+        # Writing a .py file otherwise asks a real language server for diagnostics
+        # and waits out its 3 s push window, which has nothing to do with path
+        # expansion and only shows up on hosts with a server installed.
+        config = agent_config.model_copy(update={"lsp": LspConfig(auto_diagnostics_on_edit=False)})
         return ToolCollection(
-            project_path, "test_workspace", str(uuid.uuid4()), mock_connection_manager, agent_config, mock_base_agent
+            project_path, "test_workspace", str(uuid.uuid4()), mock_connection_manager, config, mock_base_agent
         )
 
     async def test_write_expands_reference_and_never_creates_literal_dir(

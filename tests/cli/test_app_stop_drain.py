@@ -331,6 +331,28 @@ async def test_control_request_during_detached_cleanup_defaults_without_opening_
 
 
 @pytest.mark.asyncio
+async def test_quit_from_the_task_that_ran_an_inline_turn_does_not_wait_for_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A turn awaited inline runs on the caller's task, so quit must not drain it.
+
+    Counting that caller as a turn still to drain made shutdown wait out the whole
+    stop bound and then report the turn unsettled, which skipped the agent cleanup
+    and the history save even though the turn had already returned.
+    """
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        agent = cast(FakeCoderAgent, app.agent)
+        await app._process_message("inline turn")
+        assert app._agent_execution_task is asyncio.current_task()
+        await app.action_quit()
+        assert not app._agent_cleanup_failed
+        assert agent.cleanup_calls == 1
+        assert app.agent is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("detached", [False, True], ids=["active-worker", "already-detached"])
 async def test_quit_bounds_cancellation_resistant_turn_without_tearing_down_its_agent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detached: bool
