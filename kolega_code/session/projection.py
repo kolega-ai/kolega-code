@@ -1218,14 +1218,17 @@ def _on_control_requested(state: PresentationState, event: AgentEvent) -> None:
 
 def _on_control_resolved(state: PresentationState, event: AgentEvent) -> None:
     request_id = str(event.content.get("request_id") or "")
+    resolved_kind = str(event.content.get("kind") or "")
     for prompt in reversed(state.prompts):
         if prompt.request_id == request_id:
             response = event.content.get("response")
             prompt.response = dict(response) if isinstance(response, dict) else None
             prompt.reason = str(event.content.get("reason") or "answered")
+            resolved_kind = prompt.kind
             break
     if not any(not prompt.resolved for prompt in state.prompts):
-        state.activity = "generating"
+        between_turns = resolved_kind == "plan_approval" and not any(marker.ended_ms is None for marker in state.turns)
+        state.activity = "idle" if between_turns else "generating"
 
 
 def _on_system_message(state: PresentationState, event: AgentEvent) -> None:

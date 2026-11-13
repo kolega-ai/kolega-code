@@ -264,6 +264,32 @@ def test_previous_worker_rejects_lost_or_changed_canonical_goal_payloads(damage:
         worker.verify_goal_payloads(events, expected)
 
 
+@pytest.mark.parametrize(
+    "damage", ["missing", "truncated", "action", "unknown_fields", "worker_tag", "empty_worker_tag", "schema"]
+)
+def test_previous_worker_rejects_changed_plan_approval_requests_and_answers(damage: str) -> None:
+    expected = fixture_module._plan_approval_events()
+    events = [
+        AgentEvent(event_type=event_type, sender="compat-fixture", content=copy.deepcopy(payload))
+        for event_type, payload in expected
+    ]
+    worker.verify_plan_approval_payloads(events, expected)
+    if damage == "missing":
+        events.pop()
+    elif damage == "truncated":
+        events[0].content["payload"]["plan"] = events[0].content["payload"]["plan"][:500]
+    elif damage == "action":
+        events[1].content["response"]["action"] = None
+    elif damage == "unknown_fields":
+        del events[0].content["payload"]["compat_payload"]
+    elif damage in {"worker_tag", "empty_worker_tag"}:
+        events[0].sub_agent_info = {"agent_id": "worker"} if damage == "worker_tag" else {}
+    else:
+        events[0].schema_version += 1
+    with pytest.raises(RuntimeError, match="plan-approval"):
+        worker.verify_plan_approval_payloads(events, expected)
+
+
 def _simulate_writer(root: Path, manifest: dict[str, Any]) -> None:
     settings_store = SettingsStore(root)
     settings = settings_store.load()

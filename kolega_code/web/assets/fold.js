@@ -837,16 +837,21 @@ const HANDLERS = {
   },
   control_resolved: (state, event) => {
     const requestId = String((event.content && event.content.request_id) || "");
+    let resolvedKind = String((event.content && event.content.kind) || "");
     for (let index = state.prompts.length - 1; index >= 0; index -= 1) {
       if (state.prompts[index].request_id === requestId) {
         const response = event.content && event.content.response;
         state.prompts[index].response =
           response && typeof response === "object" ? Object.assign({}, response) : null;
         state.prompts[index].reason = String((event.content && event.content.reason) || "answered");
+        resolvedKind = state.prompts[index].kind;
         break;
       }
     }
-    if (!state.prompts.some((prompt) => prompt.reason === null)) state.activity = "generating";
+    if (!state.prompts.some((prompt) => prompt.reason === null)) {
+      const betweenTurns = resolvedKind === "plan_approval" && !state.turns.some((turn) => turn.ended_ms === null);
+      state.activity = betweenTurns ? "idle" : "generating";
+    }
   },
   peer_message_received: (state, event) => onPeerMessage(state, event, "received"),
   peer_message_delivered: (state, event) => onPeerMessage(state, event, "delivered"),

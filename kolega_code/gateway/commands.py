@@ -14,6 +14,7 @@ COMMAND_NEW = "new"
 COMMAND_RESET = "reset"
 COMMAND_STOP = "stop"
 COMMAND_MODEL = "model"
+COMMAND_MODE = "mode"
 COMMAND_PERMISSIONS = "permissions"
 
 #: Command menu registered with Telegram (setMyCommands), so the slash
@@ -23,6 +24,7 @@ BOT_COMMANDS: tuple[tuple[str, str], ...] = (
     ("status", "Show session and model info"),
     ("new", "Start a fresh session"),
     ("model", "Show or switch this chat's model"),
+    ("mode", "Show or switch build or plan mode"),
     ("permissions", "Show or change the permission mode"),
     ("stop", "Cancel the running turn"),
     ("help", "List commands"),
@@ -33,6 +35,7 @@ HELP_TEXT = (
     "/new — start a fresh session\n"
     "/status — show session and model info\n"
     "/model [model] — show or switch this chat's model\n"
+    "/mode [build|plan] — show or switch the interaction mode; reoffer a saved plan\n"
     "/permissions [ask|auto] — show or change the permission mode\n"
     "/stop — cancel the running turn\n"
     "/help — this list"

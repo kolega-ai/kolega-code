@@ -23,12 +23,10 @@ from acp.connection import StreamEvent
 from acp.exceptions import RequestError
 from acp.helpers import (
     text_block,
-    tool_content,
     update_agent_thought_text,
     update_available_commands,
     update_current_mode,
     update_plan,
-    update_tool_call,
     update_user_message,
 )
 from acp.interfaces import Client
@@ -46,7 +44,6 @@ from acp.schema import (
     LoadSessionResponse,
     McpCapabilities,
     McpServerStdio,
-    PermissionOption,
     PromptCapabilities,
     ResourceContentBlock,
     SessionCapabilities,
@@ -84,6 +81,7 @@ from kolega_code.llm.models import MessageHistory
 from kolega_code.llm.ledger import logical_prompt_scope
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
 from kolega_code.session.control import ControlChannel, DEFAULT_REQUEST_TIMEOUT_SECONDS
+from kolega_code.session.plans import PlanApprovalAction
 from kolega_code.session.projection import replay, sub_agent_key
 from kolega_code.session.runtime import SessionRuntime
 
@@ -799,31 +797,21 @@ class AcpAgent(Agent):
         ):
             return
         generation = session.plan_approval_generation
-        conn = getattr(self, "_conn", None)
-        if conn is None:
+        runtime = session.runtime
+        if runtime is None:
             return
-        tool_call = update_tool_call(
-            f"plan-approval-{session.session_id[:8]}",
-            title="Approve implementation plan?",
-            kind="other",
-            status="pending",
-            content=[tool_content(text_block(plan))],
-        )
-        options = [
-            PermissionOption(option_id="implement_plan", name="Implement plan", kind="allow_once"),
-            PermissionOption(
-                option_id="implement_plan_clear", name="Clear context and implement plan", kind="allow_once"
-            ),
-            PermissionOption(option_id="discuss_plan", name="Discuss further", kind="reject_once"),
-        ]
+        ready = asyncio.Event()
+
+        async def wait_for_approval() -> PlanApprovalAction | None:
+            await ready.wait()
+            return await runtime.request_plan_approval(plan)
+
         request = session.plan_approval_task = asyncio.create_task(
-            conn.request_permission(session.session_id, tool_call, options)
+            wait_for_approval(), name=f"acp-plan-approval-{session.session_id}"
         )
+        ready.set()
         try:
-            response = await asyncio.wait_for(
-                request,
-                timeout=DEFAULT_REQUEST_TIMEOUT_SECONDS,
-            )
+            option_id = await request
         except asyncio.CancelledError:
             if session.closed or generation != session.plan_approval_generation:
                 return
@@ -834,16 +822,9 @@ class AcpAgent(Agent):
         finally:
             if session.plan_approval_task is request:
                 session.plan_approval_task = None
-        outcome = getattr(response, "outcome", None)
-        if isinstance(outcome, dict):
-            selected = outcome.get("outcome") == "selected"
-            option_id = str(outcome.get("optionId") or "")
-        else:
-            selected = getattr(outcome, "outcome", None) == "selected"
-            option_id = str(getattr(outcome, "option_id", "") or "")
         if session.closed or session.cleanup_tasks or generation != session.plan_approval_generation:
             return
-        if selected and option_id in ("implement_plan", "implement_plan_clear"):
+        if option_id in ("implement_plan", "implement_plan_clear"):
             session.approved_plan = plan
             session.record.latest_plan_markdown = plan
             previous_agent = session.agent
@@ -895,7 +876,7 @@ class AcpAgent(Agent):
                     self._start_session_tasks(session)
                     session.background_wake.set()
             return
-        if selected and option_id == "discuss_plan":
+        if option_id == "discuss_plan":
             session.record.plan_pending = False
             session.record.plan_reofferable = True
             logger.info("acp plan deferred for discussion (session=%s)", session.session_id)

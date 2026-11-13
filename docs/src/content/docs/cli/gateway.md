@@ -109,9 +109,31 @@ echo is identified separately from remote access.
 
 ## In-chat commands
 
-`/new`, `/status`, `/model [model]`, `/permissions [ask|auto]`, `/stop`, `/help`.
+`/new`, `/status`, `/model [model]`, `/mode [build|plan]`,
+`/permissions [ask|auto]`, `/stop`, `/help`.
 The same commands are registered with Telegram so they appear in the slash
 menu while typing.
+
+### Planning and approval
+
+Use `/mode plan` for a read-only planning session, then send the task you want
+planned. `/mode` reports the current mode; `/mode build` switches back.
+The mode and latest plan are saved with the chat session.
+
+When a plan is ready, the gateway sends the full plan followed by three buttons:
+
+- **Implement plan** switches to Build mode and starts implementation using the
+  existing conversation.
+- **Clear context and implement plan** starts implementation with fresh model
+  context, retaining the approved plan.
+- **Discuss further** stays in Plan mode without starting another turn. Send a
+  follow-up to refine the approach.
+
+These are the same approval choices used by the TUI and ACP editors. Tool
+permission mode does not approve plans: even `/permissions auto` requires an
+explicit implementation choice. Cancelled, unanswered, expired, or obsolete
+buttons never authorize a build. The saved plan remains available when an
+approval is left unanswered.
 
 ### Background subagents
 

@@ -116,7 +116,6 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         }
         self._sub_agent_seq = max((activity.index for activity in running.values()), default=0)
         self._workflow_activities = {}
-        self._plan_decision_active = False
         self._restore_plan_action_visibility()
         self._cancel_pending_question()
         self._cancel_pending_model_selection()

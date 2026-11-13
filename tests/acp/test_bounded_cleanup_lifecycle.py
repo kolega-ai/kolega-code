@@ -487,12 +487,16 @@ async def test_cancelled_approval_request_does_not_resume_after_cleanup(
         await server.shutdown()
 
 
+@pytest.mark.parametrize("option", ["implement_plan", "implement_plan_clear"])
 async def test_worker_reuses_cleanup_task_after_automatic_plan_rebuild(
-    configured_factory: AgentFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    configured_factory: AgentFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, option: str
 ) -> None:
     monkeypatch.setattr(agent_factory, "CLEANUP_TIMEOUT", 0.02, raising=False)
     factory = configured_factory
-    server, session, _ = await _open(factory, tmp_path, monkeypatch)
+    server, session, conn = await _open(factory, tmp_path, monkeypatch)
+    conn.request_permission = AsyncMock(
+        return_value=RequestPermissionResponse.model_validate({"outcome": {"outcome": "selected", "optionId": option}})
+    )
     session.record.interaction_mode = "plan"
     session.record.plan_pending = True
     old = session.agent
@@ -559,7 +563,7 @@ async def test_worker_reuses_cleanup_task_after_automatic_plan_rebuild(
         assert retained is actual[0]
         assert not errors
         assert not session.cleanup_tasks and not session.retired_agents
-        assert not worker.done()
+        assert worker.done() is (option == "implement_plan_clear")
     finally:
         release.set()
         worker.cancel()

@@ -140,7 +140,14 @@ _TERMINAL_RENDER_EVENTS = frozenset(
 
 class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
     def _agent_execution_draining(self) -> bool:
-        return bool(getattr(self, "_draining_agent_tasks", ()))
+        return (
+            bool(getattr(self, "_draining_agent_tasks", ()))
+            or any(
+                task is not asyncio.current_task() and not task.done()
+                for task in getattr(self, "_draining_plan_approval_tasks", ())
+            )
+            or self._plan_action_reserved()
+        )
 
     def _track_agent_execution(self) -> None:
         task = asyncio.current_task()
@@ -153,6 +160,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             task.exception()
         if getattr(self, "_agent_execution_task", None) is task:
             self._agent_execution_task = None
+        self._wake_plan_approval()
         draining = getattr(self, "_draining_agent_tasks", None)
         if draining is None or task not in draining:
             return
@@ -212,6 +220,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             # already been settled — by a fast answer, a timeout, or control
             # being released. Showing a prompt nobody is waiting on would leave
             # the user answering into the void.
+            return
+        if kind == "plan_approval":
+            self._handle_plan_approval_request(event)
             return
         if kind == "permission":
             if not isinstance(payload.get("request"), dict):
@@ -465,6 +476,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         else:
             self._restore_composer_placeholder()
         self._set_chat_enabled(self.agent is not None and not self._plan_decision_active)
+        self._wake_plan_approval()
         if cancelled_by_user:
             self._schedule_primary_focus_restore()
 
@@ -564,6 +576,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._track_agent_execution()
             if self.agent is None:
                 return False
+            if self._plan_pending and not self._plan_decision_active:
+                await self._cancel_plan_approval()
+                if self.agent_worker is not owner:
+                    return False
             if self._background_retirement is not None:
                 await self._attach_background_jobs()
                 if self.agent_worker is not owner:
@@ -636,6 +652,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                     self._force_settle_stop()
                 self._refresh_shortcut_context()
                 self._schedule_maybe_start_queued_message()
+                self._wake_plan_approval()
 
     # ------------------------------------------------------------------
     # Autonomous goal loop
@@ -1793,6 +1810,13 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._handoff_cancel_event.set()
             return
         self._background_paused = True
+        if self._plan_approval_owner is not None:
+            self._invalidate_plan_approval()
+            self._plan_pending = False
+            self._plan_reofferable = bool(self._latest_plan)
+            self._plan_decision_active = False
+            self._restore_composer_placeholder()
+            self._set_chat_enabled(self.agent is not None)
         if self.agent_worker is not None:
             self._update_progress(messages.STOP_REQUESTED, complete=False, state=tui_state.TurnState.STOPPING)
             self._cancel_pending_question()
@@ -1871,6 +1895,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         else:
             self._set_chat_enabled(self.agent is not None)
         self._refresh_shortcut_context()
+        self._wake_plan_approval()
         self._schedule_primary_focus_restore()
         self._schedule_maybe_start_queued_message()
         if worker is not None:
@@ -2075,16 +2100,21 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         restore_transcript: bool = True,
         preserve_queued: bool = False,
     ) -> None:
-        if self._agent_execution_draining() and asyncio.current_task() is not self._workspace_switch_task:
+        if self._draining_agent_tasks and asyncio.current_task() is not self._workspace_switch_task:
             raise RuntimeError("The previous turn is still finishing cleanup; wait before rebuilding the agent.")
         previous = self._background_rebuilding
         self._background_rebuilding = True
         try:
+            if not self._plan_action_owned():
+                await self._cancel_plan_approval()
             await self._build_agent_impl(
                 config, rebuild, restore_transcript=restore_transcript, preserve_queued=preserve_queued
             )
         finally:
             self._background_rebuilding = previous
+            if not self._background_rebuilding:
+                self._restore_plan_action_visibility()
+                self._set_chat_enabled(self.agent is not None and not self._plan_decision_active)
             self._schedule_pending_inputs()
 
     async def _build_agent_impl(
@@ -2222,9 +2252,11 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         leaves the generation and its reports owned for a later retry. Cleanup
         failures after retirement are reported, never raised.
         """
-        if self._agent_execution_draining() and asyncio.current_task() is not self._workspace_switch_task:
+        if self._draining_agent_tasks and asyncio.current_task() is not self._workspace_switch_task:
             self._agent_cleanup_failed = True
             return
+        if not self._plan_action_owned():
+            await self._cancel_plan_approval()
         if not preserve_background or self._background_retirement is not None:
             await self._retire_background_jobs(agent=self.agent)
         agent = self.agent

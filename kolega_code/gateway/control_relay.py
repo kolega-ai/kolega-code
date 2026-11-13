@@ -21,7 +21,9 @@ from typing import Any, Callable, Optional
 
 from kolega_code.events import AgentEvent, KnownEventType
 from kolega_code.gateway.adapters.base import ButtonOption, ChatRef, GatewayAdapter, InboundMessage
+from kolega_code.gateway.adapters.telegram.formatting import chunk_text
 from kolega_code.permissions import PermissionDecision, PermissionRuleOption
+from kolega_code.session.plans import PLAN_APPROVAL_OPTIONS, plan_approval_action
 from kolega_code.session.runtime import deserialize_permission_request, deserialize_permission_rule_options
 
 logger = logging.getLogger(__name__)
@@ -118,6 +120,8 @@ class ControlRelay:
             await self._render_permission(request_id, payload)
         elif kind == "question":
             await self._render_question(request_id, payload)
+        elif kind == "plan_approval":
+            await self._render_plan_approval(request_id, payload)
         else:
             logger.debug("gateway relay: ignoring unknown control kind %r", kind)
 
@@ -149,6 +153,29 @@ class ControlRelay:
             return
         self._pending[token] = _PendingPrompt(
             kind="permission", request_id=request_id, token=token, rule_options=rule_options, options=[]
+        )
+        await self._runtime.prompt_delivered(request_id)
+
+    async def _render_plan_approval(self, request_id: str, payload: dict[str, Any]) -> None:
+        plan = payload.get("plan")
+        if not isinstance(plan, str) or not plan.strip():
+            return
+        buttons = [ButtonOption(action, label) for action, label in PLAN_APPROVAL_OPTIONS]
+        try:
+            for part in chunk_text(self._scrub(plan), self._adapter.capabilities.text_chunk_limit):
+                if not self._runtime.control.is_pending(request_id):
+                    return
+                await self._adapter.send_text(self._chat_ref.chat_id, part)
+            if not self._runtime.control.is_pending(request_id):
+                return
+            token = await self._adapter.send_buttons(self._chat_ref.chat_id, "Implement this plan?", buttons)
+        except Exception:  # noqa: BLE001
+            logger.exception("gateway relay: could not render plan approval")
+            return
+        if not self._runtime.control.is_pending(request_id):
+            return
+        self._pending[token] = _PendingPrompt(
+            kind="plan_approval", request_id=request_id, token=token, rule_options=[], options=[]
         )
         await self._runtime.prompt_delivered(request_id)
 
@@ -193,6 +220,10 @@ class ControlRelay:
                 pending.request_id,
                 {"answer": self._question_answer(message.callback_option, pending)},
                 client_id=self._client_id,
+            )
+        elif pending.kind == "plan_approval":
+            self._runtime.answer_plan_approval(
+                pending.request_id, plan_approval_action(message.callback_option), client_id=self._client_id
             )
 
     def _permission_decision(self, option_id: str, pending: _PendingPrompt) -> PermissionDecision:

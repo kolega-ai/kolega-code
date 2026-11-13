@@ -672,6 +672,76 @@ def test_a_second_open_prompt_keeps_the_session_waiting() -> None:
     assert [prompt.resolved for prompt in state.prompts] == [True, False]
 
 
+@pytest.mark.parametrize(
+    ("action", "reason"),
+    [
+        ("implement_plan", "answered"),
+        ("implement_plan_clear", "answered"),
+        ("discuss_plan", "answered"),
+        (None, "timeout"),
+        (None, "no_controller"),
+        (None, "controller_left"),
+        (None, "cancelled"),
+    ],
+)
+@pytest.mark.parametrize("turn_active", [False, True])
+@pytest.mark.parametrize("announced", [False, True])
+def test_plan_approval_settlement_does_not_invent_a_running_turn(
+    action: str | None, reason: str, turn_active: bool, announced: bool
+) -> None:
+    events = [_event(KnownEventType.TURN_STARTED, 1, turn_id="planning", user_text="Plan the change.")]
+    if not turn_active:
+        events.append(_event(KnownEventType.TURN_ENDED, 2, turn_id="planning", status="completed"))
+    state = replay(events)
+    plan = "# Full plan\n\nKeep <literal> Markdown.\n" + "Detailed steps.\n" * 1000
+    if announced:
+        fold(
+            state,
+            _event(
+                KnownEventType.CONTROL_REQUESTED, 3, request_id="plan", kind="plan_approval", payload={"plan": plan}
+            ),
+        )
+        assert state.activity == "waiting_for_user"
+    fold(
+        state,
+        _event(
+            KnownEventType.CONTROL_RESOLVED,
+            4,
+            request_id="plan",
+            kind="plan_approval",
+            response={"action": action},
+            reason=reason,
+        ),
+    )
+    assert state.activity == ("generating" if turn_active else "idle")
+    if announced:
+        assert state.prompts[0].payload["plan"] == plan
+        assert state.prompts[0].response == {"action": action}
+        assert state.prompts[0].reason == reason
+    else:
+        assert not state.prompts
+    fold(state, _event(KnownEventType.TURN_STARTED, 5, turn_id="next", user_text="Implement or discuss."))
+    assert state.activity == "generating"
+
+
+def test_settling_plan_approval_keeps_an_independent_question_waiting() -> None:
+    state = replay(
+        [
+            _event(KnownEventType.CONTROL_REQUESTED, 1, request_id="plan", kind="plan_approval", payload={}),
+            _event(KnownEventType.CONTROL_REQUESTED, 2, request_id="question", kind="question", payload={}),
+            _event(
+                KnownEventType.CONTROL_RESOLVED,
+                3,
+                request_id="plan",
+                response={"action": "discuss_plan"},
+                reason="answered",
+            ),
+        ]
+    )
+    assert state.activity == "waiting_for_user"
+    assert [prompt.resolved for prompt in state.prompts] == [True, False]
+
+
 def test_duplicate_request_announcement_is_idempotent() -> None:
     """A client catching up may see the same request twice; it is one prompt."""
     state = replay(

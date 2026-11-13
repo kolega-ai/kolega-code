@@ -47,9 +47,21 @@ While planning, the agent can:
   completed. Plan mode cannot change the list — Build mode owns it.
 - Write a structured plan, which appears in the **Planning** tab.
 
-When the planning agent submits a **complete plan**, you're prompted to decide what
-happens next — typically to **implement the plan** or to **keep discussing** it.
-The decision is presented as a vertical, arrow-key-selectable option list.
+When the planning agent submits a **complete plan**, a vertical,
+arrow-key-selectable option list offers three choices:
+
+| Choice | What happens |
+| --- | --- |
+| **Implement plan** | Switch to Build mode and start implementing with the current conversation as context. |
+| **Clear context and implement plan** | Start implementation in Build mode with fresh model context. The plan remains available as a reference, and the visible transcript is retained. |
+| **Discuss further** | Stay in Plan mode and return to the composer without starting another turn. After the next planning turn, a revised plan—or the retained plan—is offered again. |
+
+Plan approval is separate from tool permissions. Neither `auto` permission mode
+nor an “always allow” rule approves implementation. An unanswered or cancelled
+approval never starts a build or implicitly chooses discussion.
+
+A resumed session retains its pending plan and all three choices. Its composer
+remains editable, so you can send a follow-up before deciding.
 
 Use Plan mode when a change is non-trivial and you want to agree on the approach
 before any files are touched. With [gigacode](../../gigacode/) on, a planning agent
@@ -61,9 +73,9 @@ read-only too.
 1. Start in **Build mode** and describe the goal.
 2. Press `Shift+Tab` to switch to **Plan mode** for anything substantial.
 3. Review the plan and shared task list in the **Planning** tab.
-4. Choose to implement it.
-5. Press `Shift+Tab` back to **Build mode**; the agent works through the task list,
-   marking items complete as it goes.
+4. Choose **Implement plan**, or clear context first with the second option.
+5. Kolega Code switches to **Build mode** automatically and works through the task
+   list, marking items complete as it goes.
 
 ## Switching with slash commands
 
