@@ -308,6 +308,7 @@ class KolegaCodeApp(
         self._quit_cleanly = False
         self._on_shutdown_requested: Callable[[], None] | None = None
         self._session_shutdown_task: asyncio.Task[None] | None = None
+        self._quit_caller_task: asyncio.Task | None = None
         self._startup_task: asyncio.Task[None] | None = None
         self._startup_complete = asyncio.Event()
         self._startup_pending = True
@@ -2844,6 +2845,9 @@ class KolegaCodeApp(
         if self._session_shutdown_task is None:
             if self._on_shutdown_requested is not None:
                 self._on_shutdown_requested()
+            # Record who asked: a turn awaited inline (ask, tests) runs on the
+            # caller's task, so the shutdown must not wait for it.
+            self._quit_caller_task = asyncio.current_task()
             self._session_shutdown_task = asyncio.create_task(self._shutdown_session())
         await asyncio.shield(self._session_shutdown_task)
 
@@ -2856,8 +2860,12 @@ class KolegaCodeApp(
         worker = self.agent_worker
         waiters = set(self._draining_agent_tasks)
         task = self._agent_execution_task
-        if task is not None and not task.done():
+        # The caller cannot finish while it awaits this shutdown, so counting it
+        # as a turn to drain burns the whole stop bound and reports the turn as
+        # unsettled; reaching quit already means that turn's work is done.
+        if task is not None and not task.done() and task is not self._quit_caller_task:
             waiters.add(task)
+        waiters.discard(self._quit_caller_task)
         if worker is not None:
             worker.cancel()
             waiter = asyncio.create_task(worker.wait())
