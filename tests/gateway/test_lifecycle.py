@@ -787,7 +787,10 @@ async def test_pruning_retains_every_eviction_before_waiting_for_blocked_cleanup
     monkeypatch.setattr(gateway._registry, "_idle_ttl_seconds", 1.0)
     for entry in gateway._registry._entries.values():
         entry.last_active -= 10000
-    monkeypatch.setattr(sessions, "LIFECYCLE_WAIT_SECONDS", 0.05)
+    # The wait must expire while the first cleanup is blocked; 0.05 s also covered
+    # building the third session, so a loaded runner cancelled before prune
+    # retained the evictions.
+    monkeypatch.setattr(sessions, "LIFECYCLE_WAIT_SECONDS", 2.0)
     request = asyncio.create_task(gateway._ensure_session(chat_ref("third")))
     try:
         await asyncio.wait_for(entered.wait(), 10)
