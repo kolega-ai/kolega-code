@@ -12,7 +12,8 @@ version = "0.50.0"
 description = "Multi-agent coding in the terminal"
 readme = "README.md"
 license = "BUSL-1.1"
-requires-python = ">=3.11"
+# soupsieve 4.x, which fixes the 2026-11 selector DoS advisories, requires 3.11.5.
+requires-python = ">=3.11.5"
 authors = [
     {name = "Kolega Team"}
 ]
@@ -98,8 +99,10 @@ dependencies = [
     "pyjwt==2.15.0",
     "pyyaml==6.0.3",
     "readability-lxml==0.8.4.1",
-    # BeautifulSoup's selector parser: fixes CVE-2026-86000 and CVE-2026-85999.
-    "soupsieve==2.9.2",
+    # BeautifulSoup's selector parser: 4.0.0 fixes CVE-2026-126190 (polynomial
+    # DoS in the descendant combinator), and 4.1 also carries the 2.10 fix for
+    # CVE-2026-126192 (quadratic :has() match).
+    "soupsieve==4.1",
     "tavily-python==0.7.26",
     "tenacity==9.1.4",
     "textual==8.2.5",
@@ -215,6 +218,9 @@ exclude-newer = "1 week"
 # GHSA-xmj3-9gf7-h52w and, with 84.2.0, lands just inside it. Admit each without
 # widening the window. pyasn1 0.6.5 (released 2026-10-27) fixes four quadratic
 # decoding denial-of-service advisories and is admitted for the same reason.
+# soupsieve 4.1 (released 2026-11-10) carries the fixes for CVE-2026-126190 and
+# CVE-2026-126192 and sits inside the quarantine; admit it without widening the
+# global window.
 
 [tool.uv.exclude-newer-package]
 cryptography = "2026-08-01T00:00:00Z"
@@ -226,6 +232,7 @@ brotli = "2026-10-23T00:00:00Z"
 brotlicffi = "2026-10-23T00:00:00Z"
 setuptools = "2026-10-20T00:00:00Z"
 pyasn1 = "2026-10-28T00:00:00Z"
+soupsieve = "2026-11-11T00:00:00Z"
 
 [tool.pyright]
 include = ["kolega_code", "benchmarks", "tests"]

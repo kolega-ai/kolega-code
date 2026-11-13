@@ -114,9 +114,9 @@ fi
 
 # Without --python, uv uses its default interpreter, often a release kolega-code's pinned
 # dependencies ship no wheels for yet. Keep in step with TOOL_PYTHON in kolega_code/cli/updater.py.
-PYTHON_REQUEST=">=3.11,<3.15"
+PYTHON_REQUEST=">=3.11.5,<3.15"
 if [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = x86_64 ]; then
-    PYTHON_REQUEST=">=3.11,<3.13"
+    PYTHON_REQUEST=">=3.11.5,<3.13"
 fi
 
 info "Installing or updating $PACKAGE_SPEC..."
