@@ -43,6 +43,7 @@ from kolega_code.permissions import (
 
 from .control import ControlChannel, ControlRequest
 from .plans import PlanApprovalAction, plan_approval_action, plan_approval_payload
+from .turns import TurnController
 
 #: Builds the agent for this session. Called on start and on every rebuild.
 AgentFactory = Callable[[], Awaitable[Any]]
@@ -134,6 +135,7 @@ class SessionRuntime:
         agent_factory: Optional[AgentFactory] = None,
         permission_mode: PermissionMode = PermissionMode.ASK,
         on_notice: Optional[Callable[[str], None]] = None,
+        turns: TurnController[Any] | None = None,
     ) -> None:
         self.session_id = session_id
         self.project_path = project_path
@@ -145,6 +147,7 @@ class SessionRuntime:
         # the client's single approval surface.
         self._permission_lock = asyncio.Lock()
         self._on_notice = on_notice
+        self.turns: TurnController[Any] = turns if turns is not None else TurnController()
 
     # -- Lifecycle ---------------------------------------------------------
 

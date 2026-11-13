@@ -10,6 +10,7 @@ from .control import ControlChannel, ControlLeaseError, ControlRequest
 from .inmemory import InMemoryArtifactStore, InMemorySessionEventStore
 from .recording import RecordingConnectionManager, RetentionPolicy
 from .runtime import SessionRuntime, SessionRuntimeError, control_channel_for
+from .turns import TurnBusyError, TurnController, TurnHooks, TurnOutcome, TurnQueue, TurnResult
 from .store import (
     ArtifactStore,
     SessionEventMeta,
@@ -31,5 +32,11 @@ __all__ = [
     "SessionRuntime",
     "SessionRuntimeError",
     "SessionStoreError",
+    "TurnBusyError",
+    "TurnController",
+    "TurnHooks",
+    "TurnOutcome",
+    "TurnQueue",
+    "TurnResult",
     "control_channel_for",
 ]

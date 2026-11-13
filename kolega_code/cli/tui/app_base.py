@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from kolega_code.session.inbox import InboxRegistry
     from kolega_code.session.recording import RecordingConnectionManager
     from kolega_code.session.runtime import SessionRuntime
+    from kolega_code.session.turns import TurnController
     from kolega_code.session.queue import QueueReason
     from kolega_code.session.goal import GoalReason
     from kolega_code.session.background import BackgroundAgentManager
@@ -135,6 +136,7 @@ class KolegaAppBase(App):
         _share_server: ShareServer | None
         #: Owns the agent for control purposes and holds permission policy.
         session_runtime: SessionRuntime
+        _turn_controller: TurnController[tui_state.QueuedMessage]
         #: Carries prompts to this client and answers back, the same way any
         #: other frontend would.
         control_channel: ControlChannel
@@ -196,7 +198,7 @@ class KolegaAppBase(App):
         #: CancelledError can never honor a cooperative cancel.
         _stop_pending: bool
         _stop_force_after_seconds: float
-        _stop_watchdog: Timer | None
+        _stop_watchdog: asyncio.TimerHandle | None
         #: Deadline for post-turn session writes; a stall is reported, not waited on.
         _turn_save_timeout_seconds: float
         _workflow_activities: dict[str, tui_state.WorkflowActivity]
