@@ -309,6 +309,68 @@ async def test_access_checks_cover_real_http_and_websocket_connections(store: Se
 
 
 @pytest.mark.asyncio
+async def test_a_disconnected_viewer_stops_the_server_side_tail(
+    store: SessionStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A viewer that goes away must release its journal poller and its task.
+
+    The stream endpoint only writes, and ASGI reports a disconnect only to
+    ``receive()``. Left without a reader, the handler tailed forever: the
+    connection task survived the client, and uvicorn's graceful shutdown could
+    never finish, so every ``ShareServer.stop()`` ran into its five-second
+    timeout.
+    """
+    import json
+    from collections.abc import AsyncIterator
+
+    from websockets.asyncio.client import connect
+
+    from kolega_code.cli.session_event_store import FileSessionEventStore
+    from kolega_code.events import AgentEvent, KnownEventType
+
+    session_id = "a" * 32
+    await FileSessionEventStore(store.journal(session_id)).append(
+        AgentEvent(
+            session_id=session_id,
+            sender="agent",
+            event_type=KnownEventType.TURN_STARTED,
+            content={"turn_id": "live", "user_text": "watch"},
+        )
+    )
+
+    tail = FileSessionEventStore.tail
+    closed = asyncio.Event()
+
+    def tracked_tail(self: FileSessionEventStore, session_id: str, *, from_seq: int = 1) -> AsyncIterator[AgentEvent]:
+        stream = tail(self, session_id, from_seq=from_seq)
+
+        async def tracked() -> AsyncIterator[AgentEvent]:
+            try:
+                async for event in stream:
+                    yield event
+            finally:
+                closed.set()
+
+        return tracked()
+
+    monkeypatch.setattr(FileSessionEventStore, "tail", tracked_tail)
+
+    server = ShareServer(store, session_id=session_id)
+    handle = await server.start()
+    try:
+        stream_url = f"{handle.url.replace('http:', 'ws:')}/api/sessions/{session_id}/stream?token={handle.token}"
+        async with connect(stream_url, proxy=None) as websocket:
+            first = json.loads(await asyncio.wait_for(websocket.recv(), timeout=10))
+            assert first["event_type"] == KnownEventType.TURN_STARTED
+        try:
+            await asyncio.wait_for(closed.wait(), timeout=10)
+        except TimeoutError:
+            pytest.fail("the server kept tailing the journal after its viewer disconnected")
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
 async def test_tunnel_origins_require_explicit_configuration(
     store: SessionStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
