@@ -178,9 +178,14 @@ def _derived_id(kind: str, *parts: Any) -> str:
 
 
 def _message_blocks(message: Any) -> list[dict[str, Any]]:
-    if not isinstance(message, dict) or not isinstance(message.get("content"), list):
+    if not isinstance(message, dict):
         return []
-    return [block for block in message["content"] if isinstance(block, dict)]
+    content = message.get("content")
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}]
+    if not isinstance(content, list):
+        return []
+    return [block for block in content if isinstance(block, dict)]
 
 
 def _step_message_and_reasoning(

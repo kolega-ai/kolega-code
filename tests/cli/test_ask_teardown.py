@@ -16,9 +16,11 @@ from kolega_code.agent.coder import CoderAgent
 from kolega_code.cli import main as main_module
 from kolega_code.cli.peer_messaging import HeadlessPeerInbox
 from kolega_code.cli.session_store import SessionStore, default_state_dir
+from kolega_code.cli.session_usage import SessionUsageSink
 from kolega_code.extensions import ExtensionSelection, KolegaExtensionBundle
 from kolega_code.hooks import HookEvent, HookOutcome
 from kolega_code.llm.exceptions import LLMBillingError
+from kolega_code.llm.ledger import UsageLedger
 from kolega_code.llm.models import Message
 from kolega_code.session.inbox import PeerSocketServer
 
@@ -60,13 +62,24 @@ async def _claim_in_child(root: Path, session_id: str, project: Path) -> int:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("phase", ["hook", "agent", "extension", "inbox"])
-@pytest.mark.parametrize("outcome", ["completed", "failed", "cancelled"])
+@pytest.mark.parametrize(
+    ("phase", "outcome", "cancel_usage"),
+    [
+        (phase, outcome, False)
+        for outcome in ("completed", "failed", "cancelled")
+        for phase in ("hook", "agent", "extension", "inbox")
+    ]
+    + [
+        pytest.param("stream", "failed", True, id="cancel-drainer-before-producer-failure"),
+        pytest.param("extension", "completed", True, id="cancel-drainer-before-late-cleanup-request"),
+    ],
+)
 async def test_ask_teardown_retains_task_affinity_resources_terminal_export_and_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     phase: str,
     outcome: str,
+    cancel_usage: bool,
 ) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -82,8 +95,38 @@ async def test_ask_teardown_retains_task_affinity_resources_terminal_export_and_
     marker: ContextVar[str] = ContextVar("ask-extension")
     token: Token[str] | None = None
     scope: CancelScope | None = None
+    ledger: UsageLedger | None = None
+    request_id: str | None = None
+    sinks: list[SessionUsageSink] = []
+    drainer_cancelled = asyncio.Event()
     session_id = "0123456789abcdef0123456789abcdef"
     output = tmp_path / "trajectory.json"
+    unlock_snapshots: list[tuple[bool, list[str]]] = []
+    original_unlock = store.release_session_locks
+
+    def unlock() -> None:
+        events = [json.loads(line) for line in store.events_path_for(session_id).read_text().splitlines()]
+        unlock_snapshots.append((output.exists(), [event["type"] for event in events]))
+        original_unlock()
+
+    class ObservedUsageSink(SessionUsageSink):
+        async def _drain(self) -> None:
+            sinks.append(self)
+            original_get = self._queue.get
+
+            async def get() -> Any:
+                try:
+                    return await original_get()
+                except asyncio.CancelledError:
+                    drainer_cancelled.set()
+                    raise
+
+            monkeypatch.setattr(self._queue, "get", get)
+            await super()._drain()
+
+    if cancel_usage:
+        monkeypatch.setattr(main_module, "SessionUsageSink", ObservedUsageSink)
+        monkeypatch.setattr(store, "release_session_locks", unlock)
 
     async def checkpoint(name: str) -> None:
         if phase == name:
@@ -92,12 +135,17 @@ async def test_ask_teardown_retains_task_affinity_resources_terminal_export_and_
 
     class ScriptedAgent(CoderAgent):
         async def process_message_stream(self, message: str, attachments: Any = None) -> AsyncIterator[dict[str, Any]]:
+            nonlocal request_id
             assert marker.get() == "bound"
             recorder = self.session_recorder
             assert recorder is not None
             recorder.start_turn(Message(role="user", content=message))
             streaming.set()
             try:
+                if cancel_usage and phase == "stream":
+                    assert ledger is not None
+                    request_id = ledger.begin("anthropic", "offline-model")
+                    await checkpoint("stream")
                 if outcome == "cancelled":
                     await asyncio.Event().wait()
                 if outcome == "failed":
@@ -106,6 +154,11 @@ async def test_ask_teardown_retains_task_affinity_resources_terminal_export_and_
                 recorder.record_assistant(assistant)
                 self.history.extend([Message(role="user", content=message), assistant])
                 yield {"type": "response", "content": "offline response", "complete": True}
+            except LLMBillingError as exc:
+                if request_id is not None:
+                    assert ledger is not None
+                    ledger.record_failure(request_id, str(exc))
+                raise
             finally:
                 recorder.finish_turn(outcome)
 
@@ -119,7 +172,8 @@ async def test_ask_teardown_retains_task_affinity_resources_terminal_export_and_
             await super().cleanup()
 
     async def bind(agent: CoderAgent) -> None:
-        nonlocal scope, token
+        nonlocal ledger, scope, token
+        ledger = agent.usage_ledger
         tasks.append(asyncio.current_task())
         scope = CancelScope()
         scope.__enter__()
@@ -127,10 +181,15 @@ async def test_ask_teardown_retains_task_affinity_resources_terminal_export_and_
         processes.append(await asyncio.create_subprocess_exec(sys.executable, "-c", "import time; time.sleep(120)"))
 
     async def cleanup() -> None:
+        nonlocal request_id
         await checkpoint("extension")
         tasks.append(asyncio.current_task())
         assert tasks[0] is tasks[-1]
         assert marker.get() == "bound"
+        if cancel_usage and phase == "extension":
+            assert ledger is not None
+            request_id = ledger.begin("anthropic", "offline-model")
+            ledger.record_failure(request_id, "scripted cleanup rejection")
         processes[0].terminate()
         await processes[0].wait()
         assert token is not None and scope is not None
@@ -178,10 +237,22 @@ async def test_ask_teardown_retains_task_affinity_resources_terminal_export_and_
         assert len(servers) == 1 and servers[0].is_serving()
         if phase != "inbox":
             assert processes[0].returncode is None
-        command.cancel()
-        await asyncio.sleep(0)
-        command.cancel()
-        await asyncio.sleep(0)
+        if phase != "stream":
+            command.cancel()
+            await asyncio.sleep(0)
+            command.cancel()
+            await asyncio.sleep(0)
+        if cancel_usage:
+            assert len(sinks) == 1
+            sink = sinks[0]
+            assert await sink.flush(timeout=20)
+            assert sink._drainer is not None
+            sink._drainer.cancel()
+            await asyncio.wait_for(drainer_cancelled.wait(), 20)
+            assert await sink.flush(timeout=20)
+            assert processes[0].returncode is None
+            assert servers[0].is_serving()
+            assert len(tasks) == 1
         assert not command.done(), "caller cancellation abandoned an unfinished teardown phase"
         assert await _claim_in_child(store.root, session_id, project) == 3
         assert not output.exists()
@@ -202,6 +273,24 @@ async def test_ask_teardown_retains_task_affinity_resources_terminal_export_and_
         assert [event["type"] for event in terminals] == [f"run.{outcome}"]
         kinds = [event["type"] for event in events]
         assert kinds.index("llm.run_finished") < kinds.index(f"run.{outcome}")
+        assert kinds[-1] == f"run.{outcome}"
+        if cancel_usage:
+            accounting = [event for event in events if event["type"].startswith("llm.")]
+            assert [event["type"] for event in accounting] == [
+                "llm.run_started",
+                "llm.request_started",
+                "llm.request_settled",
+                "llm.request_failed",
+                "llm.run_finished",
+            ]
+            started, settled, failed = accounting[1:4]
+            assert started["payload"]["request_id"] == settled["payload"]["request_id"] == request_id
+            assert failed["payload"]["request_id"] == request_id
+            assert settled["payload"]["state"] == "failed"
+            counts = accounting[-1]["payload"]["counts"]
+            assert counts["requests"] == counts["failed"] == 1
+            assert counts["open"] == counts["responses"] == 0
+            assert unlock_snapshots == [(True, kinds)]
         trajectory = atif.Trajectory.model_validate_json(output.read_text())
         assert trajectory.extra is not None
         assert trajectory.extra["kolega"]["status"]["outcome"] == outcome
@@ -217,4 +306,4 @@ async def test_ask_teardown_retains_task_affinity_resources_terminal_export_and_
         for server in servers:
             server.close()
             await server.wait_closed()
-        store.release_session_locks()
+        original_unlock()
