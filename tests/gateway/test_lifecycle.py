@@ -163,7 +163,9 @@ async def test_startup_failure_reports_before_ordered_cleanup_and_serves_other_c
 async def test_startup_timeout_interrupts_initialization_but_retains_cleanup(
     gateway: AgentTurnHandler, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(sessions, "LIFECYCLE_WAIT_SECONDS", 0.05)
+    # The wait must expire while initialization is blocked; 0.05 s also covered
+    # the session build, so a loaded runner cancelled before initialize was entered.
+    monkeypatch.setattr(sessions, "LIFECYCLE_WAIT_SECONDS", 2.0)
     initializing, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
     agents: list[_RecorderAwareAgent] = []
     wait_operation = AgentTurnHandler._wait_operation
