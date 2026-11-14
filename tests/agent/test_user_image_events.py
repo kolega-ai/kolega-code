@@ -8,7 +8,7 @@ from io import BytesIO
 from pathlib import Path
 import threading
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from PIL import Image
@@ -287,6 +287,9 @@ async def test_emitter_ignores_images_and_count_on_turn_end() -> None:
 async def test_failed_and_cancelled_turns_do_not_repeat_user_images(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
 ) -> None:
+    async def _no_retry_delay(_delay: float) -> None:
+        return None
+
     agent, _, store, _ = _build_agent(tmp_path)
     llm = FakeLLM(token_script=[100])
     llm.stream = AsyncMock(
@@ -294,7 +297,11 @@ async def test_failed_and_cancelled_turns_do_not_repeat_user_images(
     )
     monkeypatch.setattr(agent, "llm", llm)
 
-    with pytest.raises(asyncio.CancelledError if status == "cancelled" else LLMError):
+    # The turn must fail; the retry-backoff sleeps are not what this asserts.
+    with (
+        patch("kolega_code.agent.baseagent.asyncio.sleep", side_effect=_no_retry_delay),
+        pytest.raises(asyncio.CancelledError if status == "cancelled" else LLMError),
+    ):
         _ = [chunk async for chunk in agent.process_message_stream("look", [_image(_picture("red"))])]
 
     boundaries = [
