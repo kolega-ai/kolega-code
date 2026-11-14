@@ -315,6 +315,76 @@ async def test_in_memory_journal_finish_reconciliation_needs_no_disk(monkeypatch
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("explicit_close", [False, True])
+async def test_owned_startup_cancellation_does_not_wait_for_its_live_caller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit_close: bool
+) -> None:
+    store = SessionStore(tmp_path / "state")
+    session = store.create(tmp_path / "project", "code", {})
+    journal = store.journal(session.session_id)
+    ledger = UsageLedger()
+    entered, release = threading.Event(), threading.Event()
+    begin = asyncio.Event()
+    append = journal.append
+
+    def held_start(event_type: str, **kwargs: Any) -> SessionEvent:
+        if event_type == LLM_RUN_STARTED_EVENT:
+            entered.set()
+            assert release.wait(15)
+        return append(event_type, **kwargs)
+
+    async def produce() -> None:
+        await begin.wait()
+        try:
+            await sink.start()
+            assert not sink._closed
+            request = ledger.begin("anthropic", "offline")
+            ledger.record_failure(request, "settled after startup cancellation")
+        finally:
+            if explicit_close:
+                assert (await sink.wait_closed()).committed
+
+    monkeypatch.setattr(journal, "append", held_start)
+    owner = asyncio.create_task(produce())
+    sink = SessionUsageSink(journal, store.recorder(session.session_id), ledger, mode="ask", owner_task=owner)
+    ledger.observer = sink
+    begin.set()
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        assert sink._start_task is not None
+        sink._start_task.cancel()
+        release.set()
+        await asyncio.wait_for(asyncio.shield(owner), timeout=10)
+    finally:
+        release.set()
+        if not owner.done():
+            owner.cancel()
+        await asyncio.gather(owner, return_exceptions=True)
+        result = await sink.wait_closed()
+    assert result.committed
+    assert sink._start_task is not None
+    await asyncio.wait_for(asyncio.shield(sink._start_task), timeout=10)
+    assert sink._start_task.done() and sink._drainer is not None and sink._drainer.done()
+    events = journal.read_events()
+    assert [event.event_type for event in events if event.event_type.startswith("llm.")] == [
+        "llm.run_started",
+        "llm.request_started",
+        "llm.request_settled",
+        "llm.request_failed",
+        "llm.run_finished",
+    ]
+    assert events[-1].payload["counts"] == {
+        "requests": 1,
+        "responses": 0,
+        "failed": 1,
+        "open": 0,
+        "abandoned": 0,
+        "partial": 0,
+        "missing": 1,
+    }
+
+
+@pytest.mark.asyncio
 async def test_finish_preparation_failure_settles_drainer_and_terminal_receipt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -442,3 +512,225 @@ def test_runner_teardown_settles_actual_writer_without_cancelled_task_spin(tmp_p
     assert result.returncode == 0, result.stdout + result.stderr
     assert "SETTLED" in result.stdout
     assert "Task was destroyed" not in result.stderr
+
+
+@pytest.mark.parametrize("producer_first", [False, True])
+@pytest.mark.parametrize("explicit_close", [False, True])
+def test_runner_shutdown_keeps_accounting_open_until_request_producer_finishes(
+    tmp_path: Path, producer_first: bool, explicit_close: bool, isolated_cli_env: None
+) -> None:
+    code = textwrap.dedent(
+        """
+        import asyncio
+        import json
+        from pathlib import Path
+        import sys
+
+        from kolega_code.cli.session_store import SessionStore
+        from kolega_code.cli.session_usage import SessionUsageSink, derive_session_usage
+        from kolega_code.llm.ledger import UsageLedger
+        from kolega_code.llm.usage import normalize_usage
+
+        store = SessionStore(Path(sys.argv[1]) / "state")
+        session = store.create(Path(sys.argv[1]) / "project", "code", {})
+        journal = store.journal(session.session_id)
+        ledger = UsageLedger()
+        sink = None
+        ready, drainer_cancelled, begin = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        producers, errors = [], []
+
+        async def produce():
+            await begin.wait()
+            request = ledger.begin("anthropic", "offline")
+            ready.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                while not drainer_cancelled.is_set():
+                    try:
+                        await drainer_cancelled.wait()
+                    except asyncio.CancelledError:
+                        pass
+                sink._drainer.cancel()
+                await asyncio.sleep(0)
+                assert not sink._closed
+                ledger.record_failure(request, "producer cancelled")
+                assert await sink.flush(timeout=10)
+                if sys.argv[3] == "True":
+                    assert (await sink.wait_closed()).committed
+                raise
+
+        async def main():
+            global sink
+            asyncio.get_running_loop().set_exception_handler(lambda loop, context: errors.append(str(context)))
+            producer = asyncio.create_task(produce())
+            producers.append(producer)
+            sink = SessionUsageSink(
+                journal, store.recorder(session.session_id), ledger, mode="ask", owner_task=producer
+            )
+            ledger.observer = sink
+            await sink.start()
+            for inputs, outputs in ((11, 3), (11, 3), (5, 1)):
+                request = ledger.begin("anthropic", "offline")
+                ledger.record_response(
+                    request, normalize_usage({"input_tokens": inputs, "output_tokens": outputs}, "anthropic", "offline")
+                )
+            assert await sink.flush(timeout=10)
+            request_close = sink._request_implicit_close
+
+            def observed_close():
+                drainer_cancelled.set()
+                return request_close()
+
+            sink._request_implicit_close = observed_close
+            begin.set()
+            await asyncio.wait_for(ready.wait(), 10)
+            assert await sink.flush(timeout=10)
+            all_tasks = asyncio.all_tasks
+            ordered = (producer, sink._drainer) if sys.argv[2] == "True" else (sink._drainer, producer)
+
+            def teardown_tasks(loop):
+                return sorted(all_tasks(loop), key=lambda task: ordered.index(task) if task in ordered else 2)
+
+            asyncio.runners.tasks.all_tasks = teardown_tasks
+
+        asyncio.run(main())
+        assert not errors, errors
+        assert producers[0].done() and producers[0].cancelled()
+        assert sink.close_result.committed
+        assert sink._drainer.done()
+        events = [json.loads(line) for line in journal.events_path.read_text().splitlines()]
+        starts = [event for event in events if event["type"] == "llm.request_started"]
+        settlements = [event for event in events if event["type"] == "llm.request_settled"]
+        failures = [event for event in events if event["type"] == "llm.request_failed"]
+        finishes = [event for event in events if event["type"] == "llm.run_finished"]
+        assert len(starts) == len(settlements) == 4, (len(starts), len(settlements))
+        assert len(failures) == len(finishes) == 1
+        assert finishes[0]["payload"]["counts"] == {
+            "requests": 4, "responses": 3, "failed": 1, "open": 0, "abandoned": 0, "partial": 0, "missing": 1
+        }
+        assert sum((event["payload"].get("usage") or {}).get("total_tokens", 0) for event in settlements) == 34
+        assert events[-1]["type"] == "llm.run_finished"
+        assert [event["seq"] for event in events] == list(range(1, len(events) + 1))
+        replay = derive_session_usage(journal.read_events())
+        assert (replay["requests"], replay["responses"], replay["failed"], replay["total_tokens"]) == (4, 3, 1, 34)
+        assert replay["open"] == replay["abandoned"] == 0
+        store.release_session_locks()
+        print("PRODUCER_SETTLED")
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path), str(producer_first), str(explicit_close)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PRODUCER_SETTLED" in result.stdout
+    for diagnostic in ("Task was destroyed", "was never awaited", "unhandled exception"):
+        assert diagnostic not in result.stderr
+
+
+@pytest.mark.parametrize("explicit_close", [False, True])
+@pytest.mark.parametrize("owner_first", [False, True])
+def test_runner_owned_cancelled_startup_retains_writer_until_producer_settles(
+    tmp_path: Path, explicit_close: bool, owner_first: bool, isolated_cli_env: None
+) -> None:
+    code = textwrap.dedent(
+        """
+        import asyncio
+        import json
+        from pathlib import Path
+        import sys
+        import threading
+
+        from kolega_code.cli.session_store import SessionStore
+        from kolega_code.cli.session_usage import SessionUsageSink
+        from kolega_code.llm.ledger import UsageLedger
+
+        store = SessionStore(Path(sys.argv[1]) / "state")
+        session = store.create(Path(sys.argv[1]) / "project", "code", {})
+        journal = store.journal(session.session_id)
+        ledger = UsageLedger()
+        entered, release = threading.Event(), threading.Event()
+        retained, errors = [], []
+        sink = None
+        append = journal.append
+
+        def held_start(event_type, **kwargs):
+            if event_type == "llm.run_started":
+                entered.set()
+                assert release.wait(10)
+            return append(event_type, **kwargs)
+
+        journal.append = held_start
+
+        async def produce():
+            try:
+                await sink.start()
+            except asyncio.CancelledError:
+                sink._start_task.cancel()
+                release.set()
+                while not sink._start_ready.done():
+                    try:
+                        await asyncio.shield(sink._start_ready)
+                    except asyncio.CancelledError:
+                        pass
+                assert not sink._closed
+                request = ledger.begin("anthropic", "offline")
+                ledger.record_failure(request, "startup producer cancelled")
+                if sys.argv[2] == "True":
+                    assert (await sink.wait_closed()).committed
+                raise
+
+        async def main():
+            global sink
+            asyncio.get_running_loop().set_exception_handler(lambda loop, context: errors.append(str(context)))
+            producer = asyncio.create_task(produce())
+            retained.append(producer)
+            sink = SessionUsageSink(
+                journal, store.recorder(session.session_id), ledger, mode="ask", owner_task=producer
+            )
+            ledger.observer = sink
+            assert await asyncio.to_thread(entered.wait, 10)
+            assert sink._drainer is None
+            all_tasks = asyncio.all_tasks
+            ordered = (producer, sink._start_task) if sys.argv[3] == "True" else (sink._start_task, producer)
+
+            def teardown_tasks(loop):
+                return sorted(all_tasks(loop), key=lambda task: ordered.index(task) if task in ordered else 2)
+
+            asyncio.runners.tasks.all_tasks = teardown_tasks
+
+        try:
+            asyncio.run(main())
+        finally:
+            release.set()
+        assert not errors, errors
+        assert retained[0].done() and retained[0].cancelled()
+        assert sink.close_result.committed
+        assert sink._start_task.done() and sink._drainer.done() and sink._close_task.done()
+        events = [json.loads(line) for line in journal.events_path.read_text().splitlines()]
+        kinds = [event["type"] for event in events if event["type"].startswith("llm.")]
+        assert kinds == [
+            "llm.run_started", "llm.request_started", "llm.request_settled", "llm.request_failed", "llm.run_finished"
+        ], kinds
+        assert events[-1]["payload"]["counts"] == {
+            "requests": 1, "responses": 0, "failed": 1, "open": 0, "abandoned": 0, "partial": 0, "missing": 1
+        }
+        store.release_session_locks()
+        print("STARTUP_PRODUCER_SETTLED")
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path), str(explicit_close), str(owner_first)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "STARTUP_PRODUCER_SETTLED" in result.stdout
+    for diagnostic in ("Task was destroyed", "was never awaited", "unhandled exception"):
+        assert diagnostic not in result.stderr

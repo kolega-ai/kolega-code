@@ -135,6 +135,9 @@ class SessionUsageSink:
     journal writes in the executor in FIFO order, so journal order
     matches settlement order and the journal's lock serializes us against the
     session recorder.
+
+    An optional frontend owner defers cancellation-triggered closure until it
+    finishes. Explicit close remains its producer-settled authorization.
     """
 
     def __init__(
@@ -145,6 +148,7 @@ class SessionUsageSink:
         *,
         mode: str,
         run_metadata: Optional[dict[str, Any]] = None,
+        owner_task: Optional[asyncio.Task[Any]] = None,
     ) -> None:
         self._journal = journal
         self._recorder = recorder
@@ -155,6 +159,9 @@ class SessionUsageSink:
         self._drainer: Optional[asyncio.Task[None]] = None
         self._start_task: Optional[asyncio.Task[None]] = None
         self._start_ready: Optional[asyncio.Future[None]] = None
+        self._close_started: Optional[asyncio.Future[None]] = None
+        self._owner_task = owner_task
+        self._owner_close_requested = False
         self._closed = False
         self._sink_id = uuid.uuid4().hex
         self._close_task: Optional[asyncio.Task[UsageCloseResult]] = None
@@ -180,9 +187,15 @@ class SessionUsageSink:
             return
         if self._start_task is None:
             self._start_ready = asyncio.get_running_loop().create_future()
+            self._close_started = asyncio.get_running_loop().create_future()
             self._start_task = asyncio.create_task(self._start())
             self._start_task.add_done_callback(self._mark_started)
-        await asyncio.shield(self._start_task)
+        # A live owner must await startup, not its own deferred close.
+        started = self._start_task if self._owner_task is None else self._start_ready
+        assert started is not None
+        await asyncio.shield(started)
+        if self._start_task.done():
+            self._start_task.result()
 
     def _mark_started(self, _task: Optional[asyncio.Future[None]] = None) -> None:
         # Cancelled startup owns finalization, so closers must not await its Task.
@@ -211,6 +224,9 @@ class SessionUsageSink:
         self._mark_started()
         task = asyncio.current_task()
         if task is not None and task.cancelling():
+            self._request_implicit_close()
+            assert self._close_started is not None
+            await _wait_for_owned(self._close_started)
             await self.wait_closed()
 
     def on_begin(self, request: SettledRequest) -> None:
@@ -283,11 +299,28 @@ class SessionUsageSink:
     def close_result(self) -> Optional[UsageCloseResult]:
         return self._close_result
 
+    def _close_after_owner(self, _task: asyncio.Task[Any]) -> None:
+        self._begin_close()
+
+    def _request_implicit_close(self) -> None:
+        if self._close_task is not None:
+            return
+        if self._owner_task is None or self._owner_task.done():
+            self._begin_close()
+        elif not self._owner_close_requested:
+            # The frontend must settle its producers before authorizing a close.
+            self._owner_close_requested = True
+            self._owner_task.add_done_callback(self._close_after_owner)
+
     def _begin_close(self) -> asyncio.Task[UsageCloseResult]:
         if self._close_task is None:
             self._closed = True
             self._close_result = UsageCloseResult("pending", self._io_errors)
             self._close_task = asyncio.create_task(self._finish_run())
+            if self._close_started is not None and not self._close_started.done():
+                self._close_started.set_result(None)
+            if self._owner_close_requested and self._owner_task is not None:
+                self._owner_task.remove_done_callback(self._close_after_owner)
         return self._close_task
 
     async def aclose(self, *, timeout: Optional[float] = _CLOSE_TIMEOUT_SECONDS) -> UsageCloseResult:
@@ -477,7 +510,7 @@ class SessionUsageSink:
             try:
                 item = await self._queue.get()
             except asyncio.CancelledError:
-                self._begin_close()
+                self._request_implicit_close()
                 continue
             status: CloseStatus = "committed"
             try:
@@ -502,7 +535,7 @@ class SessionUsageSink:
             # Deferred writer cancellation must finalize, not wait on an idle queue.
             task = asyncio.current_task()
             if task is not None and task.cancelling():
-                self._begin_close()
+                self._request_implicit_close()
 
     def _write(self, item: _PendingEvent) -> None:
         if item.kind == LLM_MESSAGE_EVENT:
