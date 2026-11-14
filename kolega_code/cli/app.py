@@ -1449,7 +1449,6 @@ class KolegaCodeApp(
             self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE
             and self._plan_pending
             and not self._plan_action_reserved(),
-            allow_discuss=self._plan_pending,
         )
         if not self._background_rebuilding:
             self._offer_plan_approval()
@@ -3096,7 +3095,7 @@ class KolegaCodeApp(
         # plan off screen entirely.
         self._refresh_planning_sidebar()
         self._add_conversation_entry(tui_state.ConversationEntry(kind="plan", content=plan, complete=True))
-        self._set_plan_actions_visible(True, allow_discuss=True)
+        self._set_plan_actions_visible(True)
         self._set_composer_status(messages.PLAN_READY_PLACEHOLDER)
         self._set_chat_enabled(False)
         self._refresh_input_area_visibility()
@@ -3203,7 +3202,7 @@ class KolegaCodeApp(
             except Exception:
                 return
             if not actions.display:
-                self._set_plan_actions_visible(True, allow_discuss=True)
+                self._set_plan_actions_visible(True)
 
     async def _answer_pending_plan(self, action: PlanApprovalAction) -> bool:
         owner = self._plan_approval_owner
@@ -3581,7 +3580,7 @@ class KolegaCodeApp(
             return
         self.screen.set_focus(actions)
 
-    def _set_plan_actions_visible(self, visible: bool, *, allow_discuss: bool = False) -> None:
+    def _set_plan_actions_visible(self, visible: bool) -> None:
         try:
             plan_actions = self.query_one("#plan_actions", tui_widgets.ActionList)
             if visible:
