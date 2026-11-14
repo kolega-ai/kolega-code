@@ -63,6 +63,17 @@ import kolega_code.llm.exceptions
 assert "aiohttp" not in sys.modules, "import kolega_code.cli.main eagerly loaded: aiohttp"
 """
 
+#: httpx costs ~50 ms of client/SSL/h11 setup. The LLM error mapper classifies an
+#: httpx exception from ``sys.modules`` (it can only exist once a client imported
+#: httpx), and the OAuth refresh, catalog refresh and MCP transport paths import it
+#: when they make a request. None of them needs it on a CLI start.
+_HTTPX_CHECK = """
+import sys
+import kolega_code.cli.main
+
+assert "httpx" not in sys.modules, "import kolega_code.cli.main eagerly loaded: httpx"
+"""
+
 #: firecrawl-py builds its entire pydantic type tree at import time (~205 ms).
 #: Only a keyed Firecrawl search uses the SDK, so it may not load on a CLI start.
 _FIRECRAWL_CHECK = """
@@ -123,6 +134,24 @@ def test_cli_start_does_not_load_aiohttp() -> None:
     """
     result = subprocess.run(
         [sys.executable, "-c", _AIOHTTP_CHECK],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_cli_start_does_not_load_httpx() -> None:
+    """httpx loads on the first request that needs a client, not on start.
+
+    Importing it costs ~50 ms of client/SSL/h11 setup, and it used to arrive
+    through ``llm.exceptions``, ``auth.tokens``, ``llm.timeouts``, the model
+    catalogs or the MCP transport. The error mapper resolves httpx exception
+    classes from ``sys.modules``; the rest import it inside the call that makes
+    a request. Deferring them cut CLI-start import time by ~37 ms.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", _HTTPX_CHECK],
         capture_output=True,
         text=True,
         timeout=120,

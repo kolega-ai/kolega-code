@@ -32,8 +32,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
-import httpx
-
 from .types import ThinkingEffortSpec
 from .validation import validate_model_spec
 from .pricing_feeds import feed_pricing, sanitize_spec_pricing
@@ -134,6 +132,9 @@ def fetch_models(
     api_key: Optional[str] = None,
 ) -> dict[str, Any]:
     """Fetch one Perplexity ``/models`` endpoint (Bearer ``PERPLEXITY_API_KEY``)."""
+    # Refresh-only helper: keep httpx off the CLI start path.
+    import httpx
+
     token = api_key if api_key is not None else os.environ.get(API_KEY_ENV)
     if not token:
         raise PerplexityCatalogError(

@@ -28,6 +28,10 @@ A **turn cap** (default **50**) is a safety backstop. If the goal isn't met with
 that many evaluation turns, the loop pauses and tells you to refine the goal or
 clear it.
 
+The cap is checked before sending another continuation: reaching it never starts
+one extra work turn without a subsequent verification. A failed or cancelled work
+turn does not trigger verification or an automatic retry.
+
 ## Safety model
 
 :::note
@@ -45,6 +49,9 @@ A few guarantees that keep the loop safe:
   hits the cap.
 - The verifier runs on the configured long-context model, separate from the
   working agent's turn.
+- Messages queued while the verifier is running take priority over the next
+  autonomous continuation. Stopping during verification pauses the goal rather
+  than starting another turn.
 
 ## In the TUI: `/goal`
 

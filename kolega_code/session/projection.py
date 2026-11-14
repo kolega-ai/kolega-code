@@ -22,7 +22,7 @@ from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass, field
 import re
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Optional, TypeGuard
 
 from kolega_code.events import AgentEvent, ArtifactRef, KnownEventType
 from kolega_code.session.task_list import task_list_entries
@@ -74,7 +74,7 @@ class _StreamingText:
 class ConversationItem:
     """One block in the transcript."""
 
-    #: "user" | "peer_message" | "assistant" | "thinking" | "tool" | "system" | "status"
+    #: "user" | "peer_message" | "background_delivery" | "assistant" | "thinking" | "tool" | "system" | "status"
     kind: str
     text: str = ""
     complete: bool = True
@@ -97,6 +97,7 @@ class ConversationItem:
     tool_subject: Optional[str] = None
     #: Complete safe paths / command for expanded details (never raw arguments).
     tool_display: Optional[dict[str, list[str] | str]] = None
+    background_delivery: Optional[dict] = None
 
 
 # ``dataclass`` generates ``__init__`` from the field declared above; install the
@@ -223,6 +224,8 @@ class PresentationState(_TerminalBuffer):
     compaction: Optional[dict] = None
     task_list: Optional[dict] = None
     usage: Optional[dict] = None
+    queue: Optional[dict] = None
+    goal: Optional[dict] = None
     #: Decision points in the order they arose, resolved or not. A replay shows
     #: where the agent stopped to ask and what the answer was.
     prompts: list[PendingPrompt] = field(default_factory=list)
@@ -244,6 +247,9 @@ class PresentationState(_TerminalBuffer):
     _tools: dict[str, int] = field(default_factory=dict, repr=False)
     _peer_messages: dict[str, _PeerMessageRecord] = field(default_factory=dict, repr=False)
     _pending_peer_turns: list[str] = field(default_factory=list, repr=False)
+    _background_completions: set[str] = field(default_factory=set, repr=False)
+    _retired_queue_ids: set[str] = field(default_factory=set, repr=False)
+    _retired_goal_generation_ids: set[str] = field(default_factory=set, repr=False)
 
     def to_dict(self) -> dict:
         """JSON-safe view for transport to a web client or player.
@@ -308,6 +314,8 @@ class PresentationState(_TerminalBuffer):
             "compaction": self.compaction,
             "task_list": self.task_list,
             "usage": self.usage,
+            "queue": deepcopy(self.queue),
+            "goal": deepcopy(self.goal),
             "prompts": [
                 {
                     "request_id": prompt.request_id,
@@ -350,6 +358,7 @@ def _item_dict(item: ConversationItem) -> dict:
         ("tone", item.tone),
         ("sub_agent", item.sub_agent),
         ("edit_preview", item.edit_preview),
+        ("background_delivery", item.background_delivery),
     ):
         if value is not None:
             payload[key] = value
@@ -382,6 +391,18 @@ def fold(state: PresentationState, event: AgentEvent) -> PresentationState:
             )
         state.last_seq = event.seq
     state.elapsed_ms = max(state.elapsed_ms, event.elapsed_ms)
+
+    if event.event_type == "queue_updated":
+        _on_queue_updated(state, event)
+        return state
+
+    if event.event_type == "goal_updated":
+        _on_goal_updated(state, event)
+        return state
+
+    if event.event_type == KnownEventType.BACKGROUND_JOB_DELIVERED:
+        _on_background_delivery(state, event)
+        return state
 
     if event.event_type == KnownEventType.USAGE_UPDATED:
         content = event.content
@@ -423,6 +444,164 @@ def fold(state: PresentationState, event: AgentEvent) -> PresentationState:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _queue_count(value: Any) -> TypeGuard[int | float]:
+    # Integral JSON numbers can decode as floats in Python but Numbers in JavaScript.
+    return type(value) in (int, float) and 0 <= value <= 9_007_199_254_740_991 and value == int(value)
+
+
+def _on_queue_updated(state: PresentationState, event: AgentEvent) -> None:
+    content = event.content
+    if event.sub_agent_info is not None or not isinstance(content, dict):
+        return
+    queue_id = content.get("queue_id")
+    revision = content.get("revision")
+    if not isinstance(queue_id, str) or not queue_id or not _queue_count(revision):
+        return
+    if content.get("source") not in ("tui", "ask"):
+        return
+    if content.get("reason") not in ("snapshot", "enqueued", "dequeued", "cleared", "removed"):
+        return
+    if not isinstance(content.get("items"), list):
+        return
+    items = []
+    item_ids: set[str] = set()
+    for item in content["items"]:
+        if not isinstance(item, dict):
+            return
+        item_id = item.get("queue_id")
+        if not isinstance(item_id, str) or not item_id or item_id in item_ids:
+            return
+        if not isinstance(item.get("text"), str) or not _queue_count(item.get("image_count")):
+            return
+        if "origin" not in item:
+            return
+        origin = item["origin"]
+        if origin is not None:
+            if (
+                not isinstance(origin, dict)
+                or origin.get("kind") != "peer"
+                or not isinstance(origin.get("session_id"), str)
+                or not isinstance(origin.get("title"), str)
+            ):
+                return
+            origin = {key: origin[key] for key in ("kind", "session_id", "title")}
+        items.append(
+            {"queue_id": item_id, "text": item["text"], "image_count": int(item["image_count"]), "origin": origin}
+        )
+        item_ids.add(item_id)
+    if queue_id in state._retired_queue_ids:
+        return
+    if state.queue is not None:
+        if queue_id == state.queue["queue_id"]:
+            if revision <= state.queue["revision"]:
+                return
+        else:
+            state._retired_queue_ids.add(state.queue["queue_id"])
+    state.queue = {
+        "queue_id": queue_id,
+        "revision": int(revision),
+        "source": content["source"],
+        "reason": content["reason"],
+        "items": items,
+    }
+
+
+def _on_goal_updated(state: PresentationState, event: AgentEvent) -> None:
+    content = event.content
+    if event.sub_agent_info is not None or not isinstance(content, dict):
+        return
+    generation_id = content.get("generation_id")
+    revision = content.get("revision")
+    if not isinstance(generation_id, str) or not generation_id or not _queue_count(revision):
+        return
+    if content.get("source") not in ("tui", "ask"):
+        return
+    reason = content.get("reason")
+    if reason not in ("snapshot", "started", "replaced", "evaluated", "paused", "resumed", "completed", "cleared"):
+        return
+    if "goal" not in content or "evaluation_met" not in content:
+        return
+    if content["evaluation_met"] is not None and type(content["evaluation_met"]) is not bool:
+        return
+    goal = content["goal"]
+    if goal is None:
+        if reason not in ("snapshot", "cleared"):
+            return
+    else:
+        if reason == "cleared" or not isinstance(goal, dict):
+            return
+        strings = ("condition", "started_at", "last_reason", "status_note")
+        counts = ("turns_evaluated", "tokens_spent", "max_turns")
+        flags = ("run_to_completion", "paused", "met")
+        if not all(isinstance(goal.get(key), str) for key in strings):
+            return
+        if not all(_queue_count(goal.get(key)) for key in counts):
+            return
+        if not all(type(goal.get(key)) is bool for key in flags):
+            return
+        if "last_evaluated_at" not in goal or (
+            goal["last_evaluated_at"] is not None and not isinstance(goal["last_evaluated_at"], str)
+        ):
+            return
+        goal = {
+            **{key: goal[key] for key in strings},
+            **{key: int(goal[key]) for key in counts},
+            **{key: goal[key] for key in flags},
+            "last_evaluated_at": goal["last_evaluated_at"],
+        }
+    if generation_id in state._retired_goal_generation_ids:
+        return
+    if state.goal is not None:
+        if generation_id == state.goal["generation_id"]:
+            if revision <= state.goal["revision"]:
+                return
+        else:
+            state._retired_goal_generation_ids.add(state.goal["generation_id"])
+    state.goal = {
+        "generation_id": generation_id,
+        "revision": int(revision),
+        "source": content["source"],
+        "reason": reason,
+        "goal": goal,
+        "evaluation_met": content["evaluation_met"],
+    }
+
+
+def _on_background_delivery(state: PresentationState, event: AgentEvent) -> None:
+    content = event.content
+    required = ("job_id", "completion_id", "agent_type", "status", "task", "text", "disposition")
+    if event.sub_agent_info is not None or not all(isinstance(content.get(key), str) for key in required):
+        return
+    if not all(content[key] for key in ("job_id", "completion_id", "agent_type")):
+        return
+    if content["status"] not in ("completed", "failed", "cancelled", "interrupted"):
+        return
+    if content["disposition"] not in ("context", "archived"):
+        return
+    epoch_id = content.get("epoch_id")
+    metadata = content.get("metadata", {})
+    if (epoch_id is not None and not isinstance(epoch_id, str)) or not isinstance(metadata, dict):
+        return
+    completion_id = content["completion_id"]
+    if completion_id in state._background_completions:
+        return
+    state._background_completions.add(completion_id)
+    delivery = {key: content[key] for key in required if key != "text"}
+    delivery.update(epoch_id=epoch_id, metadata=deepcopy(metadata))
+    _append(
+        state,
+        ConversationItem(
+            kind="background_delivery",
+            text=content["text"],
+            status=content["status"],
+            background_delivery=delivery,
+            artifacts=list(event.artifacts),
+        ),
+        event,
+    )
+
 
 _USAGE_COUNTS = ("requests", "responses", "reported", "unreported", "failed", "open", "abandoned", "partial", "missing")
 _USAGE_TOKENS = (
@@ -1039,14 +1218,17 @@ def _on_control_requested(state: PresentationState, event: AgentEvent) -> None:
 
 def _on_control_resolved(state: PresentationState, event: AgentEvent) -> None:
     request_id = str(event.content.get("request_id") or "")
+    resolved_kind = str(event.content.get("kind") or "")
     for prompt in reversed(state.prompts):
         if prompt.request_id == request_id:
             response = event.content.get("response")
             prompt.response = dict(response) if isinstance(response, dict) else None
             prompt.reason = str(event.content.get("reason") or "answered")
+            resolved_kind = prompt.kind
             break
     if not any(not prompt.resolved for prompt in state.prompts):
-        state.activity = "generating"
+        between_turns = resolved_kind == "plan_approval" and not any(marker.ended_ms is None for marker in state.turns)
+        state.activity = "idle" if between_turns else "generating"
 
 
 def _on_system_message(state: PresentationState, event: AgentEvent) -> None:

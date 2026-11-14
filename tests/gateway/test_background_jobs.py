@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from kolega_code.agent.baseagent import BaseAgent
+from kolega_code.cli.session_event_store import FileSessionEventStore
 from kolega_code.gateway.adapters.telegram.formatting import chunk_text
 from kolega_code.gateway.daemon import ERROR_REPLY
 from kolega_code.gateway.redaction import scrub
@@ -317,6 +318,13 @@ async def test_running_base_agent_consumes_report_and_replies_without_extra_cont
         await asyncio.wait_for(jobs.wait_for_completion(), 2)
         assert jobs.pending_count == 1
         assert "distinct child report" not in all_sent_texts(adapter)
+        assert agent.session_recorder is not None
+        presentation = FileSessionEventStore(agent.session_recorder.journal)
+        assert not [
+            event
+            for event in await presentation.read(entry.session_id)
+            if event.event_type == "background_job_delivered"
+        ]
         release_tool.set()
         assert await wait_for(
             lambda: (
@@ -333,6 +341,15 @@ async def test_running_base_agent_consumes_report_and_replies_without_extra_cont
         assert not agent.background_needs_turn
         assert jobs.pending_count == 0
         assert not entry.completions
+        deliveries = [
+            event
+            for event in await presentation.read(entry.session_id)
+            if event.event_type == "background_job_delivered"
+        ]
+        assert len(deliveries) == 1
+        assert deliveries[0].content["job_id"] == "job-running"
+        assert deliveries[0].content["text"] == "distinct child report"
+        assert deliveries[0].sub_agent_info is None
     finally:
         release_tool.set()
         release_child.set()

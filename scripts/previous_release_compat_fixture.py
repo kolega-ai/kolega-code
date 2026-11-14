@@ -18,6 +18,7 @@ from typing import Any
 
 import kolega_code
 from kolega_code.cli import session_usage
+from kolega_code.cli.goal import GoalState
 from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import SettingsStore
@@ -93,6 +94,95 @@ _TASK_LIST: dict[str, Any] = {
         {"text": _TASK_LIST_TEXT, "status": "pending"},
     ],
 }
+
+_QUEUE_INITIAL: dict[str, Any] = {
+    "queue_id": "compat-queue",
+    "revision": 0,
+    "source": "tui",
+    "reason": "snapshot",
+    "items": [],
+    "compat_payload": {"preserve": [False, None, "future queue"]},
+}
+_QUEUE: dict[str, Any] = {
+    "queue_id": "compat-queue",
+    "revision": 1,
+    "source": "tui",
+    "reason": "enqueued",
+    "items": [
+        {"queue_id": "compat-local", "text": "Literal pending café 🐍 <preview>", "image_count": 2, "origin": None},
+        {
+            "queue_id": "compat-peer",
+            "text": "Peer preview",
+            "image_count": 0,
+            "origin": {"kind": "peer", "session_id": "compat-sender", "title": "Peer <literal>"},
+        },
+    ],
+    "compat_payload": {"preserve": [1, False, None, {"text": "future queue"}]},
+}
+_GOAL_INITIAL: dict[str, Any] = {
+    "generation_id": "compat-goal-generation",
+    "revision": 0,
+    "source": "tui",
+    "reason": "snapshot",
+    "goal": None,
+    "evaluation_met": None,
+    "compat_payload": {"preserve": [False, None, {"text": "future goal café 🐍 <literal>"}]},
+}
+_GOAL: dict[str, Any] = {
+    "generation_id": "compat-goal-generation",
+    "revision": 1,
+    "source": "tui",
+    "reason": "paused",
+    "goal": GoalState(
+        condition="Preserve literal goal — café 🐍 <literal> **unchanged**\n  "
+        + "without truncation " * 40
+        + "GOAL COMPAT END",
+        started_at="2026-11-12T10:00:00+00:00",
+        turns_evaluated=3,
+        tokens_spent=321,
+        last_reason="Remaining gap — café 🐍 <literal>\n" + "Keep the complete reason. " * 40 + "REASON COMPAT END",
+        last_evaluated_at="2026-11-12T10:01:00+00:00",
+        max_turns=17,
+        run_to_completion=True,
+        paused=True,
+        met=False,
+        status_note="Stopped by user — café 🐍 <literal>",
+    ).to_dict(),
+    "evaluation_met": False,
+    "compat_payload": {"preserve": [1, False, None, {"text": "future goal café 🐍 <literal>"}]},
+}
+
+
+def _plan_approval_events() -> list[tuple[str, dict[str, Any]]]:
+    events: list[tuple[str, dict[str, Any]]] = []
+    for index, action in enumerate(("implement_plan", "implement_plan_clear", "discuss_plan", None)):
+        request = {
+            "request_id": f"compat-plan-{index}",
+            "kind": "plan_approval",
+            "payload": {
+                "plan": "## Literal plan — café 🐍 <literal>\n" + "Preserve every step. " * 1000 + "PLAN COMPAT END",
+                "options": [
+                    {"id": "implement_plan", "label": "Implement plan"},
+                    {"id": "implement_plan_clear", "label": "Clear context and implement plan"},
+                    {"id": "discuss_plan", "label": "Discuss further"},
+                ],
+                "compat_payload": {"preserve": [False, None, {"text": "future plan"}]},
+            },
+        }
+        events.extend(
+            (
+                (KnownEventType.CONTROL_REQUESTED, {**copy.deepcopy(request), "has_controller": True}),
+                (
+                    KnownEventType.CONTROL_RESOLVED,
+                    {
+                        **copy.deepcopy(request),
+                        "response": {"action": action},
+                        "reason": "answered" if action is not None else "cancelled",
+                    },
+                ),
+            )
+        )
+    return events
 
 
 def _usage_payload(*, populated: bool) -> dict[str, Any]:
@@ -171,6 +261,41 @@ _SUB_AGENTS = (
         "total_tokens": 0,
     },
 )
+
+
+def _background_deliveries(epoch_id: str, turn_id: str, root: Path) -> list[dict[str, Any]]:
+    return [
+        {
+            "job_id": job_id,
+            "completion_id": f"compat-completion-{status}",
+            "agent_type": "general",
+            "status": status,
+            "task": f"Inspect the {status} background task — café 🐍",
+            "text": f"{status} report — café 🐍 <literal>\n" + "Preserve the complete report. " * 40 + f"{status} END",
+            "disposition": disposition,
+            "epoch_id": epoch_id,
+            "metadata": (
+                {
+                    "parent_tool_call_id": "compat-dispatch-parent",
+                    "turn_id": turn_id,
+                    "effective_routing": copy.deepcopy(_SUB_AGENTS[0]["info"]["effective_routing"]),
+                    "project_path": str(root.resolve()),
+                    "workspace_id": "compat-workspace",
+                    "thread_id": "compat-thread",
+                    "compat_future_metadata": {"preserve": [False, None, "future café 🐍"]},
+                }
+                if status == "completed"
+                else {}
+            ),
+            "compat_payload": {"preserve": [False, None, {"text": "future café 🐍 <literal>"}]},
+        }
+        for job_id, status, disposition in (
+            ("compat-parent", "completed", "context"),
+            ("compat-failed", "failed", "context"),
+            ("compat-cancelled", "cancelled", "context"),
+            ("compat-archived", "interrupted", "archived"),
+        )
+    ]
 
 
 def _producer_inventory() -> set[str]:
@@ -254,8 +379,10 @@ def _ui_types() -> set[str]:
     return {value for name, value in vars(KnownEventType).items() if name.isupper() and isinstance(value, str)}
 
 
-async def _write_ui(store: FileSessionEventStore, session_id: str, image: ArtifactRef) -> None:
-    for event_type in sorted(_ui_types() | {_UNKNOWN_UI}):
+async def _write_ui(
+    store: FileSessionEventStore, session_id: str, image: ArtifactRef, background_payloads: list[dict[str, Any]]
+) -> None:
+    for event_type in sorted((_ui_types() | {_UNKNOWN_UI}) - {KnownEventType.BACKGROUND_JOB_DELIVERED}):
         content: dict[str, Any] = {"compat_payload": {"preserve": [1, "future"]}}
         if event_type == KnownEventType.TURN_STARTED:
             content.update(turn_id="compat-mixed", user_text="current-release user", image_count=1)
@@ -263,6 +390,10 @@ async def _write_ui(store: FileSessionEventStore, session_id: str, image: Artifa
             content = copy.deepcopy(_TASK_LIST_INITIAL)
         elif event_type == KnownEventType.USAGE_UPDATED:
             content = _usage_payload(populated=False)
+        elif event_type == KnownEventType.QUEUE_UPDATED:
+            content = copy.deepcopy(_QUEUE_INITIAL)
+        elif event_type == KnownEventType.GOAL_UPDATED:
+            content = copy.deepcopy(_GOAL_INITIAL)
         await store.append(
             AgentEvent(
                 event_type=event_type,
@@ -295,6 +426,9 @@ async def _write_ui(store: FileSessionEventStore, session_id: str, image: Artifa
         ),
         (KnownEventType.TASK_LIST_UPDATED, {"markdown": _TASK_LIST["markdown"]}),
         (KnownEventType.USAGE_UPDATED, _usage_payload(populated=True)),
+        (KnownEventType.QUEUE_UPDATED, copy.deepcopy(_QUEUE)),
+        (KnownEventType.GOAL_UPDATED, copy.deepcopy(_GOAL)),
+        *_plan_approval_events(),
     ):
         await store.append(
             AgentEvent(event_type=event_type, sender="compat-fixture", session_id=session_id, content=content)
@@ -321,6 +455,15 @@ async def _write_ui(store: FileSessionEventStore, session_id: str, image: Artifa
                     content=content,
                 )
             )
+    for content in background_payloads:
+        await store.append(
+            AgentEvent(
+                event_type=KnownEventType.BACKGROUND_JOB_DELIVERED,
+                sender="compat-fixture",
+                session_id=session_id,
+                content=copy.deepcopy(content),
+            )
+        )
 
 
 def _message(role: str, text: str) -> Message:
@@ -357,12 +500,30 @@ def create_fixture(root: Path) -> dict:
         recorder = sessions.recorder(session_id)
         journal = recorder.journal
         image = ImageBlock("base64", "image/png", base64.b64encode(_IMAGE).decode("ascii"))
-        recorder.start_turn(Message(role="user", content=[TextBlock("current-release user"), image]))
+        launch_turn = recorder.start_turn(Message(role="user", content=[TextBlock("current-release user"), image]))
+        background_deliveries = _background_deliveries(journal.epoch_id, launch_turn, root)
+        background_jobs: list[dict[str, Any]] = []
+        for delivery in background_deliveries:
+            job = {
+                key: copy.deepcopy(delivery[key])
+                for key in ("job_id", "completion_id", "agent_type", "task", "metadata", "epoch_id")
+            }
+            job.update(status="queued", result="", delivered=False)
+            recorder.record_background_job_submitted(job, epoch_id=journal.epoch_id)
+            background_jobs.append(job)
         recorder.record_assistant(_message("assistant", "current-release assistant"))
         recorder.finish_turn("completed")
         recorder.start_turn(Message(role="user", content=[image]))
         recorder.record_assistant(_message("assistant", "current-release image response"))
         recorder.finish_turn("completed")
+        for job, delivery in zip(background_jobs, background_deliveries):
+            job.update(status=delivery["status"], result=delivery["text"])
+            recorder.record_background_job_terminal(job, epoch_id=journal.epoch_id)
+            job["archived"] = delivery["disposition"] == "archived"
+            inserted = recorder.record_background_completion(
+                job, _message("user", delivery["text"]), epoch_id=journal.epoch_id
+            )
+            assert inserted
         existing = {event.event_type for event in journal.read_events(repair_tail=False)}
         message = _message("user", "compat context").to_dict()
         for event_type in sorted(semantic_types - existing):
@@ -382,7 +543,8 @@ def create_fixture(root: Path) -> dict:
         image_ref = ArtifactRef(
             **journal.put_artifact(_IMAGE, media_type="image/png", purpose=ArtifactPurpose.IMAGE, encoding="base64")
         )
-        asyncio.run(_write_ui(FileSessionEventStore(journal), session_id, image_ref))
+        background_payloads = [*background_deliveries, copy.deepcopy(background_deliveries[0])]
+        asyncio.run(_write_ui(FileSessionEventStore(journal), session_id, image_ref, background_payloads))
         path = sessions.events_path_for(session_id)
         lines = path.read_bytes().splitlines()
         for index, line in enumerate(lines):
@@ -432,8 +594,15 @@ def create_fixture(root: Path) -> dict:
             "task_list": copy.deepcopy(_TASK_LIST),
             "usage_payloads": [_usage_payload(populated=False), _usage_payload(populated=True)],
             "usage": {"source_seq": 1, **_usage_payload(populated=True)["usage"]},
+            "queue_payloads": [copy.deepcopy(_QUEUE_INITIAL), copy.deepcopy(_QUEUE)],
+            "queue": {key: copy.deepcopy(value) for key, value in _QUEUE.items() if key != "compat_payload"},
+            "goal_payloads": [copy.deepcopy(_GOAL_INITIAL), copy.deepcopy(_GOAL)],
+            "goal": {key: copy.deepcopy(value) for key, value in _GOAL.items() if key != "compat_payload"},
+            "plan_approval_events": _plan_approval_events(),
             "image_sha256": hashlib.sha256(_IMAGE).hexdigest(),
             "sub_agents": copy.deepcopy(_SUB_AGENTS),
+            "background_delivery_payloads": copy.deepcopy(background_payloads),
+            "background_deliveries": copy.deepcopy(background_deliveries),
         }
     finally:
         sessions.release_session_locks()
@@ -477,6 +646,34 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
     assert all(event.sub_agent_info is None and event.schema_version == 2 for event in usage_events), (
         "Usage events changed scope or schema version"
     )
+    background_events = [event for event in ui_events if event.event_type == KnownEventType.BACKGROUND_JOB_DELIVERED]
+    assert [event.content for event in background_events] == manifest["background_delivery_payloads"], (
+        "Previous writer lost canonical background-delivery payloads"
+    )
+    assert all(event.sub_agent_info is None and event.schema_version == 2 for event in background_events), (
+        "Background-delivery events changed scope or schema version"
+    )
+    queue_events = [event for event in ui_events if event.event_type == KnownEventType.QUEUE_UPDATED]
+    assert [event.content for event in queue_events] == manifest["queue_payloads"], (
+        "Previous writer lost canonical queue payloads"
+    )
+    assert all(event.sub_agent_info is None and event.schema_version == 2 for event in queue_events), (
+        "Queue events changed scope or schema version"
+    )
+    goal_events = [event for event in ui_events if event.event_type == KnownEventType.GOAL_UPDATED]
+    assert [event.content for event in goal_events] == manifest["goal_payloads"], (
+        "Previous writer lost canonical goal payloads"
+    )
+    assert all(event.sub_agent_info is None and event.schema_version == 2 for event in goal_events), (
+        "Goal events changed scope or schema version"
+    )
+    plan_events = [event for event in ui_events if event.content.get("kind") == "plan_approval"]
+    assert [[event.event_type, event.content] for event in plan_events] == [
+        list(event) for event in manifest["plan_approval_events"]
+    ], "Previous writer lost complete plan-approval requests or resolutions"
+    assert all(event.sub_agent_info is None and event.schema_version == 2 for event in plan_events), (
+        "Plan-approval events changed scope or schema version"
+    )
     image_turns = [
         event
         for event in ui_events
@@ -495,6 +692,45 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
     state = replay(ui_events)
     assert state.task_list == manifest["task_list"], "Previous writer lost the complete latest task-list projection"
     assert state.usage == manifest["usage"], "Previous writer lost the latest usage projection"
+    assert state.queue == manifest["queue"], "Previous writer lost the latest queue projection"
+    assert state.goal == manifest["goal"], "Previous writer lost the complete latest goal projection"
+    goal_sequences = {event.seq for event in goal_events}
+    assert all(item.seq not in goal_sequences for item in state.conversation), (
+        "Goal observations invented transcript rows"
+    )
+    assert all(item.seq not in goal_sequences for activity in state.sub_agents.values() for item in activity.steps), (
+        "Goal observations invented worker steps"
+    )
+    assert KnownEventType.GOAL_UPDATED not in state.unknown_event_types, "Goal observation treated as unknown"
+    queue_sequences = {event.seq for event in queue_events}
+    assert all(item.seq not in queue_sequences for item in state.conversation), (
+        "Queue observations invented transcript rows"
+    )
+    assert KnownEventType.QUEUE_UPDATED not in state.unknown_event_types, "Queue observation treated as unknown"
+    for delivery in manifest["background_deliveries"]:
+        rows = [item for item in state.conversation if delivery["text"] in item.text]
+        assert len(rows) == 1, "Background-delivery projection lost, truncated or duplicated a full report"
+        row = rows[0]
+        first = next(
+            event for event in background_events if event.content["completion_id"] == delivery["completion_id"]
+        )
+        assert row.sub_agent is None and row.seq == first.seq, "Background-delivery projection lost root attribution"
+        assert (
+            row.kind == "background_delivery" and row.text == delivery["text"] and row.status == delivery["status"]
+        ), "Background-delivery projection changed report text or status"
+        assert row.background_delivery == {
+            key: value for key, value in delivery.items() if key not in {"text", "compat_payload"}
+        }, "Background-delivery projection lost identity, disposition or admission metadata"
+    background_sequences = {event.seq for event in background_events}
+    assert all(
+        item.seq not in background_sequences for activity in state.sub_agents.values() for item in activity.steps
+    ), "Background-delivery projection duplicated reports into worker steps"
+    assert set(state.sub_agents) == {worker["info"]["agent_id"] for worker in manifest["sub_agents"]}, (
+        "Background-delivery projection invented a worker from missing metadata"
+    )
+    assert KnownEventType.BACKGROUND_JOB_DELIVERED not in state.unknown_event_types, (
+        "Background-delivery projection treated a canonical event as unknown"
+    )
     image_rows = [item for item in state.conversation if item.kind == "user"]
     assert [(item.text, item.image_count) for item in image_rows] == [("current-release user", 1), ("", 1)]
     assert all([ref.sha256 for ref in item.artifacts] == [manifest["image_sha256"]] for item in image_rows)
@@ -537,6 +773,9 @@ def verify_after_previous(root: Path, manifest: dict) -> None:
         "Previous writer changed original session metadata"
     )
     history = loaded.history
+    assert all(manifest["goal"]["goal"]["condition"] not in str(message) for message in history), (
+        "Goal observations inflated semantic history"
+    )
     assert history[: len(manifest["original_history"])] == manifest["original_history"]
     appended_history = history[len(manifest["original_history"]) :]
     assert any(

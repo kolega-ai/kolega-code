@@ -25,7 +25,7 @@ from kolega_code.llm.models import Message, TextBlock
 from textual.pilot import Pilot
 from textual.widgets import Collapsible
 
-from ._app_test_utils import _build_mention_test_app, build_test_config, install_fake_agents
+from ._app_test_utils import _build_mention_test_app, build_test_config, install_fake_agents, wait_for_layout
 
 
 async def _wait(pilot: Pilot, predicate: Callable[[], bool]) -> None:
@@ -65,11 +65,7 @@ def _saved(store: SessionStore, project: Path, title: str = "Previous work") -> 
 
 
 async def _wait_for_settings_confirmation(pilot: Pilot, app: KolegaCodeApp) -> ConfirmSettingsActionScreen:
-    """Return the resume confirmation once its composed buttons are mounted.
-
-    ``push_screen_wait`` makes the screen current before its compose pass mounts
-    the dialog, so matching only the screen class can query an empty screen.
-    """
+    """Return the resume confirmation once its button is mounted and clickable."""
     await _wait(
         pilot,
         lambda: (
@@ -78,7 +74,18 @@ async def _wait_for_settings_confirmation(pilot: Pilot, app: KolegaCodeApp) -> C
         ),
     )
     assert isinstance(app.screen, ConfirmSettingsActionScreen)
-    return app.screen
+    screen = app.screen
+    button = screen.query_one("#settings_action_confirm")
+    await wait_for_layout(
+        pilot,
+        lambda: (
+            button.region.width > 0
+            and button.region.height > 0
+            and (button.region.x, button.region.y) in screen.region
+            and screen.get_widget_at(button.region.x, button.region.y)[0] is button
+        ),
+    )
+    return screen
 
 
 async def _wait_for_row(pilot: Pilot, app: KolegaCodeApp, session_id: str) -> RecentSessionRow:

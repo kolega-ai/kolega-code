@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
 from kolega_code.cli import theme as cli_theme
-from kolega_code.events import AgentEvent, ArtifactRef
+from kolega_code.events import AgentEvent, ArtifactPurpose, ArtifactRef, KnownEventType
 from kolega_code.session.store import ArtifactStore
 
 from .redaction import RedactionReport, redact_artifact_bytes, redact_event, shareable_artifacts
@@ -221,6 +221,24 @@ def _write_single_file(
 ) -> BundleResult:
     """Write the whole replay as one HTML document."""
     inlinable, omitted = _inlinable_images(artifacts)
+    # Reports are displayed in full, unlike ordinary tool-result previews.
+    # `artifacts` contains only blobs that passed export redaction; never read
+    # the live artifact store again here or inline unrelated provider payloads.
+    for event in events:
+        if event.event_type != KnownEventType.BACKGROUND_JOB_DELIVERED or event.sub_agent_info is not None:
+            continue
+        text = event.content.get("text")
+        if not isinstance(text, str):
+            continue
+        for ref in event.artifacts:
+            if (
+                ref.purpose == ArtifactPurpose.TOOL_RESULT
+                and str(ref.media_type or "").startswith("text/plain")
+                and f"characters elided; full payload sha256 {ref.sha256} …]" in text
+                and ref.sha256 in artifacts
+            ):
+                safe_ref, data = artifacts[ref.sha256]
+                inlinable[ref.sha256] = (safe_ref.media_type, data)
     warnings: list[str] = []
     if omitted:
         warnings.append(

@@ -135,7 +135,7 @@ def make_builder(llm: ScriptedLLM, agent_config: AgentConfig):
             project_path=Path(record.project_path),
             workspace_id=record.workspace_id,
             thread_id=record.thread_id,
-            connection_manager=kwargs["manager"],
+            connection_manager=kwargs["recording"],
             config=agent_config,
             permission_mode=kwargs["permission_mode"],
             permission_callback=kwargs["permission_callback"],

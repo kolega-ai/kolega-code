@@ -48,6 +48,7 @@ const GLYPHS = {
   system: "·",
   workflow: "◆",
   agent: "◈",
+  background_delivery: "↳",
 };
 const BAR_FILLED = "█";
 const BAR_EMPTY = "░";
@@ -82,6 +83,8 @@ let renderedCount = 0;
 let renderedEntries = [];
 let renderedTaskList;
 let renderedUsage;
+let renderedQueue;
+let renderedGoal;
 /** Tool entries the viewer has opened. Tool output is collapsed by default. */
 const expandedTools = new Set();
 /** Sub-agent key the transcript is narrowed to, or null for the whole thread. */
@@ -144,6 +147,8 @@ function cacheDom() {
     "turns",
     "subAgents",
     "taskList",
+    "queue",
+    "goal",
     "usage",
     "terminal",
     "gauge",
@@ -171,6 +176,8 @@ function cacheDom() {
   dom.terminal.setAttribute("aria-labelledby", "terminalOwner");
   renderTerminal();
   renderTaskList();
+  renderQueue();
+  renderGoal();
   renderUsage();
 }
 
@@ -1036,6 +1043,8 @@ function renderEntry(entry) {
   body.className = "kc-body";
   if (item.kind === "tool") {
     body.append(renderToolBody(item));
+  } else if (item.kind === "background_delivery") {
+    body.append(renderBackgroundDelivery(item));
   } else {
     body.textContent = item.text;
     if (item.kind === "user") {
@@ -1052,6 +1061,99 @@ function renderEntry(entry) {
   }
   row.append(body);
   return row;
+}
+
+function renderBackgroundDelivery(item) {
+  const delivery = item.background_delivery || item.backgroundDelivery;
+  const metadata = delivery.metadata || {};
+  const wrapper = document.createElement("section");
+  wrapper.className = "kc-background-delivery";
+  wrapper.dataset.completionId = delivery.completion_id;
+  wrapper.dataset.disposition = delivery.disposition;
+
+  const heading = document.createElement("div");
+  heading.className = "kc-background-heading";
+  heading.textContent = `Background report · ${delivery.agent_type} · ${delivery.status}`;
+  const disposition = document.createElement("div");
+  disposition.className = "kc-background-disposition";
+  disposition.textContent = delivery.disposition === "archived"
+    ? "Archived — NOT added to live context."
+    : "Delivered — added to live context.";
+  const task = document.createElement("div");
+  task.className = "kc-background-task";
+  task.textContent = `Task: ${delivery.task}`;
+  wrapper.append(heading, disposition, task);
+
+  const details = document.createElement("details");
+  details.className = "kc-background-details";
+  const summary = document.createElement("summary");
+  summary.textContent = "Report attribution";
+  details.append(summary);
+  const facts = [
+    ["Job", delivery.job_id],
+    ["Completion", delivery.completion_id],
+    ["Epoch", delivery.epoch_id],
+    ["Launch turn", metadata.turn_id],
+    ["Parent tool call", metadata.parent_tool_call_id],
+    ["Effective routing", metadata.effective_routing],
+    ["Workspace", metadata.workspace_id],
+    ["Thread", metadata.thread_id],
+    ["Project", metadata.project_path],
+  ];
+  for (const [label, value] of facts) {
+    const fact = document.createElement("div");
+    fact.textContent = `${label}: ${value == null ? "unknown" :
+      typeof value === "object" ? JSON.stringify(value) : String(value)}`;
+    details.append(fact);
+  }
+  const durable = document.createElement("pre");
+  durable.className = "kc-background-metadata";
+  durable.textContent = JSON.stringify(metadata, null, 2);
+  details.append(durable);
+  wrapper.append(details);
+
+  const report = document.createElement("div");
+  report.className = "kc-background-report";
+  report.textContent = item.text;
+  wrapper.append(report);
+  hydrateBackgroundReport(report, item, wrapper);
+  return wrapper;
+}
+
+const backgroundReportLoads = new Map();
+
+function hydrateBackgroundReport(report, item, wrapper) {
+  const ref = (item.artifacts || []).find((candidate) =>
+    candidate.purpose === "tool_result" &&
+    String(candidate.media_type || "").startsWith("text/plain") &&
+    item.text.includes(`characters elided; full payload sha256 ${candidate.sha256} …]`),
+  );
+  if (!ref) return;
+  const notice = document.createElement("div");
+  notice.className = "kc-background-artifact-notice";
+  notice.textContent = "Loading complete report…";
+  wrapper.append(notice);
+  const source = artifactSource(ref, true);
+  if (!source) {
+    notice.textContent = "Complete report unavailable; recorded preview shown.";
+    return;
+  }
+  let loaded = backgroundReportLoads.get(ref.sha256);
+  if (!loaded) {
+    loaded = fetch(source).then((response) => {
+      if (!response.ok) throw new Error("Report unavailable");
+      return response.text();
+    }).catch(() => null);
+    backgroundReportLoads.set(ref.sha256, loaded);
+  }
+  loaded.then((text) => {
+    if (text === null) {
+      notice.textContent = "Complete report unavailable; recorded preview shown.";
+    } else {
+      report.textContent = text;
+      notice.remove();
+    }
+  });
 }
 
 /** Identity for remembering whether one tool entry is open across re-renders. */
@@ -1135,12 +1237,13 @@ function renderToolBody(item) {
  * them from the artifact endpoint — which is gated on the same token and the
  * same shareable-purpose allowlist as everything else.
  */
-function artifactSource(ref) {
+function artifactSource(ref, text = false) {
   if (!/^[a-f0-9]{64}$/.test(ref.sha256)) return null;
   const inlined = globalThis.__KC_REPLAY__;
   if (inlined && inlined.artifacts && inlined.artifacts[ref.sha256]) {
     const source = inlined.artifacts[ref.sha256];
-    return typeof source === "string" && /^data:image\/[^,]+;base64,/i.test(source) ? source : null;
+    const allowed = text ? /^data:text\/plain(?:;\s*charset=utf-8)?;base64,/i : /^data:image\/[^,]+;base64,/i;
+    return typeof source === "string" && allowed.test(source) ? source : null;
   }
   // A single-file export has no sibling files, so an artifact missing from the
   // inline map above is simply unreachable — never a relative path that 404s.
@@ -1212,6 +1315,8 @@ function advanceSpinner() {
 function renderRail() {
   renderGauge();
   renderTaskList();
+  renderQueue();
+  renderGoal();
   renderUsage();
   renderSubAgents();
   renderTerminal();
@@ -1349,6 +1454,110 @@ function renderUsage() {
   ]) {
     usageRow(persistence, field, label, count);
   }
+}
+
+function renderGoal() {
+  const envelope = state.goal ?? null;
+  const snapshot = JSON.stringify(envelope);
+  if (renderedGoal === snapshot) return;
+  renderedGoal = snapshot;
+  const goal = envelope?.goal ?? null;
+  const status = envelope === null ? "unknown" : goal === null ? "no-goal" :
+    goal.met ? "met" : envelope.reason === "completed" ? "ended-unmet" : goal.paused ? "paused" : "active";
+  const labels = {
+    unknown: "Goal unknown",
+    "no-goal": "No goal",
+    active: "Active",
+    paused: "Paused",
+    met: "Met",
+    "ended-unmet": "Ended — unmet",
+  };
+  dom.goal.replaceChildren();
+  dom.goal.dataset.state = status;
+  const text = (parent, tag, className, value) => {
+    const node = document.createElement(tag);
+    node.className = className;
+    node.textContent = value;
+    parent.append(node);
+    return node;
+  };
+  text(dom.goal, "p", "kc-goal-summary", `Session-wide · ${labels[status]}`);
+  text(dom.goal, "p", "kc-goal-caveat",
+    "Read-only historical observation — not execution authority or recoverable goal state.");
+  text(dom.goal, "p", "kc-goal-observation", envelope === null ? "Source / reason unavailable" :
+    `${envelope.source === "tui" ? "TUI" : "ask"} · ${envelope.reason}`);
+  text(dom.goal, "p", "kc-goal-condition", goal?.condition ?? "Condition unavailable.");
+  const boolean = (value) => value === true ? "Yes" : value === false ? "No" : "Unavailable";
+  const details = document.createElement("dl");
+  details.className = "kc-goal-details";
+  for (const [field, label, value] of [
+    ["turns_evaluated", "Turns evaluated", goal?.turns_evaluated],
+    ["tokens_spent", "Tokens spent", goal?.tokens_spent],
+    ["max_turns", "Maximum turns", goal?.max_turns],
+    ["run_to_completion", "Run to completion", boolean(goal?.run_to_completion)],
+    ["evaluation_met", "Last verifier verdict", boolean(envelope?.evaluation_met)],
+    ["last_reason", "Last verifier reason", goal?.last_reason || "Unavailable"],
+    ["status_note", "Status note", goal?.status_note || "Unavailable"],
+    ["started_at", "Started at", goal?.started_at || "Unavailable"],
+    ["last_evaluated_at", "Last evaluated at", goal?.last_evaluated_at || "Unavailable"],
+  ]) {
+    text(details, "dt", "kc-goal-label", label);
+    const node = text(details, "dd", "kc-goal-value", value ?? "Unavailable");
+    node.dataset.field = field;
+  }
+  dom.goal.append(details);
+}
+
+function renderQueue() {
+  const queue = state.queue ?? null;
+  const snapshot = JSON.stringify(queue);
+  if (renderedQueue === snapshot) return;
+  renderedQueue = snapshot;
+  dom.queue.replaceChildren();
+  dom.queue.dataset.state = queue === null ? "unknown" : queue.items.length ? "populated" : "empty";
+  const text = (parent, tag, className, value) => {
+    const node = document.createElement(tag);
+    node.className = className;
+    node.textContent = value;
+    parent.append(node);
+    return node;
+  };
+  text(dom.queue, "p", "kc-queue-summary",
+    queue === null ? "Session-wide" :
+      `Session-wide · ${queue.items.length} recorded pending ${queue.items.length === 1 ? "input" : "inputs"}`);
+  text(dom.queue, "p", "kc-queue-caveat",
+    "Historical preview only — not recoverable pending input or semantic-delivery confirmation.");
+  if (queue === null) {
+    text(dom.queue, "p", "kc-empty", "Queue unknown. No queue recorded yet.");
+    return;
+  }
+  const reasons = {
+    snapshot: "Snapshot recorded.",
+    enqueued: "Input enqueued.",
+    dequeued: "Dequeued — removed for processing, not delivery confirmation.",
+    cleared: "Queue cleared.",
+    removed: "Input removed.",
+  };
+  text(dom.queue, "p", "kc-queue-observation",
+    `${queue.source === "tui" ? "TUI" : "ask"} · ${reasons[queue.reason]}`);
+  if (!queue.items.length) {
+    text(dom.queue, "p", "kc-empty", "Recorded queue is empty.");
+    return;
+  }
+  const list = document.createElement("ol");
+  list.className = "kc-queue-entries";
+  list.setAttribute("aria-label", "Recorded pending inputs in queue order");
+  for (const item of queue.items) {
+    const row = document.createElement("li");
+    row.className = "kc-queue-entry";
+    text(row, "p", "kc-queue-text", item.text);
+    text(row, "p", "kc-queue-origin", item.origin === null
+      ? "Origin not recorded"
+      : `Peer: ${item.origin.title} (${item.origin.session_id})`);
+    text(row, "p", "kc-queue-images", `${item.image_count} ${item.image_count === 1 ? "image" : "images"}`);
+    list.append(row);
+  }
+  dom.queue.append(list);
 }
 
 function renderTaskList() {

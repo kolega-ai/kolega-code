@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
-import httpx
+if TYPE_CHECKING:
+    import httpx
 
 from kolega_code.llm import cloudflare_workers_ai
 
@@ -155,6 +156,9 @@ def fetch_models(
     client: httpx.Client | None = None,
 ) -> dict[str, Any]:
     """Fetch every Text Generation model visible to the account, following pagination."""
+    # Refresh-only helper: keep httpx off the CLI start path.
+    import httpx
+
     url = cloudflare_workers_ai.models_search_url(account_id)
     headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
     owned = client is None

@@ -47,6 +47,8 @@ export function emptyState() {
     compaction: null,
     taskList: null,
     usage: null,
+    queue: null,
+    goal: null,
     status: "",
     activity: "idle",
     openBrowsers: new Set(),
@@ -58,6 +60,9 @@ export function emptyState() {
     tools: new Map(),
     peerMessages: new Map(),
     pendingPeerTurns: [],
+    backgroundCompletions: new Set(),
+    retiredQueueIds: new Set(),
+    retiredGoalGenerationIds: new Set(),
   });
 }
 
@@ -127,6 +132,112 @@ function subAgentKey(event) {
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function onQueueUpdated(state, event) {
+  const content = event.content;
+  if (event.sub_agent_info != null || !isRecord(content)) return;
+  if (typeof content.queue_id !== "string" || !content.queue_id || !usageCount(content.revision)) return;
+  if (!["tui", "ask"].includes(content.source)) return;
+  if (!["snapshot", "enqueued", "dequeued", "cleared", "removed"].includes(content.reason)) return;
+  if (!Array.isArray(content.items)) return;
+  const items = [];
+  const itemIds = new Set();
+  for (const item of content.items) {
+    if (!isRecord(item) || typeof item.queue_id !== "string" || !item.queue_id || itemIds.has(item.queue_id)) return;
+    if (typeof item.text !== "string" || !usageCount(item.image_count)) return;
+    let origin = item.origin;
+    if (origin !== null) {
+      if (!isRecord(origin) || origin.kind !== "peer" ||
+        typeof origin.session_id !== "string" || typeof origin.title !== "string") return;
+      origin = { kind: origin.kind, session_id: origin.session_id, title: origin.title };
+    }
+    items.push({ queue_id: item.queue_id, text: item.text, image_count: item.image_count, origin });
+    itemIds.add(item.queue_id);
+  }
+  if (state.retiredQueueIds.has(content.queue_id)) return;
+  if (state.queue !== null) {
+    if (content.queue_id === state.queue.queue_id) {
+      if (content.revision <= state.queue.revision) return;
+    } else {
+      state.retiredQueueIds.add(state.queue.queue_id);
+    }
+  }
+  state.queue = {
+    queue_id: content.queue_id,
+    revision: content.revision,
+    source: content.source,
+    reason: content.reason,
+    items,
+  };
+}
+
+function onGoalUpdated(state, event) {
+  const content = event.content;
+  if (event.sub_agent_info != null || !isRecord(content)) return;
+  if (typeof content.generation_id !== "string" || !content.generation_id || !usageCount(content.revision)) return;
+  if (!["tui", "ask"].includes(content.source)) return;
+  if (!["snapshot", "started", "replaced", "evaluated", "paused", "resumed", "completed", "cleared"]
+    .includes(content.reason)) return;
+  if (!("goal" in content) || !("evaluation_met" in content)) return;
+  if (content.evaluation_met !== null && typeof content.evaluation_met !== "boolean") return;
+  let goal = content.goal;
+  if (goal === null) {
+    if (!["snapshot", "cleared"].includes(content.reason)) return;
+  } else {
+    if (content.reason === "cleared" || !isRecord(goal)) return;
+    const strings = ["condition", "started_at", "last_reason", "status_note"];
+    const counts = ["turns_evaluated", "tokens_spent", "max_turns"];
+    const flags = ["run_to_completion", "paused", "met"];
+    if (!strings.every((key) => typeof goal[key] === "string")) return;
+    if (!counts.every((key) => usageCount(goal[key]))) return;
+    if (!flags.every((key) => typeof goal[key] === "boolean")) return;
+    if (goal.last_evaluated_at !== null && typeof goal.last_evaluated_at !== "string") return;
+    goal = Object.fromEntries([...strings, ...counts, ...flags, "last_evaluated_at"].map((key) => [key, goal[key]]));
+  }
+  if (state.retiredGoalGenerationIds.has(content.generation_id)) return;
+  if (state.goal !== null) {
+    if (content.generation_id === state.goal.generation_id) {
+      if (content.revision <= state.goal.revision) return;
+    } else {
+      state.retiredGoalGenerationIds.add(state.goal.generation_id);
+    }
+  }
+  state.goal = {
+    generation_id: content.generation_id,
+    revision: content.revision,
+    source: content.source,
+    reason: content.reason,
+    goal,
+    evaluation_met: content.evaluation_met,
+  };
+}
+
+function onBackgroundDelivery(state, event) {
+  const content = event.content || {};
+  const required = ["job_id", "completion_id", "agent_type", "status", "task", "text", "disposition"];
+  if (event.sub_agent_info != null || !required.every((key) => typeof content[key] === "string")) return;
+  if (!["job_id", "completion_id", "agent_type"].every((key) => content[key])) return;
+  if (!["completed", "failed", "cancelled", "interrupted"].includes(content.status)) return;
+  if (!["context", "archived"].includes(content.disposition)) return;
+  const epochId = content.epoch_id ?? null;
+  const metadata = content.metadata === undefined ? {} : content.metadata;
+  if ((epochId !== null && typeof epochId !== "string") || !isRecord(metadata)) return;
+  if (state.backgroundCompletions.has(content.completion_id)) return;
+  state.backgroundCompletions.add(content.completion_id);
+  const delivery = {};
+  for (const key of required) {
+    if (key !== "text") delivery[key] = content[key];
+  }
+  delivery.epoch_id = epochId;
+  delivery.metadata = JSON.parse(JSON.stringify(metadata));
+  append(state, newItem({
+    kind: "background_delivery",
+    text: content.text,
+    status: content.status,
+    backgroundDelivery: delivery,
+    artifacts: event.artifacts || [],
+  }), event);
 }
 
 const USAGE_COUNTS = [
@@ -248,6 +359,7 @@ function newItem(fields) {
     artifacts: fields.artifacts || [],
     imageCount: fields.imageCount || 0,
     editPreview: null,
+    backgroundDelivery: fields.backgroundDelivery ?? null,
   };
 }
 
@@ -725,16 +837,21 @@ const HANDLERS = {
   },
   control_resolved: (state, event) => {
     const requestId = String((event.content && event.content.request_id) || "");
+    let resolvedKind = String((event.content && event.content.kind) || "");
     for (let index = state.prompts.length - 1; index >= 0; index -= 1) {
       if (state.prompts[index].request_id === requestId) {
         const response = event.content && event.content.response;
         state.prompts[index].response =
           response && typeof response === "object" ? Object.assign({}, response) : null;
         state.prompts[index].reason = String((event.content && event.content.reason) || "answered");
+        resolvedKind = state.prompts[index].kind;
         break;
       }
     }
-    if (!state.prompts.some((prompt) => prompt.reason === null)) state.activity = "generating";
+    if (!state.prompts.some((prompt) => prompt.reason === null)) {
+      const betweenTurns = resolvedKind === "plan_approval" && !state.turns.some((turn) => turn.ended_ms === null);
+      state.activity = betweenTurns ? "idle" : "generating";
+    }
   },
   peer_message_received: (state, event) => onPeerMessage(state, event, "received"),
   peer_message_delivered: (state, event) => onPeerMessage(state, event, "delivered"),
@@ -751,6 +868,21 @@ export function fold(state, event) {
     state.lastSeq = event.seq;
   }
   state.elapsedMs = Math.max(state.elapsedMs, event.elapsed_ms || 0);
+
+  if (event.event_type === "queue_updated") {
+    onQueueUpdated(state, event);
+    return state;
+  }
+
+  if (event.event_type === "goal_updated") {
+    onGoalUpdated(state, event);
+    return state;
+  }
+
+  if (event.event_type === "background_job_delivered") {
+    onBackgroundDelivery(state, event);
+    return state;
+  }
 
   if (event.event_type === "usage_updated") {
     const content = event.content || {};
@@ -829,6 +961,7 @@ function itemDict(item) {
     ["tone", item.tone],
     ["sub_agent", item.subAgent],
     ["edit_preview", item.editPreview],
+    ["background_delivery", item.backgroundDelivery],
   ];
   for (const [key, value] of optional) {
     if (value !== null && value !== undefined) payload[key] = value;
@@ -885,6 +1018,8 @@ export function toDict(state) {
     compaction: state.compaction,
     task_list: state.taskList,
     usage: state.usage,
+    queue: state.queue === null ? null : JSON.parse(JSON.stringify(state.queue)),
+    goal: state.goal === null ? null : JSON.parse(JSON.stringify(state.goal)),
     prompts: state.prompts.map((prompt) => ({
       request_id: prompt.request_id,
       kind: prompt.kind,
