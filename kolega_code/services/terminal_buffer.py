@@ -384,29 +384,50 @@ class _StreamingLineCap:
         self._delta_lines = 0
         self._delta_bytes = 0
 
-    def append(self, text: str) -> bytes:
-        rendered: list[str] = []
-        for char in text:
-            if char == "\n":
-                rendered.append(char)
-                self._visible_bytes = 0
-                self._line_truncated = False
-                self._delta_line_counted = False
-                continue
+    def _count_truncated_line(self) -> None:
+        if not self._delta_line_counted:
+            self._delta_lines += 1
+            self._delta_line_counted = True
 
-            encoded_size = len(char.encode("utf-8"))
-            if not self._line_truncated and self._visible_bytes + encoded_size <= self._payload_bytes:
-                rendered.append(char)
-                self._visible_bytes += encoded_size
-                continue
-
-            if not self._line_truncated:
+    def _append_segment(self, segment: str, *, has_newline: bool, rendered: list[str]) -> None:
+        if not self._line_truncated:
+            encoded_len = len(segment.encode("utf-8"))
+            if self._visible_bytes + encoded_len <= self._payload_bytes:
+                if segment:
+                    rendered.append(segment)
+                    self._visible_bytes += encoded_len
+            else:
+                # Only the bytes that fit are retained; the rest of the logical
+                # line is dropped and accounted for in the delta stats.
+                remaining = self._payload_bytes - self._visible_bytes
+                prefix = segment[:remaining].encode("utf-8")[:remaining].decode("utf-8", "ignore")
+                used = len(prefix.encode("utf-8"))
+                rendered.append(prefix)
                 rendered.append(LINE_TRUNCATION_MARKER)
                 self._line_truncated = True
-            if not self._delta_line_counted:
-                self._delta_lines += 1
-                self._delta_line_counted = True
-            self._delta_bytes += encoded_size
+                self._visible_bytes += used
+                self._count_truncated_line()
+                self._delta_bytes += encoded_len - used
+        elif segment:
+            self._count_truncated_line()
+            self._delta_bytes += len(segment.encode("utf-8"))
+        if has_newline:
+            rendered.append("\n")
+            self._visible_bytes = 0
+            self._line_truncated = False
+            self._delta_line_counted = False
+
+    def append(self, text: str) -> bytes:
+        if not text:
+            return b""
+        rendered: list[str] = []
+        if "\n" not in text:
+            self._append_segment(text, has_newline=False, rendered=rendered)
+            return "".join(rendered).encode("utf-8")
+        parts = text.split("\n")
+        last = len(parts) - 1
+        for index, segment in enumerate(parts):
+            self._append_segment(segment, has_newline=index < last, rendered=rendered)
         return "".join(rendered).encode("utf-8")
 
     def take_delta_stats(self) -> tuple[int, int]:

@@ -83,6 +83,18 @@ def verify_goal_payloads(events: list, expected: list) -> None:
     )
 
 
+def verify_plan_approval_payloads(events: list, expected: list) -> None:
+    plans = [event for event in events if event.content.get("kind") == "plan_approval"]
+    require(
+        [[event.event_type, event.content] for event in plans] == [list(event) for event in expected],
+        "Previous release did not preserve complete plan-approval requests and resolutions",
+    )
+    require(
+        all(event.sub_agent_info is None and event.schema_version == 2 for event in plans),
+        "Previous release changed plan-approval scope or schema version",
+    )
+
+
 def main() -> None:
     root = Path(sys.argv[1])
     manifest = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
@@ -120,6 +132,7 @@ def main() -> None:
     verify_usage_payloads(presentation, manifest["usage_payloads"])
     verify_queue_payloads(presentation, manifest["queue_payloads"])
     verify_goal_payloads(presentation, manifest["goal_payloads"])
+    verify_plan_approval_payloads(presentation, manifest["plan_approval_events"])
 
     # Exercise real mutations, not a load-and-save no-op or a synthetic append.
     settings.active_theme = "compat-previous-theme"
@@ -141,6 +154,9 @@ def main() -> None:
     verify_usage_payloads(asyncio.run(FileSessionEventStore(journal).read(session_id)), manifest["usage_payloads"])
     verify_queue_payloads(asyncio.run(FileSessionEventStore(journal).read(session_id)), manifest["queue_payloads"])
     verify_goal_payloads(asyncio.run(FileSessionEventStore(journal).read(session_id)), manifest["goal_payloads"])
+    verify_plan_approval_payloads(
+        asyncio.run(FileSessionEventStore(journal).read(session_id)), manifest["plan_approval_events"]
+    )
     print(f"Previous release read {len(before)} records and appended {len(after) - len(before)} records", flush=True)
 
 

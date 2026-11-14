@@ -164,6 +164,11 @@ iteration after the first. Each run starts from a clean context and has to
 rediscover state from the repository, Git history, and any notes on disk — which
 is the point: nothing accumulates.
 
+Old-context background work is handled before the new context starts: the TUI
+retires its jobs, while headless `ask` waits for results and delivers their
+continuations before clearing history. Messages you queue during a TUI reset are
+retained and take priority over the scheduled turn in the fresh context.
+
 ## Stopping a loop
 
 | Action | Effect |
@@ -174,6 +179,11 @@ is the point: nothing accumulates.
 | `/clear` or `/reset` | Ends the loop along with the thread |
 | Rewinding | Ends the loop |
 | Iteration cap or expiry | Ends the loop and says which limit was hit |
+| Failed iteration | Ends the loop without scheduling an automatic retry |
+
+Expiry is checked before every fire, including the first cron fire and after
+preparing a fresh context. A deadline that passes during an iteration prevents
+the next iteration; it does not interrupt the running turn.
 
 Stopping is final: start a new loop with `/loop` rather than resuming. This
 differs from [`/goal`](./goal/), which pauses and resumes on your next message —

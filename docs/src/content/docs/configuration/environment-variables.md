@@ -232,7 +232,7 @@ so only what you change needs to be stored:
 | `gateway.pairing_enabled` | `false` | Let unknown senders request a pairing code, including the first user. Local CLI approval is required before agent access; with no authorized users this is pairing-only, not public access. |
 | `gateway.pairing_code_ttl_seconds` | `3600` | Pairing-code lifetime in seconds. |
 | `gateway.permission_mode` | `ask` | Session permission mode: `ask` or `auto`. `ask` confirms tools in the requesting chat, not with a separate machine owner; trusted users can approve their own tools and switch to `auto`. |
-| `gateway.request_timeout_seconds` | `600` | How long a permission/question prompt waits for a tap. |
+| `gateway.request_timeout_seconds` | `600` | How long a permission, question, or plan-approval prompt waits for a tap. |
 | `gateway.max_sessions` | `50` | Live-session cache size. |
 | `gateway.session_idle_ttl_seconds` | `3600` | Idle session eviction (`null` disables). |
 | `gateway.edit_throttle_seconds` | `1` | Minimum interval between edit-in-place streaming updates. |

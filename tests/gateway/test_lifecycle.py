@@ -168,6 +168,12 @@ async def test_startup_timeout_interrupts_initialization_but_retains_cleanup(
     monkeypatch.setattr(sessions, "LIFECYCLE_WAIT_SECONDS", 2.0)
     initializing, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
     agents: list[_RecorderAwareAgent] = []
+    wait_operation = AgentTurnHandler._wait_operation
+
+    async def wait_after_initialization(handler: AgentTurnHandler, owner: sessions._LifecycleOperation) -> Any:
+        # Exercise initialization timeout, not the preceding recording/presentation setup.
+        await asyncio.wait_for(initializing.wait(), 10)
+        return await wait_operation(handler, owner)
 
     async def initialize() -> list[str]:
         initializing.set()
@@ -186,6 +192,7 @@ async def test_startup_timeout_interrupts_initialization_but_retains_cleanup(
             await release.wait()
 
     monkeypatch.setattr(sessions, "CoderAgent", Agent)
+    monkeypatch.setattr(AgentTurnHandler, "_wait_operation", wait_after_initialization)
     request = asyncio.create_task(gateway._ensure_session(CHAT))
     try:
         await asyncio.wait_for(initializing.wait(), 10)
@@ -790,6 +797,14 @@ async def test_pruning_retains_every_eviction_before_waiting_for_blocked_cleanup
     for entry in gateway._registry._entries.values():
         entry.last_active -= 10000
     monkeypatch.setattr(sessions, "LIFECYCLE_WAIT_SECONDS", 0.05)
+    wait_operation = AgentTurnHandler._wait_operation
+
+    async def wait_after_eviction(handler: AgentTurnHandler, owner: sessions._LifecycleOperation) -> Any:
+        if owner.kind == "startup":
+            await asyncio.wait_for(entered.wait(), 10)
+        return await wait_operation(handler, owner)
+
+    monkeypatch.setattr(AgentTurnHandler, "_wait_operation", wait_after_eviction)
     request = asyncio.create_task(gateway._ensure_session(chat_ref("third")))
     try:
         await asyncio.wait_for(entered.wait(), 10)

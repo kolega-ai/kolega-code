@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from kolega_code.session.inbox import InboxRegistry
     from kolega_code.session.recording import RecordingConnectionManager
     from kolega_code.session.runtime import SessionRuntime
+    from kolega_code.session.turns import TurnController, TurnResult
     from kolega_code.session.queue import QueueReason
     from kolega_code.session.goal import GoalReason
     from kolega_code.session.background import BackgroundAgentManager
@@ -73,6 +74,7 @@ if TYPE_CHECKING:
     from .settings_screen import SettingsScreen
     from .startup import RecentSessionItem
     from .pacing import FlushPacer
+    from .plan_approval import PlanApprovalOwner
     from .sub_agent_screen import SubAgentInspectorScreen
     from .terminal_display import TerminalDisplayNormalizer
 
@@ -134,6 +136,7 @@ class KolegaAppBase(App):
         _share_server: ShareServer | None
         #: Owns the agent for control purposes and holds permission policy.
         session_runtime: SessionRuntime
+        _turn_controller: TurnController[tui_state.QueuedMessage]
         #: Carries prompts to this client and answers back, the same way any
         #: other frontend would.
         control_channel: ControlChannel
@@ -195,7 +198,7 @@ class KolegaAppBase(App):
         #: CancelledError can never honor a cooperative cancel.
         _stop_pending: bool
         _stop_force_after_seconds: float
-        _stop_watchdog: Timer | None
+        _stop_watchdog: asyncio.TimerHandle | None
         #: Deadline for post-turn session writes; a stall is reported, not waited on.
         _turn_save_timeout_seconds: float
         _workflow_activities: dict[str, tui_state.WorkflowActivity]
@@ -210,6 +213,11 @@ class KolegaAppBase(App):
         _plan_pending: bool
         _plan_reofferable: bool
         _plan_decision_active: bool
+        _plan_revision: int
+        _plan_approval_owner: PlanApprovalOwner | None
+        _plan_approval_tasks: set[asyncio.Task[None]]
+        _draining_plan_approval_tasks: set[asyncio.Task[None]]
+        _session_shutdown_task: asyncio.Task[None] | None
         _gigacode_enabled: bool
         _web_search_mode: str | None
         _usage_ledger: UsageLedger
@@ -332,6 +340,12 @@ class KolegaAppBase(App):
         def _refresh_planning_sidebar(self) -> None: ...
         def _restore_composer_placeholder(self) -> None: ...
         def _restore_plan_action_visibility(self) -> None: ...
+        def _plan_action_owned(self) -> bool: ...
+        def _plan_action_reserved(self) -> bool: ...
+        def _handle_plan_approval_request(self, event: AgentEvent) -> None: ...
+        def _wake_plan_approval(self) -> None: ...
+        def _invalidate_plan_approval(self) -> None: ...
+        async def _cancel_plan_approval(self) -> None: ...
         async def _reset_current_thread(self, *, preserve_loop: bool = False) -> None: ...
         async def _handoff_session(self, document: str) -> None: ...
         async def _save_session_async(self) -> None: ...
@@ -380,8 +394,13 @@ class KolegaAppBase(App):
         def _format_lsp_status(self) -> str: ...
         async def _persist_goal_async(self) -> None: ...
         async def _process_message(
-            self, message: str, attachments: list[dict] | None = None, *, turn_label: str | None = None
-        ) -> bool: ...
+            self,
+            message: str,
+            attachments: list[dict] | None = None,
+            *,
+            turn_label: str | None = None,
+            release_owner: bool = True,
+        ) -> TurnResult: ...
         def _schedule_maybe_start_queued_message(self) -> None: ...
         def _set_goal_state(self, goal: GoalState) -> None: ...
 

@@ -6,6 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Callable
 
 from acp.connection import StreamDirection, StreamEvent
+from acp.helpers import text_block, tool_content, update_tool_call
 from acp.interfaces import Client
 from acp.schema import (
     AcceptElicitationResponse,
@@ -14,11 +15,14 @@ from acp.schema import (
     ElicitationSchema,
     ElicitationStringPropertySchema,
     EnumOption,
+    PermissionOption,
 )
 
+from kolega_code.acp.agent_factory import _finish_cleanup
 from kolega_code.acp.permissions import CONTROL_REQUEST_ID_META_KEY, AcpPermissionBroker
 from kolega_code.events import AgentEvent, KnownEventType
 from kolega_code.permissions import PermissionDecision
+from kolega_code.session.plans import PLAN_APPROVAL_OPTIONS, PlanApprovalAction, plan_approval_action
 from kolega_code.session.runtime import deserialize_permission_request, deserialize_permission_rule_options
 from kolega_code.tools.core import ToolError
 
@@ -54,14 +58,31 @@ class AcpControlAdapter:
         request_id = str(event.content.get("request_id") or "")
         if event.event_type == KnownEventType.CONTROL_RESOLVED:
             task = self.tasks.get(request_id)
-            if task is not None and event.content.get("reason") != "answered":
+            if (
+                task is not None
+                and not task.cancelling()
+                and (event.content.get("reason") != "answered" or event.content.get("kind") == "plan_approval")
+            ):
                 task.cancel()
             return
         if event.event_type != KnownEventType.CONTROL_REQUESTED or not event.content.get("has_controller"):
             return
-        task = asyncio.create_task(self._handle_request(event), name=f"acp-control-{session.session_id}")
+        ready = asyncio.Event()
+
+        async def handle() -> None:
+            # Eager tasks must be registered before the transport can acknowledge delivery.
+            await ready.wait()
+            await self._handle_request(event)
+
+        task = asyncio.create_task(handle(), name=f"acp-control-{session.session_id}")
         self.tasks[request_id] = task
-        task.add_done_callback(lambda _task: self.tasks.pop(request_id, None))
+
+        def completed(done: asyncio.Task[None]) -> None:
+            if self.tasks.get(request_id) is done:
+                self.tasks.pop(request_id)
+
+        task.add_done_callback(completed)
+        ready.set()
 
     async def on_transport_message(self, event: StreamEvent) -> bool:
         if event.direction != StreamDirection.OUTGOING or event.message.get("method") not in {
@@ -79,7 +100,7 @@ class AcpControlAdapter:
         if not isinstance(request_id, str):
             return False
         session = self._session_provider()
-        if request_id not in self.tasks or session is None or session.runtime is None:
+        if request_id not in self.tasks or session is None or session.runtime is None or session.closed:
             return False
         await session.runtime.prompt_delivered(request_id)
         return True
@@ -91,10 +112,33 @@ class AcpControlAdapter:
         request_id = str(event.content.get("request_id") or "")
         kind = str(event.content.get("kind") or "")
         payload = event.content.get("payload")
-        if not request_id or not isinstance(payload, dict):
+        if not request_id:
             return
         runtime = session.runtime
         if not runtime.control.is_pending(request_id):
+            return
+        if kind == "plan_approval":
+            try:
+                action = await self._prompt_plan_approval(payload, request_id=request_id)
+            except asyncio.CancelledError:
+                if session.plan_approval_task is None or not session.plan_approval_task.cancelling():
+                    runtime.answer_plan_approval(request_id, None, client_id=self.client_id)
+                raise
+            except Exception:
+                action = None
+            if session.plan_approval_task is not None and session.plan_approval_task.cancelling():
+                return
+            task = asyncio.current_task()
+            if (
+                self._session_provider() is not session
+                or session.runtime is not runtime
+                or session.closed
+                or (task is not None and task.cancelling())
+            ):
+                action = None
+            runtime.answer_plan_approval(request_id, action, client_id=self.client_id)
+            return
+        if not isinstance(payload, dict):
             return
         if kind == "permission":
             request_data = payload.get("request")
@@ -135,6 +179,63 @@ class AcpControlAdapter:
                 )
                 return
             runtime.answer_question(request_id, {"answer": answer or None}, client_id=self.client_id)
+
+    async def _prompt_plan_approval(self, payload: object, *, request_id: str) -> PlanApprovalAction | None:
+        if not isinstance(payload, dict):
+            return None
+        plan = payload.get("plan")
+        if (
+            not isinstance(plan, str)
+            or not plan.strip()
+            or payload.get("options") != [{"id": action, "label": label} for action, label in PLAN_APPROVAL_OPTIONS]
+        ):
+            return None
+        conn = self._connection_provider()
+        if conn is None:
+            return None
+        session = self._session
+        if session.closed:
+            return None
+        tool_call = update_tool_call(
+            f"plan-approval-{session.session_id[:8]}",
+            title="Approve implementation plan?",
+            kind="other",
+            status="pending",
+            content=[tool_content(text_block(plan))],
+        )
+        options = [
+            PermissionOption(
+                option_id=action,
+                name=label,
+                kind="reject_once" if action == "discuss_plan" else "allow_once",
+            )
+            for action, label in PLAN_APPROVAL_OPTIONS
+        ]
+        response = await conn.request_permission(
+            session.session_id, tool_call, options, **{CONTROL_REQUEST_ID_META_KEY: request_id}
+        )
+        task = asyncio.current_task()
+        if (
+            self._session_provider() is not session
+            or session.runtime is None
+            or session.closed
+            or (session.plan_approval_task is not None and session.plan_approval_task.cancelling())
+            or (task is not None and task.cancelling())
+            or not session.runtime.control.is_pending(request_id)
+        ):
+            return None
+        # Embedded clients without a transport observer acknowledge at reply.
+        await session.runtime.prompt_delivered(request_id)
+        outcome = response.get("outcome") if isinstance(response, dict) else getattr(response, "outcome", None)
+        if isinstance(outcome, dict):
+            if outcome.get("outcome") != "selected":
+                return None
+            option_id = outcome.get("optionId")
+        else:
+            if getattr(outcome, "outcome", None) != "selected":
+                return None
+            option_id = getattr(outcome, "option_id", None)
+        return plan_approval_action(option_id)
 
     async def request_question(self, question: str, labels: list[str], descriptions: list[str]) -> str:
         session = self._session_provider()
@@ -195,12 +296,17 @@ class AcpControlAdapter:
         raise ToolError("The user declined to answer the question.")
 
     async def shutdown(self) -> None:
-        tasks = list(self.tasks.values())
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        self.tasks.clear()
         if self._session.runtime is not None:
             self._session.runtime.control.release(self.client_id)
-        self._broker = None
+        tasks = list(self.tasks.values())
+        for task in tasks:
+            if not task.cancelling():
+                task.cancel()
+
+        async def join() -> None:
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            self.tasks.clear()
+            self._broker = None
+
+        await _finish_cleanup(join())

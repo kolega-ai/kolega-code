@@ -22,7 +22,7 @@ from kolega_code.cli.tui.tool_presentation import command_preview, edit_previews
 from kolega_code.cli.tui.widgets import ToolEntryWidget
 from kolega_code.tool_subjects import build_tool_display, build_tool_subject
 
-from ._app_test_utils import _build_sub_agent_test_app, _sub_agent_event
+from ._app_test_utils import _build_sub_agent_test_app, _sub_agent_event, wait_for_layout
 from .test_tool_subject_titles import _wait_for_layout
 
 
@@ -288,6 +288,7 @@ async def test_subagent_receives_command_details_and_accumulates_patch_files(
 ) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
     command = "echo one\necho two"
+    expected_preview = "$ echo one\n  echo two"
     async with app.run_test(size=(120, 40)) as pilot:
         event = _sub_agent_event(message_type="tool_call", text="Calling exec_command", tool_description="exec_command")
         event.content.update(tool_call_id="child", tool_display={"command": command})
@@ -314,17 +315,21 @@ async def test_subagent_receives_command_details_and_accumulates_patch_files(
         def child_entry() -> ToolEntryWidget | None:
             return next((entry for entry in screen.query(ToolEntryWidget) if entry.entry.tool_call_id == "child"), None)
 
-        def child_preview_mounted() -> bool:
-            # Textual mounts a composed subtree over several event-loop turns, so the parent
-            # ToolEntryWidget is queryable before its ``.tool-command-preview`` child exists;
-            # cover the child in the wait instead of querying it once the parent appears.
+        def child_preview_ready() -> bool:
+            # The composed child exists before its parent's mount refresh enables it.
             entry = child_entry()
-            return entry is not None and bool(entry.query(".tool-command-preview"))
+            return entry is not None and any(
+                preview.display and str(preview.render()) == expected_preview
+                for preview in entry.query(".tool-command-preview")
+            )
 
-        await _wait_for_layout(pilot, lambda: len(screen.query(ToolEntryWidget)) == 2 and child_preview_mounted())
+        await wait_for_layout(pilot, lambda: len(screen.query(ToolEntryWidget)) == 2 and child_preview_ready())
         widget = child_entry()
         assert widget is not None
-        assert widget.query_one(".tool-command-preview", Static).display
+        preview = widget.query_one(".tool-command-preview", Static)
+        assert preview.display
+        assert str(preview.render()) == expected_preview
+        assert widget._details_text == command
         await pilot.press("escape")
 
 

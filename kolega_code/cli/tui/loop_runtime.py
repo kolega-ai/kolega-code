@@ -21,6 +21,8 @@ from __future__ import annotations
 import asyncio
 
 from kolega_code.agent import PromptExtension
+from kolega_code.session.automation import AutomationDriver, LoopDecision, LoopHooks, LoopOutcome
+from kolega_code.session.turns import TurnResult
 
 from .. import messages
 from ..loop import (
@@ -30,7 +32,6 @@ from ..loop import (
     LoopError,
     LoopSpec,
     LoopState,
-    build_loop_iteration_prompt,
     build_loop_prompt_extension_markdown,
     format_countdown,
     loop_status_summary,
@@ -214,17 +215,22 @@ class LoopRuntimeMixin(tui_app_base.KolegaAppBase):
     # Scheduling
     # ------------------------------------------------------------------
 
-    def _loop_ready_to_fire(self) -> bool:
+    def _loop_ready_to_fire(self, *, owned: bool = False) -> bool:
         """Whether the app is idle enough to start a scheduled iteration."""
         settings_screen = getattr(self, "_settings_screen", None)
         return (
             self.agent is not None
             and not (settings_screen is not None and settings_screen.mcp_busy)
-            and not self._loop_iteration_active
-            and not self._turn_active
-            and self.agent_worker is None
             and not self._agent_execution_draining()
-            and not self._queued_messages
+            and (owned or (not self._loop_iteration_active and not self._turn_active and self.agent_worker is None))
+            and not self._startup_pending
+            and not self._exit
+            and getattr(self, "_session_shutdown_task", None) is None
+            and not self._background_rebuilding
+            and self._background_retirement is None
+            and self._pending_workspace_switch is None
+            and not self._handoff_in_progress
+            and not self._rewind_running
             and self._pending_question is None
             and self._pending_approval is None
             and self._pending_model_selection is None
@@ -236,36 +242,39 @@ class LoopRuntimeMixin(tui_app_base.KolegaAppBase):
     async def _loop_tick(self) -> None:
         """One scheduler tick: end, defer, or fire."""
         state = self._scheduled_loop
-        if state is None or state.stopped or self._agent_execution_draining():
+        if state is None:
             return
 
-        now = now_local()
-        if state.is_expired(now):
+        decision = AutomationDriver(self._turn_controller).loop_decision(
+            state, ready=self._loop_ready_to_fire(), now=now_local()
+        )
+        if decision is LoopDecision.EXPIRED:
             await self._stop_loop(messages.LOOP_EXPIRED.format(iterations=state.iterations))
             return
-        if state.reached_cap:
+        if decision is LoopDecision.CAPPED:
             await self._stop_loop(
                 messages.LOOP_MAX_ITERATIONS.format(max_iterations=state.max_iterations),
                 tone="info",
             )
             return
 
-        if not state.is_due(now):
-            state.deferred = False
+        if decision in (LoopDecision.WAIT, LoopDecision.DEFER):
             self._refresh_loop_status_if_changed()
             return
-
-        if not self._loop_ready_to_fire():
-            state.deferred = True
-            self._refresh_loop_status_if_changed()
+        if decision is not LoopDecision.FIRE:
             return
 
-        state.deferred = False
         self._launch_loop_iteration()
 
     def _launch_loop_iteration(self) -> bool:
         """Start one iteration in the exclusive ``turns`` worker group."""
-        if self._scheduled_loop is None or self.agent is None or self._agent_execution_draining():
+        if (
+            self._scheduled_loop is None
+            or AutomationDriver(self._turn_controller).loop_decision(
+                self._scheduled_loop, ready=self._loop_ready_to_fire(), now=now_local()
+            )
+            is not LoopDecision.FIRE
+        ):
             return False
         # Set before run_worker so a tick landing between here and the worker's
         # first await cannot start a second iteration.
@@ -328,68 +337,86 @@ class LoopRuntimeMixin(tui_app_base.KolegaAppBase):
             self.agent_worker = None
             return
         iteration_mark = self._usage_ledger.snapshot()
-        # ``_process_message`` owns ``agent_worker`` for its whole lifetime and
-        # releases it in its own finally. Any path that returns *before* calling
-        # it has to release the worker itself, or the app stays permanently
-        # "busy" and no further turn — typed or scheduled — can ever start.
-        turn_started = False
-        try:
-            state.mark_fired()
-            iteration = state.iterations
-            self._sync_loop_to_session()
+        failure = ""
 
-            if state.fresh and iteration > 1:
-                await self._reset_current_thread(preserve_loop=True)
-                if self.agent_worker is not owner:
-                    return
+        async def reset_context() -> None:
+            await self._reset_current_thread(preserve_loop=True)
+            if self.agent_worker is owner:
                 self._add_conversation_entry(
                     tui_state.ConversationEntry(kind="system", content=messages.LOOP_ITERATION_FRESH)
                 )
 
+        async def prepare_prompt() -> str | None:
             try:
                 prompt = self._resolve_loop_prompt(state)
             except LoopError as exc:
                 await self._stop_loop(str(exc))
-                return
+                return None
             if prompt is None:
                 await self._stop_loop(messages.LOOP_MD_GONE)
-                return
+                return None
+            return self._apply_loop_skill_prefix(prompt)
 
+        async def started() -> None:
+            self._sync_loop_to_session()
             self._add_conversation_entry(
                 tui_state.ConversationEntry(
                     kind="system",
                     content=messages.LOOP_ITERATION_STARTED.format(
-                        iteration=iteration,
+                        iteration=state.iterations,
                         max_iterations=state.max_iterations,
                         schedule=state.schedule_label(),
                     ),
                 )
             )
 
-            prompt = self._apply_loop_skill_prefix(prompt)
-            turn_prompt = build_loop_iteration_prompt(
-                prompt, iteration=iteration, max_iterations=state.max_iterations, fresh=state.fresh
+        async def run_turn(prompt: str) -> TurnResult:
+            nonlocal failure
+            result = await self._process_message(
+                prompt, turn_label=f"Loop {state.iterations}: {state.prompt}", release_owner=False
             )
-            turn_started = True
-            cancelled = await self._process_message(turn_prompt, turn_label=f"Loop {iteration}: {prompt}")
-            if self._agent_execution_draining():
+            failure = result.error
+            return result
+
+        try:
+            outcome = await AutomationDriver(self._turn_controller).run_loop_iteration(
+                state,
+                LoopHooks(
+                    run_turn=run_turn,
+                    prepare_prompt=prepare_prompt,
+                    drain_tokens=lambda: self._drain_loop_tokens(state, iteration_mark),
+                    reset_context=reset_context,
+                    started=started,
+                    is_current=lambda: self._scheduled_loop is state,
+                    ready=lambda: self._loop_ready_to_fire(owned=True),
+                ),
+            )
+            if self.agent_worker is not owner or self._agent_execution_draining():
                 return
-            if cancelled:
-                self._drain_loop_tokens(state, iteration_mark)
-                await self._stop_loop(messages.LOOP_STOPPED_BY_USER.format(iterations=iteration))
+            if outcome is LoopOutcome.CANCELLED:
+                await self._stop_loop(messages.LOOP_STOPPED_BY_USER.format(iterations=state.iterations))
+                return
+            if outcome is LoopOutcome.FAILED:
+                await self._stop_loop(messages.LOOP_STOPPED_AFTER_FAILED_TURN.format(error=failure))
                 return
 
-            self._drain_loop_tokens(state, iteration_mark)
-            state.advance_after_completion()
             await self._persist_loop_async()
             self._refresh_status_dashboard()
         except asyncio.CancelledError:
             # Cancelled outside the turn stream (for example during a --fresh
             # thread reset), where _run_turn_stream never saw the cancellation.
-            self._mark_loop_stopped(messages.LOOP_STOPPED_BY_USER.format(iterations=state.iterations))
+            if self.agent_worker is owner and self._scheduled_loop is state:
+                self._mark_loop_stopped(messages.LOOP_STOPPED_BY_USER.format(iterations=state.iterations))
+                await self._persist_loop_async()
+            raise
+        except Exception as exc:
+            if self.agent_worker is owner and self._scheduled_loop is state:
+                await self._stop_loop(messages.LOOP_STOPPED_AFTER_FAILED_TURN.format(error=str(exc)))
             raise
         finally:
-            self._loop_iteration_active = False
-            if not turn_started and self.agent_worker is owner:
+            if self.agent_worker is owner:
+                self._loop_iteration_active = False
                 self.agent_worker = None
+                if self._stop_pending:
+                    self._force_settle_stop()
                 self._schedule_maybe_start_queued_message()

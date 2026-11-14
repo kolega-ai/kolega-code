@@ -132,6 +132,51 @@ def test_streaming_line_cap_cannot_be_bypassed_across_reads():
     assert fourth.text == "\nnext\n"
 
 
+def test_streaming_line_cap_caps_each_line_in_one_chunk():
+    payload_chars = LINE_CAP_BYTES - len(LINE_TRUNCATION_MARKER.encode("utf-8"))
+    accumulator = TerminalOutputAccumulator(None)
+    head = "a" * 2_000
+    short = "b" * 50
+    tail = "c" * 2_000
+    accumulator.append_text(f"{head}\n{short}\n{tail}\n")
+
+    result = accumulator.read_delta(10_000)
+    lines = result.text.split("\n")[:-1]
+
+    assert lines == [
+        "a" * payload_chars + LINE_TRUNCATION_MARKER,
+        short,
+        "c" * payload_chars + LINE_TRUNCATION_MARKER,
+    ]
+    assert result.line_truncated_count == 2
+    assert result.line_truncated_bytes == 2 * (2_000 - payload_chars)
+
+
+def test_streaming_line_cap_does_not_split_multibyte_at_boundary():
+    accumulator = TerminalOutputAccumulator(None)
+    accumulator.append_text("€" * 1_000)
+
+    result = accumulator.read_delta(10_000)
+
+    assert "\ufffd" not in result.text
+    assert result.text.endswith(LINE_TRUNCATION_MARKER)
+    prefix = result.text[: -len(LINE_TRUNCATION_MARKER)]
+    assert prefix == "€" * 334
+    assert len(result.text.encode("utf-8")) <= LINE_CAP_BYTES
+
+
+def test_streaming_line_cap_preserves_consecutive_and_trailing_newlines():
+    accumulator = TerminalOutputAccumulator(None)
+    accumulator.append_text("\n\nx\ny\n")
+
+    result = accumulator.read_delta(10_000)
+
+    assert result.text == "\n\nx\ny\n"
+    assert result.truncated is False
+    assert result.line_truncated_count == 0
+    assert result.line_truncated_bytes == 0
+
+
 def test_split_utf8_is_normalized_before_spill_and_preview(tmp_path):
     accumulator = TerminalOutputAccumulator(TerminalSpillStore(tmp_path / "terminal-output"))
     euro = "€".encode("utf-8")
