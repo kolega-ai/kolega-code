@@ -76,8 +76,8 @@ class TurnRenderer:
         # agent rotates it at tool rounds and thinking transitions), and each
         # segment becomes one chat bubble.
         self._segment_uuid: Optional[str] = None
-        self._segment_text = ""
-        self._total_text = ""
+        self._segment_parts: list[str] = []
+        self._total_parts: list[str] = []
         self._reply_id: Optional[str] = None
         self._edited_text = ""
         self._last_flush = 0.0
@@ -114,7 +114,7 @@ class TurnRenderer:
                 content = chunk.get("content") or ""
                 chunk_uuid = str(chunk.get("uuid") or "")
                 complete = bool(chunk.get("complete"))
-                self._total_text += content
+                self._total_parts.append(content)
                 if self._reply_id is not None and chunk_uuid and chunk_uuid != self._segment_uuid:
                     # The agent rotated the segment uuid: settle this bubble,
                     # the next content opens a fresh one (the TUI's rule).
@@ -125,12 +125,12 @@ class TurnRenderer:
                         # flushes one after every tool round) — same drop rule
                         # as the TUI.
                         self._segment_uuid = chunk_uuid
-                    self._segment_text += content
+                    self._segment_parts.append(content)
                     await self._flush_segment(final=complete)
-                if complete and (self._reply_id is not None or self._segment_text):
+                if complete and (self._reply_id is not None or self._segment_parts):
                     await self._finalize_segment()
             await self._finalize_segment()
-            return self._total_text
+            return "".join(self._total_parts)
         finally:
             for task in (pump, typing):
                 if task is not None:
@@ -164,16 +164,16 @@ class TurnRenderer:
         # A new bubble for the next segment.
         self._reply_id = None
         self._edited_text = ""
-        self._segment_text = ""
+        self._segment_parts = []
         self._segment_uuid = None
 
     async def _flush_segment(self, final: bool) -> None:
-        text = self._segment_text
-        if not text:
+        if not self._segment_parts:
             return
         now = self._monotonic()
         if not final and now - self._last_flush < self._edit_throttle:
             return
+        text = "".join(self._segment_parts)
         self._last_flush = now
         chunks = chunk_text(text, self._chunk_limit)
         if self._reply_id is None:
