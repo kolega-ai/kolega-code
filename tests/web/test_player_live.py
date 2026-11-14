@@ -13,13 +13,13 @@ from a unit test of either end.
 
 from __future__ import annotations
 
-import asyncio
+import base64
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from kolega_code.cli.session_event_store import FileSessionEventStore
+from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.events import AgentEvent, KnownEventType
 from kolega_code.web.hosting import ShareServer
@@ -57,16 +57,15 @@ async def _append(
     await events.append(event)
 
 
-async def _wait_for(page: Any, predicate, *, timeout: float = 10.0) -> Any:
-    """Poll the page until the live stream has delivered. Never assert on a sleep."""
-    deadline = asyncio.get_running_loop().time() + timeout
-    snapshot = await page.evaluate(_SNAPSHOT_JS)
-    while asyncio.get_running_loop().time() < deadline:
-        if predicate(snapshot):
-            return snapshot
-        await asyncio.sleep(0.1)
-        snapshot = await page.evaluate(_SNAPSHOT_JS)
-    return snapshot
+async def _wait_for(page: Any, predicate: str, *, timeout: float = 10.0) -> Any:
+    handle = await page.wait_for_function(
+        f"() => {{ const snapshot = ({_SNAPSHOT_JS})(); return ({predicate})(snapshot) && snapshot; }}",
+        timeout=timeout * 1000,
+    )
+    try:
+        return await handle.json_value()
+    finally:
+        await handle.dispose()
 
 
 @pytest.mark.asyncio
@@ -92,14 +91,16 @@ async def test_a_share_link_follows_the_session_as_it_runs(tmp_path: Path) -> No
             page = await browser.new_page()
             errors: list[str] = []
             page.on("pageerror", lambda error: errors.append(str(error)))
-            await page.goto(url)
+            async with page.expect_websocket() as attached_socket:
+                await page.goto(url)
+            stream = await attached_socket.value
             await page.wait_for_selector(".kc-entry")
 
             # Entries render from the initial HTTP fetch while the live socket is
             # still CONNECTING, so the first rendered state is "detached"; the
             # badge only flips to "following" when the socket opens. Asserting
             # right after the entries appeared raced on loaded CI runners.
-            opened = await _wait_for(page, lambda snap: snap["liveState"] == "following")
+            opened = await _wait_for(page, "snap => snap.liveState === 'following'")
             assert opened["liveState"] == "following", "the player never attached its live stream"
             assert not opened["liveHidden"], "a live session must advertise itself"
 
@@ -111,7 +112,7 @@ async def test_a_share_link_follows_the_session_as_it_runs(tmp_path: Path) -> No
                 events, KnownEventType.ASSISTANT_DELTA, elapsed_ms=300, uuid="as", text="Answered live.", complete=True
             )
 
-            arrived = await _wait_for(page, lambda snap: "Answered live." in snap["text"])
+            arrived = await _wait_for(page, "snap => snap.text.includes('Answered live.')")
             assert "before and after." in arrived["text"], "reasoning must accumulate across the join"
             assert "Answered live." in arrived["text"]
 
@@ -119,21 +120,24 @@ async def test_a_share_link_follows_the_session_as_it_runs(tmp_path: Path) -> No
             await page.eval_on_selector("#scrub", "(el) => { el.value = '0'; el.dispatchEvent(new Event('input')); }")
             behind = await page.evaluate(_SNAPSHOT_JS)
             assert behind["liveState"] == "behind"
-            await _append(
-                events,
-                KnownEventType.ASSISTANT_DELTA,
-                elapsed_ms=400,
-                uuid="as2",
-                text="Missed while reading.",
-                complete=True,
-            )
-            await asyncio.sleep(0.6)
+            async with stream.expect_event(
+                "framereceived", predicate=lambda payload: "Missed while reading." in str(payload)
+            ):
+                await _append(
+                    events,
+                    KnownEventType.ASSISTANT_DELTA,
+                    elapsed_ms=400,
+                    uuid="as2",
+                    text="Missed while reading.",
+                    complete=True,
+                )
+            await page.wait_for_function("() => document.getElementById('meta').textContent.startsWith('5 events')")
             held = await page.evaluate(_SNAPSHOT_JS)
             assert "Missed while reading." not in held["text"], "a viewer reading history must not be yanked forward"
 
             # ...and the button brings them back to the edge.
             await page.click("#live")
-            caught_up = await _wait_for(page, lambda snap: "Missed while reading." in snap["text"])
+            caught_up = await _wait_for(page, "snap => snap.text.includes('Missed while reading.')")
             assert caught_up["liveState"] == "following"
         finally:
             await browser.close()
@@ -242,21 +246,124 @@ async def test_a_served_session_renders_an_image_from_the_artifact_endpoint(tmp_
     assert f"/api/sessions/{SESSION_ID}/artifacts/{ref.sha256}" in shown["src"]
 
 
-async def _wait_for_image(page: Any, *, timeout: float = 10.0):
+@pytest.mark.asyncio
+@pytest.mark.parametrize("live", [False, True], ids=["served-replay", "served-live"])
+async def test_user_images_load_and_fail_safely_in_served_sessions(tmp_path: Path, live: bool) -> None:
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    store = SessionStore(tmp_path / "state")
+    store.create(tmp_path, "cli", {}, session_id=SESSION_ID, title="user pictures")
+    journal = store.journal(SESSION_ID)
+    artifacts = FileArtifactStore(journal)
+    image = await artifacts.put(png, media_type="image/png", purpose="image", encoding="base64")
+    second = await artifacts.put(png + b"second", media_type="image/png", purpose="image", encoding="base64")
+    corrupt = await artifacts.put(b"not a PNG", media_type="image/png", purpose="image", encoding="base64")
+    missing = image.model_copy(update={"sha256": "e" * 64})
+    opaque = image.model_copy(update={"sha256": "d" * 64, "purpose": "provider_signature"})
+    text_ref = image.model_copy(update={"sha256": "f" * 64, "media_type": "text/plain"})
+    unsafe = image.model_copy(update={"sha256": "https://forbidden.invalid/image.png"})
+    image.path = "https://forbidden.invalid/path.png"
+    events = FileSessionEventStore(journal)
+    first = AgentEvent(
+        session_id=SESSION_ID,
+        sender="agent",
+        event_type=KnownEventType.TURN_STARTED,
+        content={"turn_id": "mixed", "user_text": "compare", "image_count": 2},
+        artifacts=[image, second],
+    )
+    await events.append(first)
+    later = [
+        AgentEvent(
+            session_id=SESSION_ID,
+            sender="agent",
+            event_type=KnownEventType.TURN_STARTED,
+            elapsed_ms=index * 100,
+            content={"turn_id": f"t{index}", "user_text": text, "image_count": count},
+            artifacts=refs,
+        )
+        for index, (text, refs, count) in enumerate(
+            [
+                ("", [image], 1),
+                ("", [missing, corrupt], 3),
+                ("unsafe refs", [opaque, text_ref, unsafe], None),
+                ("", [], None),
+            ],
+            1,
+        )
+    ]
+    if not live:
+        for event in later:
+            await events.append(event)
+        await _append(events, KnownEventType.TURN_ENDED, elapsed_ms=500, turn_id="t4", status="completed")
+    server = ShareServer(store, session_id=SESSION_ID)
+    await server.start()
+    url = server.session_url(SESSION_ID)
+    try:
+        async with playwright_api.async_playwright() as driver:
+            try:
+                browser = await driver.chromium.launch(headless=True)
+            except Exception as exc:  # pragma: no cover - depends on the local install
+                pytest.skip(f"chromium is not installed for playwright: {exc}")
+            try:
+                page = await browser.new_page(viewport={"width": 1200, "height": 1800})
+                requests: list[str] = []
+                responses: list[tuple[str, int]] = []
+                errors: list[str] = []
+                page.on("request", lambda request: requests.append(request.url))
+                page.on("response", lambda response: responses.append((response.url, response.status)))
+                page.on("pageerror", lambda error: errors.append(str(error)))
+                await page.goto(url)
+                await page.wait_for_selector(".kc-entry")
+                if live:
+                    attached = await _wait_for(page, "snap => snap.liveState === 'following'")
+                    assert attached["liveState"] == "following"
+                    for event in later:
+                        await events.append(event)
+                else:
+                    await page.eval_on_selector(
+                        "#scrub", "(el) => { el.value = el.max; el.dispatchEvent(new Event('input')); }"
+                    )
+                await page.wait_for_function(
+                    """() => {
+                      const images = [...document.querySelectorAll('#transcript img')];
+                      return images.length === 3 && images.every(img => img.complete && img.naturalWidth === 1)
+                        && document.querySelectorAll('.kc-missing-image').length === 4;
+                    }"""
+                )
+                users = page.locator('.kc-entry[data-kind="user"]')
+                assert await users.count() == 4
+                assert await users.nth(0).locator("img").count() == 2
+                assert await users.nth(1).locator("img").count() == 1
+                assert await users.nth(2).locator(".kc-missing-image").count() == 3
+                assert await users.nth(3).locator("img").count() == 0
+                assert not errors
+                assert all(request.startswith(url.split("/s/", 1)[0] + "/") for request in requests)
+                assert not any(
+                    "forbidden.invalid" in request or opaque.sha256 in request or text_ref.sha256 in request
+                    for request in requests
+                )
+                assert any(missing.sha256 in address and status == 410 for address, status in responses)
+                assert any(corrupt.sha256 in address and status == 200 for address, status in responses)
+            finally:
+                await browser.close()
+    finally:
+        await server.stop()
+
+
+async def _wait_for_image(page: Any, *, timeout: float = 10.0) -> Any:
     read = """
     () => {
       const image = document.querySelector('#transcript img.kc-artifact-image');
-      if (!image) return null;
+      if (!image || !image.complete) return false;
       return {src: image.getAttribute('src'), naturalWidth: image.naturalWidth, complete: image.complete};
     }
     """
-    deadline = asyncio.get_running_loop().time() + timeout
-    while asyncio.get_running_loop().time() < deadline:
-        found = await page.evaluate(read)
-        if found and found["complete"]:
-            return found
-        await asyncio.sleep(0.1)
-    return await page.evaluate(read)
+    handle = await page.wait_for_function(read, timeout=timeout * 1000)
+    try:
+        return await handle.json_value()
+    finally:
+        await handle.dispose()
 
 
 @pytest.mark.asyncio
@@ -288,16 +395,16 @@ async def test_losing_the_network_stops_the_badge_claiming_to_be_live(tmp_path: 
             page = await context.new_page()
             await page.goto(url)
             await page.wait_for_selector(".kc-entry")
-            attached = await _wait_for(page, lambda snap: snap["liveState"] == "following")
+            attached = await _wait_for(page, "snap => snap.liveState === 'following'")
             assert attached["liveState"] == "following", "the player never attached its live stream"
 
             await context.set_offline(True)
-            dropped = await _wait_for(page, lambda snapshot: snapshot["liveState"] != "following")
+            dropped = await _wait_for(page, "snap => snap.liveState !== 'following'")
             assert dropped["liveState"] == "detached", "an offline viewer was still told the session was live"
             assert "LIVE" not in dropped["live"]
 
             await context.set_offline(False)
-            back = await _wait_for(page, lambda snapshot: snapshot["liveState"] == "following", timeout=15.0)
+            back = await _wait_for(page, "snap => snap.liveState === 'following'", timeout=15.0)
             assert back["liveState"] == "following", "the viewer never reattached after the network returned"
         finally:
             await browser.close()

@@ -346,15 +346,16 @@ async def test_failed_clear_context_preparation_releases_approval(
         with monkeypatch.context() as fault:
             error = RuntimeError(f"failed {failure}")
             if failure == "clear_context":
-                fault.setattr(old, "reset_volatile_context", Mock(side_effect=error))
+                fault.setattr(server, "_clear_agent_context", Mock(side_effect=error))
             else:
                 jobs = old.get_background_jobs()
                 fault.setattr(jobs, "close" if failure == "close_jobs" else "deliver", AsyncMock(side_effect=error))
             with pytest.raises(RuntimeError, match=f"failed {failure}"):
                 async with session.execution_lock:
                     await server._request_plan_approval(session, plan)
-        assert session.agent is old
-        assert session.record.interaction_mode == mode
+        adopted = failure == "clear_context" and mode == "plan"
+        assert (session.agent is not old) == adopted
+        assert session.record.interaction_mode == ("build" if adopted else mode)
         assert session.record.plan_pending
         assert session.record.latest_plan_markdown == plan
         assert session.approved_plan is None
@@ -486,12 +487,16 @@ async def test_cancelled_approval_request_does_not_resume_after_cleanup(
         await server.shutdown()
 
 
+@pytest.mark.parametrize("option", ["implement_plan", "implement_plan_clear"])
 async def test_worker_reuses_cleanup_task_after_automatic_plan_rebuild(
-    configured_factory: AgentFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    configured_factory: AgentFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, option: str
 ) -> None:
     monkeypatch.setattr(agent_factory, "CLEANUP_TIMEOUT", 0.02, raising=False)
     factory = configured_factory
-    server, session, _ = await _open(factory, tmp_path, monkeypatch)
+    server, session, conn = await _open(factory, tmp_path, monkeypatch)
+    conn.request_permission = AsyncMock(
+        return_value=RequestPermissionResponse.model_validate({"outcome": {"outcome": "selected", "optionId": option}})
+    )
     session.record.interaction_mode = "plan"
     session.record.plan_pending = True
     old = session.agent
@@ -558,7 +563,7 @@ async def test_worker_reuses_cleanup_task_after_automatic_plan_rebuild(
         assert retained is actual[0]
         assert not errors
         assert not session.cleanup_tasks and not session.retired_agents
-        assert not worker.done()
+        assert worker.done() is (option == "implement_plan_clear")
     finally:
         release.set()
         worker.cancel()

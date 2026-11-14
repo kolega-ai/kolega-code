@@ -384,6 +384,7 @@ LOOP_ITERATION_STARTED = "Loop iteration {iteration}/{max_iterations} ({schedule
 LOOP_ITERATION_FRESH = "Fresh thread for this iteration — prior conversation context was cleared."
 LOOP_STOPPED = "Loop stopped after {iterations} iteration(s)."
 LOOP_STOPPED_BY_USER = "Loop stopped by user after {iterations} iteration(s)."
+LOOP_STOPPED_AFTER_FAILED_TURN = "Loop stopped after a failed turn: {error}"
 LOOP_MAX_ITERATIONS = "Loop finished: reached the {max_iterations}-iteration cap."
 LOOP_EXPIRED = "Loop expired after {iterations} iteration(s). Start a new one with /loop <interval> <prompt>."
 LOOP_RESTORED = "Loop restored: {schedule}. Next iteration {when}."

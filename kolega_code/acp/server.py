@@ -23,12 +23,10 @@ from acp.connection import StreamEvent
 from acp.exceptions import RequestError
 from acp.helpers import (
     text_block,
-    tool_content,
     update_agent_thought_text,
     update_available_commands,
     update_current_mode,
     update_plan,
-    update_tool_call,
     update_user_message,
 )
 from acp.interfaces import Client
@@ -46,7 +44,6 @@ from acp.schema import (
     LoadSessionResponse,
     McpCapabilities,
     McpServerStdio,
-    PermissionOption,
     PromptCapabilities,
     ResourceContentBlock,
     SessionCapabilities,
@@ -84,6 +81,7 @@ from kolega_code.llm.models import MessageHistory
 from kolega_code.llm.ledger import logical_prompt_scope
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
 from kolega_code.session.control import ControlChannel, DEFAULT_REQUEST_TIMEOUT_SECONDS
+from kolega_code.session.plans import PlanApprovalAction
 from kolega_code.session.projection import replay, sub_agent_key
 from kolega_code.session.runtime import SessionRuntime
 
@@ -120,6 +118,7 @@ class AcpAgent(Agent):
         self._client_capabilities: ClientCapabilities | None = None
         self._native_end_turn_usage = False
         self._shutdown_task: asyncio.Task[None] | None = None
+        self._session_openings: dict[asyncio.Future[None], asyncio.Task[Any]] = {}
 
     def on_connect(self, conn: Client) -> None:
         self._conn = conn
@@ -163,15 +162,17 @@ class AcpAgent(Agent):
         logger.info("acp new session (cwd=%s)", cwd)
         session_id = uuid4().hex
         try:
-            session = await self._factory.open_session(
-                cwd,
-                session_id=session_id,
-                permission_callback=self._permission_callback_for(session_id),
-                mcp_servers=mcp_servers,
+            session = await self._open_session(
+                self._factory.open_session(
+                    cwd,
+                    session_id=session_id,
+                    permission_callback=self._permission_callback_for(session_id),
+                    mcp_servers=mcp_servers,
+                )
             )
         except _HANDLED_CONFIG_ERRORS as exc:
             raise AgentFactory.protocol_error(exc) from exc
-        self._sessions[session.session_id] = session
+        assert session is not None
         self._attach_runtime(session)
         response = NewSessionResponse(
             session_id=session.session_id,
@@ -205,23 +206,41 @@ class AcpAgent(Agent):
             self._start_session_tasks(existing)
             return LoadSessionResponse(config_options=self._factory.config_options_for(existing))
         try:
-            session = await self._factory.load_session(
-                cwd,
-                session_id,
-                permission_callback=self._permission_callback_for(session_id),
-                mcp_servers=mcp_servers,
+            session = await self._open_session(
+                self._factory.load_session(
+                    cwd,
+                    session_id,
+                    permission_callback=self._permission_callback_for(session_id),
+                    mcp_servers=mcp_servers,
+                )
             )
         except _HANDLED_CONFIG_ERRORS as exc:
             raise AgentFactory.protocol_error(exc) from exc
         if session is None:
             return None
-        self._sessions[session.session_id] = session
         self._attach_runtime(session)
         await self._emit_initial_usage(session)
         await self._send_available_commands(session)
         await self._replay_transcript(session)
         self._start_session_tasks(session)
         return LoadSessionResponse(config_options=self._factory.config_options_for(session))
+
+    async def _open_session(self, operation: Awaitable[AcpSession | None]) -> AcpSession | None:
+        opening = asyncio.get_running_loop().create_future()
+        owner = asyncio.current_task()
+        assert owner is not None
+        self._session_openings[opening] = owner
+        try:
+            session = await operation
+            if session is not None:
+                self._sessions[session.session_id] = session
+                if self._shutdown_task is not None:
+                    self._start_close(session)
+                    raise RequestError.invalid_request({"message": "ACP server is shutting down."})
+            return session
+        finally:
+            self._session_openings.pop(opening)
+            opening.set_result(None)
 
     async def _load_sub_session(self, session_id: str) -> LoadSessionResponse:
         """Replay one delegated turn as its synthetic sub-session.
@@ -254,7 +273,7 @@ class AcpAgent(Agent):
             logger.info("acp sub-session load: no delegate for %s", session_id)
             return LoadSessionResponse()
         activity = replay(events).sub_agents.get(key)
-        bridge = AcpBridge(self._conn)
+        bridge = AcpBridge(self._conn, artifact_store=self._factory.artifact_store(parent_id))
         task = activity.task if activity is not None else ""
         if task:
             update = update_user_message(text_block(task))
@@ -333,10 +352,16 @@ class AcpAgent(Agent):
         await agent_factory._finish_cleanup(self._shutdown_task)
 
     async def _shutdown(self) -> None:
-        sessions = list(self._sessions.values())
-        results = await asyncio.gather(*(self._start_close(session) for session in sessions), return_exceptions=True)
+        closing = {
+            session.session_id: (session, self._start_close(session)) for session in tuple(self._sessions.values())
+        }
+        await asyncio.gather(*tuple(self._session_openings))
+        for session in tuple(self._sessions.values()):
+            if session.session_id not in closing:
+                closing[session.session_id] = (session, self._start_close(session))
+        results = await asyncio.gather(*(task for _, task in closing.values()), return_exceptions=True)
         failures: list[BaseException] = []
-        for session, result in zip(sessions, results):
+        for (session, _), result in zip(closing.values(), results):
             if isinstance(result, BaseException):
                 logger.warning("acp shutdown: session close incomplete (session=%s): %s", session.session_id, result)
                 failures.append(result)
@@ -599,7 +624,7 @@ class AcpAgent(Agent):
             logger.exception("acp session/load: transcript replay failed (session=%s)", session.session_id)
             return
         state = replay(events)
-        bridge = AcpBridge(self._conn)
+        bridge = AcpBridge(self._conn, artifact_store=self._factory.artifact_store(session.session_id))
         await bridge.replay_conversation(session.session_id, state.conversation)
         # Restore the compaction marker: the last finished summary renders as a
         # collapsible thought block, like the live event does.
@@ -611,10 +636,7 @@ class AcpAgent(Agent):
                     session, update_agent_thought_text(f"Conversation compacted:\n{summary}")
                 )
         task_list = (session.record.task_list_markdown or "").strip()
-        if task_list:
-            entries = task_entries_from_markdown(task_list)
-            if entries:
-                await self._send_session_update(session, update_plan(entries))
+        await self._send_session_update(session, update_plan(task_entries_from_markdown(task_list)))
 
     # -- turn machinery ----------------------------------------------------
 
@@ -627,6 +649,7 @@ class AcpAgent(Agent):
                 diff_provider=AcpDiffProvider.for_session(session),
                 agent=session.agent,
                 accounting=session.accounting,
+                task_list_markdown=lambda: session.record.task_list_markdown,
             )
             session.event_task = asyncio.create_task(
                 self._pump_events(session, session.bridge), name=f"acp-events-{session.session_id}"
@@ -774,31 +797,21 @@ class AcpAgent(Agent):
         ):
             return
         generation = session.plan_approval_generation
-        conn = getattr(self, "_conn", None)
-        if conn is None:
+        runtime = session.runtime
+        if runtime is None:
             return
-        tool_call = update_tool_call(
-            f"plan-approval-{session.session_id[:8]}",
-            title="Approve implementation plan?",
-            kind="other",
-            status="pending",
-            content=[tool_content(text_block(plan))],
-        )
-        options = [
-            PermissionOption(option_id="implement_plan", name="Implement plan", kind="allow_once"),
-            PermissionOption(
-                option_id="implement_plan_clear", name="Clear context and implement plan", kind="allow_once"
-            ),
-            PermissionOption(option_id="discuss_plan", name="Discuss further", kind="reject_once"),
-        ]
+        ready = asyncio.Event()
+
+        async def wait_for_approval() -> PlanApprovalAction | None:
+            await ready.wait()
+            return await runtime.request_plan_approval(plan)
+
         request = session.plan_approval_task = asyncio.create_task(
-            conn.request_permission(session.session_id, tool_call, options)
+            wait_for_approval(), name=f"acp-plan-approval-{session.session_id}"
         )
+        ready.set()
         try:
-            response = await asyncio.wait_for(
-                request,
-                timeout=DEFAULT_REQUEST_TIMEOUT_SECONDS,
-            )
+            option_id = await request
         except asyncio.CancelledError:
             if session.closed or generation != session.plan_approval_generation:
                 return
@@ -809,16 +822,9 @@ class AcpAgent(Agent):
         finally:
             if session.plan_approval_task is request:
                 session.plan_approval_task = None
-        outcome = getattr(response, "outcome", None)
-        if isinstance(outcome, dict):
-            selected = outcome.get("outcome") == "selected"
-            option_id = str(outcome.get("optionId") or "")
-        else:
-            selected = getattr(outcome, "outcome", None) == "selected"
-            option_id = str(getattr(outcome, "option_id", "") or "")
         if session.closed or session.cleanup_tasks or generation != session.plan_approval_generation:
             return
-        if selected and option_id in ("implement_plan", "implement_plan_clear"):
+        if option_id in ("implement_plan", "implement_plan_clear"):
             session.approved_plan = plan
             session.record.latest_plan_markdown = plan
             previous_agent = session.agent
@@ -843,11 +849,17 @@ class AcpAgent(Agent):
                         session.background_wake.clear()
                     if session.closed or generation != session.plan_approval_generation:
                         return
-                    self._clear_agent_context(session)
                 if (session.record.interaction_mode or MODE_BUILD) != MODE_BUILD:
                     await self._factory.set_interaction_mode(session, MODE_BUILD)
                 if session.closed or generation != session.plan_approval_generation:
                     return
+                if option_id == "implement_plan_clear":
+                    # The durable epoch reset must follow successful replacement construction.
+                    try:
+                        self._clear_agent_context(session)
+                    except BaseException:
+                        session.approved_plan = None
+                        raise
                 await self._emit_current_mode(session)
                 await self._resume_approved_plan(session)
             except asyncio.CancelledError:
@@ -864,7 +876,7 @@ class AcpAgent(Agent):
                     self._start_session_tasks(session)
                     session.background_wake.set()
             return
-        if selected and option_id == "discuss_plan":
+        if option_id == "discuss_plan":
             session.record.plan_pending = False
             session.record.plan_reofferable = True
             logger.info("acp plan deferred for discussion (session=%s)", session.session_id)
@@ -891,12 +903,12 @@ class AcpAgent(Agent):
     def _clear_agent_context(self, session: AcpSession) -> None:
         if session.accounting is not None:
             session.accounting.invalidate_context()
+        session.agent.reset_volatile_context()
         recorder = getattr(session.agent, "session_recorder", None)
         if recorder is not None and hasattr(recorder, "start_epoch"):
             recorder.start_epoch("acp_implement_plan_clear")
         session.agent.history = MessageHistory()
         session.agent.last_compression_index = None
-        session.agent.reset_volatile_context()
         session.record.history = []
         session.record.compaction = {}
 

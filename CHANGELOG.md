@@ -6,6 +6,44 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Security
+
+- Updated Soup Sieve, BeautifulSoup's selector engine, to 4.1. It fixes two
+  denial-of-service advisories in CSS selector matching over untrusted HTML
+  (CVE-2026-126190 / GHSA-mmhr-3c5m-f64f and CVE-2026-126192 /
+  GHSA-4j63-6c4x-wfg4). Soup Sieve 4 requires Python 3.11.5, which is now the
+  supported floor.
+
+## 0.50.0 - 2026-11-10
+
+### Added
+
+- **New model support.** Anthropic **Claude Fable 5.2** (`claude-fable-5-2`) —
+  1M context, 128K output, adaptive thinking with the full
+  `low`/`medium`/`high`/`xhigh`/`max` effort ladder (default `high`), and the
+  Fable line's first fast-tier pricing.
+- **User images are recorded and replayed.** Images sent in a session are kept
+  with the conversation and replayed in the browser session player and in ACP
+  hosts' history without duplicated entries. Image-only prompts (an attached
+  screenshot with no accompanying text) are now accepted, and sharing a session
+  discloses that embedded image pixels are included.
+
+### Changed
+
+- Streamed text is now handled in linear time end to end: providers on the
+  Responses API no longer re-copy the accumulated answer for every received
+  delta, and session replay no longer rebuilds streamed assistant and tool text
+  quadratically. Long answers, extended reasoning and large streamed tool
+  outputs no longer slow the provider read loop, the web session player, or
+  ACP session loads.
+- Exported events and `ask --json` payloads detect environment secrets once
+  per payload instead of once per string, so exporting large sessions is much
+  faster while producing identical redaction.
+- The bundled OpenRouter catalog is refreshed to this week's rankings (294
+  tool-capable models); the default route is unchanged.
+- The managed Python eval kernel bundle refreshes transitive pins (fonttools
+  4.68.0, python-dateutil 4.0.0); direct pins are unchanged.
+
 ## 0.49.0 - 2026-11-07
 
 ### Added

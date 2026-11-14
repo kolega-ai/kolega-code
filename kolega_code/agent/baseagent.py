@@ -622,7 +622,7 @@ class BaseAgent(LogMixin):
         self._current_provider_tool_call_id_var = contextvars.ContextVar("current_provider_tool_call_id", default=None)
         self.parent_tool_call_id = None  # Parent tool call ID when running as sub-agent
         self.conversation_id = None  # Sub-agent conversation ID
-        self.sub_agent_context = None  # Dispatch metadata (agent_id, task) set by AgentTool
+        self.sub_agent_context: Optional[Dict[str, Any]] = None  # Dispatch metadata (agent_id, task) set by AgentTool
         # Private workflow lifecycle state. These references never enter
         # sub_agent_context or any serialized agent metadata.
         self._workflow_accounting: Optional["WorkflowRunAccounting"] = None
@@ -2751,7 +2751,20 @@ class BaseAgent(LogMixin):
         no actual conversation. Mirroring here rather than at each ``yield`` keeps
         one choke point that cannot drift out of sync with the yields.
         """
-        turn = self._run_recorded_turn(self._process_message_stream_impl(message, attachments), user_text=message)
+        image_attachments = [attachment for attachment in attachments or [] if attachment.get("type") == "image"]
+        images = [
+            (str(attachment.get("media_type") or "image/png"), data)
+            for attachment in image_attachments
+            if attachment.get("image_type", "base64") == "base64"
+            and isinstance(data := attachment.get("data"), str)
+            and data
+        ]
+        turn = self._run_recorded_turn(
+            self._process_message_stream_impl(message, attachments),
+            user_text=message,
+            images=images,
+            image_count=len(image_attachments),
+        )
         async with contextlib.aclosing(turn):
             async for chunk in turn:
                 yield chunk
@@ -2806,7 +2819,12 @@ class BaseAgent(LogMixin):
                 yield chunk
 
     async def _run_recorded_turn(
-        self, impl: AsyncGenerator[Dict[str, Any], None], *, user_text: Optional[str]
+        self,
+        impl: AsyncGenerator[Dict[str, Any], None],
+        *,
+        user_text: Optional[str],
+        images: Optional[Sequence[Tuple[str, str]]] = None,
+        image_count: int = 0,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Drive one recorded turn: boundaries, chunk mirroring, terminal bookkeeping.
 
@@ -2818,7 +2836,9 @@ class BaseAgent(LogMixin):
         await self.prepare_background_completions()
         await self._deliver_background_completions()
         turn_id = str(uuid.uuid4())
-        await self._emit_turn_boundary("started", turn_id=turn_id, user_text=user_text)
+        await self._emit_turn_boundary(
+            "started", turn_id=turn_id, user_text=user_text, images=images, image_count=image_count
+        )
         try:
             async with contextlib.aclosing(impl):
                 async for chunk in impl:
@@ -2892,6 +2912,8 @@ class BaseAgent(LogMixin):
         turn_id: str,
         status: Optional[str] = None,
         user_text: Optional[str] = None,
+        images: Optional[Sequence[Tuple[str, str]]] = None,
+        image_count: int = 0,
     ) -> None:
         """Emit a turn boundary, swallowing everything including cancellation.
 
@@ -2900,7 +2922,9 @@ class BaseAgent(LogMixin):
         exception it is about to re-raise.
         """
         try:
-            await self.emitter.turn_boundary(phase, turn_id=turn_id, status=status, user_text=user_text)
+            await self.emitter.turn_boundary(
+                phase, turn_id=turn_id, status=status, user_text=user_text, images=images, image_count=image_count
+            )
         except BaseException:
             pass
 

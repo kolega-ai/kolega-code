@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -44,6 +45,7 @@ from .state import (
     SessionFileChange,
     SubAgentActivity,
     SubAgentRouting,
+    SubAgentTerminalEntry,
     TurnState,
     WorkflowActivity,
     TOOL_STATE_PRESENTATION,
@@ -114,7 +116,6 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         }
         self._sub_agent_seq = max((activity.index for activity in running.values()), default=0)
         self._workflow_activities = {}
-        self._plan_decision_active = False
         self._restore_plan_action_visibility()
         self._cancel_pending_question()
         self._cancel_pending_model_selection()
@@ -760,55 +761,160 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         key = self._sub_agent_key(event)
         info = event.sub_agent_info or {}
         activity = self._sub_agent_activities.get(key)
+        created = activity is None
         if activity is None:
             self._sub_agent_seq += 1
             entry = ConversationEntry(kind="sub_agent", content="", complete=False)
-            task_full = str(info.get("task_full") or info.get("task") or "")
             activity = SubAgentActivity(
                 agent_id=key,
                 agent_name=str(info.get("agent_name") or event.sender or "sub-agent"),
-                task=str(info.get("task") or ""),
+                task="",
                 index=self._sub_agent_seq,
                 entry=entry,
-                task_full=task_full,
-                background=bool(info.get("background")),
-                workflow_run_id=str(info.get("workflow_run_id") or ""),
-                workflow_phase=str(info.get("phase") or ""),
-                routing=SubAgentRouting.from_info(info),
                 started_at=self._now(),
             )
             self._sub_agent_activities[key] = activity
-            parent_id = info.get("parent_tool_call_id")
-            if parent_id:
-                self._sub_agent_by_tool_call[str(parent_id)] = key
-            if task_full:
-                # The full task becomes the first entry in the inspector trajectory; the
-                # inline summary keeps showing only the truncated preview.
-                activity.steps.append(
-                    ConversationEntry(kind="sub_agent_task", content=task_full, full_content=task_full)
-                )
-            entry.content = self._format_sub_agent_content(activity)
-            self._add_conversation_entry(entry)
+        before = (
+            activity.agent_name,
+            activity.task,
+            activity.task_full,
+            activity.parent_agent_id,
+            activity.parent_tool_call_id,
+            activity.depth,
+            activity.background,
+            activity.routing,
+            activity.tokens,
+            activity.workflow_run_id,
+            activity.workflow_phase,
+        )
+        previous_task = activity.task
+        for field_name, info_key in (
+            ("agent_name", "agent_name"),
+            ("task", "task"),
+            ("parent_agent_id", "parent_agent_id"),
+            ("parent_tool_call_id", "parent_tool_call_id"),
+            ("workflow_run_id", "workflow_run_id"),
+            ("workflow_phase", "phase"),
+        ):
+            value = info.get(info_key)
+            if isinstance(value, str) and value.strip():
+                setattr(activity, field_name, value)
+        depth = info.get("depth")
+        if isinstance(depth, int) and not isinstance(depth, bool) and depth >= 1:
+            activity.depth = depth
+        if isinstance(info.get("background"), bool):
+            activity.background = info["background"]
+        routing = SubAgentRouting.from_info(info)
+        if routing is not None:
+            if activity.routing is not None:
+                effective = info["effective_routing"]
+                if "thinking_effort" not in effective and "effort" not in effective:
+                    routing = replace(routing, effort=activity.routing.effort)
+            if "requested_routing" not in info and activity.routing is not None:
+                routing = replace(routing, overridden=activity.routing.overridden)
+            activity.routing = routing
+        elif activity.routing is not None and "requested_routing" in info:
+            activity.routing = replace(activity.routing, overridden=info["requested_routing"] is not None)
+        for tokens in (
+            event.content.get("total_tokens"),
+            event.content.get("tokens"),
+            info.get("total_tokens"),
+            info.get("tokens"),
+        ):
+            if isinstance(tokens, int) and not isinstance(tokens, bool) and tokens >= 0:
+                activity.tokens = tokens
+                break
+        task_full = info.get("task_full") or info.get("task")
+        if (
+            isinstance(task_full, str)
+            and task_full
+            and (info.get("task_full") or not activity.task_full or activity.task_full == previous_task)
+        ):
+            if task_full != activity.task_full:
+                activity.task_full = task_full
+                task_step = next((step for step in activity.steps if step.kind == "sub_agent_task"), None)
+                if task_step is None:
+                    activity.steps.insert(0, ConversationEntry(kind="sub_agent_task", content=task_full))
+                else:
+                    task_step.content = task_step.full_content = task_full
+        if activity.parent_tool_call_id:
+            self._sub_agent_by_tool_call[activity.parent_tool_call_id] = key
+        after = (
+            activity.agent_name,
+            activity.task,
+            activity.task_full,
+            activity.parent_agent_id,
+            activity.parent_tool_call_id,
+            activity.depth,
+            activity.background,
+            activity.routing,
+            activity.tokens,
+            activity.workflow_run_id,
+            activity.workflow_phase,
+        )
+        if created:
+            activity.entry.content = self._format_sub_agent_content(activity)
+            self._add_conversation_entry(activity.entry)
             self._refresh_sub_agent_activity_status()
             self._note_workflow_sub_agent(activity)
-        elif activity.routing is None:
-            # Every child event carries sub_agent_info, so an activity whose first
-            # event lacked routing picks it up from any later one.
-            activity.routing = SubAgentRouting.from_info(info)
+        elif before != after:
+            self._refresh_sub_agent_entry(activity)
+            self._note_workflow_sub_agent(activity)
+        if created or before != after:
+            self._invalidate_sub_agent_detail(activity)
         return activity
+
+    def _render_sub_agent_terminal(self, event: AgentEvent) -> None:
+        activity = self._ensure_sub_agent_activity(event)
+        content = event.content
+        tool_call_id = str(content.get("tool_call_id") or "").strip()
+        step = activity.terminal_steps.get(tool_call_id)
+        is_command = event.event_type == KnownEventType.TERMINAL_COMMAND
+        if step is None or (not tool_call_id and is_command):
+            if step is not None:
+                step.kind = "tool_result"
+                step.complete = True
+                step.normalizer.flush()
+                step.materialize()
+            step = SubAgentTerminalEntry(
+                kind="tool_call",
+                content="",
+                complete=False,
+                tool_name="terminal",
+                tool_call_id=tool_call_id or None,
+            )
+            activity.terminal_steps[tool_call_id] = step
+            activity.steps.append(step)
+        if is_command:
+            step.tool_display = sanitize_tool_display({"command": str(content.get("command") or "")})
+            step.normalizer.reset()
+            activity.last_activity = "terminal command"
+        else:
+            output = content.get("display_output")
+            if output is None:
+                output = content.get("output", "")
+            step.append_output(str(output))
+            activity.last_activity = "terminal output"
+        if activity.status == "running":
+            activity.current_action = activity.last_activity
+        if activity.status != "running":
+            step.complete = True
+            step.kind = "tool_error" if activity.status == "failed" else "tool_result"
+        self._refresh_sub_agent_entry(activity)
+        self._invalidate_sub_agent_detail(activity)
+
+    def _finish_sub_agent_terminal_steps(self, activity: SubAgentActivity) -> None:
+        for step in activity.terminal_steps.values():
+            if not step.complete:
+                step.complete = True
+                step.kind = "tool_error" if activity.status == "failed" else "tool_result"
+                step.materialize()
 
     def _render_sub_agent_event(self, event: AgentEvent) -> None:
         activity = self._ensure_sub_agent_activity(event)
         content = event.content
-        info = event.sub_agent_info or {}
-        depth = info.get("depth")
-        if isinstance(depth, int):
-            activity.depth = depth
         status = content.get("status")
         if status:  # lifecycle event from AgentTool
-            tokens = content.get("total_tokens", content.get("tokens"))
-            if isinstance(tokens, int):
-                activity.tokens = tokens
             if status != "GENERATING":
                 message = str(content.get("message") or "")
                 failed = status == "ERROR" or message.startswith("Error")
@@ -817,6 +923,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 activity.entry.complete = True
                 activity.current_action = ""
                 activity.last_activity = message if failed else ""
+                self._finish_sub_agent_terminal_steps(activity)
                 self._refresh_sub_agent_activity_status()
             self._refresh_sub_agent_entry(activity, force=True)
             self._invalidate_sub_agent_detail(activity)
@@ -837,6 +944,11 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             activity.last_activity = f"{tool} {suffix}"
             activity.current_action = f"{tool} {suffix}"
             self._record_sub_agent_tool_step(activity, message_type, content)
+            terminal = activity.terminal_steps.get(str(content.get("tool_call_id") or ""))
+            if terminal is not None:
+                terminal.kind = message_type
+                terminal.complete = True
+                terminal.materialize()
         elif message_type == "thinking":
             self._apply_sub_agent_thinking(activity, event, text)
         else:  # streamed response text - accumulate by chunk uuid
@@ -1053,13 +1165,16 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
     def _sub_agent_body_lines(self, activity: SubAgentActivity) -> list[str]:
         sep = theme.g(Glyph.BULLET_SEP)
         body_lines: list[str] = []
+        parent = self._sub_agent_parent_label(activity)
+        if parent:
+            body_lines.append(f"Parent: {parent}")
         if activity.task:
             task = activity.task
             if len(task) > theme.SUB_AGENT_TASK_PREVIEW_CHARS:
                 task = f"{task[: theme.SUB_AGENT_TASK_PREVIEW_CHARS]}{theme.g(Glyph.ELLIPSIS)}"
             body_lines.append(f"Task: {task}")
         tools_line = f"{activity.tool_calls} tool{'' if activity.tool_calls == 1 else 's'}"
-        if activity.tokens:
+        if activity.tokens is not None:
             tools_line += f" {sep} {self._format_token_count(activity.tokens)} tok"
         if activity.context_percentage is not None:
             tools_line += f" {sep} ctx {activity.context_percentage:.0f}%"
@@ -1079,6 +1194,17 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             body_lines.append(messages.SUB_AGENT_INSPECT_HINT)
 
         return body_lines
+
+    def _sub_agent_parent_label(self, activity: SubAgentActivity) -> str:
+        parent_id = activity.parent_agent_id
+        if parent_id is None:
+            return ""
+        if parent_id == "root":
+            return "root"
+        parent = self._sub_agent_activities.get(parent_id)
+        if parent is not None:
+            return f"#{parent.index} {parent.agent_name}"
+        return parent_id
 
     def _format_token_count(self, tokens: int) -> str:
         """Compact token count for cards/roster: 980, 3.1k, 1.2M."""
@@ -1122,8 +1248,10 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 activity.status = status
                 activity.finished_at = self._now()
                 activity.entry.complete = True
+                self._finish_sub_agent_terminal_steps(activity)
                 activity.entry.content = self._format_sub_agent_content(activity)
                 self._invalidate_conversation(activity.entry)
+                self._invalidate_sub_agent_detail(activity)
                 changed = True
         if changed:
             self._flush_conversation_render()

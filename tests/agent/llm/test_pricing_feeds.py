@@ -147,7 +147,7 @@ def test_openrouter_published_rates_produce_default_estimate_and_reported_cost_w
     assert cost["source"] == "estimated"
     assert cost["pricing_source"] == "catalogue"
     assert cost["complete"] is True
-    assert cost["amount"] == "0.00021"
+    assert cost["amount"] == "0.000056"
     assert any("routed" in assumption for assumption in cost["assumptions"])
     for amount in ("0", "0.0042"):
         reported = PricingResolver().calculate(
@@ -393,13 +393,33 @@ def test_deepseek_calendar_expiration_and_successful_tool_fee_transition() -> No
         }
 
 
-def test_ollama_has_independent_utc_schedule_and_no_invented_cache_read_rate() -> None:
+def _ollama_card_without_cache_read(monkeypatch: pytest.MonkeyPatch, model: str) -> dict[str, Any]:
+    """Register a live reviewed Ollama card reshaped as the source's cached-input "-" row.
+
+    The live models that carried this shape were retired upstream, so keep the
+    estimation contract under test without pinning it to a delisted route.
+    """
+    spec = deepcopy(MODEL_SPECS[("ollama_cloud", model)])
+    card = deepcopy(spec["pricing"])
+    card["rates"] = {name: rate for name, rate in card["rates"].items() if name != "cache_read"}
+    card["cache_policy"] = {"cache_write": card["cache_policy"]["cache_write"]}
+    card["assumptions"] = [
+        "The source shows '-' for cached input; nonzero or unknown cache reads have no documented rate."
+    ]
+    spec["pricing"] = card
+    monkeypatch.setitem(MODEL_SPECS, ("ollama_cloud", model), spec)
+    return card
+
+
+def test_ollama_has_independent_utc_schedule_and_no_invented_cache_read_rate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     card = PRICING[("ollama_cloud", "deepseek-v4-pro:0813")]
     when = card["schedules"][0]["when"]
     assert "holidays" not in when
     assert _match(when, {"requested_at": "2026-10-01T12:00:00Z"}, {})[0] is True
     assert _match(when, {"requested_at": "2026-11-02T18:00:00Z"}, {})[0] is False
-    no_cache_rate = PRICING[("ollama_cloud", "mistral-large-3:675b")]
+    no_cache_rate = _ollama_card_without_cache_read(monkeypatch, "mistral-large-4")
     assert "cache_read" not in no_cache_rate["rates"]
     assert "cache_read" not in no_cache_rate["cache_policy"]
     assert not no_cache_rate.get("missing_components")
@@ -454,10 +474,11 @@ def test_explicit_service_tier_overrides_defaults_without_overlapping_bands(
     assert not any("Documented default billing context" in assumption for assumption in cost["assumptions"])
 
 
-@pytest.mark.parametrize(
-    ("model", "amount"), [("mistral-large-3:675b", "0.00065"), ("nemotron-3-nano:30b", "0.000084")]
-)
-def test_ollama_unknown_cache_rate_is_not_needed_for_explicit_zero_cache(model: str, amount: str) -> None:
+@pytest.mark.parametrize(("model", "amount"), [("mistral-large-4", "0.00091"), ("nemotron-3-super", "0.000075")])
+def test_ollama_unknown_cache_rate_is_not_needed_for_explicit_zero_cache(
+    monkeypatch: pytest.MonkeyPatch, model: str, amount: str
+) -> None:
+    _ollama_card_without_cache_read(monkeypatch, model)
     cost = _estimate("ollama_cloud", model)
     assert cost["source"] == "estimated"
     assert cost["complete"] is True
@@ -465,9 +486,12 @@ def test_ollama_unknown_cache_rate_is_not_needed_for_explicit_zero_cache(model: 
     assert cost["missing_components"] == []
 
 
-@pytest.mark.parametrize("model", ["mistral-large-3:675b", "nemotron-3-nano:30b"])
+@pytest.mark.parametrize("model", ["mistral-large-4", "nemotron-3-super"])
 @pytest.mark.parametrize("read", [100, None])
-def test_ollama_nonzero_or_unknown_unpriced_cache_reads_remain_partial(model: str, read: int | None) -> None:
+def test_ollama_nonzero_or_unknown_unpriced_cache_reads_remain_partial(
+    monkeypatch: pytest.MonkeyPatch, model: str, read: int | None
+) -> None:
+    _ollama_card_without_cache_read(monkeypatch, model)
     cost = _estimate("ollama_cloud", model, read=read)
     assert cost["source"] == "estimated"
     assert cost["complete"] is False

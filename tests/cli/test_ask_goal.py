@@ -177,9 +177,7 @@ def test_ask_goal_cap_returns_nonzero(tmp_path, capsys, monkeypatch, isolated_cl
     assert exit_code == 1
     agent = GoalAskFakeAgent.instances[0]
     assert agent.evaluate_calls == 2
-    # 1 task prompt + 2 nudges (a nudge follows every not-met eval, including
-    # the one that reaches the cap — the while check is at the top).
-    assert len(agent.messages) == 3
+    assert len(agent.messages) == 2
 
 
 def test_ask_goal_failed_nudge_stops_without_another_verifier(tmp_path, capsys, monkeypatch, isolated_cli_env):

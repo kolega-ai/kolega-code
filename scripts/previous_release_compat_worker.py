@@ -34,6 +34,67 @@ def verify_original_history(history: list, expected: list) -> None:
     require(history == expected, "Previous release did not replay the original conversation")
 
 
+def verify_original_metadata(metadata: dict, expected: dict) -> None:
+    require(
+        {key: metadata[key] for key in expected if key in metadata} == expected,
+        "Previous release did not read the original session metadata",
+    )
+
+
+def verify_task_list_payloads(events: list, expected: list) -> None:
+    tasks = [event for event in events if event.event_type == "task_list_updated"]
+    require(
+        [event.content for event in tasks] == expected, "Previous release did not preserve canonical task-list payloads"
+    )
+    require(
+        all(event.sub_agent_info is None and event.schema_version == 2 for event in tasks),
+        "Previous release changed task-list scope or schema version",
+    )
+
+
+def verify_usage_payloads(events: list, expected: list) -> None:
+    usage = [event for event in events if event.event_type == "usage_updated"]
+    require(
+        [event.content for event in usage] == expected, "Previous release did not preserve canonical usage payloads"
+    )
+    require(
+        all(event.sub_agent_info is None and event.schema_version == 2 for event in usage),
+        "Previous release changed usage scope or schema version",
+    )
+
+
+def verify_queue_payloads(events: list, expected: list) -> None:
+    queue = [event for event in events if event.event_type == "queue_updated"]
+    require(
+        [event.content for event in queue] == expected, "Previous release did not preserve canonical queue payloads"
+    )
+    require(
+        all(event.sub_agent_info is None and event.schema_version == 2 for event in queue),
+        "Previous release changed queue scope or schema version",
+    )
+
+
+def verify_goal_payloads(events: list, expected: list) -> None:
+    goals = [event for event in events if event.event_type == "goal_updated"]
+    require([event.content for event in goals] == expected, "Previous release did not preserve canonical goal payloads")
+    require(
+        all(event.sub_agent_info is None and event.schema_version == 2 for event in goals),
+        "Previous release changed goal scope or schema version",
+    )
+
+
+def verify_plan_approval_payloads(events: list, expected: list) -> None:
+    plans = [event for event in events if event.content.get("kind") == "plan_approval"]
+    require(
+        [[event.event_type, event.content] for event in plans] == [list(event) for event in expected],
+        "Previous release did not preserve complete plan-approval requests and resolutions",
+    )
+    require(
+        all(event.sub_agent_info is None and event.schema_version == 2 for event in plans),
+        "Previous release changed plan-approval scope or schema version",
+    )
+
+
 def main() -> None:
     root = Path(sys.argv[1])
     manifest = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
@@ -63,9 +124,15 @@ def main() -> None:
     loaded = store.load(session_id)
     require(loaded is not None, "Previous release could not load session history")
     verify_original_history(loaded.history, manifest["original_history"])
+    verify_original_metadata(loaded.to_metadata_dict(), manifest["original_metadata"])
     presentation = asyncio.run(FileSessionEventStore(journal).read(session_id))
     expected_ui = [name[3:] for name in expected_types if name.startswith("ui.")]
     require([event.event_type for event in presentation] == expected_ui, "Previous release did not read UI events")
+    verify_task_list_payloads(presentation, manifest["task_list_payloads"])
+    verify_usage_payloads(presentation, manifest["usage_payloads"])
+    verify_queue_payloads(presentation, manifest["queue_payloads"])
+    verify_goal_payloads(presentation, manifest["goal_payloads"])
+    verify_plan_approval_payloads(presentation, manifest["plan_approval_events"])
 
     # Exercise real mutations, not a load-and-save no-op or a synthetic append.
     settings.active_theme = "compat-previous-theme"
@@ -77,6 +144,19 @@ def main() -> None:
     recorder.finish_turn("completed")
     after = journal.read_events(repair_tail=False)
     require(len(after) > len(before), "Previous release did not append to the journal")
+    original = (root / manifest["snapshot"]).read_bytes()
+    require(
+        store.events_path_for(session_id).read_bytes().startswith(original), "Previous release rewrote original records"
+    )
+    verify_task_list_payloads(
+        asyncio.run(FileSessionEventStore(journal).read(session_id)), manifest["task_list_payloads"]
+    )
+    verify_usage_payloads(asyncio.run(FileSessionEventStore(journal).read(session_id)), manifest["usage_payloads"])
+    verify_queue_payloads(asyncio.run(FileSessionEventStore(journal).read(session_id)), manifest["queue_payloads"])
+    verify_goal_payloads(asyncio.run(FileSessionEventStore(journal).read(session_id)), manifest["goal_payloads"])
+    verify_plan_approval_payloads(
+        asyncio.run(FileSessionEventStore(journal).read(session_id)), manifest["plan_approval_events"]
+    )
     print(f"Previous release read {len(before)} records and appended {len(after) - len(before)} records", flush=True)
 
 

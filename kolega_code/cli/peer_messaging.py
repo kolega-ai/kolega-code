@@ -18,7 +18,8 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from kolega_code.events import AgentEvent
+from kolega_code.events import AgentEvent, KnownEventType
+from kolega_code.session.queue import QueuePresentation, QueueReason, queue_item
 from kolega_code.session.inbox import (
     MAX_QUEUED_PEER_MESSAGES,
     InboundNotice,
@@ -53,6 +54,7 @@ class HeadlessPeerInbox:
         self._queue: list[PeerMessage] = []
         self._turn_active = False
         self._repeat_guard = PeerRepeatGuard()
+        self._presentation = QueuePresentation(self._record_queue_snapshot, source="ask")
 
     # -- Lifecycle ---------------------------------------------------------
 
@@ -70,6 +72,7 @@ class HeadlessPeerInbox:
         self._server = server
         self._notice(f"peers: listening on {server.path}")
         agent.set_queued_input_provider(self._provide_queued_inputs)
+        self._publish_queue("snapshot")
 
     def _notice(self, text: str) -> None:
         if not self.json_mode:
@@ -82,6 +85,7 @@ class HeadlessPeerInbox:
                 await server.stop()
             except Exception:  # noqa: BLE001 — shutdown must always complete
                 pass
+        await self._presentation.aclose()
 
     # -- Queue -------------------------------------------------------------
 
@@ -102,6 +106,8 @@ class HeadlessPeerInbox:
     def pop_all(self) -> list[str]:
         texts = self.pending_texts()
         self._queue.clear()
+        if texts:
+            self._publish_queue("dequeued")
         return texts
 
     async def _provide_queued_inputs(self) -> list[Any]:
@@ -113,7 +119,35 @@ class HeadlessPeerInbox:
             QueuedUserInput(text=peer_model_text(message), origin=peer_origin(message)) for message in self._queue
         ]
         self._queue.clear()
+        self._publish_queue("dequeued")
         return inputs
+
+    def _publish_queue(self, reason: QueueReason) -> None:
+        if self.json_mode:
+            # UI rows share the journal sequence space. Even silently writing
+            # them would introduce new gaps into ask --json's semantic stream.
+            return
+        self._presentation.publish(
+            [queue_item(message.message_id, message.text, origin=peer_origin(message)) for message in self._queue],
+            reason=reason,
+        )
+
+    async def _record_queue_snapshot(self, snapshot: dict[str, Any]) -> None:
+        # Deliberately bypass the ask stdout/event pump: --json is a gapless
+        # semantic stream, not a presentation stream.
+        events = self.journal_factory()
+        await events.append(
+            AgentEvent(
+                sender="peer-inbox",
+                event_type=KnownEventType.QUEUE_UPDATED,
+                session_id=self.session_id,
+                content=snapshot,
+            )
+        )
+
+    def _enqueue(self, message: PeerMessage) -> None:
+        self._queue.append(message)
+        self._publish_queue("enqueued")
 
     # -- Inbound -----------------------------------------------------------
 
@@ -135,7 +169,7 @@ class HeadlessPeerInbox:
             repeat_guard=self._repeat_guard,
             queued_count=lambda: len(self._queue),
             record_event=lambda event_type: self._record(event_type, message),
-            enqueue=self._queue.append,
+            enqueue=self._enqueue,
             notify=notify,
         )
 

@@ -7,7 +7,7 @@ the script that would report the failure is the one that was blocked. Serving th
 directory over HTTP works, but "install a web server" is not a sharing story.
 
 So the export embeds everything: stylesheets, both scripts, the manifest, the
-event log, and any images. The result is a single document that needs no server,
+event log, images, and complete background reports. The result needs no server,
 no unpacking and no network, and is small enough to email — the event log is the
 bulk of it and gzips about eight-fold before base64.
 
@@ -97,9 +97,9 @@ def build_single_file(
 ) -> str:
     """Return a complete HTML document holding an entire replay.
 
-    ``artifacts`` maps a sha256 digest to ``(media_type, data)``. Only images are
-    worth embedding: the player renders them, whereas a text artifact is already
-    described by the preview text its event carries.
+    ``artifacts`` maps a sha256 digest to ``(media_type, data)``. The bundle
+    selects redacted images and background-report text for the player; other
+    text artifacts remain described by their event's preview.
     """
     document = _read_asset("player.html")
 

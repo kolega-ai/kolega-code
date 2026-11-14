@@ -19,10 +19,13 @@ between two independent folds. Use :func:`replay` to build state from scratch.
 from __future__ import annotations
 
 from collections import deque
+from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Optional
+import re
+from typing import Any, Iterable, Optional, TypeGuard
 
 from kolega_code.events import AgentEvent, ArtifactRef, KnownEventType
+from kolega_code.session.task_list import task_list_entries
 
 #: Cap on retained terminal text. Beyond this the oldest output is dropped and
 #: ``terminal_truncated`` is set, so a viewer is told rather than misled.
@@ -71,7 +74,7 @@ class _StreamingText:
 class ConversationItem:
     """One block in the transcript."""
 
-    #: "user" | "peer_message" | "assistant" | "thinking" | "tool" | "system" | "status"
+    #: "user" | "peer_message" | "background_delivery" | "assistant" | "thinking" | "tool" | "system" | "status"
     kind: str
     text: str = ""
     complete: bool = True
@@ -87,12 +90,14 @@ class ConversationItem:
     seq: Optional[int] = None
     elapsed_ms: int = 0
     artifacts: list[ArtifactRef] = field(default_factory=list)
+    image_count: int = 0
     #: Structured edit preview attached to a tool item, when the tool edited a file.
     edit_preview: Optional[dict] = None
     #: Bounded, already-sanitized display metadata; never raw tool arguments.
     tool_subject: Optional[str] = None
     #: Complete safe paths / command for expanded details (never raw arguments).
     tool_display: Optional[dict[str, list[str] | str]] = None
+    background_delivery: Optional[dict] = None
 
 
 # ``dataclass`` generates ``__init__`` from the field declared above; install the
@@ -100,8 +105,31 @@ class ConversationItem:
 ConversationItem.text = _StreamingText()  # type: ignore[assignment]
 
 
+@dataclass(kw_only=True)
+class _TerminalBuffer:
+    terminal_truncated: bool = False
+    _terminal_parts: deque[str] = field(default_factory=deque, repr=False, compare=False)
+    _terminal_offset: int = field(default=0, repr=False, compare=False)
+    _terminal_chars: int = field(default=0, repr=False, compare=False)
+    _terminal_text: Optional[str] = field(default=None, repr=False, compare=False)
+
+    @property
+    def terminal(self) -> str:
+        if self._terminal_text is None:
+            text = "".join(self._terminal_parts)
+            self._terminal_text = text[self._terminal_offset :] if self._terminal_offset else text
+        return self._terminal_text
+
+    @terminal.setter
+    def terminal(self, value: str) -> None:
+        self._terminal_parts = deque([value] if value else ())
+        self._terminal_offset = 0
+        self._terminal_chars = len(value)
+        self._terminal_text = value
+
+
 @dataclass
-class SubAgentActivity:
+class SubAgentActivity(_TerminalBuffer):
     """Live state of one delegated agent."""
 
     key: str
@@ -120,6 +148,14 @@ class SubAgentActivity:
     phase: str = ""
     #: Groups the agents belonging to one ``run_workflow`` call.
     workflow_run_id: str = ""
+    agent_id: Optional[str] = None
+    parent_agent_id: Optional[str] = None
+    parent_tool_call_id: Optional[str] = None
+    depth: int = 1
+    background: bool = False
+    requested_routing: Optional[dict] = None
+    effective_routing: Optional[dict] = None
+    total_tokens: Optional[int] = None
 
 
 @dataclass
@@ -176,17 +212,20 @@ class _PeerMessageRecord:
 
 
 @dataclass
-class PresentationState:
+class PresentationState(_TerminalBuffer):
     """Everything a frontend needs to draw a session at one point in time."""
 
     conversation: list[ConversationItem] = field(default_factory=list)
     sub_agents: dict[str, SubAgentActivity] = field(default_factory=dict)
     turns: list[TurnMarker] = field(default_factory=list)
-    terminal_truncated: bool = False
     logs: list[tuple[str, str]] = field(default_factory=list)
     edit_previews: list[dict] = field(default_factory=list)
     context: Optional[ContextStatus] = None
     compaction: Optional[dict] = None
+    task_list: Optional[dict] = None
+    usage: Optional[dict] = None
+    queue: Optional[dict] = None
+    goal: Optional[dict] = None
     #: Decision points in the order they arose, resolved or not. A replay shows
     #: where the agent stopped to ask and what the answer was.
     prompts: list[PendingPrompt] = field(default_factory=list)
@@ -208,32 +247,9 @@ class PresentationState:
     _tools: dict[str, int] = field(default_factory=dict, repr=False)
     _peer_messages: dict[str, _PeerMessageRecord] = field(default_factory=dict, repr=False)
     _pending_peer_turns: list[str] = field(default_factory=list, repr=False)
-
-    # -- Terminal text is chunked while folding and joined on demand --------
-    _terminal_parts: deque[str] = field(default_factory=deque, repr=False, compare=False)
-    #: Characters already dropped from the front of ``_terminal_parts[0]``.
-    _terminal_offset: int = field(default=0, repr=False, compare=False)
-    _terminal_chars: int = field(default=0, repr=False, compare=False)
-    _terminal_text: Optional[str] = field(default=None, repr=False, compare=False)
-
-    @property
-    def terminal(self) -> str:
-        """Retained terminal text.
-
-        Folding appends one chunk per output event, so materializing the whole
-        buffer on every append made replay quadratic in the session length.
-        """
-        if self._terminal_text is None:
-            text = "".join(self._terminal_parts)
-            self._terminal_text = text[self._terminal_offset :] if self._terminal_offset else text
-        return self._terminal_text
-
-    @terminal.setter
-    def terminal(self, value: str) -> None:
-        self._terminal_parts = deque([value] if value else ())
-        self._terminal_offset = 0
-        self._terminal_chars = len(value)
-        self._terminal_text = value
+    _background_completions: set[str] = field(default_factory=set, repr=False)
+    _retired_queue_ids: set[str] = field(default_factory=set, repr=False)
+    _retired_goal_generation_ids: set[str] = field(default_factory=set, repr=False)
 
     def to_dict(self) -> dict:
         """JSON-safe view for transport to a web client or player.
@@ -256,6 +272,16 @@ class PresentationState:
                     "label": activity.label,
                     "phase": activity.phase,
                     "workflow_run_id": activity.workflow_run_id,
+                    "agent_id": activity.agent_id,
+                    "parent_agent_id": activity.parent_agent_id,
+                    "parent_tool_call_id": activity.parent_tool_call_id,
+                    "depth": activity.depth,
+                    "background": activity.background,
+                    "requested_routing": activity.requested_routing,
+                    "effective_routing": activity.effective_routing,
+                    "total_tokens": activity.total_tokens,
+                    "terminal": activity.terminal,
+                    "terminal_truncated": activity.terminal_truncated,
                     "steps": [_item_dict(step) for step in activity.steps],
                 }
                 for key, activity in self.sub_agents.items()
@@ -286,6 +312,10 @@ class PresentationState:
                 "will_compress_at": self.context.will_compress_at,
             },
             "compaction": self.compaction,
+            "task_list": self.task_list,
+            "usage": self.usage,
+            "queue": deepcopy(self.queue),
+            "goal": deepcopy(self.goal),
             "prompts": [
                 {
                     "request_id": prompt.request_id,
@@ -328,11 +358,14 @@ def _item_dict(item: ConversationItem) -> dict:
         ("tone", item.tone),
         ("sub_agent", item.sub_agent),
         ("edit_preview", item.edit_preview),
+        ("background_delivery", item.background_delivery),
     ):
         if value is not None:
             payload[key] = value
     if item.artifacts:
         payload["artifacts"] = [ref.model_dump(exclude_none=True) for ref in item.artifacts]
+    if item.image_count:
+        payload["image_count"] = item.image_count
     return payload
 
 
@@ -359,6 +392,47 @@ def fold(state: PresentationState, event: AgentEvent) -> PresentationState:
         state.last_seq = event.seq
     state.elapsed_ms = max(state.elapsed_ms, event.elapsed_ms)
 
+    if event.event_type == "queue_updated":
+        _on_queue_updated(state, event)
+        return state
+
+    if event.event_type == "goal_updated":
+        _on_goal_updated(state, event)
+        return state
+
+    if event.event_type == KnownEventType.BACKGROUND_JOB_DELIVERED:
+        _on_background_delivery(state, event)
+        return state
+
+    if event.event_type == KnownEventType.USAGE_UPDATED:
+        content = event.content
+        if (
+            _sub_agent_key(event) is None
+            and content.get("scope") == "session"
+            and content.get("semantics") == "snapshot"
+            and _usage_count(content.get("source_seq"))
+            and _valid_usage(content.get("usage"))
+            and (state.usage is None or content["source_seq"] >= state.usage["source_seq"])
+        ):
+            state.usage = {**deepcopy(content["usage"]), "source_seq": content["source_seq"]}
+        return state
+
+    if event.event_type == KnownEventType.TASK_LIST_UPDATED or (
+        event.event_type == KnownEventType.CHAT_MESSAGE and event.content.get("message_type") == "task_list_update"
+    ):
+        if _sub_agent_key(event) is None:
+            field_name = "markdown" if event.event_type == KnownEventType.TASK_LIST_UPDATED else "text"
+            markdown = event.content.get(field_name)
+            if isinstance(markdown, str):
+                state.task_list = {"markdown": markdown, "entries": task_list_entries(markdown)}
+        return state
+
+    # Peer lifecycle is session-scoped even when a producer attaches stale worker metadata.
+    if event.event_type not in (KnownEventType.PEER_MESSAGE_RECEIVED, KnownEventType.PEER_MESSAGE_DELIVERED):
+        key = _sub_agent_key(event)
+        if key is not None:
+            _merge_sub_agent_metadata(_sub_agent(state, key, event), event)
+
     handler = _HANDLERS.get(event.event_type)
     if handler is None:
         state.unknown_event_types.add(event.event_type)
@@ -372,6 +446,224 @@ def fold(state: PresentationState, event: AgentEvent) -> PresentationState:
 # ---------------------------------------------------------------------------
 
 
+def _queue_count(value: Any) -> TypeGuard[int | float]:
+    # Integral JSON numbers can decode as floats in Python but Numbers in JavaScript.
+    return type(value) in (int, float) and 0 <= value <= 9_007_199_254_740_991 and value == int(value)
+
+
+def _on_queue_updated(state: PresentationState, event: AgentEvent) -> None:
+    content = event.content
+    if event.sub_agent_info is not None or not isinstance(content, dict):
+        return
+    queue_id = content.get("queue_id")
+    revision = content.get("revision")
+    if not isinstance(queue_id, str) or not queue_id or not _queue_count(revision):
+        return
+    if content.get("source") not in ("tui", "ask"):
+        return
+    if content.get("reason") not in ("snapshot", "enqueued", "dequeued", "cleared", "removed"):
+        return
+    if not isinstance(content.get("items"), list):
+        return
+    items = []
+    item_ids: set[str] = set()
+    for item in content["items"]:
+        if not isinstance(item, dict):
+            return
+        item_id = item.get("queue_id")
+        if not isinstance(item_id, str) or not item_id or item_id in item_ids:
+            return
+        if not isinstance(item.get("text"), str) or not _queue_count(item.get("image_count")):
+            return
+        if "origin" not in item:
+            return
+        origin = item["origin"]
+        if origin is not None:
+            if (
+                not isinstance(origin, dict)
+                or origin.get("kind") != "peer"
+                or not isinstance(origin.get("session_id"), str)
+                or not isinstance(origin.get("title"), str)
+            ):
+                return
+            origin = {key: origin[key] for key in ("kind", "session_id", "title")}
+        items.append(
+            {"queue_id": item_id, "text": item["text"], "image_count": int(item["image_count"]), "origin": origin}
+        )
+        item_ids.add(item_id)
+    if queue_id in state._retired_queue_ids:
+        return
+    if state.queue is not None:
+        if queue_id == state.queue["queue_id"]:
+            if revision <= state.queue["revision"]:
+                return
+        else:
+            state._retired_queue_ids.add(state.queue["queue_id"])
+    state.queue = {
+        "queue_id": queue_id,
+        "revision": int(revision),
+        "source": content["source"],
+        "reason": content["reason"],
+        "items": items,
+    }
+
+
+def _on_goal_updated(state: PresentationState, event: AgentEvent) -> None:
+    content = event.content
+    if event.sub_agent_info is not None or not isinstance(content, dict):
+        return
+    generation_id = content.get("generation_id")
+    revision = content.get("revision")
+    if not isinstance(generation_id, str) or not generation_id or not _queue_count(revision):
+        return
+    if content.get("source") not in ("tui", "ask"):
+        return
+    reason = content.get("reason")
+    if reason not in ("snapshot", "started", "replaced", "evaluated", "paused", "resumed", "completed", "cleared"):
+        return
+    if "goal" not in content or "evaluation_met" not in content:
+        return
+    if content["evaluation_met"] is not None and type(content["evaluation_met"]) is not bool:
+        return
+    goal = content["goal"]
+    if goal is None:
+        if reason not in ("snapshot", "cleared"):
+            return
+    else:
+        if reason == "cleared" or not isinstance(goal, dict):
+            return
+        strings = ("condition", "started_at", "last_reason", "status_note")
+        counts = ("turns_evaluated", "tokens_spent", "max_turns")
+        flags = ("run_to_completion", "paused", "met")
+        if not all(isinstance(goal.get(key), str) for key in strings):
+            return
+        if not all(_queue_count(goal.get(key)) for key in counts):
+            return
+        if not all(type(goal.get(key)) is bool for key in flags):
+            return
+        if "last_evaluated_at" not in goal or (
+            goal["last_evaluated_at"] is not None and not isinstance(goal["last_evaluated_at"], str)
+        ):
+            return
+        goal = {
+            **{key: goal[key] for key in strings},
+            **{key: int(goal[key]) for key in counts},
+            **{key: goal[key] for key in flags},
+            "last_evaluated_at": goal["last_evaluated_at"],
+        }
+    if generation_id in state._retired_goal_generation_ids:
+        return
+    if state.goal is not None:
+        if generation_id == state.goal["generation_id"]:
+            if revision <= state.goal["revision"]:
+                return
+        else:
+            state._retired_goal_generation_ids.add(state.goal["generation_id"])
+    state.goal = {
+        "generation_id": generation_id,
+        "revision": int(revision),
+        "source": content["source"],
+        "reason": reason,
+        "goal": goal,
+        "evaluation_met": content["evaluation_met"],
+    }
+
+
+def _on_background_delivery(state: PresentationState, event: AgentEvent) -> None:
+    content = event.content
+    required = ("job_id", "completion_id", "agent_type", "status", "task", "text", "disposition")
+    if event.sub_agent_info is not None or not all(isinstance(content.get(key), str) for key in required):
+        return
+    if not all(content[key] for key in ("job_id", "completion_id", "agent_type")):
+        return
+    if content["status"] not in ("completed", "failed", "cancelled", "interrupted"):
+        return
+    if content["disposition"] not in ("context", "archived"):
+        return
+    epoch_id = content.get("epoch_id")
+    metadata = content.get("metadata", {})
+    if (epoch_id is not None and not isinstance(epoch_id, str)) or not isinstance(metadata, dict):
+        return
+    completion_id = content["completion_id"]
+    if completion_id in state._background_completions:
+        return
+    state._background_completions.add(completion_id)
+    delivery = {key: content[key] for key in required if key != "text"}
+    delivery.update(epoch_id=epoch_id, metadata=deepcopy(metadata))
+    _append(
+        state,
+        ConversationItem(
+            kind="background_delivery",
+            text=content["text"],
+            status=content["status"],
+            background_delivery=delivery,
+            artifacts=list(event.artifacts),
+        ),
+        event,
+    )
+
+
+_USAGE_COUNTS = ("requests", "responses", "reported", "unreported", "failed", "open", "abandoned", "partial", "missing")
+_USAGE_TOKENS = (
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "cache_read_input_tokens",
+    "cache_write_input_tokens",
+    "reasoning_output_tokens",
+)
+_USAGE_DECIMAL = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+
+
+def _usage_count(value: Any) -> bool:
+    return type(value) is int and 0 <= value <= 9_007_199_254_740_991
+
+
+def _usage_decimal(value: Any) -> bool:
+    if not isinstance(value, str) or _USAGE_DECIMAL.fullmatch(value) is None:
+        return False
+    mantissa = value.lower().split("e")[0]
+    return not value.startswith("-") or not mantissa[1:].replace(".", "").strip("0")
+
+
+def _valid_usage_costs(costs: Any) -> bool:
+    if not isinstance(costs, dict) or type(costs.get("complete")) is not bool:
+        return False
+    if not all(
+        _usage_count(costs.get(name))
+        for name in ("reported", "estimated", "missing", "partial", "missing_requests", "partial_requests")
+    ):
+        return False
+    for name in ("currencies", "non_monetary"):
+        buckets = costs.get(name)
+        if not isinstance(buckets, dict):
+            return False
+        for denomination, row in buckets.items():
+            if not isinstance(denomination, str) or not denomination or not isinstance(row, dict):
+                return False
+            if not all(_usage_decimal(row.get(field)) for field in ("reported", "estimated", "total")):
+                return False
+            if not all(
+                _usage_count(row.get(field)) for field in ("requests", "reported_requests", "estimated_requests")
+            ):
+                return False
+            if "token_cost_subtotal" in row and not _usage_decimal(row["token_cost_subtotal"]):
+                return False
+    return True
+
+
+def _valid_usage(usage: Any) -> bool:
+    if not isinstance(usage, dict) or type(usage.get("complete")) is not bool:
+        return False
+    known = usage.get("known_requests")
+    return (
+        all(_usage_count(usage.get(name)) for name in (*_USAGE_COUNTS, *_USAGE_TOKENS))
+        and isinstance(known, dict)
+        and all(_usage_count(known.get(name)) for name in _USAGE_TOKENS)
+        and _valid_usage_costs(usage.get("costs"))
+    )
+
+
 def sub_agent_key(info: Optional[dict]) -> Optional[str]:
     """Identity of the delegate an event belongs to (public helper).
 
@@ -379,9 +671,13 @@ def sub_agent_key(info: Optional[dict]) -> Optional[str]:
     ``dispatch_id`` unset, so keying on the name alone folded every agent of a
     fan-out into one activity.
     """
-    if not info:
+    if not isinstance(info, dict) or not info:
         return None
-    return str(info.get("dispatch_id") or info.get("agent_id") or info.get("agent_name") or "sub-agent")
+    for field_name in ("dispatch_id", "agent_id", "agent_name"):
+        value = info.get(field_name)
+        if isinstance(value, str) and value:
+            return value
+    return "sub-agent"
 
 
 def _sub_agent_key(event: AgentEvent) -> Optional[str]:
@@ -398,17 +694,46 @@ def _sub_agent_key(event: AgentEvent) -> Optional[str]:
 def _sub_agent(state: PresentationState, key: str, event: AgentEvent) -> SubAgentActivity:
     activity = state.sub_agents.get(key)
     if activity is None:
-        info = event.sub_agent_info or {}
-        activity = SubAgentActivity(
-            key=key,
-            name=str(info.get("agent_name") or key),
-            task=str(info.get("task") or ""),
-            label=str(info.get("label") or ""),
-            phase=str(info.get("phase") or ""),
-            workflow_run_id=str(info.get("workflow_run_id") or ""),
-        )
+        activity = SubAgentActivity(key=key, name=key)
         state.sub_agents[key] = activity
     return activity
+
+
+def _integer_metadata(value: Any, minimum: int = 0) -> Optional[int]:
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= minimum and value % 1 == 0:
+        return int(value)
+    return None
+
+
+def _merge_sub_agent_metadata(activity: SubAgentActivity, event: AgentEvent) -> None:
+    info = event.sub_agent_info or {}
+    for source, target in (
+        ("agent_name", "name"),
+        ("task", "task"),
+        ("label", "label"),
+        ("phase", "phase"),
+        ("workflow_run_id", "workflow_run_id"),
+        ("agent_id", "agent_id"),
+        ("parent_agent_id", "parent_agent_id"),
+        ("parent_tool_call_id", "parent_tool_call_id"),
+    ):
+        value = info.get(source)
+        if isinstance(value, str) and value:
+            setattr(activity, target, value)
+    depth = _integer_metadata(info.get("depth"), minimum=1)
+    if depth is not None:
+        activity.depth = depth
+    background = info.get("background")
+    if isinstance(background, bool):
+        activity.background = background
+    for name in ("requested_routing", "effective_routing"):
+        routing = info.get(name)
+        if isinstance(routing, dict):
+            setattr(activity, name, {**(getattr(activity, name) or {}), **routing})
+    for source in (info, event.content):
+        total = _integer_metadata(source.get("total_tokens"))
+        if total is not None:
+            activity.total_tokens = total
 
 
 def _append(state: PresentationState, item: ConversationItem, event: AgentEvent) -> ConversationItem:
@@ -684,17 +1009,22 @@ def _on_tool_streaming_update(state: PresentationState, event: AgentEvent) -> No
 
 
 def _on_terminal_command(state: PresentationState, event: AgentEvent) -> None:
+    key = _sub_agent_key(event)
+    target = state.sub_agents[key] if key is not None else state
     command = _text_of(event, "command")
     if command:
-        _append_terminal(state, f"$ {command}\n")
-    state.activity = "running_tool"
+        _append_terminal(target, f"$ {command}\n")
+    if key is None:
+        state.activity = "running_tool"
 
 
 def _on_terminal_output(state: PresentationState, event: AgentEvent) -> None:
-    _append_terminal(state, _text_of(event, "display_output", "output"))
+    key = _sub_agent_key(event)
+    target = state.sub_agents[key] if key is not None else state
+    _append_terminal(target, _text_of(event, "display_output", "output"))
 
 
-def _append_terminal(state: PresentationState, text: str) -> None:
+def _append_terminal(state: _TerminalBuffer, text: str) -> None:
     if not text:
         return
     parts = state._terminal_parts
@@ -708,7 +1038,7 @@ def _append_terminal(state: PresentationState, text: str) -> None:
         _compact_terminal(state)
 
 
-def _drop_terminal_prefix(state: PresentationState, excess: int) -> None:
+def _drop_terminal_prefix(state: _TerminalBuffer, excess: int) -> None:
     """Drop ``excess`` characters from the front of the retained terminal text.
 
     Advancing ``_terminal_offset`` instead of re-slicing keeps the head chunk
@@ -728,7 +1058,7 @@ def _drop_terminal_prefix(state: PresentationState, excess: int) -> None:
             return
 
 
-def _compact_terminal(state: PresentationState) -> None:
+def _compact_terminal(state: _TerminalBuffer) -> None:
     """Merge retained chunks so a stream of tiny deltas cannot grow the list."""
     text = "".join(state._terminal_parts)
     if state._terminal_offset:
@@ -765,6 +1095,10 @@ def _on_file_edit_preview(state: PresentationState, event: AgentEvent) -> None:
 
 def _on_context_update(state: PresentationState, event: AgentEvent) -> None:
     content = event.content
+    key = _sub_agent_key(event)
+    if key is not None:
+        _sub_agent(state, key, event).context = dict(content)
+        return
     status = ContextStatus(
         input_tokens=int(content.get("input_tokens") or 0),
         max_tokens=int(content.get("max_tokens") or 0),
@@ -773,10 +1107,6 @@ def _on_context_update(state: PresentationState, event: AgentEvent) -> None:
         message=content.get("message"),
         will_compress_at=int(content.get("will_compress_at") or 0),
     )
-    key = _sub_agent_key(event)
-    if key is not None:
-        _sub_agent(state, key, event).context = dict(content)
-        return
     state.context = status
 
 
@@ -802,6 +1132,13 @@ def _on_status_update(state: PresentationState, event: AgentEvent) -> None:
 def _on_turn_started(state: PresentationState, event: AgentEvent) -> None:
     turn_id = str(event.content.get("turn_id") or "")
     user_text = str(event.content.get("user_text") or "")
+    count = event.content.get("image_count")
+    image_count = (
+        int(count)
+        if isinstance(count, (int, float)) and not isinstance(count, bool) and count > 0 and count % 1 == 0
+        else 0
+    )
+    images = [ref for ref in event.artifacts if ref.purpose == "image" and ref.media_type.startswith("image/")]
     # A dispatched agent runs its own turns. They are not session turns: indexing
     # them would put work nobody typed into the turn rail, and letting them drive
     # the activity flag would report the session idle while the main agent is
@@ -819,8 +1156,12 @@ def _on_turn_started(state: PresentationState, event: AgentEvent) -> None:
         state.activity = "generating"
         if peer_text is not None:
             return
-    if user_text:
-        _append(state, ConversationItem(kind="user", text=user_text), event)
+    if user_text or images or image_count:
+        _append(
+            state,
+            ConversationItem(kind="user", text=user_text, artifacts=images, image_count=image_count),
+            event,
+        )
 
 
 def _on_turn_ended(state: PresentationState, event: AgentEvent) -> None:
@@ -877,14 +1218,17 @@ def _on_control_requested(state: PresentationState, event: AgentEvent) -> None:
 
 def _on_control_resolved(state: PresentationState, event: AgentEvent) -> None:
     request_id = str(event.content.get("request_id") or "")
+    resolved_kind = str(event.content.get("kind") or "")
     for prompt in reversed(state.prompts):
         if prompt.request_id == request_id:
             response = event.content.get("response")
             prompt.response = dict(response) if isinstance(response, dict) else None
             prompt.reason = str(event.content.get("reason") or "answered")
+            resolved_kind = prompt.kind
             break
     if not any(not prompt.resolved for prompt in state.prompts):
-        state.activity = "generating"
+        between_turns = resolved_kind == "plan_approval" and not any(marker.ended_ms is None for marker in state.turns)
+        state.activity = "idle" if between_turns else "generating"
 
 
 def _on_system_message(state: PresentationState, event: AgentEvent) -> None:

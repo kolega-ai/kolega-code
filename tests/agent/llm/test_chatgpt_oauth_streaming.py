@@ -517,3 +517,47 @@ async def test_responses_stream_wrapper_skips_reasoning_without_encrypted_conten
             pass
     message = await wrapper.get_final_message()
     assert not [b for b in message.content if isinstance(b, ResponsesReasoningBlock)]
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_wrapper_retains_streamed_deltas_as_parts():
+    # Deltas stay separate until the final message is built, so a long answer or
+    # reasoning segment does not recopy the whole accumulator per delta.
+    completed = _ns(output=[], usage=None, status="completed", incomplete_details=None)
+    events = [
+        _ns(type="response.output_text.delta", delta="alpha"),
+        _ns(type="response.output_text.delta", delta=" beta"),
+        _ns(type="response.reasoning_text.delta", delta="think"),
+        _ns(type="response.reasoning_text.delta", delta="ing"),
+        _ns(type="response.completed", response=completed),
+    ]
+    wrapper = ResponsesStreamWrapper(_FakeStream(events))
+    async with wrapper as stream:
+        async for _chunk in stream:
+            pass
+
+    assert wrapper._text_parts == ["alpha", " beta"]
+    assert wrapper._reasoning_parts == ["think", "ing"]
+    message = await wrapper.get_final_message()
+    assert message.get_text_content() == "alpha beta"
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_wrapper_done_arguments_replace_then_append_deltas():
+    # A terminal done event carries the authoritative arguments for a tool call;
+    # any deltas that follow it append to that text, matching the previous
+    # string-accumulator behaviour.
+    completed = _ns(output=[], usage=None, status="completed", incomplete_details=None)
+    events = [
+        _ns(type="response.custom_tool_call_input.delta", item_id="fc_1", delta="echo "),
+        _ns(type="response.custom_tool_call_input.done", item_id="fc_1", input="echo hello"),
+        _ns(type="response.custom_tool_call_input.delta", item_id="fc_1", delta=" world"),
+        _ns(type="response.completed", response=completed),
+    ]
+    wrapper = ResponsesStreamWrapper(_FakeStream(events))
+    async with wrapper as stream:
+        async for _chunk in stream:
+            pass
+    message = await wrapper.get_final_message()
+    tool_calls = [block for block in message.content if isinstance(block, ToolCall)]
+    assert tool_calls and tool_calls[0].input == "echo hello world"

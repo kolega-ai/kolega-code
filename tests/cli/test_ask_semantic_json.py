@@ -217,6 +217,15 @@ def test_presentation_events_never_reach_json_stdout(tmp_path, capsys, monkeypat
                 "ws",
                 "thread",
             )
+            await manager.broadcast_event(
+                AgentEvent(
+                    event_type="background_job_delivered",
+                    sender="coder",
+                    content={"text": "presentation must not leak"},
+                ),
+                "ws",
+                "thread",
+            )
             async for item in SemanticAskFakeAgent.process_message_stream(self, message, attachments):
                 yield item
 
@@ -227,6 +236,8 @@ def test_presentation_events_never_reach_json_stdout(tmp_path, capsys, monkeypat
     lines = _lines(capsys)
     assert all(set(line) == ENVELOPE_KEYS for line in lines)
     assert not [line for line in lines if line["type"].startswith("ui.")]
+    assert [line["seq"] for line in lines] == list(range(1, len(lines) + 1))
+    assert "presentation must not leak" not in json.dumps(lines)
 
 
 def test_synthetic_notice_is_a_marked_assistant_event(tmp_path, capsys, monkeypatch, isolated_cli_env):

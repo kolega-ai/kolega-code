@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional, Callable, Awaitable
 from datetime import datetime, timezone
 
 from ..services.base import ExecResult, TerminalCommandCancelled, TerminalManager
+from ..services.terminal import TerminalEventContext, _terminal_event_context
 from ..services.terminal_buffer import (
     GLOBAL_MAX_TOOL_OUTPUT_TOKENS,
     TerminalOutputAccumulator,
@@ -420,6 +421,7 @@ class SandboxTerminalManager(TerminalManager):
         terminal_id: str,
         output_type: str,
         command_id: Optional[str] = None,
+        event_context: Optional[TerminalEventContext] = None,
     ) -> Callable[[str], Awaitable[None]]:
         """
         Create an async output handler for streaming.
@@ -431,6 +433,7 @@ class SandboxTerminalManager(TerminalManager):
         Returns:
             Async callback function for handling output
         """
+        owner = event_context if event_context is not None else _terminal_event_context.get()
 
         async def handler(data: str) -> None:
             self.outputs[terminal_id].append(
@@ -441,24 +444,7 @@ class SandboxTerminalManager(TerminalManager):
                 if accumulator is not None:
                     accumulator.append_text(data)
 
-            # Broadcast output immediately for streaming
-            if self.connection_manager:
-                try:
-                    terminal_output_event = AgentEvent(
-                        event_type="terminal_output",
-                        sender="agent",
-                        content={
-                            "output": data,
-                            "terminal_id": terminal_id,
-                            "thread_id": self.thread_id,
-                        },
-                    )
-                    await self.connection_manager.broadcast_event(
-                        terminal_output_event, self.workspace_id, self.thread_id
-                    )
-                except Exception:
-                    # Don't let broadcast errors affect command execution
-                    pass
+            await self._broadcast_output(terminal_id, data, command_id=command_id, event_context=owner)
 
         return handler
 
@@ -583,6 +569,8 @@ class SandboxTerminalManager(TerminalManager):
         if terminal_id not in self.terminals:
             raise KeyError(f"Terminal {terminal_id} not found")
 
+        event_context = _terminal_event_context.get()
+        command_id = str(uuid.uuid4())
         terminal_info = self.terminals[terminal_id]
 
         terminal_info["last_command"] = command.rstrip("\n")
@@ -603,12 +591,14 @@ class SandboxTerminalManager(TerminalManager):
 
         if self.connection_manager:
             try:
-                await self._broadcast_output(terminal_id, f"$ {command}\n")
+                await self._broadcast_output(
+                    terminal_id, f"$ {command}\n", command_id=command_id, event_context=event_context
+                )
             except Exception:
                 pass  # Don't fail if broadcast fails
 
-        stdout_handler = await self._create_output_handler(terminal_id, "stdout")
-        stderr_handler = await self._create_output_handler(terminal_id, "stderr")
+        stdout_handler = await self._create_output_handler(terminal_id, "stdout", command_id, event_context)
+        stderr_handler = await self._create_output_handler(terminal_id, "stderr", command_id, event_context)
 
         try:
             sandbox_timeout = timeout if timeout is not None else 0
@@ -646,7 +636,12 @@ class SandboxTerminalManager(TerminalManager):
             )
 
             if self.connection_manager:
-                await self._broadcast_output(terminal_id, f"Process exited with code {result.exit_code}\n")
+                await self._broadcast_output(
+                    terminal_id,
+                    f"Process exited with code {result.exit_code}\n",
+                    command_id=command_id,
+                    event_context=event_context,
+                )
 
             if result.exit_code == 0:
                 self._handle_cd_command(command, working_dir, terminal_info)
@@ -660,7 +655,7 @@ class SandboxTerminalManager(TerminalManager):
             )
 
             if self.connection_manager:
-                await self._broadcast_output(terminal_id, error_msg)
+                await self._broadcast_output(terminal_id, error_msg, command_id=command_id, event_context=event_context)
 
             self.outputs[terminal_id].append(
                 {
@@ -672,7 +667,9 @@ class SandboxTerminalManager(TerminalManager):
             )
 
             if self.connection_manager:
-                await self._broadcast_output(terminal_id, "Process exited with code 1\n")
+                await self._broadcast_output(
+                    terminal_id, "Process exited with code 1\n", command_id=command_id, event_context=event_context
+                )
 
             return False  # Command failed due to timeout
 
@@ -683,7 +680,7 @@ class SandboxTerminalManager(TerminalManager):
             )
 
             if self.connection_manager:
-                await self._broadcast_output(terminal_id, error_msg)
+                await self._broadcast_output(terminal_id, error_msg, command_id=command_id, event_context=event_context)
 
             self.outputs[terminal_id].append(
                 {
@@ -695,7 +692,9 @@ class SandboxTerminalManager(TerminalManager):
             )
 
             if self.connection_manager:
-                await self._broadcast_output(terminal_id, "Process exited with code 1\n")
+                await self._broadcast_output(
+                    terminal_id, "Process exited with code 1\n", command_id=command_id, event_context=event_context
+                )
 
             return False  # Command failed
 
@@ -738,11 +737,18 @@ class SandboxTerminalManager(TerminalManager):
         except AttributeError as exc:
             raise ValueError("Sandbox command stdin is not supported by this E2B SDK version") from exc
 
-    async def _broadcast_output(self, terminal_id: str, output: str):
+    async def _broadcast_output(
+        self,
+        terminal_id: str,
+        output: str,
+        command_id: Optional[str] = None,
+        event_context: Optional[TerminalEventContext] = None,
+    ) -> None:
         """Broadcast terminal output to connected clients."""
         if not self.connection_manager:
             return
 
+        owner = event_context if event_context is not None else _terminal_event_context.get()
         try:
             terminal_output_event = AgentEvent(
                 event_type="terminal_output",
@@ -751,7 +757,10 @@ class SandboxTerminalManager(TerminalManager):
                     "output": output,
                     "terminal_id": terminal_id,
                     "thread_id": self.thread_id,
+                    "session_id": command_id,
+                    "tool_call_id": owner.tool_call_id,
                 },
+                sub_agent_info=owner.sub_agent_info,
             )
             await self.connection_manager.broadcast_event(terminal_output_event, self.workspace_id, self.thread_id)
         except Exception:
@@ -779,6 +788,7 @@ class SandboxTerminalManager(TerminalManager):
         if terminal_id not in self.terminals:
             raise KeyError(f"Terminal {terminal_id} not found")
 
+        event_context = _terminal_event_context.get()
         self.command_counter += 1
         command_id = f"{terminal_id}_{self.command_counter}"
 
@@ -806,17 +816,28 @@ class SandboxTerminalManager(TerminalManager):
         )
 
         if self.connection_manager:
-            await self._broadcast_output(terminal_id, f"$ {command}\n")
+            await self._broadcast_output(
+                terminal_id, f"$ {command}\n", command_id=command_id, event_context=event_context
+            )
 
-        task = asyncio.create_task(self._execute_command_async(command_id, terminal_id, command, working_dir, timeout))
+        task = asyncio.create_task(
+            self._execute_command_async(command_id, terminal_id, command, working_dir, timeout, event_context)
+        )
         self._command_tasks[command_id] = task
 
         return command_id
 
     async def _execute_command_async(
-        self, command_id: str, terminal_id: str, command: str, working_dir: str, timeout: Optional[int] = None
-    ):
+        self,
+        command_id: str,
+        terminal_id: str,
+        command: str,
+        working_dir: str,
+        timeout: Optional[int] = None,
+        event_context: Optional[TerminalEventContext] = None,
+    ) -> None:
         """Execute a command asynchronously and track its status."""
+        owner = event_context if event_context is not None else _terminal_event_context.get()
         try:
             # Convert Path objects to strings for E2B compatibility
             if hasattr(working_dir, "__fspath__"):
@@ -826,8 +847,8 @@ class SandboxTerminalManager(TerminalManager):
             env = self.terminals.get(terminal_id, {}).get("env") or {}
 
             # Create streaming output handlers
-            stdout_handler = await self._create_output_handler(terminal_id, "stdout", command_id)
-            stderr_handler = await self._create_output_handler(terminal_id, "stderr", command_id)
+            stdout_handler = await self._create_output_handler(terminal_id, "stdout", command_id, owner)
+            stderr_handler = await self._create_output_handler(terminal_id, "stderr", command_id, owner)
 
             sandbox_timeout = timeout if timeout is not None else 0
 
@@ -893,7 +914,12 @@ class SandboxTerminalManager(TerminalManager):
             )
 
             if self.connection_manager:
-                await self._broadcast_output(terminal_id, f"Process exited with code {result.exit_code}\n")
+                await self._broadcast_output(
+                    terminal_id,
+                    f"Process exited with code {result.exit_code}\n",
+                    command_id=command_id,
+                    event_context=owner,
+                )
 
             if result.exit_code == 0 and terminal_id in self.terminals:
                 terminal_info = self.terminals[terminal_id]
@@ -916,7 +942,7 @@ class SandboxTerminalManager(TerminalManager):
                 accumulator.finalize()
 
             if self.connection_manager:
-                await self._broadcast_output(terminal_id, error_msg)
+                await self._broadcast_output(terminal_id, error_msg, command_id=command_id, event_context=owner)
 
             self.outputs[terminal_id].append(
                 {
@@ -928,7 +954,9 @@ class SandboxTerminalManager(TerminalManager):
             )
 
             if self.connection_manager:
-                await self._broadcast_output(terminal_id, "Process exited with code 1\n")
+                await self._broadcast_output(
+                    terminal_id, "Process exited with code 1\n", command_id=command_id, event_context=owner
+                )
 
             if terminal_id in self.terminals:
                 self.terminals[terminal_id]["active_commands"].pop(command_id, None)
@@ -1068,10 +1096,6 @@ class SandboxTerminalManager(TerminalManager):
         self.command_history.clear()
         self._output_accumulators.clear()
         self._command_tasks.clear()
-
-    def _handle_output(self, terminal_id: str, data: str, stream: str):
-        """Handle output from process."""
-        self.outputs[terminal_id].append({"type": stream, "data": data, "timestamp": datetime.now(timezone.utc)})
 
     async def get_output(self, terminal_id: str, **kwargs) -> str:
         """

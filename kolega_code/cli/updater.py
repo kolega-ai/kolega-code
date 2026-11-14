@@ -21,9 +21,10 @@ PACKAGE_NAME = "kolega-code"
 PYPI_JSON_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/json"
 # Without --python, uv uses its default interpreter, often a release our pinned dependencies
 # ship no wheels for yet. scripts/install-kolega-code.sh repeats both ranges.
-TOOL_PYTHON = ">=3.11,<3.15"
+# The 3.11.5 floor is soupsieve 4.x's, which fixes the 2026-11 selector DoS advisories.
+TOOL_PYTHON = ">=3.11.5,<3.15"
 # onnxruntime has no Intel-mac wheels for 3.14, and its 3.13 ones need macOS 13+.
-INTEL_MAC_TOOL_PYTHON = ">=3.11,<3.13"
+INTEL_MAC_TOOL_PYTHON = ">=3.11.5,<3.13"
 
 
 def tool_python(sys_platform: str, machine: str) -> str:

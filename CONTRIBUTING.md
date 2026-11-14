@@ -2,7 +2,7 @@
 
 ## Local Setup
 
-Kolega Code requires Python 3.11 or newer.
+Kolega Code requires Python 3.11.5 or newer.
 
 Install the CLI, development dependencies, and the tracked Git hooks with the setup script:
 

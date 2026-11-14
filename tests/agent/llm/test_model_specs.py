@@ -432,11 +432,13 @@ def test_claude_sonnet_5_model_specs():
         ("claude-fable-5-1", "high"),
         ("claude-opus-5-5", "medium"),
         ("claude-sonnet-5-5", "high"),
+        ("claude-fable-5-2", "high"),
     ],
 )
 def test_claude_51_55_model_specs(model: str, default_effort: str) -> None:
-    """The Sept 2026 Claude generation keeps 1M/128K with adaptive thinking that
-    cannot be disabled; only Opus 5.5 defaults to `medium` effort."""
+    """The Sept 2026 Claude generation (and the Nov 2026 Fable 5.2) keeps 1M/128K
+    with adaptive thinking that cannot be disabled; only Opus 5.5 defaults to
+    `medium` effort."""
     specs = get_model_specs("anthropic", model)
 
     assert specs["context_length"] == 1000000

@@ -12,6 +12,7 @@ and ordering live behind the protocols in :mod:`kolega_code.session.store`;
 """
 
 import abc
+from copy import deepcopy
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
@@ -83,6 +84,11 @@ class KnownEventType:
     # consumers, which treat unrecognized types as inert like any other.
     PEER_MESSAGE_RECEIVED = "peer_message_received"
     PEER_MESSAGE_DELIVERED = "peer_message_delivered"
+    TASK_LIST_UPDATED = "task_list_updated"
+    USAGE_UPDATED = "usage_updated"
+    BACKGROUND_JOB_DELIVERED = "background_job_delivered"
+    QUEUE_UPDATED = "queue_updated"
+    GOAL_UPDATED = "goal_updated"
 
 
 class ArtifactPurpose:
@@ -337,6 +343,68 @@ class AgentEventEmitter:
             )
         )
 
+    async def task_list_updated(self, markdown: str) -> None:
+        sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
+        await self.emit(
+            AgentEvent(
+                sender=self.sender,
+                event_type=KnownEventType.TASK_LIST_UPDATED,
+                content={"markdown": markdown},
+                sub_agent_info=sub_agent_info,
+            )
+        )
+
+    async def usage_updated(self, usage: dict, *, source_seq: int) -> None:
+        sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
+        if sub_agent_info:
+            return
+        await self.emit(
+            AgentEvent(
+                sender=self.sender,
+                event_type=KnownEventType.USAGE_UPDATED,
+                content={"scope": "session", "semantics": "snapshot", "source_seq": source_seq, "usage": usage},
+            )
+        )
+
+    async def queue_updated(self, snapshot: dict[str, Any]) -> None:
+        """Present a root host queue observation, not a delivery acknowledgement."""
+        if self._sub_agent_info_provider and self._sub_agent_info_provider():
+            return
+        await self.emit(
+            AgentEvent(
+                sender=self.sender,
+                event_type=KnownEventType.QUEUE_UPDATED,
+                content=deepcopy(snapshot),
+            )
+        )
+
+    async def goal_updated(self, snapshot: dict[str, Any]) -> None:
+        if self._sub_agent_info_provider and self._sub_agent_info_provider() is not None:
+            return
+        await self.emit(
+            AgentEvent(sender=self.sender, event_type=KnownEventType.GOAL_UPDATED, content=deepcopy(snapshot))
+        )
+
+    async def background_job_delivered(self, completion: dict[str, Any]) -> None:
+        """Present a settled root insertion or archive, not worker termination."""
+        await self.emit(
+            AgentEvent(
+                sender=self.sender,
+                event_type=KnownEventType.BACKGROUND_JOB_DELIVERED,
+                content={
+                    "job_id": completion["job_id"],
+                    "completion_id": completion["completion_id"],
+                    "agent_type": completion["agent_type"],
+                    "status": completion["status"],
+                    "task": completion.get("task", ""),
+                    "text": completion["result"],
+                    "disposition": "archived" if completion.get("archived") else "context",
+                    "epoch_id": completion.get("epoch_id"),
+                    "metadata": deepcopy(completion.get("metadata", {})),
+                },
+            )
+        )
+
     async def turn_boundary(
         self,
         phase: str,
@@ -344,6 +412,8 @@ class AgentEventEmitter:
         turn_id: str,
         status: Optional[str] = None,
         user_text: Optional[str] = None,
+        images: Optional[Sequence[Tuple[str, str]]] = None,
+        image_count: int = 0,
     ) -> None:
         """Mark a turn boundary so frontends can seek by turn.
 
@@ -356,16 +426,19 @@ class AgentEventEmitter:
         transcript as a message the user never sent.
         """
         sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
+        payload: Dict[str, Any] = {"turn_id": turn_id, "status": status, "user_text": user_text}
+        if phase == "started":
+            if images:
+                payload["images"] = [{"media_type": media_type, "data": data} for media_type, data in images]
+            count = max(image_count, len(images or []))
+            if count > 0:
+                payload["image_count"] = count
 
         await self.emit(
             AgentEvent(
                 sender=self.sender,
                 event_type=(KnownEventType.TURN_STARTED if phase == "started" else KnownEventType.TURN_ENDED),
-                content={
-                    "turn_id": turn_id,
-                    "status": status,
-                    "user_text": user_text,
-                },
+                content=payload,
                 sub_agent_info=sub_agent_info,
             )
         )

@@ -14,16 +14,18 @@ entry freezes reasoning mid-sentence, spinner still running.
 from __future__ import annotations
 
 import asyncio
+import base64
 import functools
 import http.server
 import threading
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Generator, Iterator
 
 import pytest
 
-from kolega_code.events import AgentEvent, KnownEventType
-from kolega_code.web.bundle import export_bundle
+from kolega_code.events import AgentEvent, ArtifactRef, KnownEventType
+from kolega_code.session.inmemory import InMemoryArtifactStore
+from kolega_code.web.bundle import MAX_INLINE_IMAGE_BYTES, export_bundle
 
 playwright_api = pytest.importorskip("playwright.async_api", reason="playwright is required for player tests")
 
@@ -134,7 +136,7 @@ def _delegating_turn() -> list[AgentEvent]:
     ]
 
 
-def _serve(directory: Path) -> Iterator[str]:
+def _serve(directory: Path) -> Generator[str, None, None]:
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(directory))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -197,6 +199,156 @@ async def _step_to_end(page: Any) -> None:
             "(el, v) => { el.value = String(v); el.dispatchEvent(new Event('input')); }",
             value,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("single_file", [False, True], ids=["directory", "inline"])
+@pytest.mark.parametrize("media_type", ["image/png", "image/png;charset=utf-8", "image/png; charset=binary"])
+async def test_user_images_and_missing_badges_in_exports(tmp_path: Path, single_file: bool, media_type: str) -> None:
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    artifacts = InMemoryArtifactStore()
+    image = await artifacts.put(png, media_type=media_type, purpose="image", encoding="base64")
+    second = await artifacts.put(png + b"second", media_type=media_type, purpose="image", encoding="base64")
+    big = await artifacts.put(
+        png + b"x" * MAX_INLINE_IMAGE_BYTES, media_type="image/png", purpose="image", encoding="base64"
+    )
+    opaque = await artifacts.put(
+        png + b"opaque", media_type="image/png", purpose="provider_signature", encoding="base64"
+    )
+    missing = image.model_copy(update={"sha256": "e" * 64, "path": "https://forbidden.invalid/missing.png"})
+    unsafe = image.model_copy(update={"sha256": "https://forbidden.invalid/image.png"})
+    text_ref = image.model_copy(update={"sha256": "f" * 64, "media_type": "text/plain"})
+    events = []
+    for seq, (text, refs, count) in enumerate(
+        [
+            ("compare these", [image, second], 2),
+            ("", [image], 1),
+            ("", [missing], 3),
+            ("unsafe refs", [opaque, text_ref, unsafe], None),
+            ("large image", [big], 1),
+            ("legacy text", [], None),
+        ],
+        1,
+    ):
+        event = _event(KnownEventType.TURN_STARTED, seq, elapsed_ms=seq * 100, turn_id=f"t{seq}", user_text=text)
+        event.artifacts = refs
+        if count is not None:
+            event.content["image_count"] = count
+        events.append(event)
+    tool = _event(
+        KnownEventType.CHAT_MESSAGE, 7, elapsed_ms=700, message_type="tool_result", tool_description="read_image"
+    )
+    tool.artifacts = [image]
+    events.extend([tool, _event(KnownEventType.TURN_ENDED, 8, elapsed_ms=800, turn_id="t6", status="completed")])
+    destination = tmp_path / ("replay.html" if single_file else "bundle")
+    result = await export_bundle(
+        events, destination, session_id="s1", artifact_store=artifacts, single_file=single_file
+    )
+    assert bool(result.warnings) == single_file
+    served = _serve(tmp_path if single_file else destination)
+    url = next(served)
+    if single_file:
+        url = url.replace("player.html", "replay.html")
+    try:
+        async with playwright_api.async_playwright() as driver:
+            try:
+                browser = await driver.chromium.launch(headless=True)
+            except Exception as exc:  # pragma: no cover - depends on the local install
+                pytest.skip(f"chromium is not installed for playwright: {exc}")
+            try:
+                page = await browser.new_page(viewport={"width": 1200, "height": 1800})
+                requests: list[str] = []
+                responses: list[tuple[str, int]] = []
+                errors: list[str] = []
+                page.on("request", lambda request: requests.append(request.url))
+                page.on("response", lambda response: responses.append((response.url, response.status)))
+                page.on("pageerror", lambda error: errors.append(str(error)))
+                await page.goto(url)
+                await page.wait_for_selector(".kc-entry")
+                await _step_to_end(page)
+                expected_images = 4 if single_file else 5
+                expected_badges = 4 if single_file else 3
+                await page.wait_for_function(
+                    """([images, badges]) => {
+                      const nodes = [...document.querySelectorAll('#transcript img')];
+                      return nodes.length === images && nodes.every(img => img.complete && img.naturalWidth === 1)
+                        && document.querySelectorAll('.kc-missing-image').length === badges;
+                    }""",
+                    arg=[expected_images, expected_badges],
+                )
+                users = page.locator('.kc-entry[data-kind="user"]')
+                assert await users.count() == 6
+                assert await users.nth(0).locator("img").count() == 2
+                assert await users.nth(1).locator("img").count() == 1
+                assert await users.nth(2).locator(".kc-missing-image").all_text_contents() == [
+                    "Image unavailable",
+                    "2 images unavailable",
+                ]
+                assert await users.nth(3).locator("img").count() == 0
+                assert await users.nth(5).locator(".kc-body").inner_text() == "legacy text"
+                assert await page.locator('.kc-entry[data-kind="tool"] img').count() == 1
+                assert not errors
+                assert not any(
+                    "forbidden.invalid" in request or opaque.sha256 in request or text_ref.sha256 in request
+                    for request in requests
+                )
+                assert all(request.startswith(url.rsplit("/", 1)[0] + "/") for request in requests)
+                if single_file:
+                    assert not any("/artifacts/" in request for request in requests)
+                else:
+                    assert any(missing.sha256 in address and status == 404 for address, status in responses)
+            finally:
+                await browser.close()
+    finally:
+        served.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("single_file", [False, True], ids=["directory", "inline"])
+async def test_user_image_count_without_retained_bytes_never_fetches(tmp_path: Path, single_file: bool) -> None:
+    event = _event(KnownEventType.TURN_STARTED, 1, elapsed_ms=0, turn_id="t1", user_text="", image_count=1)
+    event.artifacts = [
+        ArtifactRef(
+            sha256="e" * 64,
+            bytes=12,
+            media_type="image/png",
+            purpose="image",
+            encoding="base64",
+            path="https://forbidden.invalid/image.png",
+        )
+    ]
+    count_only = _event(KnownEventType.TURN_STARTED, 2, elapsed_ms=100, turn_id="t2", user_text="", image_count=2)
+    destination = tmp_path / ("replay.html" if single_file else "bundle")
+    await export_bundle([event, count_only], destination, session_id="s1", single_file=single_file)
+    served = _serve(tmp_path if single_file else destination)
+    url = next(served).replace("player.html", "replay.html") if single_file else next(served)
+    try:
+        async with playwright_api.async_playwright() as driver:
+            try:
+                browser = await driver.chromium.launch(headless=True)
+            except Exception as exc:  # pragma: no cover - depends on the local install
+                pytest.skip(f"chromium is not installed for playwright: {exc}")
+            try:
+                page = await browser.new_page()
+                requests: list[str] = []
+                page.on("request", lambda request: requests.append(request.url))
+                await page.goto(url)
+                await page.wait_for_selector(".kc-missing-image")
+                await _step_to_end(page)
+                assert await page.locator('.kc-entry[data-kind="user"]').count() == 2
+                assert await page.locator(".kc-missing-image").all_text_contents() == [
+                    "Image unavailable",
+                    "2 images unavailable",
+                ]
+                assert await page.locator("#transcript img").count() == 0
+                assert not any("/artifacts/" in request for request in requests)
+                assert not any("forbidden.invalid" in request for request in requests)
+            finally:
+                await browser.close()
+    finally:
+        served.close()
 
 
 @pytest.mark.asyncio

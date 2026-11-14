@@ -2,14 +2,29 @@
 
 from __future__ import annotations
 
+import base64
+from pathlib import Path
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 from acp.interfaces import Client
-from acp.schema import AgentMessageChunk, AgentThoughtChunk, ToolCallProgress, ToolCallStart
+from acp.schema import AgentMessageChunk, AgentThoughtChunk, ToolCallProgress, ToolCallStart, UserMessageChunk
 
 from kolega_code.acp.bridge import AcpBridge
-from kolega_code.events import AgentEvent
+from kolega_code.cli.session_event_store import FileArtifactStore
+from kolega_code.cli.session_journal import SessionJournal
+from kolega_code.events import AgentEvent, ArtifactRef
+from kolega_code.session.projection import ConversationItem
+
+
+_PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+
+
+async def _stored_image(tmp_path: Path) -> tuple[FileArtifactStore, ArtifactRef]:
+    store = FileArtifactStore(SessionJournal("s1", tmp_path / "session"))
+    ref = await store.put(_PNG, media_type="image/png", purpose="image", encoding="base64")
+    return store, ref
 
 
 class _FakeConn:
@@ -236,6 +251,146 @@ async def test_replay_conversation_maps_transcript_items() -> None:
     assert [(p.tool_call_id, p.status) for p in progresses] == [("tc1", "completed"), ("tc2", "failed")]
     assert progresses[0].content is not None and progresses[0].content[0].content.text == "output text"
     assert "live notice" not in [getattr(u, "text", "") for u in updates]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["describe this", ""])
+async def test_replay_user_images_emits_png_bytes_from_session_store(tmp_path: Path, text: str) -> None:
+    store, ref = await _stored_image(tmp_path)
+    ref = ref.model_copy(update={"path": "https://untrusted.invalid/image.png"})
+    conn = _FakeConn()
+    bridge = AcpBridge(cast(Client, conn), artifact_store=store)
+
+    await bridge.replay_conversation(
+        "s1",
+        [
+            ConversationItem(kind="user", text=text, artifacts=[ref], seq=1),
+            ConversationItem(kind="assistant", text="a pixel", seq=2),
+        ],
+    )
+
+    user = [update for update in conn.updates if isinstance(update, UserMessageChunk)]
+    assert [update.content.type for update in user] == (["text", "image"] if text else ["image"])
+    image = user[-1].content
+    assert image.type == "image"
+    assert image.mime_type == "image/png"
+    assert base64.b64decode(image.data, validate=True) == _PNG
+    assert image.uri is None
+    assert {update.message_id for update in user} == {"replay-1-user"}
+    assert isinstance(conn.updates[-1], AgentMessageChunk)
+    assert conn.updates[-1].message_id == "replay-2-assistant"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_ref", [False, True])
+async def test_replay_image_only_without_reader_has_visible_fallback(tmp_path: Path, with_ref: bool) -> None:
+    _, ref = await _stored_image(tmp_path)
+    item = ConversationItem(kind="user", seq=7, artifacts=[ref] if with_ref else [])
+    if not with_ref:
+        item.image_count = 1
+    conn = _FakeConn()
+
+    await AcpBridge(cast(Client, conn)).replay_conversation("s1", [item])
+
+    assert len(conn.updates) == 1
+    update = conn.updates[0]
+    assert isinstance(update, UserMessageChunk)
+    assert update.message_id == "replay-7-user"
+    assert update.content.type == "text"
+    assert update.content.text == "[1 image unavailable in replay]"
+
+
+@pytest.mark.asyncio
+async def test_replay_partial_images_counts_unavailable_original_attachments(tmp_path: Path) -> None:
+    store, ref = await _stored_image(tmp_path)
+    missing = ref.model_copy(update={"sha256": "0" * 64})
+    item = ConversationItem(kind="user", text="photos", artifacts=[ref, missing], seq=1)
+    item.image_count = 3
+    conn = _FakeConn()
+
+    await AcpBridge(cast(Client, conn), artifact_store=store).replay_conversation("s1", [item])
+
+    assert [update.content.type for update in conn.updates] == ["text", "image", "text"]
+    assert conn.updates[-1].content.text == "[2 images unavailable in replay]"
+    assert {update.message_id for update in conn.updates} == {"replay-1-user"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["missing", "corrupt", "foreign", "path", "url"])
+async def test_replay_unavailable_artifact_does_not_read_untrusted_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    store, ref = await _stored_image(tmp_path)
+    outside = tmp_path / "private.png"
+    outside.write_bytes(_PNG)
+    path = tmp_path / "session" / "artifacts" / ref.sha256
+    if failure == "corrupt":
+        path.write_bytes(b"corrupt")
+    elif failure == "foreign":
+        store = FileArtifactStore(SessionJournal("s1", tmp_path / "other-session"))
+    else:
+        ref = ref.model_copy(
+            update={
+                "sha256": "../private.png" if failure == "path" else "0" * 64,
+                "path": "https://untrusted.invalid/image.png" if failure == "url" else str(outside),
+            }
+        )
+    read_bytes = Path.read_bytes
+    reads: list[Path] = []
+
+    def confined_read(candidate: Path) -> bytes:
+        reads.append(candidate)
+        assert candidate != outside
+        return read_bytes(candidate)
+
+    monkeypatch.setattr(Path, "read_bytes", confined_read)
+    conn = _FakeConn()
+    await AcpBridge(cast(Client, conn), artifact_store=store).replay_conversation(
+        "s1", [ConversationItem(kind="user", artifacts=[ref])]
+    )
+
+    assert len(conn.updates) == 1
+    assert conn.updates[0].content.type == "text"
+    assert conn.updates[0].content.text == "[1 image unavailable in replay]"
+    assert all(candidate.name != "private.png" for candidate in reads)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("purpose", ["provider_signature", "redacted_reasoning", "encrypted_reasoning", "tool_result"])
+async def test_replay_does_not_open_or_expose_non_image_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, purpose: str
+) -> None:
+    store, ref = await _stored_image(tmp_path)
+    ref = ref.model_copy(update={"purpose": purpose, "path": "/untrusted/private.png"})
+    reader = AsyncMock()
+    monkeypatch.setattr(store, "open", reader)
+    conn = _FakeConn()
+
+    await AcpBridge(cast(Client, conn), artifact_store=store).replay_conversation(
+        "s1", [ConversationItem(kind="user", text="hello", artifacts=[ref])]
+    )
+
+    reader.assert_not_called()
+    assert len(conn.updates) == 1
+    assert conn.updates[0].content.text == "hello"
+
+
+@pytest.mark.asyncio
+async def test_replay_image_ref_with_non_image_mime_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, ref = await _stored_image(tmp_path)
+    ref = ref.model_copy(update={"media_type": "text/plain"})
+    reader = AsyncMock()
+    monkeypatch.setattr(store, "open", reader)
+    conn = _FakeConn()
+
+    await AcpBridge(cast(Client, conn), artifact_store=store).replay_conversation(
+        "s1", [ConversationItem(kind="user", artifacts=[ref])]
+    )
+
+    reader.assert_not_called()
+    assert conn.updates[0].content.text == "[1 image unavailable in replay]"
 
 
 @pytest.mark.asyncio

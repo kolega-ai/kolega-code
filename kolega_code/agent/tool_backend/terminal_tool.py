@@ -12,7 +12,12 @@ from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.llm.specs import get_model_specs
 from kolega_code.events import AgentEvent
 from kolega_code.services.base import ExecResult, TerminalCommandCancelled
-from kolega_code.services.terminal import LocalTerminalManager, build_child_env
+from kolega_code.services.terminal import (
+    LocalTerminalManager,
+    TerminalEventContext,
+    build_child_env,
+    terminal_event_scope,
+)
 from kolega_code.services.terminal_buffer import (
     GLOBAL_MAX_TOOL_OUTPUT_TOKENS,
     cap_chars,
@@ -306,6 +311,7 @@ class TerminalTool(BaseTool):
             launches that are still running also include ``Background: true``
             and management guidance.
         """
+        event_context = TerminalEventContext.capture(self.caller)
         if self.security_check_enabled:
             allowed, denied_reason = await self._run_command_security_check(command)
             if not allowed:
@@ -316,15 +322,16 @@ class TerminalTool(BaseTool):
         wd = os.path.normpath(str(self.project_path / workdir)) if workdir else str(self.project_path)
         effective_max_tokens = clamp_output_tokens(max_output_tokens)
         try:
-            result = await self.terminal_manager.exec_command(
-                command,
-                workdir=wd,
-                yield_time_ms=min(yield_time_ms, BACKGROUND_SETTLE_MS) if background else yield_time_ms,
-                max_output_tokens=effective_max_tokens,
-                login=login,
-                env=self._session_env(),
-                background=background,
-            )
+            with terminal_event_scope(event_context):
+                result = await self.terminal_manager.exec_command(
+                    command,
+                    workdir=wd,
+                    yield_time_ms=min(yield_time_ms, BACKGROUND_SETTLE_MS) if background else yield_time_ms,
+                    max_output_tokens=effective_max_tokens,
+                    login=login,
+                    env=self._session_env(),
+                    background=background,
+                )
         except TerminalCommandCancelled as exc:
             return self._format_result(
                 exc.result,
@@ -371,12 +378,13 @@ class TerminalTool(BaseTool):
         """
         effective_max_tokens = clamp_output_tokens(max_output_tokens)
         try:
-            result = await self.terminal_manager.write_stdin(
-                session_id,
-                chars,
-                yield_time_ms=yield_time_ms,
-                max_output_tokens=effective_max_tokens,
-            )
+            with terminal_event_scope(TerminalEventContext.capture(self.caller)):
+                result = await self.terminal_manager.write_stdin(
+                    session_id,
+                    chars,
+                    yield_time_ms=yield_time_ms,
+                    max_output_tokens=effective_max_tokens,
+                )
         except TerminalCommandCancelled as exc:
             return self._format_result(
                 exc.result,
@@ -400,7 +408,8 @@ class TerminalTool(BaseTool):
             Structured text describing the final state of the session.
         """
         try:
-            result = await self.terminal_manager.kill_session(session_id, signal)
+            with terminal_event_scope(TerminalEventContext.capture(self.caller)):
+                result = await self.terminal_manager.kill_session(session_id, signal)
         except KeyError as exc:
             return self._format_error(exc)
         self._background_sessions.discard(session_id)
@@ -459,6 +468,7 @@ class TerminalTool(BaseTool):
             command: The command to execute
             strip_colors: Whether to strip ANSI color codes from output (default: True)
         """
+        event_context = TerminalEventContext.capture(self.caller)
         # Log the command
         await self.log_info(f"Executing command: {command}", sender=self.caller.agent_name)
 
@@ -487,7 +497,8 @@ class TerminalTool(BaseTool):
             terminal_command_event = AgentEvent(
                 event_type="terminal_command",
                 sender="agent",
-                content={"command": command, "workdir": workdir},
+                content={"command": command, "workdir": workdir, "tool_call_id": event_context.tool_call_id},
+                sub_agent_info=event_context.sub_agent_info,
             )
             await self.connection_manager.broadcast_event(terminal_command_event, self.workspace_id, self.thread_id)
 
@@ -521,7 +532,12 @@ class TerminalTool(BaseTool):
                 except Exception:
                     pass
 
-            terminal_output_event = AgentEvent(event_type="terminal_output", sender="agent", content={"output": output})
+            terminal_output_event = AgentEvent(
+                event_type="terminal_output",
+                sender="agent",
+                content={"output": output, "tool_call_id": event_context.tool_call_id},
+                sub_agent_info=event_context.sub_agent_info,
+            )
             await self.connection_manager.broadcast_event(terminal_output_event, self.workspace_id, self.thread_id)
 
             return output

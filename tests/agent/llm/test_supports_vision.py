@@ -20,6 +20,7 @@ def test_supports_vision_flag_present_on_every_entry():
         ("anthropic", "claude-fable-5-1", True),
         ("anthropic", "claude-opus-5-5", True),
         ("anthropic", "claude-sonnet-5-5", True),
+        ("anthropic", "claude-fable-5-2", True),
         ("anthropic", "claude-haiku-4-5-20251001", True),
         ("openai", "gpt-6-sol", True),
         ("openai", "gpt-6-luna", True),

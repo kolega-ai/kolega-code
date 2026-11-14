@@ -18,7 +18,7 @@ import time
 
 import pytest
 
-from kolega_code.cli.tui.state import ConversationEntry, SubAgentActivity
+from kolega_code.cli.tui.state import ConversationEntry, SubAgentActivity, SubAgentTerminalEntry
 from kolega_code.cli.tui.transcript import TranscriptRenderingMixin
 from kolega_code.events import AgentEvent
 
@@ -90,3 +90,31 @@ def test_large_stream_is_linear_not_quadratic(mixin):
     assert len(step.content) == n * len(delta)
     # Generous bound: the O(n^2) version took multiple seconds at this size.
     assert elapsed < 2.0, f"accumulation took {elapsed:.2f}s — likely regressed to O(n^2)"
+
+
+def test_terminal_deltas_are_deferred_and_retention_is_bounded() -> None:
+    step = SubAgentTerminalEntry(kind="tool_call", content="", output_limit=100)
+    chunks = [f"{i:04d}" for i in range(1000)]
+    for chunk in chunks:
+        step.append_output(chunk)
+        assert step.output_chars <= 100
+        assert step.content == ""
+        assert step.full_content == ""
+    expected = "".join(chunks)[-100:]
+    assert step.materialize() == expected
+    assert step.full_content == expected
+    assert step.output_dirty is False
+    step.append_output("tail")
+    assert step.materialize() == (expected + "tail")[-100:]
+
+
+def test_terminal_small_appends_do_not_recopy_a_large_head_chunk() -> None:
+    step = SubAgentTerminalEntry(kind="tool_call", content="", output_limit=50_000)
+    head = "x" * 50_000
+    step.append_output(head)
+    for _ in range(20_000):
+        step.append_output("y")
+    assert step.output_parts[0] is head
+    assert step.output_head_offset == 20_000
+    assert step.output_chars == 50_000
+    assert step.materialize() == "x" * 30_000 + "y" * 20_000

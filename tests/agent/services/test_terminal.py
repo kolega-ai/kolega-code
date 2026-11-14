@@ -366,6 +366,7 @@ async def test_workdir_is_respected(manager, tmp_path):
         "terminal_id": "s_1",
         "session_id": "s_1",
         "workdir": str(explicit_workdir.resolve()),
+        "tool_call_id": None,
     }
     assert result.output.strip() == str(explicit_workdir.resolve())
 
@@ -389,6 +390,7 @@ async def test_constructed_default_workdir_is_used_when_workdir_omitted(tmp_path
         "terminal_id": "s_1",
         "session_id": "s_1",
         "workdir": str(default_workdir.resolve()),
+        "tool_call_id": None,
     }
     # Commands must run in the configured project root, not the process cwd.
     assert result.output.strip() == str(default_workdir.resolve())

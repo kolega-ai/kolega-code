@@ -103,7 +103,10 @@ delete the setting to restore them.
 - **Plan mode** — plan-mode turns end in an approval prompt
   (**Implement plan** / **Clear context and implement plan** / **Discuss further**)
   with the full plan text. Approving switches the session to build mode and
-  starts the implementation turn automatically.
+  starts the implementation turn automatically. **Discuss further** keeps Plan
+  mode and waits for your next prompt. This decision is separate from tool
+  permissions: **Auto-approve** never approves a plan, and cancelling the prompt
+  never starts implementation.
 - **Task list** — the agent's shared task list renders in the editor's plan view
   with checkbox status, kept in sync as the agent checks items off.
 - **Slash commands** — type `/` for autocomplete:
