@@ -288,6 +288,27 @@ async def test_segment_uuid_rotation_opens_new_bubbles() -> None:
 
 
 @pytest.mark.asyncio
+async def test_many_delta_fragments_preserve_every_segment() -> None:
+    """Thousands of incremental fragments across two segments concatenate to
+    exactly the streamed text."""
+    adapter = FakeAdapter()
+    fragments = 2_000
+    midpoint = fragments // 2
+
+    async def fragmented() -> AsyncIterator[dict[str, Any]]:
+        for index in range(fragments):
+            yield {
+                "type": "response",
+                "content": "x",
+                "complete": index == fragments - 1,
+                "uuid": "u-1" if index < midpoint else "u-2",
+            }
+
+    r = TurnRenderer(adapter, "chat-1", event_queue=asyncio.Queue(), edit_throttle_seconds=3_600.0)
+    assert await r.run(fragmented()) == "x" * fragments
+
+
+@pytest.mark.asyncio
 async def test_status_message_skips_unchanged_text() -> None:
     """Repeated identical status lines (line-cap truncation) must not re-edit
     the same content — Telegram rejects that as 'message is not modified'."""
