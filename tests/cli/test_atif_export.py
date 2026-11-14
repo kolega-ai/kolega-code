@@ -99,6 +99,40 @@ def convert(journal, **overrides):
     return json.loads(export_atif_to_text(journal, **kwargs))
 
 
+@pytest.mark.parametrize("role", ["user", "assistant"])
+@pytest.mark.parametrize("as_blocks", [False, True], ids=["string", "blocks"])
+@pytest.mark.parametrize(
+    "text",
+    ["Héllo 世界 👩🏽‍💻 e\u0301", " \tfirst\r\n\nsecond\t \n", " \t\r\n ", ""],
+    ids=["unicode", "whitespace", "whitespace-only", "empty"],
+)
+def test_text_content_is_exact_and_export_does_not_mutate_journal(
+    tmp_path: Path, role: str, as_blocks: bool, text: str
+) -> None:
+    journal = make_journal(tmp_path)
+    recorder = bootstrap(journal)
+    message = Message(role=role, content=[TextBlock(text)] if as_blocks else text)
+    original = message.to_dict()
+    recorder.start_turn(message if role == "user" else Message(role="user", content=[TextBlock("prompt")]))
+    recorder.record_assistant(
+        message if role == "assistant" else Message(role="assistant", content=[TextBlock("response")])
+    )
+    recorder.finish_turn("completed")
+    before = journal.events_path.read_bytes()
+    event_type = "turn.started" if role == "user" else "assistant.message"
+    event = next(event for event in journal.read_events(repair_tail=False) if event.event_type == event_type)
+    assert event.payload["message"]["content"] == original["content"]
+
+    doc = convert(journal)
+
+    assert message.to_dict() == original
+    assert journal.events_path.read_bytes() == before
+    source = "user" if role == "user" else "agent"
+    step = next(step for step in doc["steps"] if step["source"] == source)
+    assert step["message"] == text
+    assert step["extra"]["kolega"]["content_blocks"] == [{"index": 0, "type": "text", "disposition": "message"}]
+
+
 RICH_TURN_TOOLS = [
     {"name": "exec_command", "description": "Run a command.", "input_schema": {"type": "object"}},
     {
@@ -496,12 +530,12 @@ def test_v1_legacy_journal_exports_with_derived_identities(tmp_path):
     assert "tool_definitions_unavailable" in codes
 
 
-def test_secrets_and_state_dir_are_scrubbed(tmp_path):
+@pytest.mark.parametrize("as_blocks", [False, True], ids=["string", "blocks"])
+def test_secrets_and_state_dir_are_scrubbed(tmp_path: Path, as_blocks: bool) -> None:
     journal = make_journal(tmp_path)
     recorder = bootstrap(journal)
-    recorder.start_turn(
-        Message(role="user", content=[TextBlock(f"key sk-TOPSECRET at {tmp_path}/session/artifacts/x")])
-    )
+    text = f"key sk-TOPSECRET at {tmp_path}/session/artifacts/x"
+    recorder.start_turn(Message(role="user", content=[TextBlock(text)] if as_blocks else text))
     recorder.finish_turn("completed")
 
     doc = convert(journal, secret_values=("sk-TOPSECRET",), state_dirs=(tmp_path,))
