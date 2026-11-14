@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Optional
 
 from rich.cells import cell_len
@@ -505,6 +506,9 @@ class ToolEntryWidget(Vertical):
         self._refresh_details()
 
 
+_EXPAND_COMPENSATION_RETRIES = 3
+
+
 class ScrollbackWindow:
     """Maintains a mounted trailing window over an append-mostly entry list.
 
@@ -639,19 +643,30 @@ class ScrollbackWindow:
     def _schedule_expand_compensation(self, old_virtual_height: int) -> None:
         view = self._view
 
-        def compensate() -> None:
-            self._expand_pending = False
+        def compensate(attempt: int = 0) -> None:
             try:
                 if not self._can_render:
+                    self._expand_pending = False
                     return
                 added = view.virtual_size.height - old_virtual_height
                 if added > 0:
                     view.scroll_to(y=view.scroll_y + added, animate=False)
+                    self._expand_pending = False
+                    return
+                # The refresh callback can run on an idle pass before layout has
+                # published the newly mounted rows, so growth reads as zero.
+                # Retry after the next refresh: skipping the compensating scroll
+                # would leave the viewport on the top row, where scrolling up
+                # again is a no-op and no further expansion can be triggered.
+                if attempt < _EXPAND_COMPENSATION_RETRIES and view.call_after_refresh(partial(compensate, attempt + 1)):
+                    return
             except Exception:
                 pass
+            self._expand_pending = False
 
         try:
-            view.call_after_refresh(compensate)
+            if not view.call_after_refresh(compensate):
+                self._expand_pending = False
         except Exception:
             self._expand_pending = False
 

@@ -9,9 +9,12 @@ scroll-up, windowed restores, modal-cover deferral, and the inspector's window.
 
 from pathlib import Path
 import time
+from typing import Any, cast
 
 import pytest
 from textual.app import ComposeResult
+from textual.containers import VerticalScroll
+from textual.geometry import Size
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
@@ -195,14 +198,94 @@ async def test_restore_mounts_only_the_trailing_window(tmp_path: Path, monkeypat
 
         # Scrolling to the top repeatedly expands until the whole history is mounted.
         view = app._conversation
-        for _ in range(10):
-            if _window(app).mounted_start == 0:
-                break
-            view.scroll_to(y=0, animate=False)
-            await _settle(pilot)
+        window = _window(app)
 
-        assert _window(app).mounted_start == 0
+        async def scroll_to_top_until_expanded(timeout: float = 10.0) -> None:
+            """Scroll to the top until the mounted window grows.
+
+            An expansion whose scroll compensation has not been applied yet leaves
+            the viewport on the top row, where scrolling to the top again changes
+            nothing, so keep re-issuing the scroll until it takes effect.
+            """
+            before = window.mounted_start
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                view.scroll_to(y=0, animate=False)
+                await pilot.pause()
+                if window.mounted_start != before:
+                    return
+            raise AssertionError(f"history expansion stalled at {window.mounted_start} of {total} entries")
+
+        while window.mounted_start > 0:
+            await scroll_to_top_until_expanded()
+
         assert len(app._entry_widgets) == total
+
+
+class _LateLayoutView:
+    """Conversation-view double whose mounted height lags one refresh behind.
+
+    Forwards every attribute to the real view, but serves the height recorded by
+    :meth:`hide_next_growth` to the compensation read that follows the expansion:
+    what a loaded event loop produces when the idle pass runs the compensation
+    before layout publishes the rows just mounted.
+    """
+
+    def __init__(self, view: VerticalScroll) -> None:
+        self._view = view
+        self._stale_height: int | None = None
+        self._fresh_reads = 0
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._view, name)
+
+    @property
+    def virtual_size(self) -> Size:
+        size = self._view.virtual_size
+        if self._stale_height is None:
+            return size
+        if self._fresh_reads > 0:
+            self._fresh_reads -= 1
+            return size
+        stale, self._stale_height = self._stale_height, None
+        return Size(size.width, stale)
+
+    def hide_next_growth(self) -> None:
+        """Report the pre-expansion height to the next compensation attempt."""
+        self._stale_height = self._view.virtual_size.height
+        self._fresh_reads = 1
+
+
+@pytest.mark.asyncio
+async def test_expansion_compensates_when_the_first_height_read_is_stale(tmp_path: Path, monkeypatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await _settle(pilot)
+        history = [
+            {"role": "user" if index % 2 == 0 else "assistant", "content": f"turn {index}"} for index in range(700)
+        ]
+        app._restore_conversation_history(history)
+        await _settle(pilot)
+
+        view = app._conversation
+        window = _window(app)
+        late_layout = _LateLayoutView(view)
+        monkeypatch.setattr(window, "_view", cast(VerticalScroll, late_layout))
+
+        while window.mounted_start > 0:
+            before = window.mounted_start
+            deadline = time.monotonic() + 10
+            while window.mounted_start == before:
+                assert time.monotonic() < deadline, f"history expansion stalled at {window.mounted_start}"
+                late_layout.hide_next_growth()
+                view.scroll_to(y=0, animate=False)
+                await pilot.pause()
+            # Without a compensating scroll the viewport stays on the top row,
+            # where scrolling up again changes nothing and expansion stops for good.
+            await _wait_for_layout(pilot, lambda: view.scroll_y > 0, timeout=10.0)
+
+        assert len(app._entry_widgets) == len(app.conversation_entries)
 
 
 @pytest.mark.asyncio
