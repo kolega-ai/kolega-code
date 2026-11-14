@@ -304,8 +304,21 @@ def _simulate_writer(root: Path, manifest: dict[str, Any]) -> None:
     sessions.release_session_locks()
 
 
+@pytest.fixture(scope="module")
+def producer_inventory() -> frozenset[str]:
+    """Parse the package once: the producer inventory does not change during a run.
+
+    ``_producer_inventory`` AST-scans every module in the package (~3.5 s here),
+    and ``create_fixture`` calls it for each roundtrip test.
+    """
+    return frozenset(fixture_module._producer_inventory())
+
+
 @pytest.fixture
-def completed_roundtrip(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
+def completed_roundtrip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, producer_inventory: frozenset[str]
+) -> tuple[Path, dict[str, Any]]:
+    monkeypatch.setattr(fixture_module, "_producer_inventory", lambda: producer_inventory)
     manifest = fixture_module.create_fixture(tmp_path)
     _simulate_writer(tmp_path, manifest)
     return tmp_path, manifest
