@@ -37,6 +37,7 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from kolega_code.agent import AgentConfig, AgentEvent, BaseAgent
+from kolega_code.events import KnownEventType
 from kolega_code.extensions import ExtensionSelection, KolegaExtensionLoadError
 from kolega_code.session.inbox import (
     SHARED_INBOX_REGISTRY,
@@ -54,7 +55,14 @@ from kolega_code.session.inbox import (
     peer_origin,
 )
 from kolega_code.session.recording import RecordingConnectionManager
+from kolega_code.session.host_extensions import complete_task_list_update
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
+from kolega_code.session.turns import TurnController
+from kolega_code.session.control import ControlChannel
+from kolega_code.session.plans import PLAN_APPROVAL_OPTIONS, PlanApprovalAction, plan_approval_action
+from kolega_code.session.usage import UsagePresentation
+from kolega_code.session.queue import QueuePresentation, QueueReason, queue_item
+from kolega_code.session.goal import GoalPresentation, GoalReason
 from kolega_code.session.background import BackgroundAgentManager
 from kolega_code.agent.prompt_dump import list_prompt_overrides
 from kolega_code.agent.prompt_provider import AgentMode
@@ -113,6 +121,7 @@ from .tui.shortcut_bar import ContextFooter, ShortcutHelpScreen
 from .tui.turn_status import TurnStatus
 from .tui.background_status import BackgroundStatus
 from .tui.boot_splash import BootSplash
+from .tui.plan_approval import PlanApprovalOwner
 from .tui import constants as tui_constants
 from .tui import agent_runtime as tui_agent_runtime
 from .tui import changes_screen as tui_changes
@@ -266,12 +275,9 @@ class KolegaCodeApp(
         # this client answers prompts exactly the way a browser or a remote client
         # would. The channel announces on the recording transport, which is what
         # puts decision points into the session's replayable history.
-        self.control_channel = control_channel_for(
-            session.session_id,
-            self.recording_connection_manager.broadcast_event,
-            workspace_id=session.workspace_id,
-            thread_id=session.thread_id,
-        )
+        self.control_channel = self._new_control_channel()
+        self._turn_controller: TurnController[tui_state.QueuedMessage] = TurnController()
+        self._turn_controller.on_finished = self._agent_execution_finished
         self.session_runtime = SessionRuntime(
             session_id=session.session_id,
             # Saved permission rules are launch-scoped like trust: they are
@@ -282,6 +288,7 @@ class KolegaCodeApp(
             control=self.control_channel,
             permission_mode=self.permission_mode,
             on_notice=lambda text: self._notify_user(text, severity="warning"),
+            turns=self._turn_controller,
         )
         # A single client holds control; viewers of a shared session may watch a
         # prompt appear but never answer it.
@@ -315,12 +322,9 @@ class KolegaCodeApp(
         self._extension_bundle = None
         self.agent = None
         self.agent_worker = None
-        self._agent_execution_task: asyncio.Task | None = None
-        self._draining_agent_tasks: set[asyncio.Task] = set()
         #: Stop escalation state: a cancel that cannot land inside the worker
         #: (parked journal write, shielded finalizer) must still free the UI.
         self._stop_pending = False
-        self._stop_watchdog = None
         self._stop_force_after_seconds = tui_constants.STOP_FORCE_AFTER_SECONDS
         #: Bound on the post-turn history save; a stalled journal write must not
         #: keep the turn's result (a captured plan) off screen.
@@ -371,6 +375,10 @@ class KolegaCodeApp(
         self._plan_pending: bool = bool(self._latest_plan and self.session.plan_pending)
         self._plan_reofferable: bool = bool(self._latest_plan and (self.session.plan_reofferable or self._plan_pending))
         self._plan_decision_active = False
+        self._plan_revision = 0
+        self._plan_approval_owner: PlanApprovalOwner | None = None
+        self._plan_approval_tasks: set[asyncio.Task[None]] = set()
+        self._draining_plan_approval_tasks: set[asyncio.Task[None]] = set()
         self._gigacode_enabled = bool(self.session.gigacode_enabled)
         # Session web tool mode override (None -> config-resolved mode applies).
         self._web_search_mode: Optional[str] = self.session.web_search_mode or None
@@ -379,6 +387,9 @@ class KolegaCodeApp(
         # journal sink is attached in on_mount, once the UI loop exists.
         self._usage_ledger = UsageLedger(pricing_resolver=PricingResolver(config.usage_pricing if config else None))
         self._usage_sink: Optional[SessionUsageSink] = None
+        self._usage_presentation: UsagePresentation | None = None
+        self._queue_presentation: QueuePresentation | None = None
+        self._goal_presentation: GoalPresentation | None = None
         self._goal: Optional[GoalState] = GoalState.from_dict(self.session.goal) if self.session.goal else None
         # Checkpoint for goal token accounting: drains advance it, so a resumed
         # goal continues from the persisted tokens_spent without recounting.
@@ -391,7 +402,6 @@ class KolegaCodeApp(
         self._pending_question: Optional[tui_state.PendingQuestion] = None
         self._pending_approval: Optional[tui_state.PendingApproval] = None
         self._pending_image_attachments: list[dict] = []
-        self._queued_messages: list[tui_state.QueuedMessage] = []
         self._queued_message_seq = 0
         # Dedup flag: one vision-mismatch system message per non-vision model
         # session. Reset in _switch_model so a new model gets a fresh warning.
@@ -839,6 +849,9 @@ class KolegaCodeApp(
             return
         if not self.is_running or self._startup_cancelled:
             return
+        await self._start_usage_presentation()
+        await self._start_queue_presentation()
+        await self._start_goal_presentation()
         # No minimum duration or final animation: hand over as soon as the
         # generation is usable, before any onboarding/loop/discovery prompt.
         self._dismiss_boot_splash()
@@ -859,6 +872,57 @@ class KolegaCodeApp(
 
     def _startup_recent_sessions(self) -> tuple[RecentSessionItem, ...]:
         return self._recent_sessions if self._recent_sessions_available else ()
+
+    async def _start_usage_presentation(self) -> None:
+        await self._prime_recording_offset()
+        presentation = UsagePresentation(
+            self.store.journal(self.session.session_id),
+            self.recording_connection_manager.broadcast_event,
+            workspace_id=self.session.workspace_id,
+            thread_id=self.session.thread_id,
+            live_run_id=lambda: self._usage_ledger.run_id,
+        )
+        self._usage_presentation = presentation
+        await presentation.start()
+
+    def _publish_queue(self, reason: QueueReason) -> None:
+        if self._queue_presentation is None:
+            # Capture the current recorder, not a getter that could follow a
+            # handoff while this publisher still owns an in-flight snapshot.
+            self._queue_presentation = QueuePresentation(self._task_list_event_emitter().queue_updated, source="tui")
+        self._queue_presentation.publish(
+            [
+                queue_item(
+                    item.queue_id,
+                    item.display_text,
+                    image_count=sum(attachment.get("type") == "image" for attachment in item.attachments or []),
+                    origin=item.origin,
+                )
+                for item in self._queued_messages
+            ],
+            reason=reason,
+        )
+
+    async def _start_queue_presentation(self) -> None:
+        await self._prime_recording_offset()
+        self._publish_queue("snapshot")
+        assert self._queue_presentation is not None
+        await self._queue_presentation.flush()
+
+    def _publish_goal(self, reason: GoalReason, *, evaluation_met: bool | None = None) -> None:
+        if self._goal_presentation is None:
+            self._goal_presentation = GoalPresentation(self._task_list_event_emitter().goal_updated, source="tui")
+        self._goal_presentation.publish(
+            self._goal.to_dict() if self._goal is not None else None,
+            reason=reason,
+            evaluation_met=evaluation_met,
+        )
+
+    async def _start_goal_presentation(self) -> None:
+        await self._prime_recording_offset()
+        self._publish_goal("snapshot")
+        assert self._goal_presentation is not None
+        await self._goal_presentation.flush()
 
     async def _load_recent_sessions(self) -> None:
         try:
@@ -1382,9 +1446,13 @@ class KolegaCodeApp(
         # "Clear context and implement plan" and "Discuss further" whenever a
         # session with a pending plan was resumed.
         self._set_plan_actions_visible(
-            self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE and self._plan_pending,
+            self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE
+            and self._plan_pending
+            and not self._plan_action_reserved(),
             allow_discuss=self._plan_pending,
         )
+        if not self._background_rebuilding:
+            self._offer_plan_approval()
 
     def _restore_prompt_history(self) -> None:
         """Seed the composer's recall history from per-project local state.
@@ -1510,6 +1578,8 @@ class KolegaCodeApp(
                 return
         # Safe to consume — clear the composer, pending attachments, and the
         # attach hint (which would otherwise linger during generation or queueing).
+        if self._plan_pending and not self._plan_decision_active:
+            await self._cancel_plan_approval()
         event.composer.load_text("")
         self._pending_image_attachments.clear()
         self._clear_composer_hint()
@@ -1631,12 +1701,12 @@ class KolegaCodeApp(
             return
         if event.option_list.id == "plan_actions":
             event.stop()
-            if event.option_id == "implement_plan":
-                await self._implement_pending_plan()
-            elif event.option_id == "implement_plan_clear":
-                await self._implement_pending_plan(clear_context=True)
-            elif event.option_id == "discuss_plan":
-                await self._discuss_pending_plan()
+            actions = self.query_one("#plan_actions", tui_widgets.ActionList)
+            if event.option_list is not actions or not any(option is event.option for option in actions.options):
+                return
+            action = plan_approval_action(event.option_id)
+            if action is not None:
+                await self._answer_pending_plan(action)
             return
         if event.option_list.id != "completion_dropdown":
             return
@@ -2716,6 +2786,7 @@ class KolegaCodeApp(
             self.action_open_sub_agent(activity.agent_id)
 
     async def on_unmount(self) -> None:
+        await self._cancel_plan_approval()
         if self._background_jobs is not None:
             self._background_jobs.set_callbacks()
         if self._background_status_timer is not None:
@@ -2746,6 +2817,10 @@ class KolegaCodeApp(
             except RuntimeError:
                 pass
         self._unregister_from_inbox()
+        if self._queue_presentation is not None:
+            await self._queue_presentation.aclose()
+        if self._goal_presentation is not None:
+            await self._goal_presentation.aclose()
         self._close_memory_manager()
         self._discard_session_diff_tracker(self._session_diff_tracker)
 
@@ -2777,6 +2852,8 @@ class KolegaCodeApp(
         # All callers share one teardown, which survives cancellation of any
         # individual caller and is also awaited by the launcher.
         if self._session_shutdown_task is None:
+            self._turn_controller.close_admission()
+            self._invalidate_plan_approval()
             if self._on_shutdown_requested is not None:
                 self._on_shutdown_requested()
             self._session_shutdown_task = asyncio.create_task(self._shutdown_session())
@@ -2789,26 +2866,19 @@ class KolegaCodeApp(
 
     async def _wait_for_agent_shutdown(self) -> bool:
         worker = self.agent_worker
-        waiters = set(self._draining_agent_tasks)
-        task = self._agent_execution_task
-        if task is not None and not task.done():
-            waiters.add(task)
+        waiters = set(self._plan_approval_tasks)
         if worker is not None:
             worker.cancel()
             waiter = asyncio.create_task(worker.wait())
             self._shutdown_worker_waiters.add(waiter)
             waiter.add_done_callback(self._shutdown_worker_wait_finished)
             waiters.add(waiter)
-        if not waiters:
+        if await self._turn_controller.wait_settled(timeout=max(1.0, self._stop_force_after_seconds), extra=waiters):
             return True
-        _, pending = await asyncio.wait(waiters, timeout=max(1.0, self._stop_force_after_seconds))
-        if not pending:
-            return True
-        task = self._agent_execution_task
-        if task is not None and not task.done():
-            self._draining_agent_tasks.add(task)
         if self.agent_worker is worker:
-            self.agent_worker = None
+            # Cancellation was already requested before waiting. Keep the
+            # execution owned without interrupting its in-flight cleanup again.
+            self._turn_controller.detach(cancel_execution=False)
         return False
 
     async def _shutdown_session(self) -> None:
@@ -2816,6 +2886,7 @@ class KolegaCodeApp(
         turns_settled = True
         self._background_rebuilding = True
         self._background_paused = True
+        self._invalidate_plan_approval()
         try:
             # Release control first, so any prompt still open resolves to its
             # default instead of leaving a turn waiting on a closing window.
@@ -2866,8 +2937,14 @@ class KolegaCodeApp(
                     # the ledger first, so the drain below captures them.
                     if turns_settled and self._usage_sink is not None:
                         await self._usage_sink.wait_closed()
+                    if turns_settled and self._usage_presentation is not None:
+                        await self._usage_presentation.aclose()
                 finally:
                     await self._stop_inbox_socket()
+                    if self._queue_presentation is not None:
+                        await self._queue_presentation.aclose()
+                    if self._goal_presentation is not None:
+                        await self._goal_presentation.aclose()
                     self._unregister_from_inbox()
                     self._close_memory_manager()
                 # Relaunch is allowed only after both persistence and teardown
@@ -2891,15 +2968,25 @@ class KolegaCodeApp(
             raise ValueError(f"Unknown interaction mode: {interaction_mode}")
         if self.interaction_mode == interaction_mode:
             return
-        if self._agent_execution_draining():
+        if self._draining_agent_tasks:
             raise RuntimeError("The previous turn is still finishing cleanup; wait before switching modes.")
+        owner = self._plan_approval_owner if self._plan_action_owned() else None
+        if not self._plan_action_owned():
+            await self._cancel_plan_approval()
 
         previous_tool_names = self._agent_tool_names()
         had_history = self.agent is not None and bool(getattr(self.agent, "history", None))
 
+        previous_interaction_mode = self.interaction_mode
         self.interaction_mode = interaction_mode
         self._plan_decision_active = False
         await self._save_session_async()
+        if owner is not None and not self._plan_owner_is_current(owner):
+            self.interaction_mode = previous_interaction_mode
+            await self._save_session_async()
+            self._update_mode_chrome()
+            self._restore_composer_placeholder()
+            return
         self._restore_plan_action_visibility()
         self._refresh_input_area_visibility()
         self._cancel_pending_question()
@@ -2911,9 +2998,13 @@ class KolegaCodeApp(
 
         if self.config is not None:
             await self._build_agent(self.config, rebuild=True, restore_transcript=False)
+            if owner is not None and not self._plan_owner_is_current(owner):
+                return
 
         if previous_tool_names is not None and had_history:
             await self._inject_mode_switch_notice(previous_tool_names)
+            if owner is not None and not self._plan_owner_is_current(owner):
+                return
 
         self._update_mode_chrome()
         self._restore_composer_placeholder()
@@ -2979,10 +3070,7 @@ class KolegaCodeApp(
         if self.interaction_mode != tui_constants.PLAN_INTERACTION_MODE or self.agent is None:
             return
         consume_completed_plan = getattr(self.agent, "consume_completed_plan", None)
-        if not callable(consume_completed_plan):
-            return
-
-        plan = consume_completed_plan()
+        plan = consume_completed_plan() if callable(consume_completed_plan) else None
         if plan:
             plan_str = str(plan)
             self._latest_plan = plan_str
@@ -2991,11 +3079,17 @@ class KolegaCodeApp(
             await self._show_plan_for_decision(plan_str, notification=messages.PLAN_CAPTURED)
             return
 
-        if self._latest_plan and self._plan_reofferable and not self._plan_pending:
+        if (
+            self._latest_plan
+            and self._plan_reofferable
+            and (not self._plan_pending or self._plan_approval_owner is None)
+        ):
             self._ensure_current_plan_artifact(self._latest_plan)
             await self._show_plan_for_decision(self._latest_plan, notification=messages.PLAN_REOFFERED)
 
     async def _show_plan_for_decision(self, plan: str, *, notification: str) -> None:
+        await self._cancel_plan_approval()
+        self._latest_plan = plan
         self._plan_pending = True
         self._plan_decision_active = True
         # Render before persisting: a stalled journal write used to keep a finished
@@ -3007,9 +3101,251 @@ class KolegaCodeApp(
         self._set_chat_enabled(False)
         self._refresh_input_area_visibility()
         self._notify_user(notification)
-        await self._save_session_with_deadline(self._save_session_async())
+        owner = self._offer_plan_approval(ready=False)
+        try:
+            await self._save_session_with_deadline(self._save_session_async())
+        finally:
+            if owner is not None:
+                owner.ready.set()
 
-    async def _implement_pending_plan(self, *, clear_context: bool = False) -> None:
+    def _plan_owner_is_current(self, owner: PlanApprovalOwner) -> bool:
+        return (
+            owner.valid
+            and self._plan_approval_owner is owner
+            and self._plan_revision == owner.revision
+            and self.session.session_id == owner.session_id
+            and self.session_runtime is owner.runtime
+            and (self.agent is owner.agent or owner.transitioning)
+            and self._session_shutdown_task is None
+            and not self._exit
+        )
+
+    def _plan_action_owned(self) -> bool:
+        owner = getattr(self, "_plan_approval_owner", None)
+        return owner is not None and owner.action is not None and owner.task is asyncio.current_task()
+
+    def _plan_action_reserved(self) -> bool:
+        owner = getattr(self, "_plan_approval_owner", None)
+        return (
+            owner is not None
+            and owner.action is not None
+            and owner.task is not asyncio.current_task()
+            and owner.task is not None
+            and not owner.task.done()
+        )
+
+    def _new_control_channel(self) -> ControlChannel:
+        broadcast = self.recording_connection_manager.broadcast_event
+
+        async def announce(event: AgentEvent, workspace_id: str, thread_id: str) -> None:
+            owner = self._plan_approval_owner
+            if (
+                owner is not None
+                and owner.task is asyncio.current_task()
+                and self._plan_owner_is_current(owner)
+                and event.event_type == KnownEventType.CONTROL_REQUESTED
+                and event.content.get("kind") == "plan_approval"
+            ):
+                owner.request_id = str(event.content["request_id"])
+            await broadcast(event, workspace_id, thread_id)
+
+        return control_channel_for(
+            self.session.session_id,
+            announce,
+            workspace_id=self.session.workspace_id,
+            thread_id=self.session.thread_id,
+        )
+
+    def _offer_plan_approval(self, *, ready: bool = True) -> PlanApprovalOwner | None:
+        if (
+            self._plan_approval_owner is not None
+            or not self._latest_plan
+            or not self._plan_pending
+            or self.interaction_mode != tui_constants.PLAN_INTERACTION_MODE
+            or self.agent is None
+            or self._session_shutdown_task is not None
+            or self._exit
+            or self._agent_execution_draining()
+        ):
+            return None
+        self._plan_revision += 1
+        owner = PlanApprovalOwner(
+            self.session.session_id,
+            self.session_runtime,
+            self.agent,
+            self._plan_revision,
+            self._latest_plan,
+            origin_task=self._agent_execution_task if self.agent_worker is not None else None,
+        )
+        if ready:
+            owner.ready.set()
+        self._plan_approval_owner = owner
+        owner.task = asyncio.create_task(self._consume_plan_approval(owner))
+        self._plan_approval_tasks.add(owner.task)
+        owner.task.add_done_callback(self._plan_approval_finished)
+        return owner
+
+    def _plan_request_id(self, owner: PlanApprovalOwner) -> str | None:
+        if owner.request_id is not None and owner.runtime.control.is_pending(owner.request_id):
+            return owner.request_id
+        return None
+
+    def _handle_plan_approval_request(self, event: AgentEvent) -> None:
+        owner = self._plan_approval_owner
+        if owner is None or not self._plan_owner_is_current(owner):
+            return
+        if event.session_id != owner.session_id:
+            return
+        request_id = str(event.content.get("request_id") or "")
+        if self._plan_request_id(owner) == request_id and owner.action is None:
+            try:
+                actions = self.query_one("#plan_actions", tui_widgets.ActionList)
+            except Exception:
+                return
+            if not actions.display:
+                self._set_plan_actions_visible(True, allow_discuss=True)
+
+    async def _answer_pending_plan(self, action: PlanApprovalAction) -> bool:
+        owner = self._plan_approval_owner
+        if owner is None:
+            return False
+        while self._plan_owner_is_current(owner) and owner.action is None:
+            request_id = self._plan_request_id(owner)
+            if request_id is not None:
+                return owner.runtime.answer_plan_approval(request_id, action, client_id=tui_constants.TUI_CLIENT_ID)
+            if owner.request_id is not None:
+                return False
+            if owner.task is None or owner.task.done():
+                break
+            await asyncio.sleep(0)
+        return False
+
+    def _invalidate_plan_approval(self) -> None:
+        owner, self._plan_approval_owner = self._plan_approval_owner, None
+        self._plan_revision += 1
+        if owner is None:
+            return
+        owner.valid = False
+        owner.invalidated.set()
+        request_id = self._plan_request_id(owner)
+        if request_id is not None:
+            owner.runtime.answer_plan_approval(request_id, None, client_id=tui_constants.TUI_CLIENT_ID)
+        owner.ready.set()
+        owner.released.set()
+        self._set_plan_actions_visible(False)
+        if owner.task is not None and not owner.task.done() and owner.task is not asyncio.current_task():
+            self._draining_plan_approval_tasks.add(owner.task)
+            if owner.action is None:
+                owner.task.cancel()
+
+    async def _cancel_plan_approval(self) -> None:
+        self._invalidate_plan_approval()
+        tasks = [task for task in self._plan_approval_tasks if task is not asyncio.current_task()]
+        if tasks:
+            await asyncio.shield(asyncio.gather(*tasks, return_exceptions=True))
+
+    def _plan_approval_finished(self, task: asyncio.Task[None]) -> None:
+        self._plan_approval_tasks.discard(task)
+        self._draining_plan_approval_tasks.discard(task)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            self._log_status(f"Plan approval failed: {error}", "warn")
+        if not self._exit and self._session_shutdown_task is None:
+            self._refresh_shortcut_context()
+            self._schedule_pending_inputs()
+
+    def _wake_plan_approval(self) -> None:
+        owner = getattr(self, "_plan_approval_owner", None)
+        if owner is not None:
+            owner.released.set()
+
+    async def _consume_plan_approval(self, owner: PlanApprovalOwner) -> None:
+        # Textual's eager factory may enter before owner.task is published.
+        await asyncio.sleep(0)
+        try:
+            while self._plan_owner_is_current(owner):
+                action = await owner.runtime.request_plan_approval(owner.plan)
+                if not self._plan_owner_is_current(owner):
+                    return
+                if action is None:
+                    owner.request_id = None
+                    if not owner.runtime.control.has_controller:
+                        self._set_plan_actions_visible(False)
+                        return
+                    # Plan cards are long-lived; channel deadlines renew the offer, never discuss it.
+                    await asyncio.sleep(0)
+                    continue
+                owner.action = action
+                self._set_plan_actions_visible(False)
+                self._set_chat_enabled(False)
+                await owner.ready.wait()
+                if not self._plan_owner_is_current(owner):
+                    return
+                if owner.origin_task is not None:
+                    # The origin can supersede this offer and join us before its goal loop finishes.
+                    invalidated = asyncio.create_task(owner.invalidated.wait())
+                    try:
+                        await asyncio.wait((owner.origin_task, invalidated), return_when=asyncio.FIRST_COMPLETED)
+                    finally:
+                        invalidated.cancel()
+                        await asyncio.gather(invalidated, return_exceptions=True)
+                while self._plan_owner_is_current(owner):
+                    owner.released.clear()
+                    if not (self._turn_active or self.agent_worker is not None or self._draining_agent_tasks):
+                        break
+                    await owner.released.wait()
+                if not self._plan_owner_is_current(owner):
+                    return
+                decision_active = self._plan_decision_active
+                plan_reofferable = self._plan_reofferable
+                try:
+                    saves = list(self._pending_session_saves)
+                    if saves:
+                        await asyncio.shield(asyncio.gather(*saves))
+                    if not self._plan_owner_is_current(owner):
+                        return
+                    await self._save_session_async()
+                    if not self._plan_owner_is_current(owner):
+                        return
+                    if action == "discuss_plan":
+                        await self._discuss_pending_plan(_owner=owner)
+                    else:
+                        await self._implement_pending_plan(clear_context=action == "implement_plan_clear", _owner=owner)
+                except Exception as error:
+                    if self._plan_owner_is_current(owner) and self.agent is owner.agent:
+                        self.interaction_mode = tui_constants.PLAN_INTERACTION_MODE
+                        self._plan_pending = True
+                        self._plan_reofferable = plan_reofferable
+                        self._plan_decision_active = decision_active
+                        self._invalidate_plan_approval()
+                        self._update_mode_chrome()
+                        self._restore_plan_action_visibility()
+                        self._refresh_input_area_visibility()
+                        if self._plan_decision_active:
+                            self._set_composer_status(messages.PLAN_READY_PLACEHOLDER)
+                        else:
+                            self._restore_composer_placeholder()
+                        self._set_chat_enabled(self.agent is not None and not self._plan_decision_active)
+                        self._schedule_primary_focus_restore()
+                        self._notify_user(
+                            f"Plan approval failed: {error}. Choose an action to retry.", severity="warning"
+                        )
+                    raise
+                return
+        finally:
+            if self._plan_approval_owner is owner:
+                self._plan_approval_owner = None
+
+    async def _implement_pending_plan(
+        self, *, clear_context: bool = False, _owner: PlanApprovalOwner | None = None
+    ) -> None:
+        if _owner is None and self._plan_approval_owner is not None:
+            owner = self._plan_approval_owner
+            if await self._answer_pending_plan("implement_plan_clear" if clear_context else "implement_plan"):
+                if owner.task is not None:
+                    await asyncio.shield(owner.task)
+            return
+        if _owner is not None and not self._plan_owner_is_current(_owner):
+            return
         plan = self._latest_plan
         if (
             not plan
@@ -3030,9 +3366,17 @@ class KolegaCodeApp(
         self._plan_decision_active = False
         if clear_context:
             await self._retire_background_jobs()
+            if _owner is not None and not self._plan_owner_is_current(_owner):
+                return
             self._clear_agent_context(reason="implement_plan_with_cleared_context")
         await self._save_session_async()
+        if _owner is not None and not self._plan_owner_is_current(_owner):
+            return
+        if _owner is not None:
+            _owner.transitioning = True
         await self._set_interaction_mode(tui_constants.BUILD_INTERACTION_MODE)
+        if _owner is not None and not self._plan_owner_is_current(_owner):
+            return
         self._refresh_planning_sidebar()
         self._set_plan_actions_visible(False)
         self._refresh_input_area_visibility()
@@ -3050,7 +3394,15 @@ class KolegaCodeApp(
             exclusive=True,
         )
 
-    async def _discuss_pending_plan(self) -> None:
+    async def _discuss_pending_plan(self, *, _owner: PlanApprovalOwner | None = None) -> None:
+        if _owner is None and self._plan_approval_owner is not None:
+            owner = self._plan_approval_owner
+            if await self._answer_pending_plan("discuss_plan"):
+                if owner.task is not None:
+                    await asyncio.shield(owner.task)
+            return
+        if _owner is not None and not self._plan_owner_is_current(_owner):
+            return
         if not self._latest_plan:
             return
 
@@ -3058,6 +3410,8 @@ class KolegaCodeApp(
         self._plan_reofferable = True
         self._plan_decision_active = False
         await self._save_session_async()
+        if _owner is not None and not self._plan_owner_is_current(_owner):
+            return
         self._refresh_planning_sidebar()
         self._set_plan_actions_visible(False)
         self._refresh_input_area_visibility()
@@ -3218,12 +3572,9 @@ class KolegaCodeApp(
         actions = self._active_prompt_actions()
         if actions is None or self.screen.focused is actions:
             return
-        # Legitimate exception: during a QUESTION the composer is enabled so the user
-        # can type a free-form answer; don't fight a deliberate move there. For
-        # approvals/plan the composer is disabled and thus never focusable here.
         focused = self.screen.focused
         if (
-            self._pending_question is not None
+            (self._pending_question is not None or (self._plan_pending and not self._plan_decision_active))
             and isinstance(focused, tui_widgets.ChatComposer)
             and not focused.disabled
         ):
@@ -3234,10 +3585,7 @@ class KolegaCodeApp(
         try:
             plan_actions = self.query_one("#plan_actions", tui_widgets.ActionList)
             if visible:
-                options = [Option("Implement plan", id="implement_plan")]
-                if allow_discuss:
-                    options.append(Option("Clear context and implement plan", id="implement_plan_clear"))
-                    options.append(Option("Discuss further", id="discuss_plan"))
+                options = [Option(label, id=action) for action, label in PLAN_APPROVAL_OPTIONS]
                 plan_actions.show_options(options)
                 self._focus_active_prompt()
             else:
@@ -3442,11 +3790,12 @@ class KolegaCodeApp(
         self._clear_queued_messages()
 
     async def _reset_current_thread(self, *, preserve_loop: bool = False) -> None:
-        if self._agent_execution_draining():
+        if self._draining_agent_tasks:
             raise RuntimeError("The previous turn is still finishing cleanup; wait before resetting the thread.")
         previous = self._background_rebuilding
         self._background_rebuilding = True
         try:
+            await self._cancel_plan_approval()
             await self._reset_current_thread_impl(preserve_loop=preserve_loop)
         finally:
             self._background_rebuilding = previous
@@ -3484,13 +3833,15 @@ class KolegaCodeApp(
         self._sub_agent_by_tool_call = {}
         self._sub_agent_seq = 0
         self._workflow_activities = {}
-        self._clear_queued_messages()
+        if not preserve_loop:
+            self._clear_queued_messages()
         self._latest_plan = None
         self._plan_pending = False
         self._plan_reofferable = False
         self._plan_decision_active = False
         self._goal = None
         self.session.goal = {}
+        self._publish_goal("cleared")
         if self.agent is not None:
             self.agent.apply_goal(None)
         if preserve_loop:
@@ -3505,26 +3856,31 @@ class KolegaCodeApp(
             if self.agent is not None:
                 self.agent.apply_loop(False)
         self._clear_runtime_output()
-        await self._save_session_async()
-        self._set_plan_actions_visible(False)
-        self._cancel_pending_question()
-        self._cancel_pending_approval()
-        self._cancel_pending_model_selection()
-        self._cancel_pending_effort_selection()
-        self._cancel_pending_theme_selection()
-        self._refresh_planning_sidebar()
-        self._clear_turn_status_strip()
-        self._turn_active = False
-        self._restore_composer_placeholder()
-        self._set_chat_enabled(self.agent is not None)
-        # A thread reset is not startup: the launch's one tip offer stays spent, so
-        # the rebuilt startup entry must not re-arm it.
-        self._discovery_tip_consumed = True
-        self._ensure_startup_entry(render=False)
-        self._add_conversation_entry(
-            tui_state.ConversationEntry(kind="progress", content=messages.THREAD_RESET_MESSAGE, complete=True)
-        )
-        await self._attach_background_jobs()
+
+        async def persist_reset() -> None:
+            await self._save_session_async()
+            self._set_plan_actions_visible(False)
+            self._cancel_pending_question()
+            self._cancel_pending_approval()
+            self._cancel_pending_model_selection()
+            self._cancel_pending_effort_selection()
+            self._cancel_pending_theme_selection()
+            self._refresh_planning_sidebar()
+            await self._task_list_event_emitter().task_list_updated("")
+            self._clear_turn_status_strip()
+            self._turn_active = False
+            self._restore_composer_placeholder()
+            self._set_chat_enabled(self.agent is not None)
+            # A thread reset is not startup: the launch's one tip offer stays spent, so
+            # the rebuilt startup entry must not re-arm it.
+            self._discovery_tip_consumed = True
+            self._ensure_startup_entry(render=False)
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(kind="progress", content=messages.THREAD_RESET_MESSAGE, complete=True)
+            )
+            await self._attach_background_jobs()
+
+        await complete_task_list_update(persist_reset())
 
     async def _handoff_session(self, document: str) -> None:
         """Switch to a fresh session whose entire context is ``document``.
@@ -3534,8 +3890,9 @@ class KolegaCodeApp(
         the new session records it as ``parent_session_id`` and restores the
         document as its opening conversation.
         """
-        if self._agent_execution_draining():
+        if self._draining_agent_tasks:
             raise RuntimeError("The previous turn is still finishing cleanup; wait before handing off the session.")
+        await self._cancel_plan_approval()
         await self._retire_background_jobs()
         # 1) Final durable flush of the old session while its agent/recorder are
         #    still live and bound to the old session id.
@@ -3571,8 +3928,20 @@ class KolegaCodeApp(
         if self._usage_sink is not None:
             await self._usage_sink.wait_closed()
             self._usage_sink = None
+        if self._usage_presentation is not None:
+            await self._usage_presentation.aclose()
+            self._usage_presentation = None
         self._unregister_from_inbox()
         await self._stop_inbox_socket()
+        # Removal belongs to the old queue/session, never the successor. Drain
+        # its captured recorder before rebinding any session-owned surface.
+        self._clear_queued_messages()
+        if self._queue_presentation is not None:
+            await self._queue_presentation.aclose()
+            self._queue_presentation = None
+        if self._goal_presentation is not None:
+            await self._goal_presentation.aclose()
+            self._goal_presentation = None
 
         # 6) Rebind the session-bound surface to the new id.
         self.session = new_record
@@ -3585,12 +3954,7 @@ class KolegaCodeApp(
             artifact_store=FileArtifactStore(journal),
         )
         self._recording_primed = False
-        self.control_channel = control_channel_for(
-            new_record.session_id,
-            self.recording_connection_manager.broadcast_event,
-            workspace_id=new_record.workspace_id,
-            thread_id=new_record.thread_id,
-        )
+        self.control_channel = self._new_control_channel()
         self.control_channel.acquire(tui_constants.TUI_CLIENT_ID)
         self.session_runtime = SessionRuntime(
             session_id=new_record.session_id,
@@ -3598,6 +3962,7 @@ class KolegaCodeApp(
             control=self.control_channel,
             permission_mode=self.permission_mode,
             on_notice=lambda text: self._notify_user(text, severity="warning"),
+            turns=self._turn_controller,
         )
         self._register_with_inbox()
         await self._start_inbox_socket()
@@ -3610,7 +3975,6 @@ class KolegaCodeApp(
         self.session.task_list_markdown = ""
         self._session_file_changes = []
         self._session_diff_dirty = True
-        self._clear_queued_messages()
         self._latest_plan = None
         self._plan_pending = False
         self._plan_reofferable = False
@@ -3651,6 +4015,9 @@ class KolegaCodeApp(
         self._usage_sink = usage_sink
         self._usage_ledger.observer = usage_sink
         await usage_sink.start()
+        await self._start_usage_presentation()
+        await self._start_queue_presentation()
+        await self._start_goal_presentation()
 
         # 11) Persist the new session and announce the switch.
         await self._save_session_async()

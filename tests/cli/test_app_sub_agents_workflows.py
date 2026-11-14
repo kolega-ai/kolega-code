@@ -866,7 +866,7 @@ async def test_sub_agent_inspector_shows_empty_state(tmp_path: Path, monkeypatch
         assert cli_messages.SUB_AGENT_INSPECTOR_NO_STEPS in str(placeholder.render())
 
         # Once a real step arrives, the placeholder is replaced by step widgets.
-        app._render_event(_sub_agent_event(uuid="r1", text="now working"))
+        app._render_event(_sub_agent_event(task="", uuid="r1", text="now working"))
         screen._flush()
         await _wait_for_layout(
             pilot,

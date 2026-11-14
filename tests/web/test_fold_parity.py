@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from kolega_code.session.inbox import PeerMessage, peer_model_text
 from kolega_code.session.projection import replay
 
 ASSET_DIR = Path(__file__).resolve().parents[2] / "kolega_code" / "web" / "assets"
+TASK_LIST_FIXTURE = json.loads((Path(__file__).parents[1] / "fixtures" / "task_list.json").read_text(encoding="utf-8"))
 
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node is required for fold parity")
 
@@ -337,6 +339,424 @@ def test_folds_agree_at_every_prefix(tmp_path: Path) -> None:
         expected = replay(events[:cut]).to_dict()
         actual = _run_js_fold(serialized[:cut], tmp_path)
         assert actual == expected, f"folds diverged after {cut} events"
+
+
+@pytest.mark.parametrize(
+    ("action", "reason"),
+    [
+        ("implement_plan", "answered"),
+        ("implement_plan_clear", "answered"),
+        ("discuss_plan", "answered"),
+        (None, "timeout"),
+        (None, "no_controller"),
+        (None, "controller_left"),
+        (None, "cancelled"),
+    ],
+)
+@pytest.mark.parametrize("announced", [False, True])
+def test_plan_approval_independent_activity_and_full_payload_at_every_prefix(
+    tmp_path: Path, action: str | None, reason: str, announced: bool
+) -> None:
+    payload = {
+        "plan": "# Exact plan\n\n<literal> & **Markdown**\n" + "Unabridged step.\n" * 1000,
+        "options": [
+            {"id": "implement_plan", "label": "Implement plan"},
+            {"id": "implement_plan_clear", "label": "Clear context and implement plan"},
+            {"id": "discuss_plan", "label": "Discuss further"},
+        ],
+    }
+    events = [
+        _event(KnownEventType.TURN_STARTED, 1, turn_id="plan", user_text="Make a plan."),
+        _event(KnownEventType.TURN_ENDED, 2, turn_id="plan", status="completed"),
+        _event(KnownEventType.CONTROL_REQUESTED, 3, request_id="approval", kind="plan_approval", payload=payload),
+        _event(
+            KnownEventType.CONTROL_RESOLVED,
+            4,
+            request_id="approval",
+            kind="plan_approval",
+            response={"action": action},
+            reason=reason,
+        ),
+        _event(KnownEventType.TURN_STARTED, 5, turn_id="followup", user_text="A real subsequent turn."),
+    ]
+    activities = ["generating", "idle", "waiting_for_user", "idle", "generating"]
+    if not announced:
+        events.pop(2)
+        activities.pop(2)
+    serialized = [event.model_dump(mode="json") for event in events]
+    for cut, activity in enumerate(activities, 1):
+        python = replay(events[:cut]).to_dict()
+        javascript = _run_js_fold(serialized[:cut], tmp_path)
+        assert python["activity"] == javascript["activity"] == activity
+        assert python == javascript
+        if announced and cut >= 3:
+            for state in (python, javascript):
+                assert state["prompts"][0]["kind"] == "plan_approval"
+                assert state["prompts"][0]["payload"] == payload
+                assert state["prompts"][0]["response"] == ({"action": action} if cut >= 4 else None)
+                assert state["prompts"][0]["reason"] == (reason if cut >= 4 else None)
+        elif not announced:
+            assert python["prompts"] == javascript["prompts"] == []
+
+
+def test_subagent_linkage_independent_expected_state_at_every_prefix(tmp_path: Path) -> None:
+    fixture = json.loads((Path(__file__).parents[1] / "fixtures" / "subagent_linkage.json").read_text())
+    expected = deepcopy(fixture["initial"])
+    expected["task_list"] = None
+    expected["goal"] = None
+    expected_prefixes = [deepcopy(expected)]
+    events = []
+    for seq, step in enumerate(fixture["steps"], 1):
+        event = AgentEvent(session_id="s", sender="agent", seq=seq, elapsed_ms=seq * 10, **step["event"])
+        events.append(event.model_dump(mode="json"))
+        patch = deepcopy(step["expect"])
+        for key, updates in patch.pop("sub_agents", {}).items():
+            if key not in expected["sub_agents"]:
+                expected["sub_agents"][key] = {**deepcopy(fixture["agent_defaults"]), "key": key, "name": key}
+            expected["sub_agents"][key].update(updates)
+        expected.update(patch)
+        expected.update(last_seq=seq, elapsed_ms=seq * 10)
+        expected_prefixes.append(deepcopy(expected))
+    harness = tmp_path / "linkage-prefixes.mjs"
+    payload = tmp_path / "linkage-events.json"
+    payload.write_text(json.dumps(events), encoding="utf-8")
+    harness.write_text(
+        f"""
+import {{ emptyState, fold, replay, toDict }} from {json.dumps(str(ASSET_DIR / "fold.js"))};
+import {{ readFileSync }} from "node:fs";
+const events = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const state = emptyState();
+const incremental = [toDict(state)];
+const seek = [toDict(replay([]))];
+for (let index = 0; index < events.length; index++) {{
+  fold(state, events[index]);
+  incremental.push(toDict(state));
+  seek.push(toDict(replay(events.slice(0, index + 1))));
+}}
+process.stdout.write(JSON.stringify({{ incremental, seek }}));
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(["node", str(harness), str(payload)], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    actual = json.loads(result.stdout)
+    for cut, expected in enumerate(expected_prefixes):
+        assert actual["incremental"][cut] == expected, f"JavaScript incremental prefix {cut}"
+        assert actual["seek"][cut] == expected, f"JavaScript seek prefix {cut}"
+        assert replay([AgentEvent.model_validate(event) for event in events[:cut]]).to_dict() == expected, (
+            f"Python prefix {cut}"
+        )
+
+
+def test_task_list_independent_expected_state_at_every_prefix(tmp_path: Path) -> None:
+    expected = deepcopy(TASK_LIST_FIXTURE["initial"])
+    expected["goal"] = None
+    expected_prefixes = [deepcopy(expected)]
+    events = []
+    for step in TASK_LIST_FIXTURE["steps"]:
+        event = AgentEvent(session_id="s", sender="agent", **step["event"])
+        events.append(event)
+        expected.update(deepcopy(step["expect"]))
+        expected_prefixes.append(deepcopy(expected))
+    harness = tmp_path / "task-list-prefixes.mjs"
+    payload = tmp_path / "task-list-events.json"
+    payload.write_text(json.dumps([event.model_dump(mode="json") for event in events]), encoding="utf-8")
+    harness.write_text(
+        f"""
+import {{ emptyState, fold, replay, toDict }} from {json.dumps(str(ASSET_DIR / "fold.js"))};
+import {{ readFileSync }} from "node:fs";
+const events = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const state = emptyState();
+const incremental = [toDict(state)];
+const seek = [toDict(replay([]))];
+for (let index = 0; index < events.length; index++) {{
+  fold(state, events[index]);
+  incremental.push(toDict(state));
+  seek.push(toDict(replay(events.slice(0, index + 1))));
+}}
+process.stdout.write(JSON.stringify({{ incremental, seek }}));
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(["node", str(harness), str(payload)], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    actual = json.loads(result.stdout)
+    for cut, expected in enumerate(expected_prefixes):
+        assert actual["incremental"][cut] == expected, f"JavaScript incremental prefix {cut}"
+        assert actual["seek"][cut] == expected, f"JavaScript seek prefix {cut}"
+        assert replay(events[:cut]).to_dict() == expected, f"Python seek prefix {cut}"
+
+
+def test_task_list_parser_and_full_text_in_javascript(tmp_path: Path) -> None:
+    cases = deepcopy(TASK_LIST_FIXTURE["parser_cases"])
+    text = ('完成 🐍 <tag> & "quoted" é ' * 100).strip()
+    for prefix, status in [
+        ("- [x]", "completed"),
+        ("- [X]", "completed"),
+        ("- [ ]", "pending"),
+        ("-", "pending"),
+        ("", "pending"),
+    ]:
+        cases.append({"markdown": f" \t{prefix} {text}\n ", "entries": [{"text": text, "status": status}]})
+    payload = tmp_path / "task-list-parser.json"
+    payload.write_text(json.dumps(cases), encoding="utf-8")
+    harness = tmp_path / "task-list-parser.mjs"
+    harness.write_text(
+        f"""
+import assert from "node:assert/strict";
+import {{ emptyState, fold, toDict, taskListEntries }} from {json.dumps(str(ASSET_DIR / "fold.js"))};
+import {{ readFileSync }} from "node:fs";
+for (const testCase of JSON.parse(readFileSync(process.argv[2], "utf8"))) {{
+  assert.deepEqual(taskListEntries(testCase.markdown), testCase.entries, testCase.name);
+  const expected = {{ markdown: testCase.markdown, entries: testCase.entries }};
+  for (const legacy of [false, true]) {{
+    const state = emptyState();
+    fold(state, {{
+      event_type: legacy ? "chat_message" : "task_list_updated",
+      content: legacy ? {{ message_type: "task_list_update", text: testCase.markdown }} :
+        {{ markdown: testCase.markdown }},
+    }});
+    assert.deepEqual(state.taskList, expected, testCase.name);
+    assert.deepEqual(toDict(state).task_list, expected, testCase.name);
+    assert.deepEqual(state.conversation, []);
+    assert.deepEqual([...state.unknownEventTypes], []);
+  }}
+}}
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(["node", str(harness), str(payload)], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+
+
+def test_task_update_seq_rejection_in_javascript(tmp_path: Path) -> None:
+    harness = tmp_path / "task-list-seq.mjs"
+    harness.write_text(
+        f"""
+import assert from "node:assert/strict";
+import {{ emptyState, fold, toDict }} from {json.dumps(str(ASSET_DIR / "fold.js"))};
+for (const seq of [1, 3]) {{
+  for (const worker of [false, true]) {{
+    for (const [eventType, content] of [
+      ["task_list_updated", {{ markdown: "- replacement" }}],
+      ["task_list_updated", {{ markdown: null }}],
+      ["chat_message", {{ message_type: "task_list_update", text: "" }}],
+      ["chat_message", {{ message_type: "task_list_update", text: false }}],
+    ]) {{
+      const state = emptyState();
+      fold(state, {{ event_type: "task_list_updated", content: {{ markdown: "- known" }}, seq: 3 }});
+      const expected = toDict(state);
+      assert.throws(() => fold(state, {{
+        event_type: eventType, content, seq, elapsed_ms: 100,
+        sub_agent_info: worker ? {{ agent_id: "ignored-worker" }} : null,
+      }}), /ascending order/);
+      assert.deepEqual(toDict(state), expected);
+    }}
+  }}
+}}
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(["node", str(harness)], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+
+
+def test_worker_metadata_validation_and_every_handler_in_javascript(tmp_path: Path) -> None:
+    harness = tmp_path / "worker-metadata.mjs"
+    harness.write_text(
+        f"""
+import assert from "node:assert/strict";
+import {{ emptyState, fold, toDict }} from {json.dumps(str(ASSET_DIR / "fold.js"))};
+const types = [
+  "assistant_delta", "thinking_delta", "chat_message", "tool_streaming_update",
+  "terminal_command", "terminal_output", "terminal_launched", "terminal_closed",
+  "log_message", "file_edit_preview", "llm_context_update", "compaction_status",
+  "llm_status_update", "status_update", "turn_started", "turn_ended",
+  "browser_launched", "browser_closed", "stream_truncated", "control_requested",
+  "control_resolved", "system_message", "memory_suggestions", "credit_alert",
+  "llm_error", "llm_request", "future_worker",
+];
+for (const eventType of types) {{
+  const state = emptyState();
+  fold(state, {{ event_type: "llm_request", seq: 1, content: {{}}, sub_agent_info: {{ dispatch_id: "d" }} }});
+  fold(state, {{ event_type: eventType, seq: 2, content: {{}}, sub_agent_info: {{
+    dispatch_id: "d", agent_id: "actual", agent_name: "late name", task: "late task",
+    label: "late label", phase: "late phase", workflow_run_id: "workflow",
+    parent_agent_id: "root", parent_tool_call_id: "call", depth: 3, background: true,
+    requested_routing: {{ model: "requested", provider: "fake" }},
+    effective_routing: {{ model: "effective" }}, total_tokens: 5,
+  }} }});
+  const activity = state.subAgents.get("d");
+  assert.equal(activity.agentId, "actual", eventType);
+  assert.equal(activity.name, "late name", eventType);
+  assert.equal(activity.task, "late task", eventType);
+  assert.equal(activity.label, "late label", eventType);
+  assert.equal(activity.phase, "late phase", eventType);
+  assert.equal(activity.workflowRunId, "workflow", eventType);
+  assert.equal(activity.parentAgentId, "root", eventType);
+  assert.equal(activity.parentToolCallId, "call", eventType);
+  assert.equal(activity.depth, 3, eventType);
+  assert.equal(activity.background, true, eventType);
+  assert.equal(activity.totalTokens, 5, eventType);
+  fold(state, {{ event_type: eventType, seq: 3, content: {{ total_tokens: 0 }}, sub_agent_info: {{
+    dispatch_id: "d", background: false, requested_routing: {{ model: "revised" }}, effective_routing: {{}},
+  }} }});
+  const serialized = toDict(state).sub_agents.d;
+  assert.equal(activity.agentId, "actual", eventType);
+  assert.equal(serialized.agent_id, "actual", eventType);
+  assert.equal(serialized.parent_agent_id, "root", eventType);
+  assert.equal(serialized.parent_tool_call_id, "call", eventType);
+  assert.equal(serialized.name, "late name", eventType);
+  assert.equal(serialized.task, "late task", eventType);
+  assert.equal(serialized.label, "late label", eventType);
+  assert.equal(serialized.phase, "late phase", eventType);
+  assert.equal(serialized.workflow_run_id, "workflow", eventType);
+  assert.equal(serialized.depth, 3, eventType);
+  assert.equal(serialized.background, false, eventType);
+  assert.equal(serialized.total_tokens, 0, eventType);
+  assert.deepEqual(serialized.requested_routing, {{ model: "revised", provider: "fake" }}, eventType);
+  assert.deepEqual(serialized.effective_routing, {{ model: "effective" }}, eventType);
+}}
+const cases = [
+  ["agent_id", [null, true, false, 2, [], {{}}, ""]],
+  ["parent_agent_id", [null, true, false, 2, [], {{}}, ""]],
+  ["parent_tool_call_id", [null, true, false, 2, [], {{}}, ""]],
+  ["agent_name", [null, true, false, 2, [], {{}}, ""]],
+  ["task", [null, true, false, 2, [], {{}}, ""]],
+  ["label", [null, true, false, 2, [], {{}}, ""]],
+  ["phase", [null, true, false, 2, [], {{}}, ""]],
+  ["workflow_run_id", [null, true, false, 2, [], {{}}, ""]],
+  ["depth", [null, true, false, 0, -1, 1.5, "2", [], {{}}, NaN, Infinity]],
+  ["background", [null, 0, 1, "false", [], {{}}]],
+  ["total_tokens", [null, true, false, -1, 1.5, "2", [], {{}}, NaN, Infinity]],
+  ["requested_routing", [null, true, false, 0, "route", []]],
+  ["effective_routing", [null, true, false, 0, "route", []]],
+];
+for (const [field, values] of cases) {{
+  for (const value of values) {{
+    const state = emptyState();
+    fold(state, {{ event_type: "llm_request", seq: 1, content: {{}}, sub_agent_info: {{
+      dispatch_id: "d", agent_id: "actual", agent_name: "name", task: "task", label: "label",
+      phase: "phase", workflow_run_id: "workflow", parent_agent_id: "parent", parent_tool_call_id: "call",
+      depth: 2, background: true, total_tokens: 4,
+      requested_routing: {{ model: "requested" }}, effective_routing: {{ model: "effective" }},
+    }} }});
+    const expected = toDict(state).sub_agents.d;
+    const content = field === "total_tokens" ? {{ total_tokens: value }} : {{}};
+    fold(state, {{ event_type: "llm_request", seq: 2, content,
+      sub_agent_info: {{ dispatch_id: "d", [field]: value }} }});
+    assert.deepEqual(toDict(state).sub_agents.d, expected, field);
+  }}
+}}
+for (const info of [null, [], "bad", 1, false, {{}}]) {{
+  const state = emptyState();
+  fold(state, {{ event_type: "terminal_output", seq: 1, content: {{ output: "root" }}, sub_agent_info: info }});
+  assert.equal(state.terminal, "root");
+  assert.equal(state.subAgents.size, 0);
+}}
+for (const [info, key] of [
+  [{{ dispatch_id: {{}}, agent_id: "actual" }}, "actual"],
+  [{{ dispatch_id: true, agent_id: [], agent_name: "legacy" }}, "legacy"],
+  [{{ dispatch_id: 5, agent_id: false, agent_name: {{}} }}, "sub-agent"],
+]) {{
+  const state = emptyState();
+  fold(state, {{ event_type: "llm_request", seq: 1, content: {{}}, sub_agent_info: info }});
+  assert.deepEqual([...state.subAgents.keys()], [key]);
+}}
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(["node", str(harness)], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+
+
+def test_terminal_caps_and_linear_append_in_javascript(tmp_path: Path) -> None:
+    harness = tmp_path / "worker-terminals.mjs"
+    harness.write_text(
+        f"""
+import assert from "node:assert/strict";
+import {{
+  emptyState, fold, toDict, TERMINAL_BUFFER_CHARS as cap,
+  TERMINAL_MAX_PARTS as maxParts, TERMINAL_MAX_DROPPED_PREFIX as maxPrefix,
+}} from {json.dumps(str(ASSET_DIR / "fold.js"))};
+let seq = 0;
+const state = emptyState();
+function event(type, content, key) {{
+  return {{ event_type: type, seq: ++seq, content, sub_agent_info: key ? {{ agent_id: key }} : null }};
+}}
+fold(state, event("turn_started", {{ turn_id: "root", user_text: "coordinate" }}));
+fold(state, event("terminal_output", {{ output: "root" }}));
+fold(state, event("terminal_output", {{ output: "parallel" }}, "other"));
+let expected = "";
+for (const chunk of ["a".repeat(cap + maxPrefix + 1), "b".repeat(7), "c".repeat(cap / 2)]) {{
+  fold(state, event("terminal_output", {{ output: chunk }}, "child"));
+  expected = (expected + chunk).slice(-cap);
+  const child = state.subAgents.get("child");
+  assert.equal(child.terminal, expected);
+  assert.equal(child.terminalTruncated, true);
+  assert.equal(child._terminalChars, cap);
+  assert.ok(child._terminalOffset <= maxPrefix);
+  assert.equal(state.terminal, "root");
+  assert.equal(state.terminalTruncated, false);
+  assert.equal(state.activity, "generating");
+  assert.equal(state.subAgents.get("other").terminal, "parallel");
+  assert.equal(state.subAgents.get("other").terminalTruncated, false);
+  assert.deepEqual(child.steps, []);
+  assert.equal(toDict(state).sub_agents.child.terminal, expected);
+  assert.equal(toDict(state).sub_agents.child.terminal_truncated, true);
+}}
+const child = state.subAgents.get("child");
+child.terminal = "replacement";
+fold(state, event("terminal_output", {{ display_output: " tail", output: "hidden" }}, "child"));
+assert.equal(child.terminal, "replacement tail");
+fold(state, event("terminal_command", {{ command: "child-check" }}, "child"));
+assert.equal(child.terminal, "replacement tail$ child-check\\n");
+assert.equal(state.activity, "generating");
+for (const key of [null, "performance-child"]) {{
+  const state = emptyState();
+  fold(state, event("terminal_output", {{ output: "a".repeat(cap) }}, key));
+  const target = key ? state.subAgents.get(key) : state;
+  const guarded = new Proxy(target, {{
+    get(object, property) {{
+      assert.notEqual(property, "terminal", "fold must not materialize terminal text");
+      return Reflect.get(object, property);
+    }},
+  }});
+  if (key) state.subAgents.set(key, guarded);
+  let joins = 0;
+  let joinedChars = 0;
+  const originalJoin = Array.prototype.join;
+  const count = maxParts * 12;
+  try {{
+    Array.prototype.join = function(separator) {{
+      joins++;
+      joinedChars += this.reduce((sum, part) => sum + (part ? part.length : 0), 0);
+      return originalJoin.call(this, separator);
+    }};
+    for (let index = 0; index < count; index++) {{
+      fold(key ? state : guarded, event("terminal_output", {{ output: "b" }}, key));
+    }}
+  }} finally {{
+    Array.prototype.join = originalJoin;
+  }}
+  assert.ok(joins <= 12, `unexpected joins: ${{joins}}`);
+  assert.ok(joinedChars <= (cap + maxPrefix) * 12);
+  assert.ok(target._terminalParts.length <= maxParts);
+  assert.equal(target._terminalChars, cap);
+  assert.equal(target._terminalText, null);
+  assert.equal(target.terminal, "a".repeat(cap - count) + "b".repeat(count));
+  assert.equal(target.terminalTruncated, true);
+  if (key) {{
+    assert.equal(state.terminal, "");
+    assert.equal(state.terminalTruncated, false);
+    assert.deepEqual(target.steps, []);
+  }}
+}}
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(["node", str(harness)], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
 
 
 def test_user_images_have_independent_expected_states_at_every_prefix(tmp_path: Path) -> None:

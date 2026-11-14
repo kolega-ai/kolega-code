@@ -81,8 +81,6 @@ class PerplexityResponsesProvider(ResponsesProviderBase):
         self.provider_name = provider_name
         self._session_id = str(uuid.uuid4())
         self.async_client = AsyncOpenAI(api_key=api_key, base_url=self.base_url, max_retries=max_retries)
-        # The Responses path is async-only; the sync client is unused.
-        self.sync_client = None
 
     def _default_model(self) -> str:
         return DEFAULT_MODEL

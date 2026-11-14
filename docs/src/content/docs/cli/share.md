@@ -67,6 +67,10 @@ default — it has nothing to fetch.
   entry in the Sub-agents panel, to read that agent's thread on its own and then
   come back. Parallel agents interleave line by line, so a merged stream is
   unreadable once more than one is running.
+- Opening an agent also selects its terminal output. Returning to the session
+  restores the main agent's terminal; parallel and background workers do not
+  mix their commands into it. Agent details retain reported parent links,
+  delegation depth, model routing, background status and token totals.
 - A gigacode run shows its own name, each phase as it starts, and how it
   finished, with its agents' cards in between.
 - Play, pause, and 1x / 2x / 4x / max playback. Long idle gaps are compressed, so
@@ -74,10 +78,137 @@ default — it has nothing to fetch.
 - A scrubber with a tick per turn, plus a turn list for jumping straight to a
   prompt.
 - Live context-window usage, sub-agent activity, and terminal output.
+- A read-only, session-wide task list with pending and completed tasks, a
+  completion count, and the source Markdown.
+- A read-only, session-wide queue showing recorded pending-input previews in order.
+- A read-only, session-wide Goal panel showing the latest recorded goal observation.
+- Session-wide token and cost snapshots, including coverage and recording health.
 - A theme switcher covering every theme the TUI ships.
 
 Keyboard: <kbd>Space</kbd> plays and pauses, <kbd>←</kbd>/<kbd>→</kbd> seek five
 seconds, <kbd>Home</kbd>/<kbd>End</kbd> jump to the start or end.
+
+Older recordings remain playable, but missing parent, routing and terminal-owner
+metadata cannot be reconstructed. Untagged terminal output stays in the main
+terminal rather than being assigned to a guessed worker.
+
+### Background reports
+
+Live shares, single-file replays and directory exports show recorded background
+reports in the main session transcript, separately from the worker's own steps.
+Each entry retains the full report, task, job and completion IDs, and whether
+the job completed, failed, was cancelled or was interrupted. Recorded launch,
+model-routing and workspace details remain available when present; missing
+metadata does not create a guessed worker.
+
+A report appears when its delivery is recorded, not merely when the worker
+finishes. **Context** means it was inserted into the live main-agent context.
+**Archived** means it was retained while retiring that context, without being
+inserted into the successor's live context. Both are read-only and follow
+playback and seeking; repeated delivery records for the same completion appear
+only once.
+
+Large reports load their complete recorded text, including in single-file
+exports. If those bytes are unavailable, the player labels the recorded preview
+instead. Recording and displaying a report does not add another semantic
+completion or change usage accounting, `ask --json`, or ATIF exports.
+
+Older recordings without delivery events cannot establish whether or when a
+report reached the main agent. That evidence is **unknown**, not proof that the
+job failed or was never delivered. Resuming or exporting a session does not
+backfill missing delivery history.
+
+### Task list
+
+The task-list panel shows the latest recorded update to the session's shared
+list. It stays session-wide when you open a delegated agent's thread; a worker's
+own updates do not replace it. Task-list updates do not appear again as prose in
+the transcript.
+
+The list follows playback and seeking, including when you seek backward or
+return to the live edge. It is available in live shares, single-file replays and
+directory bundles. Tasks and source Markdown are displayed as literal text,
+not executable HTML. The panel is **read-only**: viewers cannot edit tasks or
+check them off.
+
+Before any task-list update has been recorded, the panel says **No task list
+recorded yet**. That means the list is unknown, not empty or completed. An
+explicit empty update instead shows **Task list cleared**. Older recordings can
+show a list only where an update was actually captured. Resuming a session may
+record its saved list at that point, but does not invent earlier task-list
+history. Recording and displaying task updates does not add them to the model's
+conversation history or change its prompts.
+
+### Queue
+
+The Queue panel shows the latest recorded observation of pending inputs, in queue
+order. It follows live updates, playback and seeking in live shares, single-file
+replays and directory bundles, and stays session-wide when viewing a worker.
+Entries show bounded literal text previews, attachment image counts and recorded
+peer attribution—not raw attachment bytes, local paths or model framing. The
+panel does not load images or offer downloads or queue controls.
+
+These are **read-only historical previews**, not recoverable pending inputs, a
+durable queue or a way to resume queued work. A **dequeued** observation means an
+input was removed for processing, **not** that semantic delivery succeeded; no
+queue observation is a delivery acknowledgment. Queue updates do not create
+conversation turns.
+
+Before any queue observation was recorded, the queue is **unknown**, not empty.
+`ask --json` remains semantic-only and does not record queue observations.
+An explicitly recorded empty snapshot is shown as empty. Older sessions do not
+gain invented queue history. Export redaction also applies to queue previews and
+peer attribution; live shares remain unredacted.
+
+### Goal
+
+The Goal panel shows recorded goal observations: started, replaced, evaluated,
+paused, resumed, completed and cleared, as well as saved-state snapshots. It
+follows live updates, playback and seeking in live shares, single-file replays
+and directory bundles. Opening a worker's thread does not narrow the panel or
+replace the session's goal with a worker's state. Goal observations do not add
+transcript rows or conversation turns.
+
+The panel retains the full recorded condition, evaluation reason, counters,
+timestamps, flags and status note. Text is displayed literally, not as
+executable HTML. This is **read-only evidence**: there are no start, clear, pause
+or resume controls. A recorded evaluation result or completion is not a new
+verification by the player, and the panel cannot execute work, resume a goal or
+recover goal-loop state.
+
+Before the first recorded observation, the goal is **unknown**, not absent or
+completed. An explicit snapshot with no goal or a recorded clear instead
+establishes that no goal was set at that point. Older recordings do not gain
+invented goal history. A saved-state snapshot records what was observed when
+the session opened; it does not backfill earlier lifecycle events.
+
+Normal `ask` can record goal observations without changing its existing goal
+execution or recovery semantics. `ask --json` writes **no goal presentation
+events**, preserving its semantic-only, gaplessly sequenced stream. Goal
+observations do not change model history, semantic goal accounting or ATIF
+exports. Export redaction applies to goal text; live shares remain unredacted.
+
+### Token and cost usage
+
+The read-only usage panel follows recorded session-wide snapshots during live
+viewing, replay and seeking. Opening a worker's thread does not narrow these
+totals. They include recorded requests across earlier turns and context resets;
+the separate context-window gauge is not a lifetime token counter.
+
+Unknown values appear as unavailable, not zero. Partial evidence is labelled as
+a known subtotal, and request coverage is shown separately from persistence
+health. An older recording without usage snapshots does not gain invented
+totals. Resuming it can record a current snapshot from the available evidence,
+but cannot reconstruct missing historical usage.
+
+Costs retain their recorded decimal precision and distinguish reported values
+from estimates. Currencies and non-monetary credits are displayed separately,
+without conversion or a combined balance. Missing costs are not treated as free
+requests. Sessions without full request accounting, including gateway sessions,
+can therefore show incomplete coverage.
+
+These snapshots are presentation data. They do not change model history,
+semantic JSON output, or ATIF exports, and viewers cannot edit them.
 
 ## What is removed before sharing
 

@@ -1,7 +1,7 @@
 """The agent session host: one Kolega session per chat, driven headlessly.
 
 This is the gateway's real turn handler. Each chat gets a durable Kolega
-session — a ``SessionRuntime`` owning a ``CoderAgent`` built with the same
+session — a ``SessionRuntime`` owning a build or planning agent built with the same
 recipe the ACP server uses (``CliConnectionManager`` + recording + journal) —
 so recording, export, redaction, and the permission machinery all work
 exactly as they do in the TUI.
@@ -17,13 +17,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
+from contextlib import aclosing
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable, Optional
+from typing import Any, AsyncGenerator, AsyncIterator, Awaitable, Callable, Optional
 
-from kolega_code.agent import CoderAgent, PromptExtension, ToolExtension
+from kolega_code.agent import CoderAgent, PlanningAgent, PromptExtension, ToolExtension
 from kolega_code.agent.prompt_provider import AgentMode
-from kolega_code.agent.prompts import BUILD_QUESTION_PROMPT
+from kolega_code.agent.prompts import BUILD_QUESTION_PROMPT, PLANNING_QUESTION_PROMPT, build_implement_plan_prompt
 from kolega_code.cli.config import CliConfigError, CliConfigOverrides, build_agent_config, config_summary
 from kolega_code.cli.connection import CliConnectionManager
 from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
@@ -34,6 +35,8 @@ from kolega_code.mcp.config import LoadedMCPConfig
 from kolega_code.permissions import PermissionMode, normalize_permission_mode
 from kolega_code.session.recording import RecordingConnectionManager
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
+from kolega_code.session.turns import StreamFactory, TurnController, TurnHooks, TurnQueue
+from kolega_code.session.usage import UsagePresentation
 from kolega_code.tools import ToolError
 
 from kolega_code.gateway.adapters.base import Attachment, ChatRef, GatewayAdapter, InboundMessage
@@ -42,6 +45,7 @@ from kolega_code.gateway.bridge import TurnRenderer
 from kolega_code.gateway.commands import (
     COMMAND_HELP,
     COMMAND_MODEL,
+    COMMAND_MODE,
     COMMAND_NEW,
     COMMAND_PERMISSIONS,
     COMMAND_RESET,
@@ -72,6 +76,7 @@ from kolega_code.session.composition import (
     HostExtensions,
     construct_agent,
     prepare_composition,
+    select_agent_class,
 )
 
 logger = logging.getLogger(__name__)
@@ -101,6 +106,7 @@ class _LifecycleOperation:
     partial_agent: Any = None
     router: EventRouter | None = None
     relay: ControlRelay | None = None
+    usage_presentation: UsagePresentation | None = None
 
     def interrupt(self) -> None:
         if self.stopping or self.cleaning:
@@ -141,7 +147,6 @@ class ChatSession:
     #: Mutable holder the agent factory reads at every build, so /model can
     #: swap the config and rebuild the session in place.
     config_holder: dict[str, Any]
-    turn_task: Optional[asyncio.Task[None]] = None
     turn_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     background_jobs: Any = None
     completions: list[dict[str, Any]] = field(default_factory=list)
@@ -151,6 +156,13 @@ class ChatSession:
     auto_continue_paused: bool = False
     closed: bool = False
     retired_agents: list[Any] = field(default_factory=list)
+    usage_presentation: UsagePresentation | None = None
+    plan_approval_task: asyncio.Task[None] | None = None
+    plan_approval_generation: int = 0
+
+    @property
+    def turn_task(self) -> asyncio.Task[Any] | None:
+        return self.runtime.turns.execution_task
 
 
 class AgentTurnHandler:
@@ -182,6 +194,7 @@ class AgentTurnHandler:
             is_pinned=lambda entry: (
                 entry.chat_ref.key in self._operations
                 or entry.turn_task is not None
+                or entry.plan_approval_task is not None
                 or entry.turn_lock.locked()
                 or entry.background_queued
                 or bool(entry.background_jobs is not None and entry.background_jobs.has_work)
@@ -190,7 +203,7 @@ class AgentTurnHandler:
         )
         self._map_path = config.state_dir / SESSION_MAP_FILE_NAME
         self._chat_sessions = self._load_map()
-        self._queues: dict[str, asyncio.Queue[InboundMessage | None]] = {}
+        self._queues: dict[str, TurnQueue[InboundMessage | None]] = {}
         self._workers: dict[str, asyncio.Task[None]] = {}
         self._operations: dict[str, _LifecycleOperation] = {}
         self._shutdown_task: asyncio.Task[None] | None = None
@@ -209,7 +222,13 @@ class AgentTurnHandler:
     def _check_admission(self, chat_ref: ChatRef) -> None:
         if self._closing:
             raise ChatLifecycleIncomplete("Gateway is shutting down.")
-        if chat_ref.key in self._operations:
+        owner = self._operations.get(chat_ref.key)
+        if owner is not None and not (
+            owner.kind == "plan"
+            and not owner.cleaning
+            and owner.entry is not None
+            and owner.entry.turn_task is owner.task
+        ):
             raise ChatLifecycleIncomplete("This chat still owns startup or cleanup; try again after it settles.")
 
     def _start_operation(
@@ -253,11 +272,13 @@ class AgentTurnHandler:
         owner.task.add_done_callback(settled)
         return owner
 
-    async def _wait_operation(self, owner: _LifecycleOperation) -> Any:
+    async def _wait_operation(self, owner: _LifecycleOperation, *, ready: asyncio.Future[None] | None = None) -> Any:
         assert owner.task is not None
         waiters: set[asyncio.Future[Any]] = {owner.task}
         if owner.startup_failure is not None:
             waiters.add(owner.startup_failure)
+        if ready is not None:
+            waiters.add(ready)
         try:
             done, _ = await asyncio.wait(waiters, timeout=LIFECYCLE_WAIT_SECONDS, return_when=asyncio.FIRST_COMPLETED)
         except asyncio.CancelledError:
@@ -268,6 +289,8 @@ class AgentTurnHandler:
         if not done:
             owner.interrupt()
             raise ChatLifecycleIncomplete("The chat operation is still pending; its cleanup remains owned.")
+        if ready is not None and ready in done and not owner.task.done():
+            return None
         return owner.task.result()
 
     async def handle(self, chat_ref: ChatRef, message: InboundMessage) -> None:
@@ -283,9 +306,10 @@ class AgentTurnHandler:
         if command is not None:
             await self._run_command(chat_ref, message, command)
             return
-        await self._ensure_session(chat_ref)  # also prunes idle sessions
+        entry = await self._ensure_session(chat_ref)  # also prunes idle sessions
+        self._invalidate_plan_approval(entry)
         self._check_admission(chat_ref)
-        queue = self._queues.setdefault(chat_ref.key, asyncio.Queue())
+        queue = self._queues.setdefault(chat_ref.key, entry.runtime.turns.inputs)
         queue.put_nowait(message)
         worker = self._workers.get(chat_ref.key)
         if worker is None or worker.done():
@@ -320,6 +344,8 @@ class AgentTurnHandler:
     async def _shutdown(self) -> None:
         owners = list(self._operations.values())
         entries = self._registry.take_all()
+        for entry in entries:
+            self._invalidate_plan_approval(entry.payload)
 
         async def close(entry: ChatSession) -> None:
             owner = self._operations.get(entry.chat_ref.key)
@@ -365,11 +391,10 @@ class AgentTurnHandler:
                 entry = await self._ensure_session(chat_ref)
                 if message is None:
                     entry.background_queued = False
-                turn_task: asyncio.Task[None] = asyncio.create_task(
-                    self._run_owned_turn(entry, chat_ref, message),
+                turn_task = entry.runtime.turns.start(
+                    lambda: self._run_owned_turn(entry, chat_ref, message),
                     name=f"gateway-turn-{entry.session_id}",
                 )
-                entry.turn_task = turn_task
                 try:
                     # Shield breaks the cancellation coupling: cancelling the
                     # worker (shutdown/eviction) must not silently cancel the
@@ -395,7 +420,6 @@ class AgentTurnHandler:
                             await turn_task
                         except BaseException:  # noqa: BLE001
                             pass
-                        entry.turn_task = None
                         raise asyncio.CancelledError()
                 except Exception:
                     # A genuinely failed turn; a *stopped* turn can also land
@@ -407,8 +431,6 @@ class AgentTurnHandler:
                             await self._adapter.send_text(chat_ref.chat_id, ERROR_REPLY)
                         except Exception:  # noqa: BLE001 — the log already has the details
                             pass
-                finally:
-                    entry.turn_task = None
         except asyncio.CancelledError:
             raise
         finally:
@@ -425,7 +447,7 @@ class AgentTurnHandler:
         ):
             return
         entry.background_queued = True
-        queue = self._queues.setdefault(entry.chat_ref.key, asyncio.Queue())
+        queue = self._queues.setdefault(entry.chat_ref.key, entry.runtime.turns.inputs)
         queue.put_nowait(None)
         worker = self._workers.get(entry.chat_ref.key)
         if worker is None or worker.done():
@@ -466,7 +488,18 @@ class AgentTurnHandler:
                     return
                 if chat_ref.key in self._operations:
                     continue
+                # A plan implementation can temporarily own the controller
+                # while this published turn waits for its lifecycle release.
+                task = asyncio.current_task()
+                turns = entry.runtime.turns
+                if turns.execution_task is not task or turns.owner is not task:
+                    turns.owner = task
+                    turns.track(task)
                 if message is not None:
+                    self._invalidate_plan_approval(entry)
+                    task = entry.plan_approval_task
+                    if task is not None:
+                        await asyncio.gather(task, return_exceptions=True)
                     entry.auto_continue_paused = False
                     await self._run_turn(entry, chat_ref, message)
                     return
@@ -497,19 +530,15 @@ class AgentTurnHandler:
                 if (
                     completions
                     and not entry.auto_continue_paused
+                    and entry.plan_approval_task is None
                     and getattr(entry.runtime.agent, "background_needs_turn", True)
                 ):
                     agent = entry.runtime.agent
                     assert agent is not None
-                    renderer = TurnRenderer(
-                        self._adapter,
-                        chat_ref.chat_id,
-                        event_queue=entry.turn_events,
-                        chunk_limit=self._adapter.capabilities.text_chunk_limit,
-                        edit_throttle_seconds=self._config.edit_throttle_seconds,
-                    )
-                    await renderer.run(self._scrub_chunks(agent.continue_from_history_stream()))
-                self._persist(entry)
+                    await self._run_rendered_turn(entry, chat_ref, agent.continue_from_history_stream)
+                else:
+                    self._persist(entry)
+                    self._start_plan_approval(entry)
                 if not jobs.active_count and entry.retired_agents:
                     owner = self._start_operation(
                         chat_ref, "retire", lambda op: self._cleanup_retired(entry, op), cleaning=True
@@ -564,6 +593,9 @@ class AgentTurnHandler:
             return  # nothing the model can act on (e.g. an undecodable voice note)
         if not text:
             text = "[attachment]"
+        await self._run_rendered_turn(entry, chat_ref, lambda: entry.runtime.send_message(text, attachments or None))
+
+    async def _run_rendered_turn(self, entry: ChatSession, chat_ref: ChatRef, stream_factory: StreamFactory) -> None:
         renderer = TurnRenderer(
             self._adapter,
             chat_ref.chat_id,
@@ -571,9 +603,162 @@ class AgentTurnHandler:
             chunk_limit=self._adapter.capabilities.text_chunk_limit,
             edit_throttle_seconds=self._config.edit_throttle_seconds,
         )
-        stream = entry.runtime.send_message(text, attachments or None)
-        await renderer.run(self._scrub_chunks(stream))
-        self._persist(entry)
+        response: list[str] = []
+
+        async def consume(stream: AsyncIterator[dict[str, Any]]) -> None:
+            async with aclosing(self._scrub_chunks(stream, response)) as chunks:
+                await renderer.run(chunks)
+
+        async def complete() -> None:
+            self._capture_plan(entry, response)
+            self._persist(entry)
+            self._start_plan_approval(entry)
+
+        await entry.runtime.turns.run(stream_factory, hooks=TurnHooks(consume=consume, after=(complete,)))
+
+    def _capture_plan(self, entry: ChatSession, response: list[str]) -> None:
+        if entry.record.interaction_mode != "plan":
+            return
+        consume = getattr(entry.runtime.agent, "consume_completed_plan", None)
+        plan = consume() if callable(consume) else None
+        if not isinstance(plan, str) or not plan.strip():
+            plan = "".join(response)
+        if plan.strip():
+            self._invalidate_plan_approval(entry)
+            entry.record.latest_plan_markdown = plan
+            entry.record.plan_pending = True
+            entry.record.plan_reofferable = True
+
+    def _invalidate_plan_approval(self, entry: ChatSession) -> None:
+        entry.plan_approval_generation += 1
+        for request in entry.runtime.control.pending():
+            if request.kind == "plan_approval":
+                entry.runtime.answer_plan_approval(request.request_id, None, client_id=entry.chat_ref.key)
+        task = entry.plan_approval_task
+        if task is not None and task is not asyncio.current_task() and not task.cancelling():
+            task.cancel()
+
+    def _start_plan_approval(self, entry: ChatSession, *, restored: bool = False) -> None:
+        task = entry.plan_approval_task
+        if task is not None and task.done():
+            # Completion can precede the queued callback; reclaim only its finished owner.
+            if not task.cancelled():
+                task.exception()
+            if entry.plan_approval_task is task:
+                entry.plan_approval_task = None
+        if (
+            self._closing
+            or entry.closed
+            or entry.auto_continue_paused
+            or entry.plan_approval_task is not None
+            or (entry.record.interaction_mode != "plan" and not restored)
+            or not entry.record.plan_pending
+            or not entry.record.latest_plan_markdown.strip()
+        ):
+            return
+        generation = entry.plan_approval_generation
+        plan = entry.record.latest_plan_markdown
+
+        async def offer() -> None:
+            # Never enter a replacement while the planning turn still owns its lock.
+            await asyncio.sleep(0)
+            await self._wait_for_lifecycle(entry.chat_ref)
+            if not self._plan_acceptance_live(entry, generation, plan):
+                return
+            try:
+                action = await entry.runtime.request_plan_approval(plan)
+                if not self._plan_acceptance_live(entry, generation, plan):
+                    return
+                if action == "discuss_plan":
+                    if entry.record.interaction_mode != "plan":
+                        owner = self._start_operation(
+                            entry.chat_ref,
+                            "plan",
+                            lambda op: self._replace_mode_owned(entry, "plan", op, acceptance=(generation, plan)),
+                        )
+                        await self._wait_operation(owner)
+                        if not self._plan_acceptance_live(entry, generation, plan):
+                            return
+                    entry.record.plan_pending = False
+                    entry.record.plan_reofferable = True
+                    self._store.save(entry.record)
+                elif action in ("implement_plan", "implement_plan_clear"):
+                    ready: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+                    owner = self._start_operation(
+                        entry.chat_ref,
+                        "plan",
+                        lambda op: self._implement_plan_owned(
+                            entry, op, generation, plan, ready, clear=action == "implement_plan_clear"
+                        ),
+                    )
+                    await self._wait_operation(owner, ready=ready)
+                    assert owner.task is not None
+                    await asyncio.shield(owner.task)
+            except asyncio.CancelledError:
+                if entry.plan_approval_generation == generation:
+                    self._invalidate_plan_approval(entry)
+                owner = self._operations.get(entry.chat_ref.key)
+                if owner is not None and owner.kind == "plan" and owner.entry is entry:
+                    owner.interrupt()
+                raise
+            except Exception:
+                if entry.plan_approval_generation == generation:
+                    self._invalidate_plan_approval(entry)
+                logger.exception("gateway: plan approval failed for chat %s", entry.chat_ref.key)
+
+        def settled(task: asyncio.Task[None]) -> None:
+            if not task.cancelled():
+                task.exception()
+            if entry.plan_approval_task is task:
+                entry.plan_approval_task = None
+            if entry.completions:
+                self._wake_background(entry)
+
+        entry.plan_approval_task = asyncio.create_task(offer(), name=f"gateway-plan-{entry.session_id}")
+        entry.plan_approval_task.add_done_callback(settled)
+
+    async def _implement_plan_owned(
+        self,
+        entry: ChatSession,
+        owner: _LifecycleOperation,
+        generation: int,
+        plan: str,
+        ready: asyncio.Future[None],
+        *,
+        clear: bool,
+    ) -> None:
+        await self._replace_mode_owned(entry, "build", owner, clear=clear, acceptance=(generation, plan))
+        async with entry.turn_lock:
+            if not self._plan_acceptance_live(entry, generation, plan):
+                return
+            owner.cleaning = False
+            entry.runtime.turns.owner = owner.task
+            entry.runtime.turns.track()
+            entry.record.plan_pending = False
+            entry.record.plan_reofferable = False
+            self._persist(entry)
+            ready.set_result(None)
+            await self._run_turn(
+                entry,
+                entry.chat_ref,
+                InboundMessage(
+                    channel=entry.chat_ref.channel,
+                    chat_id=entry.chat_ref.chat_id,
+                    sender_id="",
+                    message_id="",
+                    text=build_implement_plan_prompt(plan),
+                ),
+            )
+
+    def _plan_acceptance_live(self, entry: ChatSession, generation: int, plan: str) -> bool:
+        return (
+            not self._closing
+            and not entry.closed
+            and not entry.auto_continue_paused
+            and entry.plan_approval_generation == generation
+            and entry.record.plan_pending
+            and entry.record.latest_plan_markdown == plan
+        )
 
     async def _transcribe(self, chat_ref: ChatRef, source: str) -> Optional[str]:
         """Transcribe a voice note.
@@ -621,9 +806,13 @@ class AgentTurnHandler:
         note = f"[document: {label} saved at {attachment.source}]"
         return f"{note}\n\n{text}" if text else note
 
-    async def _scrub_chunks(self, stream: Any) -> AsyncIterator[dict[str, Any]]:
+    async def _scrub_chunks(
+        self, stream: Any, response: list[str] | None = None
+    ) -> AsyncGenerator[dict[str, Any], None]:
         async for chunk in stream:
             content = chunk.get("content")
+            if response is not None and chunk.get("type") == "response" and isinstance(content, str):
+                response.append(content)
             if content:
                 chunk["content"] = scrub(content, self._secret_values)
             yield chunk
@@ -632,7 +821,7 @@ class AgentTurnHandler:
 
     async def _run_command(self, chat_ref: ChatRef, _message: InboundMessage, command: tuple[str, str]) -> None:
         name, args = command
-        if name not in (COMMAND_STOP, COMMAND_HELP, COMMAND_STATUS, "help"):
+        if name not in (COMMAND_STOP, COMMAND_NEW, COMMAND_RESET, COMMAND_HELP, COMMAND_STATUS, "help"):
             self._check_admission(chat_ref)
         if name == COMMAND_HELP or name == "help":
             await self._adapter.send_text(chat_ref.chat_id, HELP_TEXT)
@@ -640,6 +829,8 @@ class AgentTurnHandler:
             await self._adapter.send_text(chat_ref.chat_id, await self._status_text(chat_ref))
         elif name == COMMAND_MODEL:
             await self._model_command(chat_ref, args)
+        elif name == COMMAND_MODE:
+            await self._mode_command(chat_ref, args)
         elif name == COMMAND_PERMISSIONS:
             await self._permissions_command(chat_ref, args)
         elif name in (COMMAND_NEW, COMMAND_RESET):
@@ -670,10 +861,18 @@ class AgentTurnHandler:
             f"Session {payload.session_id}\n"
             f"Model: {primary.provider.value}/{primary.model}\n"
             f"Permissions: {payload.runtime.permission_mode.value}\n"
+            f"Mode: {payload.record.interaction_mode}\n"
             f"Project: {payload.record.project_path}"
         )
 
     async def _reset_session(self, chat_ref: ChatRef) -> None:
+        current = self._operations.get(chat_ref.key)
+        if current is not None and current.kind == "plan":
+            await self._stop_turn(chat_ref)
+            try:
+                await asyncio.wait_for(current.released.wait(), timeout=LIFECYCLE_WAIT_SECONDS)
+            except asyncio.TimeoutError as exc:
+                raise ChatLifecycleIncomplete("Plan preparation cleanup is still owned.") from exc
         self._check_admission(chat_ref)
         owner = self._start_operation(
             chat_ref, "reset", lambda op: self._reset_session_owned(chat_ref, op), cleaning=True
@@ -698,14 +897,19 @@ class AgentTurnHandler:
         payload = entry.payload if entry is not None else owner.entry if owner is not None else None
         if payload is not None:
             payload.auto_continue_paused = True
+            self._invalidate_plan_approval(payload)
+        plan_running = payload is not None and payload.plan_approval_task is not None
         if owner is not None:
-            owner.interrupt()
+            if payload is not None and payload.turn_task is owner.task:
+                payload.runtime.turns.request_stop(cancel=owner.interrupt)
+            else:
+                owner.interrupt()
             return True
         if entry is None:
             return False
         if entry.payload.turn_task is None:
-            return False
-        entry.payload.turn_task.cancel()
+            return plan_running
+        entry.payload.runtime.turns.request_stop()
         return True
 
     async def _model_command(self, chat_ref: ChatRef, args: str) -> None:
@@ -725,10 +929,132 @@ class AgentTurnHandler:
 
     async def _apply_model(self, chat_ref: ChatRef, entry: ChatSession, spec: str) -> None:
         self._check_admission(chat_ref)
+        if entry.turn_task is not None and not entry.turn_task.done():
+            await self._adapter.send_text(chat_ref.chat_id, "A turn is running — /stop it first, then switch models.")
+            return
+        self._invalidate_plan_approval(entry)
         owner = self._start_operation(
             chat_ref, "rebuild", lambda op: self._apply_model_owned(chat_ref, entry, spec, op)
         )
         await self._wait_operation(owner)
+        self._start_plan_approval(entry)
+
+    async def _mode_command(self, chat_ref: ChatRef, args: str) -> None:
+        mode = args.strip().lower()
+        if mode and mode not in ("build", "plan"):
+            await self._adapter.send_text(chat_ref.chat_id, "Usage: /mode build|plan")
+            return
+        entry = await self._ensure_session(chat_ref)
+        if not mode:
+            await self._adapter.send_text(
+                chat_ref.chat_id, f"Mode: {entry.record.interaction_mode}\nChange with /mode build|plan."
+            )
+            return
+        if entry.turn_task is not None and not entry.turn_task.done():
+            await self._adapter.send_text(chat_ref.chat_id, "A turn is running — /stop it first, then switch modes.")
+            return
+        self._invalidate_plan_approval(entry)
+        if mode != entry.record.interaction_mode:
+            owner = self._start_operation(chat_ref, "mode", lambda op: self._replace_mode_owned(entry, mode, op))
+            await self._wait_operation(owner)
+        if mode == "plan" and entry.record.plan_reofferable:
+            entry.record.plan_pending = True
+            self._store.save(entry.record)
+        entry.auto_continue_paused = False
+        # The invalidated request may not have finished its cancellation callback yet.
+        task = entry.plan_approval_task
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+        self._start_plan_approval(entry)
+        await self._adapter.send_text(chat_ref.chat_id, f"Mode: {mode}")
+
+    async def _replace_mode_owned(
+        self,
+        entry: ChatSession,
+        mode: str,
+        owner: _LifecycleOperation,
+        *,
+        clear: bool = False,
+        acceptance: tuple[int, str] | None = None,
+    ) -> None:
+        owner.entry = entry
+
+        def check_acceptance() -> None:
+            if (
+                self._closing
+                or entry.closed
+                or owner.stopping
+                or (acceptance is not None and not self._plan_acceptance_live(entry, *acceptance))
+            ):
+                raise asyncio.CancelledError()
+
+        async with entry.turn_lock:
+            check_acceptance()
+            self._persist(entry)
+            old = entry.runtime.agent
+            jobs = entry.background_jobs
+            jobs_settled = False
+            try:
+                if clear and jobs is not None:
+                    owner.cleaning = True
+                    await jobs.close()
+                    await jobs.deliver(old)
+                    jobs_settled = True
+                    owner.cleaning = False
+                    check_acceptance()
+                    self._persist(entry)
+                entry.config_holder["record"] = replace(entry.record, interaction_mode=mode)
+                rebuilt = await entry.runtime.start()
+                check_acceptance()
+                if clear:
+                    rebuilt.reset_volatile_context()
+                    rebuilt.history = []
+                    rebuilt.last_compression_index = None
+                    rebuilt.restore_compaction_state({})
+                    rebuilt.session_recorder.start_epoch("gateway_implement_plan_clear")
+            except BaseException:
+                if old is not None and entry.runtime.agent is not old:
+                    try:
+                        entry.runtime.adopt(old)
+                    except BaseException:
+                        owner.cleanup_failed = True
+                        logger.exception("gateway: could not restore the old generation's policy")
+                await self._cleanup_partial(owner)
+                if clear and jobs is not None:
+                    if not jobs_settled or old is None:
+                        owner.cleanup_failed = True
+                    else:
+                        try:
+                            jobs.set_callbacks(on_ready=None, on_delivered=None)
+                            old.background_jobs = None
+                            entry.background_jobs = None
+                            await self._attach_background(entry)
+                            self._persist(entry)
+                        except BaseException:
+                            owner.cleanup_failed = True
+                            logger.exception("gateway: could not recover the old generation's background supervisor")
+                raise
+            finally:
+                entry.config_holder.pop("record", None)
+            owner.partial_agent = None
+            owner.cleaning = True
+            if old is not None:
+                entry.retired_agents.append(old)
+            if jobs is not None:
+                if clear:
+                    jobs.set_callbacks(on_ready=None, on_delivered=None)
+                    entry.background_jobs = None
+                else:
+                    rebuilt.background_jobs = jobs
+                    rebuilt.background_needs_turn = getattr(old, "background_needs_turn", False)
+                if old is not None:
+                    old.background_jobs = None
+            entry.record.interaction_mode = mode
+            self._persist(entry)
+            if not jobs or clear or not jobs.active_count:
+                await self._cleanup_retired(entry, owner)
+            if clear:
+                await self._attach_background(entry)
 
     async def _apply_model_owned(
         self, chat_ref: ChatRef, entry: ChatSession, spec: str, owner: _LifecycleOperation
@@ -887,6 +1213,7 @@ class AgentTurnHandler:
         self._registry.put(chat_ref, payload)
         async with payload.turn_lock:
             await self._registry.prune()
+        self._start_plan_approval(payload, restored=restore)
         return payload
 
     async def _build_chat_session(
@@ -907,6 +1234,13 @@ class AgentTurnHandler:
             session_id=record.session_id,
             artifact_store=FileArtifactStore(journal),
         )
+        presentation = UsagePresentation(
+            journal,
+            recording.broadcast_event,
+            workspace_id=record.workspace_id,
+            thread_id=record.thread_id,
+        )
+        owner.usage_presentation = presentation
         permission_mode = normalize_permission_mode(
             record.permission_mode,
             default=PermissionMode(self._config.permission_mode),
@@ -930,7 +1264,7 @@ class AgentTurnHandler:
 
         async def factory() -> Any:
             built = await builder(
-                record,
+                config_holder.get("record", record),
                 config_holder["config"],
                 manager=manager,
                 recording=recording,
@@ -956,6 +1290,7 @@ class AgentTurnHandler:
             control=control,
             agent_factory=factory,
             permission_mode=permission_mode,
+            turns=TurnController(inputs=self._queues.get(chat_ref.key)),
             on_notice=lambda notice: logger.info("gateway session %s: %s", record.session_id, notice),
         )
         relay = ControlRelay(
@@ -990,6 +1325,8 @@ class AgentTurnHandler:
         try:
             router.start()
             relay.start()
+            await recording.prime_elapsed_offset()
+            await presentation.start()
             await runtime.start()
         except BaseException as exc:
             await self._cleanup_startup(owner, runtime, exc)
@@ -1005,6 +1342,7 @@ class AgentTurnHandler:
             turn_events=turn_events,
             relay=relay,
             config_holder=config_holder,
+            usage_presentation=presentation,
         )
 
     async def _default_agent_builder(self, record: SessionRecord, agent_config: Any, **kwargs: Any) -> Any:
@@ -1020,8 +1358,10 @@ class AgentTurnHandler:
             project_path=Path(record.project_path),
             active_project_path=Path(record.project_path),
             state_dir=self._settings_store.root,
-            interaction_mode="build",
-            agent_class=CoderAgent,
+            interaction_mode=record.interaction_mode,
+            agent_class=select_agent_class(
+                record.interaction_mode, build_agent_class=CoderAgent, planning_agent_class=PlanningAgent
+            ),
             workspace_id=record.workspace_id,
             thread_id=record.thread_id,
             connection_manager=recording,
@@ -1040,7 +1380,7 @@ class AgentTurnHandler:
                 PromptExtension(
                     id="gateway-questions",
                     title="Asking the User",
-                    markdown=BUILD_QUESTION_PROMPT,
+                    markdown=PLANNING_QUESTION_PROMPT if record.interaction_mode == "plan" else BUILD_QUESTION_PROMPT,
                     modes=[AgentMode.CLI],
                     propagate_to_sub_agents=False,
                 ),
@@ -1093,6 +1433,14 @@ class AgentTurnHandler:
         if owner.partial_agent is None:
             owner.partial_agent = runtime.agent
         await self._cleanup_partial(owner)
+        if owner.usage_presentation is not None:
+            try:
+                await owner.usage_presentation.aclose()
+            except BaseException:
+                owner.cleanup_failed = True
+                logger.exception("gateway: startup usage presentation cleanup failed")
+            else:
+                owner.usage_presentation = None
         for resource in (owner.relay, owner.router):
             if resource is not None:
                 try:
@@ -1144,6 +1492,10 @@ class AgentTurnHandler:
 
     async def _close_entry_impl(self, chat_session: ChatSession, owner: _LifecycleOperation) -> None:
         chat_session.closed = True
+        chat_session.runtime.turns.close_admission()
+        self._invalidate_plan_approval(chat_session)
+        if chat_session.plan_approval_task is not None:
+            await asyncio.gather(chat_session.plan_approval_task, return_exceptions=True)
         worker = self._workers.get(chat_session.chat_ref.key)
         if worker is not None and worker is not asyncio.current_task():
             if not worker.cancelling():
@@ -1154,9 +1506,8 @@ class AgentTurnHandler:
             chat_session.background_retry = None
         turn_task = chat_session.turn_task
         if turn_task is not None and turn_task is not asyncio.current_task():
-            if not turn_task.cancelling():
-                turn_task.cancel()
-            await asyncio.gather(turn_task, return_exceptions=True)
+            chat_session.runtime.turns.request_stop()
+            await chat_session.runtime.turns.wait_settled()
         if chat_session.background_jobs is not None:
             chat_session.background_jobs.set_callbacks(on_ready=None, on_delivered=None)
             await chat_session.background_jobs.close()
@@ -1168,6 +1519,8 @@ class AgentTurnHandler:
         owner.partial_agent = chat_session.runtime.agent
         await chat_session.runtime.shutdown()
         owner.partial_agent = None
+        if chat_session.usage_presentation is not None:
+            await chat_session.usage_presentation.aclose()
 
     # -- Persisted chat→session mapping ------------------------------------
 

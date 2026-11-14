@@ -78,6 +78,13 @@ class _StreamState:
     #: Pending text for append-mode runs. Dropping these would lose content, so
     #: they are concatenated into the next checkpoint instead.
     pending: list[str] = field(default_factory=list)
+    pending_chars: int = 0
+    #: PTYs can expose a separate decoded display stream. Keep its checkpoints
+    #: alongside raw output rather than retaining only the last chunk's display.
+    display_pending: list[str] = field(default_factory=list)
+    display_pending_chars: int = 0
+    display_reported: bool = False
+    display_latest: Optional[str] = None
     #: Latest full text for replace-mode streams, where intermediates are
     #: genuinely redundant and can be discarded outright.
     latest: Optional[str] = None
@@ -109,7 +116,7 @@ class RecordingConnectionManager(AgentConnectionManager):
         self.session_id = session_id
         self.artifact_store = artifact_store
         self.policy = policy or RetentionPolicy()
-        self._streams: dict[tuple[str, str], _StreamState] = {}
+        self._streams: dict[tuple[str, ...], _StreamState] = {}
         self._origin_monotonic: Optional[float] = None
         self._origin_offset_ms = 0
         self._events_written = 0
@@ -145,11 +152,17 @@ class RecordingConnectionManager(AgentConnectionManager):
 
     async def broadcast_event(self, event: AgentEvent, workspace_id: str, thread_id: str) -> None:
         self._stamp(event, workspace_id, thread_id)
-        if IMAGE_PAYLOAD_KEY not in event.content:
+        if IMAGE_PAYLOAD_KEY not in event.content and event.event_type not in (
+            KnownEventType.TASK_LIST_UPDATED,
+            KnownEventType.USAGE_UPDATED,
+            KnownEventType.BACKGROUND_JOB_DELIVERED,
+            KnownEventType.QUEUE_UPDATED,
+            KnownEventType.GOAL_UPDATED,
+        ):
             await self._broadcast_recorded_event(event, workspace_id, thread_id)
             return
-        # An image write may own a worker thread; cancellation must not drop its
-        # turn boundary or release the caller while that writer is still live.
+        # Image writes and snapshots may own journal threads; cancellation
+        # must not release the caller before persistence and live delivery finish.
         operation = asyncio.create_task(
             self._broadcast_recorded_event(event.model_copy(deep=True), workspace_id, thread_id)
         )
@@ -216,7 +229,7 @@ class RecordingConnectionManager(AgentConnectionManager):
             return
         await self._accumulate(key, event)
 
-    def _coalesce_key(self, event: AgentEvent) -> Optional[tuple[str, str]]:
+    def _coalesce_key(self, event: AgentEvent) -> Optional[tuple[str, ...]]:
         """Return the buffer key grouping ``event`` with its run, or None if it stands alone.
 
         Choosing the grouping identity is the subtle part. Streaming segments
@@ -228,24 +241,28 @@ class RecordingConnectionManager(AgentConnectionManager):
         scope = ""
         if event.sub_agent_info:
             scope = str(
-                event.sub_agent_info.get("dispatch_id") or event.sub_agent_info.get("agent_name") or "sub",
+                event.sub_agent_info.get("dispatch_id")
+                or event.sub_agent_info.get("agent_id")
+                or event.sub_agent_info.get("agent_name")
+                or "sub",
             )
         if event.event_type in self.policy.coalesce_types:
-            for candidate in ("tool_call_id", "terminal_id", "browser_id"):
-                value = event.content.get(candidate)
-                if isinstance(value, str) and value:
-                    scope = f"{scope}|{value}"
-                    break
-            return (event.event_type, scope)
+            # Separate tuple components avoid delimiter collisions, and a tool
+            # operating on multiple terminals must not merge their output.
+            identifiers = tuple(
+                value if isinstance(value := event.content.get(candidate), str) else ""
+                for candidate in ("tool_call_id", "terminal_id", "session_id", "browser_id")
+            )
+            return (event.event_type, scope, *identifiers)
 
-        key = (event.event_type, f"{scope}|{event.uuid}")
+        key = (event.event_type, scope, event.uuid)
         if event.is_streaming:
             return key
         # The final, non-streaming delta of an open streaming segment belongs
         # with the run it completes.
         return key if key in self._streams else None
 
-    async def _accumulate(self, key: tuple[str, str], event: AgentEvent) -> None:
+    async def _accumulate(self, key: tuple[str, ...], event: AgentEvent) -> None:
         state = self._streams.get(key)
         if state is None:
             self._open_counter += 1
@@ -262,17 +279,30 @@ class RecordingConnectionManager(AgentConnectionManager):
 
         replace_mode = str(event.content.get("stream_mode") or "") == "replace"
         text = self._event_text(event)
+        if event.event_type == KnownEventType.TERMINAL_OUTPUT:
+            display = event.content.get("display_output")
+            display_text = display if isinstance(display, str) else text
+            state.display_reported |= isinstance(display, str)
+            if replace_mode:
+                state.display_latest = display_text
+            elif display_text:
+                state.display_pending.append(display_text)
+                state.display_pending_chars += len(display_text)
         if replace_mode:
             state.latest = text
         elif text:
             state.pending.append(text)
+            state.pending_chars += len(text)
 
         if state.streaming and not event.is_streaming:
             # End of a streaming segment: emit whatever is buffered as one record.
             await self._flush(key)
             return
 
-        pending_chars = len(state.latest or "") if replace_mode else sum(len(part) for part in state.pending)
+        pending_chars = len(state.latest or "") if replace_mode else state.pending_chars
+        if state.display_reported:
+            display_chars = len(state.display_latest or "") if replace_mode else state.display_pending_chars
+            pending_chars = max(pending_chars, display_chars)
         if pending_chars == 0:
             return
         due_by_size = pending_chars >= self.policy.stream_checkpoint_chars
@@ -280,7 +310,7 @@ class RecordingConnectionManager(AgentConnectionManager):
         if due_by_size or due_by_time:
             await self._flush(key, keep_open=True)
 
-    async def _flush(self, key: tuple[str, str], *, keep_open: bool = False) -> None:
+    async def _flush(self, key: tuple[str, ...], *, keep_open: bool = False) -> None:
         """Persist one buffer's accumulated text, after anything that began earlier.
 
         Reasoning and prose stream concurrently and the prose segment reliably
@@ -299,7 +329,7 @@ class RecordingConnectionManager(AgentConnectionManager):
             await self._write_checkpoint(older_key, keep_open=True)
         await self._write_checkpoint(key, keep_open=keep_open)
 
-    def _keys_opened_before(self, open_index: int) -> list[tuple[str, str]]:
+    def _keys_opened_before(self, open_index: int) -> list[tuple[str, ...]]:
         """Buffer keys for runs that began before ``open_index``, oldest first."""
         return [
             key
@@ -308,20 +338,30 @@ class RecordingConnectionManager(AgentConnectionManager):
             )
         ]
 
-    async def _write_checkpoint(self, key: tuple[str, str], *, keep_open: bool) -> None:
+    async def _write_checkpoint(self, key: tuple[str, ...], *, keep_open: bool) -> None:
         """Write one buffer's accumulated text, with no regard for ordering."""
         state = self._streams.get(key)
         if state is None:
             return
         checkpoint = state.latest if state.latest is not None else "".join(state.pending)
+        display_checkpoint = None
+        if state.display_reported:
+            display_checkpoint = (
+                state.display_latest if state.display_latest is not None else "".join(state.display_pending)
+            )
         state.pending.clear()
+        state.pending_chars = 0
         state.latest = None
+        state.display_pending.clear()
+        state.display_pending_chars = 0
+        state.display_reported = False
+        state.display_latest = None
         if not keep_open:
             del self._streams[key]
-        if not checkpoint:
+        if not checkpoint and not display_checkpoint:
             return
         state.last_flush_ms = state.template.elapsed_ms
-        await self._persist(self._with_text(state.template, checkpoint))
+        await self._persist(self._with_text(state.template, checkpoint, display_text=display_checkpoint))
 
     async def _flush_all(self) -> None:
         # Insertion order is open order, so a run that began first is written
@@ -359,7 +399,12 @@ class RecordingConnectionManager(AgentConnectionManager):
                     stale = [
                         key
                         for key, state in self._streams.items()
-                        if (state.pending or state.latest is not None)
+                        if (
+                            state.pending_chars
+                            or state.latest is not None
+                            or state.display_pending_chars
+                            or state.display_latest is not None
+                        )
                         and now - state.last_flush_ms >= self.policy.stream_checkpoint_ms
                     ]
                     # _flush, not _write_checkpoint: a stalled younger run must
@@ -394,13 +439,15 @@ class RecordingConnectionManager(AgentConnectionManager):
                 return value
         return ""
 
-    def _with_text(self, event: AgentEvent, text: str) -> AgentEvent:
+    def _with_text(self, event: AgentEvent, text: str, *, display_text: Optional[str] = None) -> AgentEvent:
         """Copy ``event`` with its text payload replaced by ``text``."""
         clone = event.model_copy(deep=True)
         for candidate in _TEXT_KEYS:
             if isinstance(event.content.get(candidate), str):
                 clone.content[candidate] = text
                 break
+        if display_text is not None:
+            clone.content["display_output"] = display_text
         # The stored copy is a distinct record; it must not inherit the live
         # event's identity or a consumer would treat them as the same delta.
         clone.seq = None
@@ -457,7 +504,10 @@ class RecordingConnectionManager(AgentConnectionManager):
         oversized = {
             key: value
             for key, value in event.content.items()
-            if isinstance(value, str) and len(value) > self.policy.inline_payload_chars
+            if isinstance(value, str)
+            and len(value) > self.policy.inline_payload_chars
+            # The fold needs the complete snapshot, not an artifact preview.
+            and not (event.event_type == KnownEventType.TASK_LIST_UPDATED and key == "markdown")
         }
         if not oversized:
             return event

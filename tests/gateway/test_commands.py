@@ -24,12 +24,12 @@ def test_group_chat_botname_suffix_is_stripped() -> None:
 
 
 def test_help_text_lists_every_command() -> None:
-    for name in ("new", "status", "model", "permissions", "stop", "help"):
+    for name in ("new", "status", "model", "mode", "permissions", "stop", "help"):
         assert f"/{name}" in HELP_TEXT
 
 
 def test_bot_commands_menu_matches_the_command_set() -> None:
     menu = {name for name, _description in BOT_COMMANDS}
-    assert menu == {"status", "new", "model", "permissions", "stop", "help"}
+    assert menu == {"status", "new", "model", "mode", "permissions", "stop", "help"}
     # Every menu entry has a non-empty description for Telegram.
     assert all(description for _name, description in BOT_COMMANDS)

@@ -21,6 +21,7 @@ import asyncio
 import logging
 import os
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable, cast
 from uuid import uuid4
@@ -56,7 +57,7 @@ from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEv
 from kolega_code.cli.session_store import SessionRecord, SessionStore, SessionStoreError
 from kolega_code.cli.settings import CliSettings, SettingsStore
 from kolega_code.cli.session_usage import SessionUsageSink
-from kolega_code.events import AgentEvent
+from kolega_code.events import AgentEvent, KnownEventType
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config
 from kolega_code.llm.ledger import UsageLedger
 from kolega_code.llm.models import Message, TextBlock
@@ -64,6 +65,9 @@ from kolega_code.llm.pricing import PricingResolver
 from kolega_code.mcp.config import MCPServerConfig, load_mcp_config
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest, normalize_permission_mode
 from kolega_code.session.recording import RecordingConnectionManager
+from kolega_code.session.usage import UsagePresentation
+from kolega_code.session.host_extensions import complete_task_list_update
+from kolega_code.tools import ToolError
 from kolega_code.session.composition import (
     CompositionHost,
     CompositionRequest,
@@ -130,7 +134,7 @@ class _AcpRecordingConnectionManager(RecordingConnectionManager):
     generation: str
 
     async def broadcast_event(self, event: AgentEvent, workspace_id: str, thread_id: str) -> None:
-        if event.event_type == "llm_context_update":
+        if event.event_type in ("llm_context_update", KnownEventType.TASK_LIST_UPDATED):
             event = event.model_copy(update={"content": {**event.content, "acp_generation": self.generation}})
         await super().broadcast_event(event, workspace_id, thread_id)
 
@@ -289,6 +293,8 @@ class AgentFactory:
             finally:
                 if session.accounting is not None:
                     await session.accounting.aclose()
+                if session.usage_presentation is not None:
+                    await session.usage_presentation.aclose()
                 session.client_mcp_servers.clear()
                 session.config = None
                 self._acp_sessions.pop(session_id, None)
@@ -346,28 +352,42 @@ class AgentFactory:
         return task
 
     @staticmethod
-    def _task_list_extension(record: SessionRecord, agent_holder: dict[str, Any], mode: str) -> ToolExtension:
+    def _task_list_extension(
+        record: SessionRecord,
+        agent_holder: dict[str, Any],
+        mode: str,
+        *,
+        save_session: Callable[[SessionRecord], Awaitable[None]] | None = None,
+        is_current: Callable[[], bool] | None = None,
+    ) -> ToolExtension:
         """Shared task-list tools backed by the session record — the same list
         the TUI's ``update_task_list`` writes, so a session moves between the
         TUI and the editor with one task list.
 
         Build mode can read and update the list; plan mode gets a read-only
-        view (same split as the TUI). Updates broadcast a ``task_list_update``
-        chat event so the bridge can refresh the editor's plan view live.
+        view (same split as the TUI).
         """
 
         async def get_task_list() -> str:
             return record.task_list_markdown or "No task list has been set."
 
         async def update_task_list(task_list_markdown: str) -> str:
-            record.task_list_markdown = task_list_markdown.strip()
-            agent = agent_holder.get("agent")
-            if agent is not None:
-                await agent.send_chat_message(
-                    message_type="task_list_update",
-                    content=task_list_markdown.strip(),
-                    tool_call_id=str(getattr(agent, "current_tool_call_id", "") or ""),
-                )
+            markdown = task_list_markdown.strip()
+
+            async def apply() -> None:
+                if is_current is not None and not is_current():
+                    raise ToolError("This task-list tool belongs to an inactive agent.")
+                if save_session is not None:
+                    # Keep pending candidates out of the metadata-backed live bridge.
+                    candidate = replace(record, task_list_markdown=markdown)
+                    await save_session(candidate)
+                    record.updated_at = candidate.updated_at
+                record.task_list_markdown = markdown
+                agent = agent_holder.get("agent")
+                if agent is not None:
+                    await agent.emitter.task_list_updated(markdown)
+
+            await complete_task_list_update(apply())
             return "Task list updated."
 
         tools: dict[str, Any] = {"get_task_list": get_task_list}
@@ -578,6 +598,22 @@ class AgentFactory:
             accounting.ledger,
             mode="acp",
         )
+        manager = CliConnectionManager()
+        journal = self._store.journal(record.session_id)
+        presentation_recording = RecordingConnectionManager(
+            manager,
+            FileSessionEventStore(journal),
+            session_id=record.session_id,
+            artifact_store=FileArtifactStore(journal),
+        )
+        presentation = UsagePresentation(
+            journal,
+            presentation_recording.broadcast_event,
+            workspace_id=record.workspace_id,
+            thread_id=record.thread_id,
+            live_run_id=lambda: accounting.ledger.run_id,
+        )
+        agent = None
         try:
             await accounting.sink.start()
             accounting.ledger.observer = accounting.sink
@@ -589,9 +625,19 @@ class AgentFactory:
                 permission_mode=permission_mode,
                 question_state=question_state,
                 accounting=accounting,
+                manager=manager,
             )
+            await presentation_recording.prime_elapsed_offset()
+            await presentation.start()
         except BaseException:
-            await accounting.aclose()
+            try:
+                if agent is not None:
+                    await _finish_cleanup(agent.cleanup())
+            finally:
+                try:
+                    await accounting.aclose()
+                finally:
+                    await presentation.aclose()
             raise
         accounting.rebind(agent)
         session = AcpSession(
@@ -603,6 +649,7 @@ class AgentFactory:
             config=config,
             question_state=question_state,
             accounting=accounting,
+            usage_presentation=presentation,
             client_mcp_servers=client_mcp_servers or {},
         )
         self._acp_sessions[record.session_id] = session
@@ -618,11 +665,14 @@ class AgentFactory:
         permission_mode: PermissionMode | None = None,
         question_state: dict[str, Any] | None = None,
         accounting: AcpUsageAccounting | None = None,
+        manager: CliConnectionManager | None = None,
     ) -> tuple[CoderAgent, CliConnectionManager]:
         journal = self._store.journal(record.session_id)
         recorder = self._store.recorder(record.session_id)
         existing = self._acp_sessions.get(record.session_id)
-        manager = existing.manager if existing is not None else CliConnectionManager()
+        manager = (
+            existing.manager if existing is not None else (manager if manager is not None else CliConnectionManager())
+        )
         recording = _AcpRecordingConnectionManager(
             manager,
             FileSessionEventStore(journal),
@@ -633,6 +683,14 @@ class AgentFactory:
         interaction_mode = record.interaction_mode or MODE_BUILD
         agent_class = agent_class_for(interaction_mode)
         agent_holder: dict[str, Any] = {}
+
+        async def save_task_list(candidate: SessionRecord) -> None:
+            self._store.save(candidate)
+
+        def task_list_is_current() -> bool:
+            session = self._acp_sessions.get(record.session_id)
+            return session is not None and not session.closed and session.agent is agent_holder.get("agent")
+
         question_markdown = PLANNING_QUESTION_PROMPT if interaction_mode == MODE_PLAN else BUILD_QUESTION_PROMPT
         question_prompt = PromptExtension(
             id="acp-questions",
@@ -671,7 +729,18 @@ class AgentFactory:
             usage_ledger=accounting.ledger if accounting is not None else None,
         )
         host = CompositionHost(
-            extensions=lambda: HostExtensions([], [self._task_list_extension(record, agent_holder, interaction_mode)]),
+            extensions=lambda: HostExtensions(
+                [],
+                [
+                    self._task_list_extension(
+                        record,
+                        agent_holder,
+                        interaction_mode,
+                        save_session=save_task_list,
+                        is_current=task_list_is_current,
+                    )
+                ],
+            ),
             questions=lambda: (
                 question_prompt,
                 build_question_extension(question_state if question_state is not None else {}),
@@ -709,6 +778,8 @@ class AgentFactory:
                             Message(role="user", content=[TextBlock(text=outcome.additional_context)])
                         )
                     agent.append_user_message([TextBlock(text=outcome.additional_context)])
+            if existing is None:
+                await agent.emitter.task_list_updated(record.task_list_markdown)
         except BaseException:
             try:
                 if agent is not None:

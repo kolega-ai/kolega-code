@@ -6,6 +6,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Security
+
+- Updated Soup Sieve, BeautifulSoup's selector engine, to 4.1. It fixes two
+  denial-of-service advisories in CSS selector matching over untrusted HTML
+  (CVE-2026-126190 / GHSA-mmhr-3c5m-f64f and CVE-2026-126192 /
+  GHSA-4j63-6c4x-wfg4). Soup Sieve 4 requires Python 3.11.5, which is now the
+  supported floor.
+
 ## 0.50.0 - 2026-11-10
 
 ### Added

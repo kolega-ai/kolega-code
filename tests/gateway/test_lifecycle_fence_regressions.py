@@ -9,13 +9,16 @@ from unittest.mock import AsyncMock
 import pytest
 import pytest_asyncio
 
+from kolega_code.cli.session_event_store import FileSessionEventStore
 from kolega_code.gateway import sessions
 from kolega_code.gateway.adapters.base import ChatRef, InboundMessage
 from kolega_code.gateway.daemon import GatewayShutdownIncomplete
 from kolega_code.gateway.sessions import AgentTurnHandler, ChatLifecycleIncomplete, ChatSession
+from kolega_code.llm.models import Message
+from kolega_code.llm.usage import normalize_usage
 
 from .test_sessions import RecordingAdapter, inbound, wait_for, wait_for_turn_done
-from .test_shared_composition import CHAT
+from .test_shared_composition import CHAT, _RecorderAwareAgent
 from .test_shared_composition import gateway as gateway
 
 pytestmark = pytest.mark.usefixtures("isolated_cli_env")
@@ -172,9 +175,11 @@ async def test_admitted_turn_rechecks_fence_after_scheduling_and_lock_acquisitio
 async def test_queued_background_wake_survives_retirement_timeout_and_failed_fence(
     gateway: AgentTurnHandler, monkeypatch: pytest.MonkeyPatch, cleanup_fails: bool
 ) -> None:
-    monkeypatch.setattr(sessions, "LIFECYCLE_WAIT_SECONDS", 0.01)
     entered, release = asyncio.Event(), asyncio.Event()
     entry = await gateway._ensure_session(CHAT)
+    monkeypatch.setattr(sessions, "LIFECYCLE_WAIT_SECONDS", 0.01)
+    presentation = entry.usage_presentation
+    assert presentation is not None
     entry.auto_continue_paused = True
     calls = 0
 
@@ -209,6 +214,8 @@ async def test_queued_background_wake_survives_retirement_timeout_and_failed_fen
         assert entry.background_queued
         assert calls == 1
         assert gateway._workers[CHAT.key] is worker
+        assert entry.usage_presentation is presentation
+        assert not presentation._closing and not presentation._closed and presentation._unsubscribe is not None
         release.set()
         assert owner.task is not None
         await asyncio.wait({owner.task}, timeout=10)
@@ -228,6 +235,7 @@ async def test_queued_background_wake_survives_retirement_timeout_and_failed_fen
             assert worker.cancelled()
             assert retired.cleanup.await_count == 1
             assert gateway._operations[CHAT.key] is owner
+            assert not presentation._closing and not presentation._closed and presentation._unsubscribe is not None
         else:
             adapter = cast(RecordingAdapter, gateway._adapter)
             assert await wait_for(lambda: ("42", "second report") in adapter.sent)
@@ -238,6 +246,8 @@ async def test_queued_background_wake_survives_retirement_timeout_and_failed_fen
             assert owner.released.is_set()
             assert retired.cleanup.await_count == 1
             assert gateway._workers[CHAT.key] is worker
+            assert entry.usage_presentation is presentation
+            assert not presentation._closing and not presentation._closed and presentation._unsubscribe is not None
     finally:
         release.set()
 
@@ -246,10 +256,12 @@ async def test_queued_background_wake_survives_retirement_timeout_and_failed_fen
 async def test_shutdown_cancels_fence_waiter_without_interrupting_cleanup(
     gateway: AgentTurnHandler, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(sessions, "LIFECYCLE_WAIT_SECONDS", 0.01)
-    monkeypatch.setattr(sessions, "SHUTDOWN_WAIT_SECONDS", 0.01)
     entered, release = asyncio.Event(), asyncio.Event()
     entry = await gateway._ensure_session(CHAT)
+    monkeypatch.setattr(sessions, "LIFECYCLE_WAIT_SECONDS", 0.01)
+    monkeypatch.setattr(sessions, "SHUTDOWN_WAIT_SECONDS", 0.01)
+    presentation = entry.usage_presentation
+    assert presentation is not None
 
     async def cleanup() -> None:
         entered.set()
@@ -274,14 +286,87 @@ async def test_shutdown_cancels_fence_waiter_without_interrupting_cleanup(
         assert owner.task is not None and not owner.task.done()
         assert not owner.task.cancelling()
         assert owner.cleaning
+        assert not presentation._closing and not presentation._closed and presentation._unsubscribe is not None
         release.set()
         await asyncio.wait_for(gateway.wait_closed(), 10)
         assert retired.cleanup.await_count == 1
         assert not gateway._operations
         assert not gateway._workers
         assert not gateway._queues
+        assert presentation._closed and presentation._unsubscribe is None
     finally:
         release.set()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_startup_keeps_usage_publisher_until_partial_agent_cleanup_finishes(
+    gateway: AgentTurnHandler, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initializing, cleaning, release = (asyncio.Event() for _ in range(3))
+    agents: list[_RecorderAwareAgent] = []
+
+    async def initialize() -> list[str]:
+        initializing.set()
+        await asyncio.Future()
+        return []
+
+    class Agent(_RecorderAwareAgent):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            agents.append(self)
+            self.tool_collection.initialize.side_effect = initialize
+
+        async def cleanup(self) -> None:
+            self.cleanup_calls += 1
+            cleaning.set()
+            await release.wait()
+            assert self.session_recorder is not None
+            self.session_recorder.start_turn(Message(role="user", content="late cleanup evidence"))
+            usage = normalize_usage({"input_tokens": 3, "output_tokens": 1}, "anthropic", "usage-test")
+            self.session_recorder.record_assistant(Message(role="assistant", content="cleanup response", usage=usage))
+            self.session_recorder.finish_turn("completed")
+
+    monkeypatch.setattr(sessions, "CoderAgent", Agent)
+    request = asyncio.create_task(gateway._ensure_session(CHAT))
+    try:
+        await asyncio.wait_for(initializing.wait(), 10)
+        owner = gateway._operations[CHAT.key]
+        presentation = owner.usage_presentation
+        assert presentation is not None
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+        await asyncio.wait_for(cleaning.wait(), 10)
+        assert owner.task is not None and not owner.task.done()
+        assert owner.cleaning and owner.partial_agent is agents[0]
+        assert not presentation._closing and not presentation._closed and presentation._unsubscribe is not None
+        cancellations = owner.task.cancelling()
+        for _ in range(2):
+            await gateway.handle(CHAT, inbound("/stop"))
+        assert owner.task.cancelling() == cancellations
+        with pytest.raises(ChatLifecycleIncomplete):
+            await gateway._ensure_session(CHAT)
+        assert gateway._registry.get(CHAT) is None
+        release.set()
+        done, _ = await asyncio.wait({owner.task}, timeout=10)
+        assert done == {owner.task}
+        assert owner.task.cancelled()
+        assert agents[0].cleanup_calls == 1
+        assert presentation._closed and presentation._unsubscribe is None
+        assert presentation._worker is not None and presentation._worker.done()
+        assert owner.usage_presentation is None
+        assert owner.relay is not None and owner.relay._pump_task is None
+        assert owner.router is not None and owner.router._task is None
+        assert owner.released.is_set()
+        assert not gateway._operations
+        journal = gateway._store.journal(gateway._chat_sessions[CHAT.key])
+        events = await FileSessionEventStore(journal).read(journal.session_id)
+        usage = [event for event in events if event.event_type == "usage_updated"][-1].content["usage"]
+        assert usage["requests"] == 1
+        assert usage["total_tokens"] == 4
+    finally:
+        release.set()
+        await asyncio.gather(request, return_exceptions=True)
 
 
 @pytest.mark.asyncio

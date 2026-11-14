@@ -186,6 +186,38 @@ body::after {
   color: var(--kc-agent);
 }
 
+.kc-entry[data-kind="background_delivery"] .kc-glyph {
+  color: var(--kc-agent);
+}
+.kc-background-delivery {
+  border-left: 2px solid var(--kc-agent);
+  padding-left: 0.75rem;
+}
+.kc-background-heading {
+  font-weight: 600;
+}
+.kc-background-disposition,
+.kc-background-details,
+.kc-background-artifact-notice {
+  color: var(--kc-text-muted);
+}
+.kc-background-delivery[data-disposition="archived"] .kc-background-disposition {
+  font-weight: 600;
+}
+.kc-background-details {
+  margin: 0.35rem 0;
+  white-space: normal;
+}
+.kc-background-details div,
+.kc-background-metadata,
+.kc-background-report {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.kc-background-metadata {
+  font: inherit;
+}
+
 .kc-entry[data-kind="thinking"] .kc-glyph,
 .kc-entry[data-kind="thinking"] .kc-body {
   /* The raw thinking token is deliberately dim in a terminal, but on a full
@@ -268,6 +300,7 @@ body::after {
   z-index: 2;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.6rem;
   margin-bottom: 1rem;
   padding: 0.4rem 0.6rem;
@@ -305,6 +338,28 @@ body::after {
 .kc-agent-back:hover {
   color: var(--kc-foreground);
   border-color: var(--kc-tool);
+}
+.kc-agent-details {
+  flex: 1 0 100%;
+  margin-top: 0.35rem;
+  font-size: 0.72rem;
+  color: color-mix(in srgb, var(--kc-foreground) 68%, var(--kc-text-muted));
+  overflow-wrap: anywhere;
+}
+.kc-agent-parent {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--kc-tool);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.kc-agent-parent:focus-visible,
+.kc-agent-back:focus-visible {
+  outline: 1px solid var(--kc-tool);
+  outline-offset: 2px;
 }
 
 /* A gigacode run's own lifecycle: its name, each phase, and how it ended. */
@@ -540,6 +595,178 @@ button.kc-tool-name:focus-visible {
   margin-top: 0.25rem;
 }
 
+#usage {
+  max-height: 32rem;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.kc-usage-summary,
+.kc-usage-note {
+  margin: 0 0 0.4rem;
+  color: color-mix(in srgb, var(--kc-foreground) 66%, var(--kc-text-muted));
+}
+
+.kc-usage-group {
+  margin-top: 0.7rem;
+}
+
+.kc-usage-heading {
+  margin: 0 0 0.3rem;
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.kc-usage-row {
+  margin-bottom: 0.3rem;
+}
+
+.kc-usage-label {
+  display: block;
+  color: color-mix(in srgb, var(--kc-foreground) 66%, var(--kc-text-muted));
+}
+
+.kc-usage-value {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.kc-usage-note[data-state="incomplete"],
+.kc-usage-note[data-state="unhealthy"] {
+  color: var(--kc-warning);
+}
+
+#taskList {
+  max-height: 20rem;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
+.kc-task-summary,
+.kc-task-source-label {
+  margin: 0 0 0.4rem;
+  font-size: 0.7rem;
+  color: color-mix(in srgb, var(--kc-foreground) 66%, var(--kc-text-muted));
+}
+
+.kc-task-entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.kc-task-entry {
+  display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr);
+  gap: 0.4rem;
+  padding: 0.3rem 0;
+  font-size: 0.76rem;
+}
+
+.kc-task-mark {
+  color: var(--kc-accent);
+}
+
+.kc-task-entry[data-status="completed"] .kc-task-mark {
+  color: var(--kc-success);
+}
+
+.kc-task-text,
+.kc-task-source {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.kc-task-source-label {
+  margin-top: 0.65rem;
+}
+
+.kc-task-source {
+  margin: 0;
+  padding-left: 0.65rem;
+  border-left: 1px solid var(--kc-hairline-strong);
+  font: inherit;
+  font-size: 0.72rem;
+  color: color-mix(in srgb, var(--kc-foreground) 70%, var(--kc-text-muted));
+}
+
+#goal {
+  overflow-wrap: anywhere;
+  font-size: 0.76rem;
+}
+
+.kc-goal-summary,
+.kc-goal-caveat,
+.kc-goal-observation {
+  margin: 0 0 0.4rem;
+  font-size: 0.7rem;
+  color: color-mix(in srgb, var(--kc-foreground) 66%, var(--kc-text-muted));
+}
+
+.kc-goal-condition,
+.kc-goal-value {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.kc-goal-condition {
+  margin: 0 0 0.6rem;
+}
+
+.kc-goal-details {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.3rem 0.5rem;
+  margin: 0;
+}
+
+.kc-goal-label {
+  color: var(--kc-text-muted);
+}
+
+.kc-goal-value {
+  margin: 0;
+}
+
+#queue {
+  overflow-wrap: anywhere;
+  font-size: 0.76rem;
+}
+
+.kc-queue-summary,
+.kc-queue-caveat,
+.kc-queue-observation,
+.kc-queue-origin,
+.kc-queue-images {
+  margin: 0 0 0.4rem;
+  font-size: 0.7rem;
+  color: color-mix(in srgb, var(--kc-foreground) 66%, var(--kc-text-muted));
+}
+
+.kc-queue-entries {
+  max-height: 20rem;
+  overflow-y: auto;
+  margin: 0;
+  padding-left: 1.5rem;
+}
+
+.kc-queue-entry {
+  padding: 0.3rem 0;
+}
+
+.kc-queue-text,
+.kc-queue-origin {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.kc-queue-text {
+  margin: 0 0 0.3rem;
+}
+
 .kc-turn {
   display: block;
   width: 100%;
@@ -708,6 +935,15 @@ button.kc-tool-name:focus-visible {
   overflow: auto;
   /* Keeps the last line off the card's rounded edge. */
   padding-bottom: 0.3rem;
+}
+.kc-terminal-owner,
+.kc-terminal-truncated {
+  margin-bottom: 0.35rem;
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+.kc-terminal-truncated {
+  color: var(--kc-warning);
 }
 
 .kc-empty {

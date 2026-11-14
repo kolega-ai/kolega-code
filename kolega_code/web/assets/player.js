@@ -48,6 +48,7 @@ const GLYPHS = {
   system: "·",
   workflow: "◆",
   agent: "◈",
+  background_delivery: "↳",
 };
 const BAR_FILLED = "█";
 const BAR_EMPTY = "░";
@@ -80,6 +81,10 @@ let lastFrame = 0;
 let renderedCount = 0;
 /** Per-index snapshot of the mutable fields renderEntry draws, for change detection. */
 let renderedEntries = [];
+let renderedTaskList;
+let renderedUsage;
+let renderedQueue;
+let renderedGoal;
 /** Tool entries the viewer has opened. Tool output is collapsed by default. */
 const expandedTools = new Set();
 /** Sub-agent key the transcript is narrowed to, or null for the whole thread. */
@@ -141,6 +146,10 @@ function cacheDom() {
     "transcript",
     "turns",
     "subAgents",
+    "taskList",
+    "queue",
+    "goal",
+    "usage",
     "terminal",
     "gauge",
     "gaugeLabel",
@@ -156,6 +165,20 @@ function cacheDom() {
   ]) {
     dom[id] = document.getElementById(id);
   }
+  dom.terminalOwner = document.createElement("div");
+  dom.terminalOwner.id = "terminalOwner";
+  dom.terminalOwner.className = "kc-terminal-owner";
+  dom.terminalTruncated = document.createElement("div");
+  dom.terminalTruncated.id = "terminalTruncated";
+  dom.terminalTruncated.className = "kc-terminal-truncated";
+  dom.terminalTruncated.textContent = "Older terminal output truncated.";
+  dom.terminal.before(dom.terminalOwner, dom.terminalTruncated);
+  dom.terminal.setAttribute("aria-labelledby", "terminalOwner");
+  renderTerminal();
+  renderTaskList();
+  renderQueue();
+  renderGoal();
+  renderUsage();
 }
 
 async function fetchJson(path) {
@@ -241,12 +264,15 @@ function applyCount(target) {
     appliedCount = 0;
     renderedCount = 0;
     renderedEntries = [];
+    renderedTaskList = undefined;
+    renderedUsage = undefined;
     mergedRows = null;
     dom.transcript.replaceChildren();
   }
   for (let index = appliedCount; index < target; index += 1) {
     fold(state, events[index]);
   }
+  mergedRows = null;
   appliedCount = target;
   render();
 }
@@ -564,7 +590,11 @@ function wireControls() {
     focusAgent(focusedAgent === row.dataset.agentKey ? null : row.dataset.agentKey);
   });
   document.addEventListener("keydown", (event) => {
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
+    if (
+      event.defaultPrevented ||
+      (event.target instanceof Element &&
+        event.target.closest("button, a, input, select, textarea, [contenteditable], [role='button']"))
+    ) return;
     if (event.code === "Space") {
       event.preventDefault();
       setFollowing(false);
@@ -633,8 +663,8 @@ function activitySeq(activity) {
  * card reports the agent and whether it is still going, and clicking it shows
  * that agent's thread on its own.
  *
- * A card sorts to its agent's first step and never moves afterwards, so the
- * list stays append-only and the render diff below can stay index-based.
+ * An agent first seen through metadata or terminal output may gain its first
+ * transcript step later, so the merge is rebuilt after each fold batch.
  */
 function transcriptRows() {
   if (mergedRows && mergedRows.length === transcriptSize()) return mergedRows;
@@ -672,6 +702,7 @@ function entrySnapshot(row) {
       status: row.agent.status,
       notice: row.agent.notice,
       steps: row.agent.steps.length,
+      metadata: agentMetadataSnapshot(row.agent),
     };
   }
   return {
@@ -696,7 +727,8 @@ function entryChanged(previous, row) {
       previous.agent !== row.agent ||
       previous.status !== row.agent.status ||
       previous.notice !== row.agent.notice ||
-      previous.steps !== row.agent.steps.length
+      previous.steps !== row.agent.steps.length ||
+      previous.metadata !== agentMetadataSnapshot(row.agent)
     );
   }
   const item = row.item;
@@ -737,6 +769,11 @@ function focusAgent(key) {
   focusedAgent = key;
   redrawTranscript();
   renderSubAgents();
+  renderTerminal();
+  if (!document.activeElement || document.activeElement === document.body) {
+    if (key === null) dom.subAgents.querySelector(".kc-sub-agent")?.focus({ preventScroll: true });
+    else document.querySelector(".kc-agent-back")?.focus({ preventScroll: true });
+  }
   if (key === null) return;
   // The list scrolls, so the selected agent can sit outside it after a redraw —
   // leaving whichever row happens to be under the cursor looking like the
@@ -762,65 +799,52 @@ function redrawTranscript() {
  * conversation and the only clue is a highlight in the rail.
  */
 function renderAgentHeader() {
-  const existing = document.getElementById("agentHeader");
+  let header = document.getElementById("agentHeader");
   const activity = focusedAgent === null ? null : state.subAgents.get(focusedAgent);
-  if (!activity) {
-    if (existing) existing.remove();
+  if (focusedAgent === null) {
+    header?.remove();
     return;
   }
-  if (existing) {
-    // Rebuilding every frame would drop keyboard focus from the back button, so
-    // only the part that actually changes is written while an agent runs.
-    const badge = existing.querySelector(".kc-tool-status");
-    if (badge) {
-      badge.dataset.status = activity.status === "running" ? "running" : activity.status;
-      badge.textContent = activity.status || "running";
-    }
-    let notice = existing.querySelector(".kc-agent-header-notice");
-    if (!activity.notice) {
-      notice?.remove();
-    } else {
-      if (!notice) {
-        notice = document.createElement("span");
-        notice.className = "kc-agent-header-notice";
-        existing.append(notice);
-      }
-      notice.textContent = activity.notice;
-    }
-    return;
-  }
-
-  const header = document.createElement("div");
-  header.className = "kc-agent-header";
-  header.id = "agentHeader";
-
-  const back = document.createElement("button");
-  back.type = "button";
-  back.className = "kc-agent-back";
-  back.textContent = "← Back to the session";
-  back.addEventListener("click", () => focusAgent(null));
-  header.append(back);
-
-  const title = document.createElement("div");
-  title.className = "kc-agent-header-title";
-  title.textContent = agentDisplayName(activity);
-  if (activity.task) title.title = activity.task;
-  header.append(title);
-
-  const status = document.createElement("span");
-  status.className = "kc-tool-status";
-  status.dataset.status = activity.status === "running" ? "running" : activity.status;
-  status.textContent = activity.status || "running";
-  header.append(status);
-
-  if (activity.notice) {
+  if (!header) {
+    header = document.createElement("div");
+    header.className = "kc-agent-header";
+    header.id = "agentHeader";
+    const back = document.createElement("button");
+    back.type = "button";
+    back.className = "kc-agent-back";
+    back.textContent = "← Back to the session";
+    back.addEventListener("click", () => focusAgent(null));
+    const title = document.createElement("div");
+    title.className = "kc-agent-header-title";
+    const status = document.createElement("span");
+    status.className = "kc-tool-status";
     const notice = document.createElement("span");
     notice.className = "kc-agent-header-notice";
-    notice.textContent = activity.notice;
-    header.append(notice);
+    const details = document.createElement("div");
+    details.className = "kc-agent-details";
+    header.append(back, title, status, notice, details);
+    dom.transcript.parentElement?.prepend(header);
   }
-
-  dom.transcript.parentElement?.prepend(header);
+  const title = header.querySelector(".kc-agent-header-title");
+  title.textContent = activity ? agentDisplayName(activity) : `${focusedAgent} (not present at this position)`;
+  title.title = activity?.task || "";
+  const status = header.querySelector(".kc-tool-status");
+  status.dataset.status = activity?.status || "unavailable";
+  status.textContent = activity?.status || "unavailable";
+  const notice = header.querySelector(".kc-agent-header-notice");
+  notice.textContent = activity?.notice || "";
+  notice.hidden = !activity?.notice;
+  const details = header.querySelector(".kc-agent-details");
+  const metadata = activity ? agentMetadataSnapshot(activity) : "";
+  if (details.dataset.snapshot !== metadata) {
+    const hadFocus = details.contains(document.activeElement);
+    details.replaceChildren();
+    if (activity) fillAgentDetails(details, activity, true);
+    details.dataset.snapshot = metadata;
+    if (hadFocus) {
+      (details.querySelector("button") || header.querySelector(".kc-agent-back")).focus({ preventScroll: true });
+    }
+  }
 }
 
 function renderTranscript() {
@@ -831,6 +855,7 @@ function renderTranscript() {
   // entry left those frozen mid-stream, spinner and all.
   const rows = visibleRows();
   renderAgentHeader();
+  const active = dom.transcript.contains(document.activeElement) ? document.activeElement : null;
   if (renderedCount > rows.length) {
     dom.transcript.replaceChildren();
     renderedCount = 0;
@@ -847,6 +872,12 @@ function renderTranscript() {
     renderedEntries[index] = entrySnapshot(rows[index]);
   }
   renderedCount = rows.length;
+  if (active && !active.isConnected) {
+    const selector = active.dataset.toolKey
+      ? `[data-tool-key="${CSS.escape(active.dataset.toolKey)}"]`
+      : `[data-agent-key="${CSS.escape(active.dataset.agentKey)}"]`;
+    dom.transcript.querySelector(selector)?.focus({ preventScroll: true });
+  }
   const atEnd = dom.transcript.parentElement;
   if (atEnd) atEnd.scrollTop = atEnd.scrollHeight;
 }
@@ -854,6 +885,77 @@ function renderTranscript() {
 /** The label is what tells one agent of a fan-out from the next; they share a name. */
 function agentDisplayName(activity) {
   return activity.label || activity.name || activity.key;
+}
+
+function agentParent(activity) {
+  const id = activity.parentAgentId;
+  if (id === null || id === undefined || id === "") return { text: "unknown", target: null };
+  if (id === "root") return { text: "root", target: null, root: true };
+  const byId = new Map();
+  for (const agent of state.subAgents.values()) {
+    if (agent.agentId) byId.set(agent.agentId, agent);
+  }
+  const parent = byId.get(id);
+  if (!parent) return { text: `${id} (unavailable)`, target: null };
+  const visited = new Set(activity.agentId ? [activity.agentId] : []);
+  let ancestor = parent;
+  let cyclic = false;
+  while (ancestor) {
+    if (visited.has(ancestor.agentId)) {
+      cyclic = true;
+      break;
+    }
+    visited.add(ancestor.agentId);
+    ancestor = byId.get(ancestor.parentAgentId);
+  }
+  const label = agentDisplayName(parent);
+  return {
+    text: `${id}${label !== id ? ` · ${label}` : ""}${cyclic ? " (cycle)" : ""}`,
+    target: agentKeyOf(parent),
+  };
+}
+
+function routeText(route) {
+  if (route === null || route === undefined) return "unknown";
+  return typeof route === "string" ? route : JSON.stringify(route);
+}
+
+function agentFacts(activity) {
+  return [
+    ["Agent", activity.agentId ?? "unknown"],
+    ["Parent", agentParent(activity).text],
+    ["Parent tool call", activity.parentToolCallId ?? "unknown"],
+    ["Depth", activity.depth ?? "unknown"],
+    ["Background", activity.background === true ? "yes" : activity.background === false ? "no" : "unknown"],
+    ["Requested routing", routeText(activity.requestedRouting)],
+    ["Effective routing", routeText(activity.effectiveRouting)],
+    ["Total tokens", activity.totalTokens === null || activity.totalTokens === undefined
+      ? "unknown" : activity.totalTokens.toLocaleString()],
+  ];
+}
+
+function agentMetadataSnapshot(activity) {
+  return JSON.stringify([
+    activity.key, activity.name, activity.label, activity.task, activity.phase, activity.workflowRunId, agentFacts(activity),
+  ]);
+}
+
+function fillAgentDetails(container, activity, interactive = false) {
+  for (const [label, value] of agentFacts(activity)) {
+    const fact = document.createElement("div");
+    fact.className = "kc-agent-fact";
+    const parent = label === "Parent" && interactive ? agentParent(activity) : null;
+    fact.textContent = `${label}: `;
+    const content = document.createElement(parent && (parent.root || parent.target !== null) ? "button" : "span");
+    content.textContent = String(value);
+    if (content instanceof HTMLButtonElement) {
+      content.type = "button";
+      content.className = "kc-agent-parent";
+      content.addEventListener("click", () => focusAgent(parent.target));
+    }
+    fact.append(content);
+    container.append(fact);
+  }
 }
 
 /**
@@ -915,6 +1017,10 @@ function renderAgentCard(activity) {
     notice.textContent = activity.notice;
     card.append(notice);
   }
+  const details = document.createElement("div");
+  details.className = "kc-agent-details";
+  fillAgentDetails(details, activity);
+  card.append(details);
   row.append(card);
   return row;
 }
@@ -937,6 +1043,8 @@ function renderEntry(entry) {
   body.className = "kc-body";
   if (item.kind === "tool") {
     body.append(renderToolBody(item));
+  } else if (item.kind === "background_delivery") {
+    body.append(renderBackgroundDelivery(item));
   } else {
     body.textContent = item.text;
     if (item.kind === "user") {
@@ -953,6 +1061,99 @@ function renderEntry(entry) {
   }
   row.append(body);
   return row;
+}
+
+function renderBackgroundDelivery(item) {
+  const delivery = item.background_delivery || item.backgroundDelivery;
+  const metadata = delivery.metadata || {};
+  const wrapper = document.createElement("section");
+  wrapper.className = "kc-background-delivery";
+  wrapper.dataset.completionId = delivery.completion_id;
+  wrapper.dataset.disposition = delivery.disposition;
+
+  const heading = document.createElement("div");
+  heading.className = "kc-background-heading";
+  heading.textContent = `Background report · ${delivery.agent_type} · ${delivery.status}`;
+  const disposition = document.createElement("div");
+  disposition.className = "kc-background-disposition";
+  disposition.textContent = delivery.disposition === "archived"
+    ? "Archived — NOT added to live context."
+    : "Delivered — added to live context.";
+  const task = document.createElement("div");
+  task.className = "kc-background-task";
+  task.textContent = `Task: ${delivery.task}`;
+  wrapper.append(heading, disposition, task);
+
+  const details = document.createElement("details");
+  details.className = "kc-background-details";
+  const summary = document.createElement("summary");
+  summary.textContent = "Report attribution";
+  details.append(summary);
+  const facts = [
+    ["Job", delivery.job_id],
+    ["Completion", delivery.completion_id],
+    ["Epoch", delivery.epoch_id],
+    ["Launch turn", metadata.turn_id],
+    ["Parent tool call", metadata.parent_tool_call_id],
+    ["Effective routing", metadata.effective_routing],
+    ["Workspace", metadata.workspace_id],
+    ["Thread", metadata.thread_id],
+    ["Project", metadata.project_path],
+  ];
+  for (const [label, value] of facts) {
+    const fact = document.createElement("div");
+    fact.textContent = `${label}: ${value == null ? "unknown" :
+      typeof value === "object" ? JSON.stringify(value) : String(value)}`;
+    details.append(fact);
+  }
+  const durable = document.createElement("pre");
+  durable.className = "kc-background-metadata";
+  durable.textContent = JSON.stringify(metadata, null, 2);
+  details.append(durable);
+  wrapper.append(details);
+
+  const report = document.createElement("div");
+  report.className = "kc-background-report";
+  report.textContent = item.text;
+  wrapper.append(report);
+  hydrateBackgroundReport(report, item, wrapper);
+  return wrapper;
+}
+
+const backgroundReportLoads = new Map();
+
+function hydrateBackgroundReport(report, item, wrapper) {
+  const ref = (item.artifacts || []).find((candidate) =>
+    candidate.purpose === "tool_result" &&
+    String(candidate.media_type || "").startsWith("text/plain") &&
+    item.text.includes(`characters elided; full payload sha256 ${candidate.sha256} …]`),
+  );
+  if (!ref) return;
+  const notice = document.createElement("div");
+  notice.className = "kc-background-artifact-notice";
+  notice.textContent = "Loading complete report…";
+  wrapper.append(notice);
+  const source = artifactSource(ref, true);
+  if (!source) {
+    notice.textContent = "Complete report unavailable; recorded preview shown.";
+    return;
+  }
+  let loaded = backgroundReportLoads.get(ref.sha256);
+  if (!loaded) {
+    loaded = fetch(source).then((response) => {
+      if (!response.ok) throw new Error("Report unavailable");
+      return response.text();
+    }).catch(() => null);
+    backgroundReportLoads.set(ref.sha256, loaded);
+  }
+  loaded.then((text) => {
+    if (text === null) {
+      notice.textContent = "Complete report unavailable; recorded preview shown.";
+    } else {
+      report.textContent = text;
+      notice.remove();
+    }
+  });
 }
 
 /** Identity for remembering whether one tool entry is open across re-renders. */
@@ -1036,12 +1237,13 @@ function renderToolBody(item) {
  * them from the artifact endpoint — which is gated on the same token and the
  * same shareable-purpose allowlist as everything else.
  */
-function artifactSource(ref) {
+function artifactSource(ref, text = false) {
   if (!/^[a-f0-9]{64}$/.test(ref.sha256)) return null;
   const inlined = globalThis.__KC_REPLAY__;
   if (inlined && inlined.artifacts && inlined.artifacts[ref.sha256]) {
     const source = inlined.artifacts[ref.sha256];
-    return typeof source === "string" && /^data:image\/[^,]+;base64,/i.test(source) ? source : null;
+    const allowed = text ? /^data:text\/plain(?:;\s*charset=utf-8)?;base64,/i : /^data:image\/[^,]+;base64,/i;
+    return typeof source === "string" && allowed.test(source) ? source : null;
   }
   // A single-file export has no sibling files, so an artifact missing from the
   // inline map above is simply unreachable — never a relative path that 404s.
@@ -1112,11 +1314,319 @@ function advanceSpinner() {
 
 function renderRail() {
   renderGauge();
+  renderTaskList();
+  renderQueue();
+  renderGoal();
+  renderUsage();
   renderSubAgents();
-  dom.terminal.textContent = state.terminal || "";
-  if (!state.terminal) dom.terminal.innerHTML = '<span class="kc-empty">No terminal output yet.</span>';
+  renderTerminal();
   dom.status.textContent = state.status || "";
   dom.truncated.hidden = !state.recordingTruncated;
+}
+
+function usageText(parent, tag, className, text) {
+  const node = document.createElement(tag);
+  node.className = className;
+  node.textContent = text;
+  parent.append(node);
+  return node;
+}
+
+function usageRow(parent, field, label, value) {
+  const row = document.createElement("div");
+  row.className = "kc-usage-row";
+  row.dataset.field = field;
+  usageText(row, "span", "kc-usage-label", label);
+  usageText(row, "span", "kc-usage-value", value ?? "Unavailable");
+  parent.append(row);
+}
+
+function usageGroup(field, title) {
+  const group = document.createElement("section");
+  group.className = "kc-usage-group";
+  group.dataset.group = field;
+  usageText(group, "h3", "kc-usage-heading", title);
+  dom.usage.append(group);
+  return group;
+}
+
+function usageCompleteness(parent, complete, subject) {
+  const note = usageText(parent, "p", "kc-usage-note",
+    complete === true ? `Complete ${subject}` :
+      complete === false ? `Incomplete ${subject} · known subtotals only` : `${subject} unavailable`);
+  note.dataset.state = complete === true ? "complete" : complete === false ? "incomplete" : "unknown";
+}
+
+function renderUsage() {
+  const usage = state.usage ?? null;
+  const snapshot = JSON.stringify(usage);
+  if (renderedUsage === snapshot) return;
+  renderedUsage = snapshot;
+  dom.usage.replaceChildren();
+  dom.usage.dataset.state = usage === null ? "unknown" : "recorded";
+  usageText(dom.usage, "p", "kc-usage-summary", "Session-wide · lifetime across all agents and epochs");
+  if (usage === null) {
+    usageText(dom.usage, "p", "kc-empty", "Usage unavailable. No usage recorded.");
+    return;
+  }
+
+  const requests = usageGroup("requests", "Requests");
+  for (const [field, label] of [
+    ["requests", "Total requests"], ["responses", "Responses"], ["reported", "Complete token reports"],
+    ["unreported", "Responses without complete tokens"], ["failed", "Failed / cancelled"],
+    ["open", "Open"], ["abandoned", "Abandoned"], ["partial", "Partial token reports"],
+    ["missing", "Missing token reports"],
+  ]) {
+    usageRow(requests, field, label, usage[field]);
+  }
+
+  const tokens = usageGroup("tokens", "Tokens");
+  usageCompleteness(tokens, usage.complete, "primary token evidence");
+  const known = usage.known_requests ?? usage.known_fields ?? {};
+  for (const [field, label] of [
+    ["input_tokens", "Input"], ["output_tokens", "Output"], ["total_tokens", "Total"],
+    ["cache_read_input_tokens", "Cache read"], ["cache_write_input_tokens", "Cache write"],
+    ["reasoning_output_tokens", "Reasoning output"],
+  ]) {
+    const count = known[field];
+    const available = usage[field] != null && (count > 0 || usage.requests === 0);
+    const coverage = count != null && usage.requests != null ? ` · ${count}/${usage.requests} requests` : "";
+    const partial = available && count < usage.requests ? " · partial subtotal" : "";
+    usageRow(tokens, field, label, `${available ? usage[field] : "Unavailable"}${coverage}${partial}`);
+  }
+
+  const coverage = usageGroup("coverage", "Recording coverage");
+  const full = usage.coverage?.full;
+  const coverageNote = usageText(coverage, "p", "kc-usage-note",
+    full === true ? "Full recording coverage" :
+      full === false ? "Incomplete recording coverage" : "Recording coverage unavailable");
+  coverageNote.dataset.state = full === true ? "complete" : full === false ? "incomplete" : "unknown";
+  for (const [field, count] of Object.entries(usage.coverage ?? {})) {
+    if (field !== "full" && (count || field === "accounted_runs")) {
+      usageRow(coverage, field, field.replaceAll("_", " "), count);
+    }
+  }
+
+  const costs = usage.costs ?? {};
+  const costGroup = usageGroup("costs", "Cost evidence");
+  usageCompleteness(costGroup, costs.complete, "cost evidence");
+  for (const [field, label, count] of [
+    ["reported", "Provider-reported requests", costs.reported],
+    ["estimated", "Estimated requests", costs.estimated],
+    ["missing", "Missing cost requests", costs.missing_requests ?? costs.missing],
+    ["partial", "Partial cost requests", costs.partial_requests ?? costs.partial],
+  ]) {
+    usageRow(costGroup, field, label, count);
+  }
+  for (const [field, title] of [["currencies", "Monetary cost"], ["non_monetary", "Non-monetary credits"]]) {
+    const group = usageGroup(field, title);
+    const rows = Object.entries(costs[field] ?? {});
+    if (!rows.length) usageText(group, "p", "kc-empty", "Unavailable · no cost recorded.");
+    for (const [denomination, amounts] of rows) {
+      const row = document.createElement("section");
+      row.className = "kc-usage-group";
+      row.dataset.denomination = denomination;
+      usageText(row, "h4", "kc-usage-heading", denomination);
+      const decimal = (value) => typeof value === "string" ? value : "Unavailable";
+      usageRow(row, "total", costs.complete === true ? "Total" : "Known subtotal", decimal(amounts.total));
+      for (const [source, label] of [["reported", "Provider-reported"], ["estimated", "Estimated"]]) {
+        const count = amounts[`${source}_requests`];
+        const amount = count === 0 ? "Unavailable" : decimal(amounts[source]);
+        usageRow(row, source, label, `${amount} · ${count ?? "unknown"} requests`);
+      }
+      usageRow(row, "requests", "Requests in this denomination", amounts.requests);
+      if (amounts.token_cost_subtotal != null) {
+        usageRow(row, "token_cost_subtotal", "Token cost subtotal", decimal(amounts.token_cost_subtotal));
+      }
+      group.append(row);
+    }
+  }
+
+  const persistence = usageGroup("persistence", "Persistence health");
+  const health = usage.persistence?.healthy;
+  const healthNote = usageText(persistence, "p", "kc-usage-note",
+    health === true ? "Healthy" : health === false ? "Persistence issues recorded" : "Persistence health unavailable");
+  healthNote.dataset.state = health === true ? "healthy" : health === false ? "unhealthy" : "unknown";
+  for (const [field, label, count] of [
+    ["persist_failures", "Persistence failures", usage.persistence?.persist_failures ?? usage.persist_failures],
+    ["unclosed_runs", "Unclosed runs", usage.persistence?.unclosed_runs ?? usage.coverage?.unclosed_runs],
+    ["lost_requests", "Lost requests", usage.persistence?.lost_requests ?? usage.coverage?.lost_requests],
+  ]) {
+    usageRow(persistence, field, label, count);
+  }
+}
+
+function renderGoal() {
+  const envelope = state.goal ?? null;
+  const snapshot = JSON.stringify(envelope);
+  if (renderedGoal === snapshot) return;
+  renderedGoal = snapshot;
+  const goal = envelope?.goal ?? null;
+  const status = envelope === null ? "unknown" : goal === null ? "no-goal" :
+    goal.met ? "met" : envelope.reason === "completed" ? "ended-unmet" : goal.paused ? "paused" : "active";
+  const labels = {
+    unknown: "Goal unknown",
+    "no-goal": "No goal",
+    active: "Active",
+    paused: "Paused",
+    met: "Met",
+    "ended-unmet": "Ended — unmet",
+  };
+  dom.goal.replaceChildren();
+  dom.goal.dataset.state = status;
+  const text = (parent, tag, className, value) => {
+    const node = document.createElement(tag);
+    node.className = className;
+    node.textContent = value;
+    parent.append(node);
+    return node;
+  };
+  text(dom.goal, "p", "kc-goal-summary", `Session-wide · ${labels[status]}`);
+  text(dom.goal, "p", "kc-goal-caveat",
+    "Read-only historical observation — not execution authority or recoverable goal state.");
+  text(dom.goal, "p", "kc-goal-observation", envelope === null ? "Source / reason unavailable" :
+    `${envelope.source === "tui" ? "TUI" : "ask"} · ${envelope.reason}`);
+  text(dom.goal, "p", "kc-goal-condition", goal?.condition ?? "Condition unavailable.");
+  const boolean = (value) => value === true ? "Yes" : value === false ? "No" : "Unavailable";
+  const details = document.createElement("dl");
+  details.className = "kc-goal-details";
+  for (const [field, label, value] of [
+    ["turns_evaluated", "Turns evaluated", goal?.turns_evaluated],
+    ["tokens_spent", "Tokens spent", goal?.tokens_spent],
+    ["max_turns", "Maximum turns", goal?.max_turns],
+    ["run_to_completion", "Run to completion", boolean(goal?.run_to_completion)],
+    ["evaluation_met", "Last verifier verdict", boolean(envelope?.evaluation_met)],
+    ["last_reason", "Last verifier reason", goal?.last_reason || "Unavailable"],
+    ["status_note", "Status note", goal?.status_note || "Unavailable"],
+    ["started_at", "Started at", goal?.started_at || "Unavailable"],
+    ["last_evaluated_at", "Last evaluated at", goal?.last_evaluated_at || "Unavailable"],
+  ]) {
+    text(details, "dt", "kc-goal-label", label);
+    const node = text(details, "dd", "kc-goal-value", value ?? "Unavailable");
+    node.dataset.field = field;
+  }
+  dom.goal.append(details);
+}
+
+function renderQueue() {
+  const queue = state.queue ?? null;
+  const snapshot = JSON.stringify(queue);
+  if (renderedQueue === snapshot) return;
+  renderedQueue = snapshot;
+  dom.queue.replaceChildren();
+  dom.queue.dataset.state = queue === null ? "unknown" : queue.items.length ? "populated" : "empty";
+  const text = (parent, tag, className, value) => {
+    const node = document.createElement(tag);
+    node.className = className;
+    node.textContent = value;
+    parent.append(node);
+    return node;
+  };
+  text(dom.queue, "p", "kc-queue-summary",
+    queue === null ? "Session-wide" :
+      `Session-wide · ${queue.items.length} recorded pending ${queue.items.length === 1 ? "input" : "inputs"}`);
+  text(dom.queue, "p", "kc-queue-caveat",
+    "Historical preview only — not recoverable pending input or semantic-delivery confirmation.");
+  if (queue === null) {
+    text(dom.queue, "p", "kc-empty", "Queue unknown. No queue recorded yet.");
+    return;
+  }
+  const reasons = {
+    snapshot: "Snapshot recorded.",
+    enqueued: "Input enqueued.",
+    dequeued: "Dequeued — removed for processing, not delivery confirmation.",
+    cleared: "Queue cleared.",
+    removed: "Input removed.",
+  };
+  text(dom.queue, "p", "kc-queue-observation",
+    `${queue.source === "tui" ? "TUI" : "ask"} · ${reasons[queue.reason]}`);
+  if (!queue.items.length) {
+    text(dom.queue, "p", "kc-empty", "Recorded queue is empty.");
+    return;
+  }
+  const list = document.createElement("ol");
+  list.className = "kc-queue-entries";
+  list.setAttribute("aria-label", "Recorded pending inputs in queue order");
+  for (const item of queue.items) {
+    const row = document.createElement("li");
+    row.className = "kc-queue-entry";
+    text(row, "p", "kc-queue-text", item.text);
+    text(row, "p", "kc-queue-origin", item.origin === null
+      ? "Origin not recorded"
+      : `Peer: ${item.origin.title} (${item.origin.session_id})`);
+    text(row, "p", "kc-queue-images", `${item.image_count} ${item.image_count === 1 ? "image" : "images"}`);
+    list.append(row);
+  }
+  dom.queue.append(list);
+}
+
+function renderTaskList() {
+  const taskList = state.taskList ?? null;
+  const snapshot = JSON.stringify(taskList);
+  if (renderedTaskList === snapshot) return;
+  renderedTaskList = snapshot;
+  dom.taskList.replaceChildren();
+  const summary = document.createElement("p");
+  summary.className = "kc-task-summary";
+  summary.textContent = "Session-wide";
+  dom.taskList.append(summary);
+  if (taskList === null || (taskList.markdown === "" && taskList.entries.length === 0)) {
+    dom.taskList.dataset.state = taskList === null ? "unknown" : "cleared";
+    const empty = document.createElement("p");
+    empty.className = "kc-empty";
+    empty.textContent = taskList === null ? "No task list recorded yet." : "Task list cleared.";
+    dom.taskList.append(empty);
+    return;
+  }
+  dom.taskList.dataset.state = "populated";
+  const completed = taskList.entries.filter((entry) => entry.status === "completed").length;
+  summary.textContent += ` · ${completed}/${taskList.entries.length} completed`;
+  if (taskList.entries.length) {
+    const list = document.createElement("ul");
+    list.className = "kc-task-entries";
+    list.setAttribute("aria-label", "Session tasks");
+    for (const entry of taskList.entries) {
+      const row = document.createElement("li");
+      row.className = "kc-task-entry";
+      row.dataset.status = entry.status;
+      const mark = document.createElement("span");
+      mark.className = "kc-task-mark";
+      mark.textContent = entry.status === "completed" ? "✓" : "○";
+      mark.setAttribute("role", "img");
+      mark.setAttribute("aria-label", entry.status === "completed" ? "Completed" : "Pending");
+      const text = document.createElement("span");
+      text.className = "kc-task-text";
+      text.textContent = entry.text;
+      row.append(mark, text);
+      list.append(row);
+    }
+    dom.taskList.append(list);
+  }
+  const label = document.createElement("p");
+  label.className = "kc-task-source-label";
+  label.textContent = "Full content";
+  const source = document.createElement("pre");
+  source.className = "kc-task-source";
+  source.setAttribute("aria-label", "Full task list content");
+  source.textContent = taskList.markdown;
+  dom.taskList.append(label, source);
+}
+
+function renderTerminal() {
+  const activity = focusedAgent === null ? null : state.subAgents.get(focusedAgent);
+  const owner = focusedAgent === null ? "root" : activity?.agentId || focusedAgent;
+  const label = activity ? agentDisplayName(activity) : owner;
+  dom.terminalOwner.textContent = `Owner: ${label === owner ? owner : `${label} (${owner})`}`;
+  dom.terminalOwner.dataset.owner = owner;
+  const terminal = focusedAgent === null ? state.terminal : activity?.terminal;
+  dom.terminalTruncated.hidden = !(focusedAgent === null ? state.terminalTruncated : activity?.terminalTruncated);
+  dom.terminal.textContent = terminal || "";
+  if (!terminal) {
+    const empty = document.createElement("span");
+    empty.className = "kc-empty";
+    empty.textContent = "No terminal output yet.";
+    dom.terminal.append(empty);
+  }
 }
 
 function renderGauge() {
@@ -1145,31 +1655,42 @@ function renderSubAgents() {
   const entries = Array.from(state.subAgents.values());
   if (!entries.length) {
     dom.subAgents.innerHTML = '<p class="kc-empty">No sub-agents dispatched.</p>';
+    if (focusedAgent !== null && document.activeElement === document.body) {
+      document.querySelector(".kc-agent-back")?.focus({ preventScroll: true });
+    }
     return;
   }
-  dom.subAgents.replaceChildren();
-
-  // A fan-out puts a dozen delegated threads into one merged transcript, which
-  // reads as interleaved noise. Clicking an agent narrows the transcript to just
-  // that agent's work, which is the only way to follow one of them.
-  const all = document.createElement("button");
-  all.type = "button";
-  all.className = "kc-sub-agent-all";
+  const active = dom.subAgents.contains(document.activeElement) ? document.activeElement : null;
+  let all = dom.subAgents.querySelector(".kc-sub-agent-all");
+  if (!all) {
+    dom.subAgents.replaceChildren();
+    all = document.createElement("button");
+    all.type = "button";
+    all.className = "kc-sub-agent-all";
+    all.addEventListener("click", () => focusAgent(null));
+    dom.subAgents.append(all);
+  }
   all.textContent = focusedAgent === null ? `All agents (${entries.length})` : "← Back to the whole session";
   all.disabled = focusedAgent === null;
-  all.addEventListener("click", () => focusAgent(null));
-  dom.subAgents.append(all);
-
+  const retained = new Set([all]);
   for (const activity of entries) {
     const key = agentKeyOf(activity);
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "kc-sub-agent";
-    row.dataset.agentKey = key;
+    let row = dom.subAgents.querySelector(`[data-agent-key="${CSS.escape(key)}"]`);
+    if (!row) {
+      row = document.createElement("button");
+      row.type = "button";
+      row.className = "kc-sub-agent";
+      row.dataset.agentKey = key;
+      dom.subAgents.append(row);
+    }
+    retained.add(row);
     row.dataset.status = activity.status || "running";
-    if (focusedAgent === key) row.dataset.focused = "true";
+    row.dataset.focused = String(focusedAgent === key);
     row.setAttribute("aria-pressed", focusedAgent === key ? "true" : "false");
-
+    const snapshot = JSON.stringify([agentMetadataSnapshot(activity), activity.lastText, activity.notice]);
+    if (row.dataset.snapshot === snapshot) continue;
+    row.dataset.snapshot = snapshot;
+    row.replaceChildren();
     const name = document.createElement("div");
     name.className = "kc-sub-agent-name";
     // A workflow labels each agent; without it every agent in a fan-out is
@@ -1191,7 +1712,14 @@ function renderSubAgents() {
       notice.textContent = activity.notice;
       row.append(notice);
     }
-    dom.subAgents.append(row);
+  }
+  for (const child of Array.from(dom.subAgents.children)) {
+    if (!retained.has(child)) child.remove();
+  }
+  if (active?.isConnected && document.activeElement !== active && !active.disabled) {
+    active.focus({ preventScroll: true });
+  } else if (active && !active.isConnected) {
+    document.querySelector(".kc-agent-back")?.focus({ preventScroll: true });
   }
 }
 

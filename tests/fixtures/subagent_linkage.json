@@ -1,0 +1,380 @@
+{
+  "initial": {
+    "conversation": [],
+    "sub_agents": {},
+    "turns": [],
+    "terminal": "",
+    "terminal_truncated": false,
+    "logs": [],
+    "edit_previews": [],
+    "context": null,
+    "compaction": null,
+    "task_list": null,
+    "usage": null,
+    "queue": null,
+    "goal": null,
+    "prompts": [],
+    "status": "",
+    "activity": "idle",
+    "open_browsers": [],
+    "last_seq": 0,
+    "elapsed_ms": 0,
+    "recording_truncated": false,
+    "unknown_event_types": []
+  },
+  "agent_defaults": {
+    "task": "",
+    "status": "running",
+    "notice": "",
+    "last_text": "",
+    "context": null,
+    "label": "",
+    "phase": "",
+    "workflow_run_id": "",
+    "agent_id": null,
+    "parent_agent_id": null,
+    "parent_tool_call_id": null,
+    "depth": 1,
+    "background": false,
+    "requested_routing": null,
+    "effective_routing": null,
+    "total_tokens": null,
+    "terminal": "",
+    "terminal_truncated": false,
+    "steps": []
+  },
+  "steps": [
+    {
+      "event": {"event_type": "turn_started", "content": {"turn_id": "root-turn", "user_text": "coordinate"}},
+      "expect": {
+        "conversation": [{"kind": "user", "text": "coordinate", "complete": true, "seq": 1, "elapsed_ms": 10}],
+        "turns": [{"turn_id": "root-turn", "status": "open", "user_text": "coordinate", "started_seq": 1, "started_ms": 10, "ended_ms": null}],
+        "activity": "generating"
+      }
+    },
+    {
+      "event": {
+        "event_type": "terminal_command",
+        "content": {"command": "child-check"},
+        "sub_agent_info": {
+          "agent_id": "child", "parent_agent_id": "parent", "parent_tool_call_id": "nested-call",
+          "depth": 2, "background": true,
+          "requested_routing": {"provider": "fake", "model": "requested", "thinking_effort": "high"}
+        }
+      },
+      "expect": {"sub_agents": {"child": {
+        "agent_id": "child", "parent_agent_id": "parent", "parent_tool_call_id": "nested-call",
+        "depth": 2, "background": true, "terminal": "$ child-check\n",
+        "requested_routing": {"provider": "fake", "model": "requested", "thinking_effort": "high"}
+      }}}
+    },
+    {
+      "event": {
+        "event_type": "terminal_output",
+        "content": {"display_output": "parallel\n", "output": "hidden raw output"},
+        "sub_agent_info": {
+          "agent_id": "parallel", "parent_agent_id": "root", "parent_tool_call_id": "parallel-call",
+          "depth": 1, "background": true
+        }
+      },
+      "expect": {"sub_agents": {"parallel": {
+        "agent_id": "parallel", "parent_agent_id": "root", "parent_tool_call_id": "parallel-call",
+        "background": true, "terminal": "parallel\n"
+      }}}
+    },
+    {
+      "event": {
+        "event_type": "thinking_delta", "uuid": "shared", "content": {"text": "think ", "complete": false},
+        "sub_agent_info": {"agent_id": "child"}
+      },
+      "expect": {"sub_agents": {"child": {
+        "last_text": "think ",
+        "steps": [{"kind": "thinking", "text": "think ", "complete": false, "seq": 4, "elapsed_ms": 40, "stream_id": "shared", "sub_agent": "child"}]
+      }}}
+    },
+    {
+      "event": {"event_type": "terminal_command", "content": {"command": "root-check"}},
+      "expect": {"terminal": "$ root-check\n", "activity": "running_tool"}
+    },
+    {
+      "event": {
+        "event_type": "llm_context_update",
+        "content": {"input_tokens": 0, "max_tokens": 100, "usage_percentage": 0, "alert_level": "ok", "message": null, "will_compress_at": 80},
+        "sub_agent_info": {"agent_id": "child"}
+      },
+      "expect": {"sub_agents": {"child": {
+        "context": {"input_tokens": 0, "max_tokens": 100, "usage_percentage": 0, "alert_level": "ok", "message": null, "will_compress_at": 80}
+      }}}
+    },
+    {
+      "event": {
+        "event_type": "chat_message", "content": {"status": "GENERATING", "message": "starting"},
+        "sub_agent_info": {
+          "agent_id": "parent", "agent_name": "planner", "parent_agent_id": "root",
+          "parent_tool_call_id": "parent-call", "depth": 1, "background": false, "task": "plan"
+        }
+      },
+      "expect": {"sub_agents": {"parent": {
+        "name": "planner", "agent_id": "parent", "parent_agent_id": "root",
+        "parent_tool_call_id": "parent-call", "task": "plan"
+      }}}
+    },
+    {
+      "event": {
+        "event_type": "terminal_output", "content": {"output": "child\n"},
+        "sub_agent_info": {
+          "agent_id": "child", "agent_name": "coder", "task": "late task",
+          "label": "Child", "phase": "Work", "workflow_run_id": "workflow"
+        }
+      },
+      "expect": {"sub_agents": {"child": {
+        "name": "coder", "task": "late task", "label": "Child", "phase": "Work",
+        "workflow_run_id": "workflow", "terminal": "$ child-check\nchild\n"
+      }}}
+    },
+    {
+      "event": {
+        "event_type": "assistant_delta", "uuid": "shared", "content": {"text": "child-", "complete": false},
+        "sub_agent_info": {"agent_id": "child"}
+      },
+      "expect": {"sub_agents": {"child": {
+        "last_text": "child-",
+        "steps": [
+          {"kind": "thinking", "text": "think ", "complete": false, "seq": 4, "elapsed_ms": 40, "stream_id": "shared", "sub_agent": "child"},
+          {"kind": "assistant", "text": "child-", "complete": false, "seq": 9, "elapsed_ms": 90, "stream_id": "shared", "sub_agent": "child"}
+        ]
+      }}}
+    },
+    {
+      "event": {
+        "event_type": "assistant_delta", "uuid": "shared", "content": {"text": "parallel answer", "complete": true},
+        "sub_agent_info": {"agent_id": "parallel"}
+      },
+      "expect": {"sub_agents": {"parallel": {
+        "last_text": "parallel answer",
+        "steps": [{"kind": "assistant", "text": "parallel answer", "complete": true, "seq": 10, "elapsed_ms": 100, "stream_id": "shared", "sub_agent": "parallel"}]
+      }}}
+    },
+    {
+      "event": {
+        "event_type": "thinking_delta", "uuid": "shared", "content": {"text": "done", "complete": true},
+        "sub_agent_info": {
+          "agent_id": "child", "requested_routing": {"thinking_effort": "low"}, "effective_routing": {"provider": "fake"}
+        }
+      },
+      "expect": {"sub_agents": {"child": {
+        "requested_routing": {"provider": "fake", "model": "requested", "thinking_effort": "low"},
+        "effective_routing": {"provider": "fake"},
+        "steps": [
+          {"kind": "thinking", "text": "think done", "complete": true, "seq": 4, "elapsed_ms": 40, "stream_id": "shared", "sub_agent": "child"},
+          {"kind": "assistant", "text": "child-", "complete": false, "seq": 9, "elapsed_ms": 90, "stream_id": "shared", "sub_agent": "child"}
+        ]
+      }}}
+    },
+    {
+      "event": {
+        "event_type": "chat_message",
+        "content": {"message_type": "tool_call", "tool_call_id": "shared-tool", "tool_description": "read", "text": "scan"},
+        "sub_agent_info": {"agent_id": "child", "effective_routing": {"model": "actual", "thinking_effort": "medium"}}
+      },
+      "expect": {"sub_agents": {"child": {
+        "last_text": "scan", "effective_routing": {"provider": "fake", "model": "actual", "thinking_effort": "medium"},
+        "steps": [
+          {"kind": "thinking", "text": "think done", "complete": true, "seq": 4, "elapsed_ms": 40, "stream_id": "shared", "sub_agent": "child"},
+          {"kind": "assistant", "text": "child-", "complete": false, "seq": 9, "elapsed_ms": 90, "stream_id": "shared", "sub_agent": "child"},
+          {"kind": "tool", "text": "scan", "complete": true, "seq": 12, "elapsed_ms": 120, "tool_name": "read", "tool_call_id": "shared-tool", "status": "running", "sub_agent": "child"}
+        ]
+      }}}
+    },
+    {
+      "event": {
+        "event_type": "assistant_delta", "uuid": "shared", "content": {"text": "parent answer", "complete": true},
+        "sub_agent_info": {"agent_id": "parent"}
+      },
+      "expect": {"sub_agents": {"parent": {
+        "last_text": "parent answer",
+        "steps": [{"kind": "assistant", "text": "parent answer", "complete": true, "seq": 13, "elapsed_ms": 130, "stream_id": "shared", "sub_agent": "parent"}]
+      }}}
+    },
+    {
+      "event": {
+        "event_type": "llm_status_update", "content": {"message": "waiting"},
+        "sub_agent_info": {"agent_id": "parallel", "requested_routing": {}, "total_tokens": 17}
+      },
+      "expect": {"sub_agents": {"parallel": {"notice": "waiting", "requested_routing": {}, "total_tokens": 17}}}
+    },
+    {
+      "event": {
+        "event_type": "tool_streaming_update", "content": {"tool_call_id": "shared-tool", "text": " more"},
+        "sub_agent_info": {"agent_id": "child"}
+      },
+      "expect": {"sub_agents": {"child": {
+        "steps": [
+          {"kind": "thinking", "text": "think done", "complete": true, "seq": 4, "elapsed_ms": 40, "stream_id": "shared", "sub_agent": "child"},
+          {"kind": "assistant", "text": "child-", "complete": false, "seq": 9, "elapsed_ms": 90, "stream_id": "shared", "sub_agent": "child"},
+          {"kind": "tool", "text": "scan more", "complete": true, "seq": 12, "elapsed_ms": 120, "tool_name": "read", "tool_call_id": "shared-tool", "status": "running", "sub_agent": "child"}
+        ]
+      }}}
+    },
+    {
+      "event": {
+        "event_type": "chat_message",
+        "content": {"message_type": "tool_result", "tool_call_id": "shared-tool", "text": "scanned"},
+        "sub_agent_info": {"agent_id": "child"}
+      },
+      "expect": {"sub_agents": {"child": {
+        "steps": [
+          {"kind": "thinking", "text": "think done", "complete": true, "seq": 4, "elapsed_ms": 40, "stream_id": "shared", "sub_agent": "child"},
+          {"kind": "assistant", "text": "child-", "complete": false, "seq": 9, "elapsed_ms": 90, "stream_id": "shared", "sub_agent": "child"},
+          {"kind": "tool", "text": "scanned", "complete": true, "seq": 12, "elapsed_ms": 120, "tool_name": "read", "tool_call_id": "shared-tool", "status": "done", "sub_agent": "child"}
+        ]
+      }}}
+    },
+    {
+      "event": {
+        "event_type": "assistant_delta", "uuid": "shared", "content": {"text": "done", "complete": true},
+        "sub_agent_info": {"agent_id": "child"}
+      },
+      "expect": {"sub_agents": {"child": {
+        "steps": [
+          {"kind": "thinking", "text": "think done", "complete": true, "seq": 4, "elapsed_ms": 40, "stream_id": "shared", "sub_agent": "child"},
+          {"kind": "assistant", "text": "child-done", "complete": true, "seq": 9, "elapsed_ms": 90, "stream_id": "shared", "sub_agent": "child"},
+          {"kind": "tool", "text": "scanned", "complete": true, "seq": 12, "elapsed_ms": 120, "tool_name": "read", "tool_call_id": "shared-tool", "status": "done", "sub_agent": "child"}
+        ]
+      }}}
+    },
+    {
+      "event": {
+        "event_type": "chat_message", "content": {"status": "STOPPED", "message": "done", "total_tokens": 0},
+        "sub_agent_info": {"agent_id": "child", "background": false, "effective_routing": {"budget": 0, "fallback": false}}
+      },
+      "expect": {"sub_agents": {"child": {
+        "status": "completed", "background": false, "total_tokens": 0,
+        "effective_routing": {"provider": "fake", "model": "actual", "thinking_effort": "medium", "budget": 0, "fallback": false}
+      }}}
+    },
+    {
+      "event": {
+        "event_type": "llm_status_update", "content": {"message": "late retry"},
+        "sub_agent_info": {"agent_id": "child", "agent_name": "late coder", "task": "revised task"}
+      },
+      "expect": {"sub_agents": {"child": {"name": "late coder", "task": "revised task", "notice": "late retry"}}}
+    },
+    {
+      "event": {
+        "event_type": "assistant_delta", "uuid": "empty", "content": {"text": "", "complete": true, "total_tokens": true},
+        "sub_agent_info": {
+          "agent_id": "child", "parent_agent_id": null, "parent_tool_call_id": [],
+          "depth": true, "background": 0, "requested_routing": [], "effective_routing": "bad",
+          "agent_name": {}, "task": 4, "label": false, "phase": [], "workflow_run_id": 0, "total_tokens": true
+        }
+      },
+      "expect": {}
+    },
+    {
+      "event": {
+        "event_type": "terminal_output", "content": {"output": "legacy\n"},
+        "sub_agent_info": {"dispatch_id": "legacy-dispatch", "agent_id": "legacy-agent", "agent_name": "legacy", "parent_agent_id": null}
+      },
+      "expect": {"sub_agents": {"legacy-dispatch": {"name": "legacy", "agent_id": "legacy-agent", "terminal": "legacy\n"}}}
+    },
+    {
+      "event": {
+        "event_type": "assistant_delta", "uuid": "old", "content": {"text": "old answer", "complete": true},
+        "sub_agent_info": {"agent_name": "old-worker"}
+      },
+      "expect": {"sub_agents": {"old-worker": {
+        "last_text": "old answer",
+        "steps": [{"kind": "assistant", "text": "old answer", "complete": true, "seq": 22, "elapsed_ms": 220, "stream_id": "old", "sub_agent": "old-worker"}]
+      }}}
+    },
+    {
+      "event": {"event_type": "llm_request", "content": {}, "sub_agent_info": {"task": "unnamed"}},
+      "expect": {"sub_agents": {"sub-agent": {"task": "unnamed"}}}
+    },
+    {
+      "event": {
+        "event_type": "future_worker", "content": {},
+        "sub_agent_info": {"dispatch_id": "child", "agent_id": "child", "label": "late Child", "requested_routing": {}}
+      },
+      "expect": {"unknown_event_types": ["future_worker"], "sub_agents": {"child": {"label": "late Child"}}}
+    },
+    {
+      "event": {
+        "event_type": "chat_message", "content": {"status": "ERROR", "message": "failed", "total_tokens": 0},
+        "sub_agent_info": {"agent_id": "parallel", "background": false}
+      },
+      "expect": {"sub_agents": {"parallel": {"status": "failed", "background": false, "total_tokens": 0}}}
+    },
+    {
+      "event": {
+        "event_type": "turn_started", "content": {"turn_id": "parent-turn", "user_text": "parent task"},
+        "sub_agent_info": {"agent_id": "parent"}
+      },
+      "expect": {"sub_agents": {"parent": {
+        "last_text": "parent task",
+        "steps": [
+          {"kind": "assistant", "text": "parent answer", "complete": true, "seq": 13, "elapsed_ms": 130, "stream_id": "shared", "sub_agent": "parent"},
+          {"kind": "user", "text": "parent task", "complete": true, "seq": 26, "elapsed_ms": 260, "sub_agent": "parent"}
+        ]
+      }}}
+    },
+    {
+      "event": {"event_type": "turn_ended", "content": {"turn_id": "parent-turn", "status": "completed"}, "sub_agent_info": {"agent_id": "parent"}},
+      "expect": {}
+    },
+    {
+      "event": {"event_type": "compaction_status", "content": {"phase": "started", "message": "root compaction"}},
+      "expect": {"compaction": {"phase": "started", "message": "root compaction"}}
+    },
+    {
+      "event": {"event_type": "compaction_status", "content": {"phase": "finished"}, "sub_agent_info": {"agent_id": "child", "phase": "Late phase"}},
+      "expect": {"sub_agents": {"child": {"phase": "Late phase"}}}
+    },
+    {
+      "event": {
+        "event_type": "llm_context_update",
+        "content": {"input_tokens": 50, "max_tokens": 1000, "usage_percentage": 5, "alert_level": "ok", "message": null, "will_compress_at": 800}
+      },
+      "expect": {"context": {"input_tokens": 50, "max_tokens": 1000, "usage_percentage": 5, "alert_level": "ok", "message": null, "will_compress_at": 800}}
+    },
+    {
+      "event": {
+        "event_type": "llm_status_update", "content": {"message": "", "status": ""},
+        "sub_agent_info": {"agent_id": "child", "parent_tool_call_id": "nested-final"}
+      },
+      "expect": {"sub_agents": {"child": {"parent_tool_call_id": "nested-final"}}}
+    },
+    {
+      "event": {"event_type": "terminal_output", "content": {}, "sub_agent_info": {"agent_id": "terminal-only"}},
+      "expect": {"sub_agents": {"terminal-only": {"agent_id": "terminal-only"}}}
+    },
+    {
+      "event": {"event_type": "terminal_output", "content": {"output": "after-complete\n"}, "sub_agent_info": {"agent_id": "child"}},
+      "expect": {"sub_agents": {"child": {"terminal": "$ child-check\nchild\nafter-complete\n"}}}
+    },
+    {
+      "event": {"event_type": "terminal_output", "content": {"output": "root done\n"}},
+      "expect": {"terminal": "$ root-check\nroot done\n"}
+    },
+    {
+      "event": {"event_type": "turn_ended", "content": {"turn_id": "root-turn", "status": "completed"}},
+      "expect": {
+        "activity": "idle",
+        "turns": [{"turn_id": "root-turn", "status": "completed", "user_text": "coordinate", "started_seq": 1, "started_ms": 10, "ended_ms": 350}]
+      }
+    },
+    {
+      "event": {"event_type": "terminal_output", "content": {"output": "background tail\n"}, "sub_agent_info": {"agent_id": "parallel"}},
+      "expect": {"sub_agents": {"parallel": {"terminal": "parallel\nbackground tail\n"}}}
+    },
+    {
+      "event": {"event_type": "terminal_command", "content": {"command": "late-command"}, "sub_agent_info": {"agent_id": "child"}},
+      "expect": {"sub_agents": {"child": {"terminal": "$ child-check\nchild\nafter-complete\n$ late-command\n"}}}
+    },
+    {
+      "event": {"event_type": "terminal_output", "content": {"output": "untagged legacy output\n"}},
+      "expect": {"terminal": "$ root-check\nroot done\nuntagged legacy output\n"}
+    }
+  ]
+}

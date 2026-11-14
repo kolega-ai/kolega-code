@@ -29,6 +29,12 @@ OLLAMA_CLOUD_THINKING_MODEL = next(
     for (provider, model), specs in MODEL_SPECS.items()
     if provider == ModelProvider.OLLAMA_CLOUD.value and "thinking_effort" in specs
 )
+# A known model without a thinking ladder: every current Ollama Cloud model has one.
+NO_EFFORT_MODEL = next(
+    model
+    for (provider, model), specs in MODEL_SPECS.items()
+    if provider == ModelProvider.ANTHROPIC.value and "thinking_effort" not in specs
+)
 
 
 @pytest.mark.parametrize(
@@ -75,12 +81,12 @@ def test_build_agent_config_unknown_saved_provider_is_unconfigured(tmp_path: Pat
 def test_build_agent_config_drops_saved_effort_model_no_longer_supports(tmp_path: Path) -> None:
     # A saved effort can outlive a catalog change that removes the spec.
     settings = CliSettings(
-        active_provider="ollama_cloud",
-        active_model="mistral-large-3:675b",  # known model, no thinking spec
+        active_provider="anthropic",
+        active_model=NO_EFFORT_MODEL,  # known model, no thinking spec
         active_thinking_effort="high",
     )
 
-    config = build_agent_config(tmp_path, env={"OLLAMA_API_KEY": "test"}, settings=settings)
+    config = build_agent_config(tmp_path, env={"ANTHROPIC_API_KEY": "test"}, settings=settings)
 
     assert config.long_context_config.thinking_effort is None
     # An explicitly requested effort for the same model still errors.
@@ -88,7 +94,7 @@ def test_build_agent_config_drops_saved_effort_model_no_longer_supports(tmp_path
         build_agent_config(
             tmp_path,
             overrides=CliConfigOverrides(thinking_effort="high"),
-            env={"OLLAMA_API_KEY": "test"},
+            env={"ANTHROPIC_API_KEY": "test"},
             settings=settings,
         )
 

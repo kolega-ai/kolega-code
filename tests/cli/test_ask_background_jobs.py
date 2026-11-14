@@ -229,7 +229,7 @@ async def test_fresh_iteration_settles_old_context_jobs_before_clearing_history(
     clock = {"now": datetime(2026, 10, 15, 12)}
     monkeypatch.setattr(loop_module, "now_local", lambda: clock["now"])
     state = LoopState.create(parse_schedule_text("5m"), "poll", max_iterations=2, fresh=True)
-    monkeypatch.setattr(state, "seconds_until", lambda: 0.0)
+    monkeypatch.setattr(state, "seconds_until", lambda now=None: 0.0)
     state.mark_fired()
     clock["now"] += timedelta(minutes=5)
     agent = HostAgent()

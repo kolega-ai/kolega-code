@@ -304,6 +304,8 @@ async def test_resume_and_rebuild_restore_with_recorder_detached_then_record_nex
     gateway._persist(entry)
     expected_history = first.dump_message_history()
     recorded_history = gateway._store.load(entry.session_id).history
+    assert entry.usage_presentation is not None
+    await entry.usage_presentation.flush()
     events = gateway._store.journal(entry.session_id).read_events()
     rebuilt = await entry.runtime.rebuild()
     assert isinstance(rebuilt, _RecorderAwareAgent)
@@ -338,7 +340,11 @@ async def test_resume_and_rebuild_restore_with_recorder_detached_then_record_nex
         assert resumed.compaction == first.compaction
         assert resumed.kwargs["permission_mode"] is PermissionMode.AUTO
         assert resumed_entry.runtime.permission_mode is PermissionMode.AUTO
-        assert gateway._store.journal(entry.session_id).read_events() == events
+        restored_events = gateway._store.journal(entry.session_id).read_events()
+        assert restored_events[:-1] == events
+        assert restored_events[-1].event_type == "ui.usage_updated"
+        previous_usage = next(event for event in reversed(events) if event.event_type == "ui.usage_updated")
+        assert restored_events[-1].payload["event"]["content"] == previous_usage.payload["event"]["content"]
         async for _ in resumed_entry.runtime.send_message("after resume"):
             pass
         persisted = gateway._store.load(entry.session_id)

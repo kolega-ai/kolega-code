@@ -51,12 +51,6 @@ if TYPE_CHECKING:
 
     from .models import Message
 
-# Handle httpx being optional. If installed, we will map certain httpx errors.
-try:
-    import httpx
-except ImportError:
-    httpx = None
-
 from ..config import ModelProvider
 
 
@@ -636,6 +630,18 @@ def _is_aiohttp_client_error(error: Exception) -> bool:
     return isinstance(client_error, type) and isinstance(error, client_error)
 
 
+def _is_httpx_error(error: Exception, name: str) -> bool:
+    """True when ``error`` is the named ``httpx`` exception class.
+
+    The LLM clients and their SDKs import httpx themselves, so the mapper only
+    sees an httpx exception after it is loaded; importing it here cost ~50 ms of
+    h11/SSL setup on every CLI start.
+    """
+    module = sys.modules.get("httpx")
+    error_type = getattr(module, name, None)
+    return isinstance(error_type, type) and isinstance(error, error_type)
+
+
 def map_to_llm_error(error: Exception, provider: str | None = None) -> LLMError:
     """Map any exception to a standardized LLM error.
 
@@ -683,7 +689,7 @@ def map_to_llm_error(error: Exception, provider: str | None = None) -> LLMError:
     # Map common Python exceptions
     if isinstance(error, ValueError):
         return LLMInvalidRequestError(message=f"Invalid parameter: {str(error)}", provider=provider)
-    elif httpx and isinstance(error, httpx.TimeoutException):
+    elif _is_httpx_error(error, "TimeoutException"):
         # Read/connect/pool/write timeouts (e.g. a stalled streaming read). Check before
         # the broader TransportError below; LLMTimeout is an LLMConnectionError subclass.
         return LLMTimeout(message=f"Request timeout: {str(error)}", provider=provider)
@@ -693,7 +699,7 @@ def map_to_llm_error(error: Exception, provider: str | None = None) -> LLMError:
         return LLMConnectionError(message=f"Connection error: {str(error)}", provider=provider)
     elif _is_aiohttp_client_error(error):
         return LLMConnectionError(message=f"HTTP client error: {str(error)}", provider=provider)
-    elif httpx and isinstance(error, httpx.TransportError):
+    elif _is_httpx_error(error, "TransportError"):
         # Connect/read/protocol/reset errors — transient transport failures (e.g. a dropped
         # streaming connection), so retryable.
         return LLMConnectionError(message=f"HTTPX transport error: {str(error)}", provider=provider)

@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -25,6 +26,7 @@ from kolega_code.permissions import (
     allow_rule_options,
 )
 from kolega_code.session.control import ControlChannel
+from kolega_code.session.plans import PLAN_APPROVAL_OPTIONS
 from kolega_code.session.runtime import SessionRuntime, serialize_permission_request
 
 
@@ -36,6 +38,11 @@ class ButtonAdapter(GatewayAdapter):
         self.capabilities = AdapterCapabilities(supports_edits=True, supports_inline_buttons=True)
         self.buttons: list[tuple[str, str, list[ButtonOption]]] = []
         self.tokens: list[str] = []
+        self.sent: list[str] = []
+
+    async def send_text(self, chat_id: str, text: str, *, reply_to_message_id: str | None = None) -> str:
+        self.sent.append(text)
+        return f"text-{len(self.sent)}"
 
     async def send_buttons(self, chat_id: str, prompt: str, options: list[ButtonOption]) -> str:
         await asyncio.sleep(0)
@@ -486,3 +493,145 @@ async def test_malformed_question_does_not_render_notify_or_stop_the_relay(tmp_p
     finally:
         await relay.stop()
         await router.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", [action for action, _ in PLAN_APPROVAL_OPTIONS] + ["allow_once", "0"])
+async def test_full_plan_is_scrubbed_and_chunked_with_only_exact_approval_ids(tmp_path: Path, action: str) -> None:
+    relay, router, channel, adapter, runtime = await make_relay(tmp_path)
+    adapter.capabilities = replace(adapter.capabilities, text_chunk_limit=128)
+    relay._scrub = lambda text: text.replace("fake-private-value", "[redacted]")
+    plan = "# Full plan\n\n" + ("- Detailed implementation step.\n" * 150) + "fake-private-value\nTail."
+    task = asyncio.create_task(runtime.request_plan_approval(plan))
+    try:
+        assert await wait_for(lambda: bool(adapter.buttons))
+        assert len(adapter.sent) > 1
+        assert all(len(part) <= 128 for part in adapter.sent)
+        assert "fake-private-value" not in "\n".join(adapter.sent)
+        assert "[redacted]" in "\n".join(adapter.sent)
+        assert adapter.sent[-1].endswith("Tail.")
+        prompt, buttons = adapter.buttons[0][1:]
+        assert prompt == "Implement this plan?"
+        assert [(button.option_id, button.label) for button in buttons] == list(PLAN_APPROVAL_OPTIONS)
+        request = channel.pending()[0]
+        assert request.payload["plan"] == plan and request.default == {"action": None}
+        await relay.handle_tap(tap(adapter.tokens[0], action))
+        result = await asyncio.wait_for(task, 5)
+        assert result == (action if action in dict(PLAN_APPROVAL_OPTIONS) else None)
+        await relay.handle_tap(tap(adapter.tokens[0], "implement_plan"))
+        assert not channel.pending()
+    finally:
+        await relay.stop()
+        await router.stop()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked_at", ["text", "buttons"])
+async def test_cancelled_plan_delivery_never_gives_late_tokens_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked_at: str
+) -> None:
+    relay, router, channel, adapter, runtime = await make_relay(tmp_path)
+    entered, release = asyncio.Event(), asyncio.Event()
+    send_text, send_buttons = adapter.send_text, adapter.send_buttons
+
+    async def blocked_text(chat_id: str, text: str, **kwargs: Any) -> str:
+        entered.set()
+        await release.wait()
+        return await send_text(chat_id, text, **kwargs)
+
+    async def blocked_buttons(chat_id: str, prompt: str, options: list[ButtonOption]) -> str:
+        entered.set()
+        await release.wait()
+        return await send_buttons(chat_id, prompt, options)
+
+    monkeypatch.setattr(
+        adapter,
+        "send_text" if blocked_at == "text" else "send_buttons",
+        blocked_text if blocked_at == "text" else blocked_buttons,
+    )
+    task = asyncio.create_task(runtime.request_plan_approval("# Plan\n\nA complete plan."))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()
+        assert await wait_for(lambda: bool(adapter.sent if blocked_at == "text" else adapter.tokens))
+        if adapter.tokens:
+            await relay.handle_tap(tap(adapter.tokens[0], "implement_plan"))
+        else:
+            assert not adapter.buttons
+        assert not channel.pending() and not relay._pending
+    finally:
+        release.set()
+        await relay.stop()
+        await router.stop()
+
+
+@pytest.mark.asyncio
+async def test_late_cancelled_plan_token_cannot_answer_a_fresh_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    relay, router, channel, adapter, runtime = await make_relay(tmp_path)
+    entered, release = asyncio.Event(), asyncio.Event()
+    send_buttons = adapter.send_buttons
+
+    async def blocked_buttons(chat_id: str, prompt: str, options: list[ButtonOption]) -> str:
+        if not adapter.tokens:
+            entered.set()
+            await release.wait()
+        return await send_buttons(chat_id, prompt, options)
+
+    monkeypatch.setattr(adapter, "send_buttons", blocked_buttons)
+    old = asyncio.create_task(runtime.request_plan_approval("# Original plan\n\nDo not implement this revision."))
+    fresh: asyncio.Task[str | None] | None = None
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        old_request = channel.pending()[0].request_id
+        old.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await old
+        fresh = asyncio.create_task(runtime.request_plan_approval("# Fresh plan\n\nImplement only this revision."))
+        assert await wait_for(lambda: bool(channel.pending()))
+        request_id = channel.pending()[0].request_id
+        assert request_id != old_request
+        release.set()
+        assert await wait_for(lambda: any(prompt.request_id == request_id for prompt in relay._pending.values()))
+        assert len(adapter.tokens) == 2
+        assert adapter.tokens[0] not in relay._pending
+        token = next(token for token, prompt in relay._pending.items() if prompt.request_id == request_id)
+        await relay.handle_tap(tap(adapter.tokens[0], "implement_plan_clear"))
+        assert not fresh.done() and channel.is_pending(request_id)
+        await relay.handle_tap(tap(token, "implement_plan"))
+        assert await asyncio.wait_for(fresh, 5) == "implement_plan"
+        assert not channel.pending()
+    finally:
+        release.set()
+        await relay.stop()
+        await router.stop()
+        await asyncio.gather(old, *([fresh] if fresh is not None else []), return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_plan_request_does_not_turn_question_taps_into_implementation(tmp_path: Path) -> None:
+    relay, router, channel, adapter, runtime = await make_relay(tmp_path)
+    question = asyncio.create_task(
+        channel.request("question", {"question": "Which?", "options": ["red", "green"]}, default={"answer": None})
+    )
+    plan = asyncio.create_task(runtime.request_plan_approval("# Plan\n\nImplement the requested change."))
+    try:
+        assert await wait_for(lambda: len(adapter.tokens) == 2)
+        requests = {request.kind: request.request_id for request in channel.pending()}
+        assert not runtime.answer_plan_approval(requests["question"], "implement_plan", client_id="buttony:42")
+        question_token = next(token for token, prompt in relay._pending.items() if prompt.kind == "question")
+        plan_token = next(token for token, prompt in relay._pending.items() if prompt.kind == "plan_approval")
+        await relay.handle_tap(tap(question_token, "implement_plan"))
+        assert await question == {"answer": ""}
+        assert not plan.done()
+        await relay.handle_tap(tap(plan_token, "discuss_plan"))
+        assert await plan == "discuss_plan"
+    finally:
+        await relay.stop()
+        await router.stop()
+        await asyncio.gather(question, plan, return_exceptions=True)

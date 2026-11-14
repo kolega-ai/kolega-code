@@ -52,6 +52,19 @@ from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config
 from kolega_code.llm.exceptions import LLMError, LLMBillingError, billing_error_message, llm_error_message
 from kolega_code.llm.models import Message, TextBlock
 from kolega_code.events import AgentEvent, KnownEventType
+from kolega_code.session.goal import GoalPresentation
+from kolega_code.agent.goal import GoalVerdict
+from kolega_code.session.automation import (
+    AutomationDriver,
+    GoalHooks,
+    GoalOutcome,
+    GoalPolicy,
+    LoopDecision,
+    LoopHooks,
+    LoopOutcome,
+    pause_goal,
+)
+from kolega_code.session.turns import TurnController, TurnHooks, TurnOutcome, TurnResult
 
 from .peer_messaging import start_headless_peer_inbox
 from .session_event_store import FileSessionEventStore
@@ -135,7 +148,6 @@ from .settings import CliSettings, SettingsStore, SettingsStoreError
 from .goal import (
     DEFAULT_GOAL_MAX_TURNS,
     GoalState,
-    build_goal_nudge,
     build_goal_prompt_extension_markdown,
     build_goal_task_prompt,
     now_iso,
@@ -147,7 +159,6 @@ from .loop import (
     PROMPT_SOURCE_LOOP_MD,
     LoopError,
     LoopState,
-    build_loop_iteration_prompt,
     build_loop_prompt_extension_markdown,
     format_duration_short,
     parse_duration,
@@ -1341,8 +1352,20 @@ async def _close_tui_app(app: Any) -> None:
                 await cast(Any, wait_closed)()
             else:
                 await usage_sink.aclose()
+        except asyncio.CancelledError as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
         except Exception as exc:  # noqa: BLE001 — reported, never masks the primary exception
             print(f"Warning: usage sink close failed: {exc}", file=sys.stderr)
+    usage_presentation = getattr(app, "_usage_presentation", None)
+    if usage_presentation is not None:
+        try:
+            await usage_presentation.aclose()
+        except asyncio.CancelledError as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        except Exception as exc:  # noqa: BLE001 — presentation must not mask the primary exception
+            print(f"Warning: usage presentation close failed: {exc}", file=sys.stderr)
     if cleanup_error is not None:
         raise cleanup_error
 
@@ -1708,22 +1731,19 @@ async def _sleep_until_loop_fire(
     *,
     background_jobs: _AskBackgroundJobs | None = None,
     consume_turn: Any = None,
+    driver: AutomationDriver | None = None,
 ) -> None:
-    """Wait until the loop's next fire time, in slices so Ctrl-C stays responsive."""
-    remaining = state.seconds_until()
-    if remaining <= 0:
-        return
-    recorder.record_loop_sleeping({"seconds": round(remaining, 3), "next_fire_at": state.next_fire_at})
-    if not json_mode:
-        print(
-            f"[loop] sleeping {format_duration_short(remaining)} until {state.next_fire_at}",
-            file=sys.stderr,
-        )
-    while remaining > 0:
-        slice_seconds = min(1.0, remaining)
+    def sleeping(remaining: float) -> None:
+        recorder.record_loop_sleeping({"seconds": round(remaining, 3), "next_fire_at": state.next_fire_at})
+        if not json_mode:
+            print(
+                f"[loop] sleeping {format_duration_short(remaining)} until {state.next_fire_at}",
+                file=sys.stderr,
+            )
+
+    async def wait(slice_seconds: float) -> None:
         if background_jobs is None or background_jobs.manager is None:
             await asyncio.sleep(slice_seconds)
-            remaining -= slice_seconds
         else:
             try:
                 await asyncio.wait_for(background_jobs.ready.wait(), timeout=slice_seconds)
@@ -1732,7 +1752,8 @@ async def _sleep_until_loop_fire(
             await background_jobs.drain(consume_turn)
             # Continuations do not mark a scheduled iteration fired, nor move
             # its deadline. Time spent consuming results counts as sleep time.
-            remaining = state.seconds_until()
+
+    await (driver or AutomationDriver(TurnController())).wait_for_loop(state, wait, sleeping=sleeping)
 
 
 def _emit_loop_iteration(state: LoopState, recorder: SessionRecorder, json_mode: bool) -> None:
@@ -1840,8 +1861,7 @@ def _pause_headless_goal_after_failed_turn(
 ) -> bool:
     if goal_state is None or goal_state.met:
         return False
-    goal_state.paused = True
-    goal_state.status_note = error
+    pause_goal(goal_state, error)
     recorder.record_goal_completed(
         {
             "met": False,
@@ -1941,6 +1961,34 @@ def _prepare_ask_journal(
         # New-session bootstrap events predate the printer; resumed sessions stream from the tail.
         printer.emit_backlog(journal.read_events())
     return session, journal, recorder
+
+
+def _create_ask_goal_presentation(
+    journal: SessionJournal, session_id: str, goal: GoalState | None, *, json_mode: bool
+) -> GoalPresentation | None:
+    if json_mode:
+        return None
+    events = FileSessionEventStore(journal)
+
+    async def record(snapshot: dict[str, Any]) -> None:
+        await events.append(
+            AgentEvent(sender="ask", event_type=KnownEventType.GOAL_UPDATED, session_id=session_id, content=snapshot)
+        )
+
+    presentation = GoalPresentation(record, source="ask")
+    presentation.publish(
+        goal.to_dict() if goal is not None else None, reason="started" if goal is not None else "snapshot"
+    )
+    return presentation
+
+
+async def _close_ask_goal_presentation(
+    presentation: GoalPresentation | None, goal: GoalState | None, *, paused: bool
+) -> None:
+    if presentation is not None:
+        if paused and goal is not None:
+            presentation.publish(goal.to_dict(), reason="paused")
+        await presentation.aclose()
 
 
 async def _run_ask(args: argparse.Namespace) -> int:
@@ -2145,6 +2193,7 @@ async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) 
     goal_state: Optional[GoalState] = None
     drain_goal_tokens: Optional[Callable[[GoalState], None]] = None
     persist_failed_goal_after_cleanup = False
+    goal_presentation: GoalPresentation | None = None
 
     async def _close_generation() -> None:
         # At most once; agent before bundle; each step guarded so a cleanup
@@ -2303,6 +2352,7 @@ async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) 
             )
             if not prompt:
                 prompt = build_goal_task_prompt(goal_condition)
+        goal_presentation = _create_ask_goal_presentation(journal, session.session_id, goal_state, json_mode=args.json)
 
         # --loop / --loop-cron: arm the schedule and apply the loop-aware prompt
         # extension. The prompt itself is sent verbatim on every iteration.
@@ -2379,7 +2429,7 @@ async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) 
         # messages, tool results, and terminal records print as semantic events
         # the moment they are journaled. Consuming the stream drives the turn
         # (and prints the answer text in plain mode).
-        async def _consume_turn(stream) -> None:
+        async def _render_turn(stream) -> None:
             if peer_inbox is not None:
                 peer_inbox.mark_busy()
             try:
@@ -2390,6 +2440,11 @@ async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) 
             finally:
                 if peer_inbox is not None:
                     peer_inbox.mark_idle()
+
+        driver = AutomationDriver(permission_runtime.turns)
+
+        async def _consume_turn(stream) -> None:
+            await permission_runtime.turns.run(lambda: stream, hooks=TurnHooks(consume=_render_turn))
 
         async def _drain_pending_peer_turns() -> None:
             """Deliver queued peer messages as their own turn while idle.
@@ -2404,31 +2459,13 @@ async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) 
 
         background_jobs = _AskBackgroundJobs(agent)
         await background_jobs.recover()
-        if loop_state is not None:
-            # Interval schedules fire immediately; cron schedules wait for the
-            # first matching wall-clock time, servicing recovered work meanwhile.
-            await _sleep_until_loop_fire(
-                loop_state,
-                session_recorder,
-                args.json,
-                background_jobs=background_jobs,
-                consume_turn=_consume_turn,
+        if loop_state is None:
+            stream = (
+                agent.process_message_stream(turn_prompt, attachments)
+                if attachments
+                else agent.process_message_stream(turn_prompt)
             )
-            loop_state.mark_fired()
-            _emit_loop_iteration(loop_state, session_recorder, args.json)
-            turn_prompt = build_loop_iteration_prompt(
-                prompt or "",
-                iteration=loop_state.iterations,
-                max_iterations=loop_state.max_iterations,
-                fresh=loop_state.fresh,
-            )
-
-        stream = (
-            agent.process_message_stream(turn_prompt, attachments)
-            if attachments
-            else agent.process_message_stream(turn_prompt)
-        )
-        await _consume_turn(stream)
+            await _consume_turn(stream)
 
         # --loop / --goal worker modes, then the terminal-boundary peer drain.
         exit_code = await _run_worker_modes(
@@ -2443,6 +2480,9 @@ async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) 
             drain_tokens=_drain_tokens,
             drain_peer_turns=_drain_pending_peer_turns,
             background_jobs=background_jobs,
+            goal_presentation=goal_presentation,
+            driver=driver,
+            first_loop_completed=False,
         )
 
         if args.save or args.session:
@@ -2471,10 +2511,16 @@ async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) 
         # Ctrl-C: asyncio.run cancels this coroutine; main() still exits 130.
         run_status = "cancelled"
         run_error = {"code": "cancelled"}
+        persist_failed_goal_after_cleanup = _pause_headless_goal_after_failed_turn(
+            goal_state, session_recorder, "Stopped by user."
+        )
         raise
     except BaseException as exc:
         run_status = "failed"
         run_error = {"code": type(exc).__name__, "message": str(exc)[:500]}
+        persist_failed_goal_after_cleanup = _pause_headless_goal_after_failed_turn(
+            goal_state, session_recorder, str(exc)
+        )
         raise
     finally:
         tearing_down.set()
@@ -2509,6 +2555,7 @@ async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) 
             if args.save or args.session:
                 session.goal = goal_state.to_dict()
                 session.config = summary
+        await _close_ask_goal_presentation(goal_presentation, goal_state, paused=persist_failed_goal_after_cleanup)
         failed_goal_save_error: Optional[Exception] = None
         if persist_failed_goal_after_cleanup and (args.save or args.session):
             try:
@@ -2578,6 +2625,9 @@ async def _run_worker_modes(
     drain_tokens,
     drain_peer_turns,
     background_jobs: _AskBackgroundJobs | None = None,
+    goal_presentation: GoalPresentation | None = None,
+    driver: AutomationDriver | None = None,
+    first_loop_completed: bool = True,
 ) -> int:
     """Run --loop / --goal after the first turn, then drain the peer inbox.
 
@@ -2601,6 +2651,8 @@ async def _run_worker_modes(
             drain_tokens=drain_tokens,
             drain_peer_turns=drain_peer_turns,
             background_jobs=background_jobs,
+            driver=driver,
+            first_completed=first_loop_completed,
         )
 
     if goal_state is not None:
@@ -2612,6 +2664,8 @@ async def _run_worker_modes(
             consume_turn=consume_turn,
             drain_tokens=drain_tokens,
             drain_peer_turns=drain_peer_turns,
+            goal_presentation=goal_presentation,
+            driver=driver,
         )
 
     await drain_peer_turns()
@@ -2634,10 +2688,39 @@ async def _run_ask_loop_iterations(
     drain_tokens,
     drain_peer_turns,
     background_jobs: _AskBackgroundJobs | None = None,
+    driver: AutomationDriver | None = None,
+    first_completed: bool = True,
 ) -> None:
-    """Re-run the loop prompt until the iteration cap or the expiry is hit."""
-    drain_tokens(loop_state)
-    loop_state.advance_after_completion()
+    driver = driver or AutomationDriver(TurnController())
+    if first_completed:
+        drain_tokens(loop_state)
+        loop_state.advance_after_completion()
+
+    async def prepare_prompt() -> str:
+        return prompt or ""
+
+    async def started() -> None:
+        _emit_loop_iteration(loop_state, session_recorder, json_mode)
+
+    async def run_turn(turn_prompt: str) -> TurnResult:
+        stream = (
+            agent.process_message_stream(turn_prompt, attachments)
+            if attachments
+            else agent.process_message_stream(turn_prompt)
+        )
+        await consume_turn(stream)
+        return TurnResult(TurnOutcome.COMPLETED)
+
+    async def settle_background() -> None:
+        if background_jobs is not None:
+            await background_jobs.drain(consume_turn, wait=True)
+
+    async def reset_context() -> None:
+        if background_jobs is not None:
+            await background_jobs.reset_history()
+        else:
+            agent.clear_history()
+
     while loop_state.is_active:
         await drain_peer_turns()
         await _sleep_until_loop_fire(
@@ -2646,37 +2729,24 @@ async def _run_ask_loop_iterations(
             json_mode,
             background_jobs=background_jobs,
             consume_turn=consume_turn,
+            driver=driver,
         )
-        if not loop_state.is_active:
+        await drain_peer_turns()
+        if driver.loop_decision(loop_state, owned=True) is not LoopDecision.FIRE:
             break
-        if loop_state.fresh:
-            # Finish old-context work before resetting history. A scheduled
-            # fresh iteration must never receive a late prior-epoch report.
-            if background_jobs is not None:
-                await background_jobs.drain(consume_turn, wait=True)
-                if not loop_state.is_active:
-                    break
-        loop_state.mark_fired()
-        if loop_state.fresh:
-            if background_jobs is not None:
-                await background_jobs.reset_history()
-            else:
-                agent.clear_history()
-        _emit_loop_iteration(loop_state, session_recorder, json_mode)
-        turn_prompt = build_loop_iteration_prompt(
-            prompt or "",
-            iteration=loop_state.iterations,
-            max_iterations=loop_state.max_iterations,
-            fresh=loop_state.fresh,
+        outcome = await driver.run_loop_iteration(
+            loop_state,
+            LoopHooks(
+                run_turn=run_turn,
+                prepare_prompt=prepare_prompt,
+                drain_tokens=lambda: drain_tokens(loop_state),
+                settle_background=settle_background,
+                reset_context=reset_context,
+                started=started,
+            ),
         )
-        stream = (
-            agent.process_message_stream(turn_prompt, attachments)
-            if attachments
-            else agent.process_message_stream(turn_prompt)
-        )
-        await consume_turn(stream)
-        drain_tokens(loop_state)
-        loop_state.advance_after_completion()
+        if outcome is not LoopOutcome.COMPLETED:
+            break
     _emit_loop_finished(loop_state, session_recorder, json_mode)
 
 
@@ -2689,43 +2759,54 @@ async def _run_ask_goal_iterations(
     consume_turn,
     drain_tokens,
     drain_peer_turns,
+    goal_presentation: GoalPresentation | None = None,
+    driver: AutomationDriver | None = None,
 ) -> int:
     """Evaluate and auto-continue until the goal is met or the turn cap is hit.
 
     Returns the process exit code. An unmet goal exits 1 but the run itself
     completed: the process finished; the goal did not.
     """
-    drain_tokens(goal_state)
-    while not goal_state.met and goal_state.turns_evaluated < goal_state.max_turns:
-        # Messages that arrived between turns run before the next verdict, so a
-        # peer's input can influence what the worker does, not just what it says.
-        await drain_peer_turns()
-        verdict = await agent.evaluate_goal_condition(goal_state.condition)
-        goal_state.turns_evaluated += 1
-        goal_state.last_reason = verdict.reason
-        goal_state.last_evaluated_at = now_iso()
+
+    async def evaluated(verdict: GoalVerdict) -> None:
         session_recorder.record_goal_evaluated(
             {"met": verdict.met, "turns": goal_state.turns_evaluated, "reason": verdict.reason}
         )
+        if goal_presentation is not None:
+            goal_presentation.publish(goal_state.to_dict(), reason="evaluated", evaluation_met=verdict.met)
         if not json_mode:
             tag = "MET" if verdict.met else f"not met — {verdict.reason}"
             print(f"[goal] turn {goal_state.turns_evaluated}: {tag}", file=sys.stderr)
-        if verdict.met:
-            goal_state.met = True
-            break
-        turns_remaining = goal_state.max_turns - goal_state.turns_evaluated
-        nudge = build_goal_nudge(goal_state.condition, verdict, turns_remaining)
+
+    async def continue_turn(nudge: str, verdict: GoalVerdict) -> TurnResult:
         await consume_turn(agent.process_message_stream(nudge))
-        drain_tokens(goal_state)
-    # The loop above can exit on a met verdict or the turn cap; count the
-    # final verifier either way.
-    drain_tokens(goal_state)
-    session_recorder.record_goal_completed(
-        {"met": goal_state.met, "turns": goal_state.turns_evaluated, "reason": goal_state.last_reason}
+        return TurnResult(TurnOutcome.COMPLETED)
+
+    async def finished(outcome: GoalOutcome, error: str) -> None:
+        if outcome not in (GoalOutcome.MET, GoalOutcome.CAPPED):
+            return
+        session_recorder.record_goal_completed(
+            {"met": goal_state.met, "turns": goal_state.turns_evaluated, "reason": goal_state.last_reason}
+        )
+        if goal_presentation is not None:
+            goal_presentation.publish(goal_state.to_dict(), reason="completed")
+        if not json_mode:
+            status = "met" if goal_state.met else "not met (turn cap reached)"
+            print(f"[goal] {status} after {goal_state.turns_evaluated} turn(s)", file=sys.stderr)
+
+    await (driver or AutomationDriver(TurnController())).run_goal(
+        goal_state,
+        GoalHooks(
+            evaluate=agent.evaluate_goal_condition,
+            continue_turn=continue_turn,
+            drain_tokens=lambda: drain_tokens(goal_state),
+            evaluated=evaluated,
+            finished=finished,
+            before_evaluate=drain_peer_turns,
+            before_continue=drain_peer_turns,
+        ),
+        policy=GoalPolicy(pause_at_cap=False),
     )
-    if not json_mode:
-        status = "met" if goal_state.met else "not met (turn cap reached)"
-        print(f"[goal] {status} after {goal_state.turns_evaluated} turn(s)", file=sys.stderr)
     return 0 if goal_state.met else 1
 
 

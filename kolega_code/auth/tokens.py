@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
-import httpx
 from pydantic import BaseModel, Field
 
 from . import constants
 from ._jwt import extract_chatgpt_claims
+
+if TYPE_CHECKING:
+    import httpx
 
 # Scope sent on a refresh-token grant (narrower than the initial authorize scope,
 # matching Codex).
@@ -41,6 +43,11 @@ async def request_token(
     Used by both the authorization-code exchange and the refresh-token grant.
     Raises :class:`OAuthError` on any transport/HTTP error.
     """
+    # httpx (h11/SSL setup, ~50 ms) is only needed once a token grant actually
+    # runs; importing it at module scope loaded it on every CLI start through
+    # ``config.AgentConfig``.
+    import httpx
+
     try:
         if http_client is not None:
             response = await http_client.post(token_url, data=data)

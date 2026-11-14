@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 
@@ -16,6 +17,19 @@ from kolega_code.agent.prompts import (
 from kolega_code.agent.tool_definitions import tool_description_asset
 from kolega_code.tools import ASK_USER_CHOICE_INPUT_SCHEMA, ToolError
 from kolega_code.tools.ask_user import normalize_choice_questions
+
+
+async def complete_task_list_update(update: Awaitable[None]) -> None:
+    operation = asyncio.ensure_future(update)
+    cancelled = False
+    while not operation.done():
+        try:
+            await asyncio.shield(operation)
+        except asyncio.CancelledError:
+            cancelled = True
+    operation.result()
+    if cancelled:
+        raise asyncio.CancelledError()
 
 
 def shared_task_list_prompt_extension() -> PromptExtension:
@@ -36,14 +50,22 @@ def shared_task_list_tool_extension(
     save_session: Callable[[], Awaitable[None]],
     refresh_task_list: Callable[[], None],
     empty_message: str = "No task list has been set.",
+    emit_task_list: Callable[[str], Awaitable[None]] | None = None,
 ) -> ToolExtension:
     async def get_task_list() -> str:
         return get_task_list_markdown() or empty_message
 
     async def update_task_list(task_list_markdown: str) -> str:
-        set_task_list_markdown(task_list_markdown.strip())
-        await save_session()
-        refresh_task_list()
+        markdown = task_list_markdown.strip()
+
+        async def apply() -> None:
+            set_task_list_markdown(markdown)
+            await save_session()
+            refresh_task_list()
+            if emit_task_list is not None:
+                await emit_task_list(markdown)
+
+        await complete_task_list_update(apply())
         return "Task list updated."
 
     return ToolExtension(
