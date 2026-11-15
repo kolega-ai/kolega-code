@@ -66,7 +66,7 @@ from kolega_code.session.automation import (
 )
 from kolega_code.session.turns import TurnController, TurnHooks, TurnOutcome, TurnResult
 
-from .peer_messaging import start_headless_peer_inbox
+from .peer_messaging import HeadlessPeerInbox, start_headless_peer_inbox
 from .session_event_store import FileSessionEventStore
 from kolega_code.mcp.config import (
     _SERVER_ID_MAX_LENGTH,
@@ -158,6 +158,7 @@ from .loop import (
     PROMPT_SOURCE_INLINE,
     PROMPT_SOURCE_LOOP_MD,
     LoopError,
+    LoopSchedule,
     LoopState,
     build_loop_prompt_extension_markdown,
     format_duration_short,
@@ -2004,94 +2005,290 @@ async def _run_ask(args: argparse.Namespace) -> int:
     return invocation.result()
 
 
-async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) -> int:
-    launch_project_path = _select_startup_project(args.project, args)
-    project_path = launch_project_path
-    store = _store_from_args(args)
-    resumed_session: SessionRecord | None = None
-    if args.session:
-        try:
-            resumed_session = store.load(args.session)
-        except SessionStoreError:
-            resumed_session = None
-        if resumed_session is not None:
-            _validate_session_project(resumed_session, launch_project_path)
-            project_path = _active_project_for_resume(resumed_session, store)
-    settings_store = _settings_store_from_args(args)
-    settings = settings_store.load()
-    overrides = _overrides_from_args(args)
+class _AskUsageError(Exception):
+    """A launch argument rejected before a session is opened."""
+
+
+@dataclass
+class _AskLoopOptions:
+    schedule: LoopSchedule
+    expires_seconds: int
+    prompt: Optional[str]
+
+
+@dataclass
+class _AskPrompt:
+    raw_prompt: Optional[str]
+    goal_condition: Optional[str]
+    loop_schedule: Optional[LoopSchedule]
+    loop_expires_seconds: int
+    loop_md_prompt: Optional[str]
+    skill_command: Optional[tuple[str, str]]
+
+
+@dataclass
+class _AskLaunch:
+    launch_project_path: Path
+    project_path: Path
+    store: SessionStore
+    resumed_session: Optional[SessionRecord]
+    settings_store: SettingsStore
+    settings: CliSettings
+    overrides: CliConfigOverrides
+    extension_selection: Optional[ExtensionSelection]
+    skills_enabled: bool
+    skill_catalog: SkillCatalog
+    raw_prompt: Optional[str]
+    goal_condition: Optional[str]
+    loop_schedule: Optional[LoopSchedule]
+    loop_expires_seconds: int
+    loop_md_prompt: Optional[str]
+    skill_command: Optional[tuple[str, str]]
+
+
+def _load_ask_resumed_session(
+    store: SessionStore, session_id: Optional[str], launch_project_path: Path
+) -> Optional[SessionRecord]:
+    if not session_id:
+        return None
     try:
-        extension_selection = _resolve_extension_selection_from_args(args)
+        session = store.load(session_id)
+    except SessionStoreError:
+        return None
+    return _validate_session_project(session, launch_project_path)
+
+
+def _ask_extension_selection(args: argparse.Namespace) -> Optional[ExtensionSelection]:
+    try:
+        return _resolve_extension_selection_from_args(args)
     except KolegaExtensionLoadError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 2
-    skills_enabled = _skills_enabled(load_cli_env(launch_project_path), settings, overrides.skills_mode)
-    skill_catalog = discover_skills(project_path) if skills_enabled else SkillCatalog()
-    goal_condition = getattr(args, "goal", None)
+        raise _AskUsageError(str(exc)) from exc
+
+
+def _resolve_ask_loop(
+    args: argparse.Namespace, project_path: Path, raw_prompt: Optional[str], goal_condition: Optional[str]
+) -> Optional[_AskLoopOptions]:
     loop_interval = getattr(args, "loop", None)
     loop_cron = getattr(args, "loop_cron", None)
-    looping = bool(loop_interval or loop_cron)
-    raw_prompt = args.prompt
-
-    if looping and goal_condition:
-        print("Error: --loop cannot be combined with --goal.", file=sys.stderr)
-        return 2
-
+    if not (loop_interval or loop_cron):
+        return None
+    if goal_condition:
+        raise _AskUsageError("--loop cannot be combined with --goal.")
     # Validate the schedule up front so a typo fails before an agent is built.
-    loop_schedule = None
-    loop_expires_seconds = DEFAULT_LOOP_EXPIRY_DAYS * 86400
-    if looping:
-        try:
-            loop_schedule = parse_schedule_text(loop_cron if loop_cron else str(loop_interval))
-            if getattr(args, "loop_expires", None):
-                loop_expires_seconds = parse_duration(args.loop_expires)
-        except LoopError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            return 2
-
+    try:
+        schedule = parse_schedule_text(loop_cron if loop_cron else str(loop_interval))
+        expires_seconds = (
+            parse_duration(args.loop_expires)
+            if getattr(args, "loop_expires", None)
+            else DEFAULT_LOOP_EXPIRY_DAYS * 86400
+        )
+    except LoopError as exc:
+        raise _AskUsageError(str(exc)) from exc
     # A loop may take its prompt from .kolega/loop.md instead of the command line.
-    loop_md_prompt: Optional[str] = None
-    if looping and raw_prompt is None:
+    prompt: Optional[str] = None
+    if raw_prompt is None:
         try:
             loop_md = read_loop_md(project_path)
         except LoopError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            return 2
+            raise _AskUsageError(str(exc)) from exc
         if loop_md is None:
-            print(f"Error: {messages.LOOP_MD_MISSING}", file=sys.stderr)
-            return 2
-        loop_md_prompt = loop_md.prompt
+            raise _AskUsageError(messages.LOOP_MD_MISSING)
+        prompt = loop_md.prompt
+    return _AskLoopOptions(schedule=schedule, expires_seconds=expires_seconds, prompt=prompt)
 
+
+def _prepare_ask_prompt(args: argparse.Namespace, project_path: Path, skill_catalog: SkillCatalog) -> _AskPrompt:
+    raw_prompt = args.prompt
+    goal_condition = getattr(args, "goal", None)
+    loop = _resolve_ask_loop(args, project_path, raw_prompt, goal_condition)
+    loop_md_prompt = loop.prompt if loop is not None else None
     # --goal can run without a prompt (it synthesises one from the condition).
     if raw_prompt is None and not goal_condition and loop_md_prompt is None:
-        print("Error: prompt is required (or use --goal <condition> or --loop).", file=sys.stderr)
-        return 2
-    skill_command = _parse_skill_prompt(raw_prompt, skill_catalog) if raw_prompt else None
+        raise _AskUsageError("prompt is required (or use --goal <condition> or --loop).")
+    return _AskPrompt(
+        raw_prompt=raw_prompt,
+        goal_condition=goal_condition,
+        loop_schedule=loop.schedule if loop is not None else None,
+        loop_expires_seconds=loop.expires_seconds if loop is not None else DEFAULT_LOOP_EXPIRY_DAYS * 86400,
+        loop_md_prompt=loop_md_prompt,
+        skill_command=_parse_skill_prompt(raw_prompt, skill_catalog) if raw_prompt else None,
+    )
 
-    # Pre-session informational output: no journal exists yet, so these print
-    # plain text regardless of --json rather than inventing envelope-less JSON.
+
+def _prepare_ask_launch(args: argparse.Namespace) -> _AskLaunch:
+    launch_project_path = _select_startup_project(args.project, args)
+    store = _store_from_args(args)
+    resumed_session = _load_ask_resumed_session(store, args.session, launch_project_path)
+    project_path = (
+        _active_project_for_resume(resumed_session, store) if resumed_session is not None else launch_project_path
+    )
+    settings_store = _settings_store_from_args(args)
+    settings = settings_store.load()
+    overrides = _overrides_from_args(args)
+    extension_selection = _ask_extension_selection(args)
+    skills_enabled = _skills_enabled(load_cli_env(launch_project_path), settings, overrides.skills_mode)
+    skill_catalog = discover_skills(project_path) if skills_enabled else SkillCatalog()
+    prompt = _prepare_ask_prompt(args, project_path, skill_catalog)
+    return _AskLaunch(
+        launch_project_path=launch_project_path,
+        project_path=project_path,
+        store=store,
+        resumed_session=resumed_session,
+        settings_store=settings_store,
+        settings=settings,
+        overrides=overrides,
+        extension_selection=extension_selection,
+        skills_enabled=skills_enabled,
+        skill_catalog=skill_catalog,
+        raw_prompt=prompt.raw_prompt,
+        goal_condition=prompt.goal_condition,
+        loop_schedule=prompt.loop_schedule,
+        loop_expires_seconds=prompt.loop_expires_seconds,
+        loop_md_prompt=prompt.loop_md_prompt,
+        skill_command=prompt.skill_command,
+    )
+
+
+def _print_ask_skill_request(
+    args: argparse.Namespace,
+    *,
+    skills_enabled: bool,
+    skill_catalog: SkillCatalog,
+    skill_command: Optional[tuple[str, str]],
+) -> Optional[int]:
+    """Print a pre-session skill listing or activation, returning its exit code."""
     if skill_command and skill_command[0] == "skills":
-        catalog_text = skill_catalog.format_catalog() if skills_enabled else messages.SKILLS_DISABLED
-        print(catalog_text)
+        print(skill_catalog.format_catalog() if skills_enabled else messages.SKILLS_DISABLED)
         return 0
-
     if skill_command and skill_command[0] != "skills" and not skill_command[1] and not (args.save or args.session):
-        activation_content = skill_catalog.activation_content(skill_command[0])
-        print(activation_content)
+        print(skill_catalog.activation_content(skill_command[0]))
         return 0
+    return None
 
-    settings_changed = False
+
+def _apply_ask_trust_flags(
+    args: argparse.Namespace, settings: CliSettings, settings_store: SettingsStore, project_path: Path
+) -> None:
+    changed = False
     if getattr(args, "trust_hooks", False):
-        settings.trust_hook_project(launch_project_path)
-        settings_changed = True
+        settings.trust_hook_project(project_path)
+        changed = True
     if getattr(args, "trust_mcp", False):
-        settings.trust_mcp_project(launch_project_path)
-        settings_changed = True
+        settings.trust_mcp_project(project_path)
+        changed = True
     if getattr(args, "trust_lsp", False):
-        settings.trust_lsp_project(launch_project_path)
-        settings_changed = True
-    if settings_changed:
+        settings.trust_lsp_project(project_path)
+        changed = True
+    if changed:
         settings_store.save(settings)
+
+
+async def _close_ask_streams(
+    pump_task: Optional[asyncio.Task],
+    peer_inbox: Optional[HeadlessPeerInbox],
+    manager: CliConnectionManager,
+    *,
+    json_mode: bool,
+) -> None:
+    if pump_task is not None:
+        pump_task.cancel()
+        try:
+            await pump_task
+        except asyncio.CancelledError:
+            pass
+    if peer_inbox is not None:
+        await peer_inbox.stop()
+    while not manager.events.empty():
+        _print_ask_event(manager.events.get_nowait(), json_mode)
+
+
+def _persist_failed_ask_goal(
+    goal_state: Optional[GoalState],
+    drain_tokens: Optional[Callable[[GoalState], None]],
+    *,
+    session: SessionRecord,
+    summary: dict[str, Any],
+    saveable: bool,
+) -> None:
+    if goal_state is None:
+        return
+    if drain_tokens is not None:
+        drain_tokens(goal_state)
+    if saveable:
+        session.goal = goal_state.to_dict()
+        session.config = summary
+
+
+def _export_ask_atif(
+    args: argparse.Namespace,
+    *,
+    journal: SessionJournal,
+    session: SessionRecord,
+    settings: CliSettings,
+    settings_store: SettingsStore,
+    launch_project_path: Path,
+    state_root: Path,
+    exit_code: int,
+) -> int:
+    output = getattr(args, "atif_output", None)
+    if output is None:
+        return exit_code
+    # After the run terminal so the trajectory carries the outcome. Synchronous and
+    # broadly guarded: this runs inside a finally and must never mask billing errors
+    # or a propagating cancellation.
+    try:
+        from kolega_code import __version__ as _kolega_version_atif
+
+        from .atif_export import export_atif_to_path
+
+        path = export_atif_to_path(
+            journal,
+            output=output,
+            session_metadata=session.to_metadata_dict(),
+            kolega_version=_kolega_version_atif,
+            secret_values=known_secret_values(settings, settings_store, project_path=launch_project_path),
+            state_dirs=(state_root,),
+        )
+        _print_styled(f"Wrote ATIF trajectory to {path}", style="success", stderr=True)
+    except Exception as exc:  # noqa: BLE001 - reported; run outcome wins
+        _print_styled(f"ATIF export failed: {exc}", style="error", stderr=True)
+        if exit_code == 0:
+            # A conversion failure on an otherwise-clean run exits 1; a run that
+            # already failed keeps its own exit status.
+            exit_code = 1
+    return exit_code
+
+
+async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) -> int:
+    try:
+        launch = _prepare_ask_launch(args)
+    except _AskUsageError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    launch_project_path = launch.launch_project_path
+    project_path = launch.project_path
+    store = launch.store
+    resumed_session = launch.resumed_session
+    settings_store = launch.settings_store
+    settings = launch.settings
+    overrides = launch.overrides
+    extension_selection = launch.extension_selection
+    skills_enabled = launch.skills_enabled
+    skill_catalog = launch.skill_catalog
+    goal_condition = launch.goal_condition
+    loop_schedule = launch.loop_schedule
+    loop_expires_seconds = launch.loop_expires_seconds
+    loop_md_prompt = launch.loop_md_prompt
+    skill_command = launch.skill_command
+    raw_prompt = launch.raw_prompt
+
+    skill_exit = _print_ask_skill_request(
+        args, skills_enabled=skills_enabled, skill_catalog=skill_catalog, skill_command=skill_command
+    )
+    if skill_exit is not None:
+        return skill_exit
+
+    _apply_ask_trust_flags(args, settings, settings_store, launch_project_path)
     config = build_agent_config(launch_project_path, overrides, settings=settings, settings_store=settings_store)
     summary = config_summary(config)
 
@@ -2534,28 +2731,20 @@ async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) 
         # Children can still emit their terminal events and usage while joined.
         # Keep the host's consumers and recording sink alive until that settles.
         await _close_generation()
-        if pump_task is not None:
-            pump_task.cancel()
-            try:
-                await pump_task
-            except asyncio.CancelledError:
-                pass
-        if peer_inbox is not None:
-            await peer_inbox.stop()
-        while not manager.events.empty():
-            event = manager.events.get_nowait()
-            _print_ask_event(event, args.json)
+        await _close_ask_streams(pump_task, peer_inbox, manager, json_mode=args.json)
         if usage_sink is not None:
             try:
                 await usage_sink.wait_closed()
             except Exception as exc:  # noqa: BLE001 — reported, never masks the primary exception
                 print(f"Warning: usage sink close failed: {exc}", file=sys.stderr)
-        if persist_failed_goal_after_cleanup and goal_state is not None:
-            if drain_goal_tokens is not None:
-                drain_goal_tokens(goal_state)
-            if args.save or args.session:
-                session.goal = goal_state.to_dict()
-                session.config = summary
+        if persist_failed_goal_after_cleanup:
+            _persist_failed_ask_goal(
+                goal_state,
+                drain_goal_tokens,
+                session=session,
+                summary=summary,
+                saveable=bool(args.save or args.session),
+            )
         await _close_ask_goal_presentation(goal_presentation, goal_state, paused=persist_failed_goal_after_cleanup)
         failed_goal_save_error: Optional[Exception] = None
         if persist_failed_goal_after_cleanup and (args.save or args.session):
@@ -2577,30 +2766,16 @@ async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) 
             model=config.long_context_config.model,
         )
         _print_ask_cost_summary(session.usage, usage_ledger, json_mode=args.json)
-        if getattr(args, "atif_output", None) is not None:
-            # After the run terminal so the trajectory carries the outcome.
-            # Synchronous and broadly guarded: this runs inside a finally and
-            # must never mask billing errors or a propagating cancellation.
-            try:
-                from kolega_code import __version__ as _kolega_version_atif
-
-                from .atif_export import export_atif_to_path
-
-                path = export_atif_to_path(
-                    journal,
-                    output=args.atif_output,
-                    session_metadata=session.to_metadata_dict(),
-                    kolega_version=_kolega_version_atif,
-                    secret_values=known_secret_values(settings, settings_store, project_path=launch_project_path),
-                    state_dirs=(store.root,),
-                )
-                _print_styled(f"Wrote ATIF trajectory to {path}", style="success", stderr=True)
-            except Exception as exc:  # noqa: BLE001 - reported; run outcome wins
-                _print_styled(f"ATIF export failed: {exc}", style="error", stderr=True)
-                if exit_code == 0:
-                    # A conversion failure on an otherwise-clean run exits 1;
-                    # a run that already failed keeps its own exit status.
-                    exit_code = 1
+        exit_code = _export_ask_atif(
+            args,
+            journal=journal,
+            session=session,
+            settings=settings,
+            settings_store=settings_store,
+            launch_project_path=launch_project_path,
+            state_root=store.root,
+            exit_code=exit_code,
+        )
 
         # The command's ownership of the session ends here: release the
         # cross-process lock so a sequential resume in this process (tests,
