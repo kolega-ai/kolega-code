@@ -529,10 +529,11 @@ class BaseAgent(LogMixin):
             self.config.context_window_tokens is not None and self.config.max_output_tokens is not None
         )
         if self.strict_context_budget:
-            if self.config.context_window_tokens > model_specs["context_length"]:
+            max_context = model_specs.get("max_context_length", model_specs["context_length"])
+            if self.config.context_window_tokens > max_context:
                 raise ValueError(
                     f"context_window_tokens ({self.config.context_window_tokens}) exceeds the catalogued "
-                    f"context length ({model_specs['context_length']}) for the primary model."
+                    f"context length ({max_context}) for the primary model."
                 )
             if self.config.max_output_tokens > model_specs["max_completion_tokens"]:
                 raise ValueError(

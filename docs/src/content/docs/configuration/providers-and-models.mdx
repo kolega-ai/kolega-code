@@ -126,17 +126,35 @@ models. Subscription availability depends on your account and OpenAI's rollout.
 Luna are the cheaper/faster members and accept the full `none`, `low`, `medium`,
 `high`, `xhigh`, `max` ladder; GPT-6.1 Sol is the near-Astra refresh and rejects
 `none` and `minimal` (use `low`). All three keep Astra's 1,050,000-token window and
-128K output reservation on the API provider and the same conservative 400,000-token
-budget on the ChatGPT provider.
+128K output reservation on the API provider. On the ChatGPT provider, GPT-6 Sol
+and Luna keep a conservative 400,000-token budget; GPT-6.1 Sol uses 500,000.
 
 **GPT-6.1 Terra** (`gpt-6.1-terra`) is the mid-tier member of the GPT-6.1
 generation and is available on both providers. It keeps Astra's 1,050,000-token
 window and 128K output reservation on the API provider, supports image input and
 hosted web search, and accepts `none`, `low`, `medium`, `high`, `xhigh`, and `max`
 reasoning efforts (`medium` by default) — only `minimal` is rejected. On the
-ChatGPT provider the Codex backend advertises a 500,000-token window for Terra,
-which leaves 372,000 input tokens after the 128K output reservation; the rest of
-the GPT-6 subscription models keep the conservative 400,000-token budget.
+ChatGPT provider the Codex backend advertises a 500,000-token default window for
+both GPT-6.1 Sol and Terra, leaving 372,000 input tokens after the 128K output
+reservation.
+
+For GPT-6 Astra, GPT-6 Sol and Luna, GPT-6.1 Sol and Terra, and GPT-5.6 Sol,
+Terra and Luna on `openai_chatgpt`, the Codex catalog also advertises an
+**872,000-token maximum override**. Kolega retains its default budgets unless
+you opt in for a run, for example:
+
+```sh
+kolega-code tui --context-window-tokens 872000 --max-output-tokens 128000
+```
+
+This reserves 128,000 tokens for output and gives a 744,000-token input budget;
+the default 95% compression threshold is 706,800 input tokens. The flags apply
+only to the current process, including when using `ask`. The ChatGPT backend
+does not accept an output limit in the request, so the output reservation is
+local budgeting rather than a provider-enforced cap. The advertised maximum is
+an override ceiling, not proof of a hard server-side rejection limit.
+These process-wide flags also apply to subagents: a subagent routed to a model
+with a smaller catalogued window or output maximum cannot start with this pair.
 
 **Gemini 4 Argon** (`gemini-4-argon`) is available on the `google` provider.
 [Google released Argon on October 13, 2026](https://ai.google.dev/gemini-api/docs/changelog).
