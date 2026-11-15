@@ -695,7 +695,6 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
 
         index = len(self._session_file_changes) + 1
         change = SessionFileChange(
-            change_id=f"change-{index}",
             index=index,
             path=path,
             preview=dict(content),
