@@ -26,8 +26,12 @@ import pytest
 from kolega_code.events import AgentEvent, ArtifactRef, KnownEventType
 from kolega_code.session.inmemory import InMemoryArtifactStore
 from kolega_code.web.bundle import MAX_INLINE_IMAGE_BYTES, export_bundle
+from tests.web._player_browser import player_page, shared_player_browser  # noqa: F401 - fixture registration
 
-playwright_api = pytest.importorskip("playwright.async_api", reason="playwright is required for player tests")
+pytestmark = [
+    pytest.mark.asyncio(loop_scope="module"),
+    pytest.mark.usefixtures("shared_player_browser"),
+]
 
 
 def _event(event_type: str, seq: int, *, elapsed_ms: int, uuid: str | None = None, **content) -> AgentEvent:
@@ -201,7 +205,6 @@ async def _step_to_end(page: Any) -> None:
         )
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("single_file", [False, True], ids=["directory", "inline"])
 @pytest.mark.parametrize("media_type", ["image/png", "image/png;charset=utf-8", "image/png; charset=binary"])
 async def test_user_images_and_missing_badges_in_exports(tmp_path: Path, single_file: bool, media_type: str) -> None:
@@ -252,60 +255,51 @@ async def test_user_images_and_missing_badges_in_exports(tmp_path: Path, single_
     if single_file:
         url = url.replace("player.html", "replay.html")
     try:
-        async with playwright_api.async_playwright() as driver:
-            try:
-                browser = await driver.chromium.launch(headless=True)
-            except Exception as exc:  # pragma: no cover - depends on the local install
-                pytest.skip(f"chromium is not installed for playwright: {exc}")
-            try:
-                page = await browser.new_page(viewport={"width": 1200, "height": 1800})
-                requests: list[str] = []
-                responses: list[tuple[str, int]] = []
-                errors: list[str] = []
-                page.on("request", lambda request: requests.append(request.url))
-                page.on("response", lambda response: responses.append((response.url, response.status)))
-                page.on("pageerror", lambda error: errors.append(str(error)))
-                await page.goto(url)
-                await page.wait_for_selector(".kc-entry")
-                await _step_to_end(page)
-                expected_images = 4 if single_file else 5
-                expected_badges = 4 if single_file else 3
-                await page.wait_for_function(
-                    """([images, badges]) => {
-                      const nodes = [...document.querySelectorAll('#transcript img')];
-                      return nodes.length === images && nodes.every(img => img.complete && img.naturalWidth === 1)
-                        && document.querySelectorAll('.kc-missing-image').length === badges;
-                    }""",
-                    arg=[expected_images, expected_badges],
-                )
-                users = page.locator('.kc-entry[data-kind="user"]')
-                assert await users.count() == 6
-                assert await users.nth(0).locator("img").count() == 2
-                assert await users.nth(1).locator("img").count() == 1
-                assert await users.nth(2).locator(".kc-missing-image").all_text_contents() == [
-                    "Image unavailable",
-                    "2 images unavailable",
-                ]
-                assert await users.nth(3).locator("img").count() == 0
-                assert await users.nth(5).locator(".kc-body").inner_text() == "legacy text"
-                assert await page.locator('.kc-entry[data-kind="tool"] img').count() == 1
-                assert not errors
-                assert not any(
-                    "forbidden.invalid" in request or opaque.sha256 in request or text_ref.sha256 in request
-                    for request in requests
-                )
-                assert all(request.startswith(url.rsplit("/", 1)[0] + "/") for request in requests)
-                if single_file:
-                    assert not any("/artifacts/" in request for request in requests)
-                else:
-                    assert any(missing.sha256 in address and status == 404 for address, status in responses)
-            finally:
-                await browser.close()
+        async with player_page(viewport={"width": 1200, "height": 1800}) as page:
+            requests: list[str] = []
+            responses: list[tuple[str, int]] = []
+            errors: list[str] = []
+            page.on("request", lambda request: requests.append(request.url))
+            page.on("response", lambda response: responses.append((response.url, response.status)))
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            await page.goto(url)
+            await page.wait_for_selector(".kc-entry")
+            await _step_to_end(page)
+            expected_images = 4 if single_file else 5
+            expected_badges = 4 if single_file else 3
+            await page.wait_for_function(
+                """([images, badges]) => {
+                  const nodes = [...document.querySelectorAll('#transcript img')];
+                  return nodes.length === images && nodes.every(img => img.complete && img.naturalWidth === 1)
+                    && document.querySelectorAll('.kc-missing-image').length === badges;
+                }""",
+                arg=[expected_images, expected_badges],
+            )
+            users = page.locator('.kc-entry[data-kind="user"]')
+            assert await users.count() == 6
+            assert await users.nth(0).locator("img").count() == 2
+            assert await users.nth(1).locator("img").count() == 1
+            assert await users.nth(2).locator(".kc-missing-image").all_text_contents() == [
+                "Image unavailable",
+                "2 images unavailable",
+            ]
+            assert await users.nth(3).locator("img").count() == 0
+            assert await users.nth(5).locator(".kc-body").inner_text() == "legacy text"
+            assert await page.locator('.kc-entry[data-kind="tool"] img').count() == 1
+            assert not errors
+            assert not any(
+                "forbidden.invalid" in request or opaque.sha256 in request or text_ref.sha256 in request
+                for request in requests
+            )
+            assert all(request.startswith(url.rsplit("/", 1)[0] + "/") for request in requests)
+            if single_file:
+                assert not any("/artifacts/" in request for request in requests)
+            else:
+                assert any(missing.sha256 in address and status == 404 for address, status in responses)
     finally:
         served.close()
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("single_file", [False, True], ids=["directory", "inline"])
 async def test_user_image_count_without_retained_bytes_never_fetches(tmp_path: Path, single_file: bool) -> None:
     event = _event(KnownEventType.TURN_STARTED, 1, elapsed_ms=0, turn_id="t1", user_text="", image_count=1)
@@ -325,50 +319,33 @@ async def test_user_image_count_without_retained_bytes_never_fetches(tmp_path: P
     served = _serve(tmp_path if single_file else destination)
     url = next(served).replace("player.html", "replay.html") if single_file else next(served)
     try:
-        async with playwright_api.async_playwright() as driver:
-            try:
-                browser = await driver.chromium.launch(headless=True)
-            except Exception as exc:  # pragma: no cover - depends on the local install
-                pytest.skip(f"chromium is not installed for playwright: {exc}")
-            try:
-                page = await browser.new_page()
-                requests: list[str] = []
-                page.on("request", lambda request: requests.append(request.url))
-                await page.goto(url)
-                await page.wait_for_selector(".kc-missing-image")
-                await _step_to_end(page)
-                assert await page.locator('.kc-entry[data-kind="user"]').count() == 2
-                assert await page.locator(".kc-missing-image").all_text_contents() == [
-                    "Image unavailable",
-                    "2 images unavailable",
-                ]
-                assert await page.locator("#transcript img").count() == 0
-                assert not any("/artifacts/" in request for request in requests)
-                assert not any("forbidden.invalid" in request for request in requests)
-            finally:
-                await browser.close()
+        async with player_page() as page:
+            requests: list[str] = []
+            page.on("request", lambda request: requests.append(request.url))
+            await page.goto(url)
+            await page.wait_for_selector(".kc-missing-image")
+            await _step_to_end(page)
+            assert await page.locator('.kc-entry[data-kind="user"]').count() == 2
+            assert await page.locator(".kc-missing-image").all_text_contents() == [
+                "Image unavailable",
+                "2 images unavailable",
+            ]
+            assert await page.locator("#transcript img").count() == 0
+            assert not any("/artifacts/" in request for request in requests)
+            assert not any("forbidden.invalid" in request for request in requests)
     finally:
         served.close()
 
 
-@pytest.mark.asyncio
 async def test_interleaved_reasoning_is_complete_after_playback(bundle_url: str) -> None:
-    async with playwright_api.async_playwright() as driver:
-        try:
-            browser = await driver.chromium.launch(headless=True)
-        except Exception as exc:  # pragma: no cover - depends on the local install
-            pytest.skip(f"chromium is not installed for playwright: {exc}")
-        try:
-            page = await browser.new_page()
-            errors: list[str] = []
-            page.on("pageerror", lambda error: errors.append(str(error)))
-            await page.goto(bundle_url)
-            await page.wait_for_selector(".kc-entry")
+    async with player_page() as page:
+        errors: list[str] = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        await page.goto(bundle_url)
+        await page.wait_for_selector(".kc-entry")
 
-            await _step_to_end(page)
-            entries = await page.evaluate(_ENTRIES_JS)
-        finally:
-            await browser.close()
+        await _step_to_end(page)
+        entries = await page.evaluate(_ENTRIES_JS)
 
     assert not errors, f"the player raised: {errors}"
     by_kind = {entry["kind"]: entry for entry in entries}
@@ -380,36 +357,26 @@ async def test_interleaved_reasoning_is_complete_after_playback(bundle_url: str)
     assert not any(entry["spinning"] for entry in entries), "a settled entry is still showing a spinner"
 
 
-@pytest.mark.asyncio
 async def test_seeking_backwards_then_forwards_rebuilds_the_transcript(bundle_url: str) -> None:
     """A backward seek rebuilds from empty; the result must match a forward pass."""
-    async with playwright_api.async_playwright() as driver:
-        try:
-            browser = await driver.chromium.launch(headless=True)
-        except Exception as exc:  # pragma: no cover - depends on the local install
-            pytest.skip(f"chromium is not installed for playwright: {exc}")
-        try:
-            page = await browser.new_page()
-            await page.goto(bundle_url)
-            await page.wait_for_selector(".kc-entry")
+    async with player_page() as page:
+        await page.goto(bundle_url)
+        await page.wait_for_selector(".kc-entry")
 
-            await _step_to_end(page)
-            forward = await page.evaluate(_ENTRIES_JS)
+        await _step_to_end(page)
+        forward = await page.evaluate(_ENTRIES_JS)
 
-            for value in (300, 0, 1000):
-                await page.eval_on_selector(
-                    "#scrub",
-                    "(el, v) => { el.value = String(v); el.dispatchEvent(new Event('input')); }",
-                    value,
-                )
-            rewound = await page.evaluate(_ENTRIES_JS)
-        finally:
-            await browser.close()
+        for value in (300, 0, 1000):
+            await page.eval_on_selector(
+                "#scrub",
+                "(el, v) => { el.value = String(v); el.dispatchEvent(new Event('input')); }",
+                value,
+            )
+        rewound = await page.evaluate(_ENTRIES_JS)
 
     assert rewound == forward, "the transcript differs after seeking back and forward again"
 
 
-@pytest.mark.asyncio
 async def test_a_dispatch_is_one_openable_entry_not_spliced_into_the_thread(delegating_url: str) -> None:
     """Delegated work is reachable from the main thread without invading it.
 
@@ -418,38 +385,30 @@ async def test_a_dispatch_is_one_openable_entry_not_spliced_into_the_thread(dele
     answers arrive in an order unrelated to the questions above them. The
     terminal collapses a dispatch to one entry you open, and so does this.
     """
-    async with playwright_api.async_playwright() as driver:
-        try:
-            browser = await driver.chromium.launch(headless=True)
-        except Exception as exc:  # pragma: no cover - depends on the local install
-            pytest.skip(f"chromium is not installed for playwright: {exc}")
-        try:
-            page = await browser.new_page()
-            await page.goto(delegating_url)
-            await page.wait_for_selector(".kc-entry")
-            await _step_to_end(page)
-            main_thread = await page.evaluate(_ENTRIES_JS)
-            card = await page.evaluate(
-                """() => {
-                    const el = document.querySelector('.kc-agent-card');
-                    return el && {
-                        text: el.innerText,
-                        status: el.dataset.status,
-                        key: el.dataset.agentKey,
-                        notice: el.querySelector('.kc-agent-card-notice')?.textContent ?? null,
-                    };
-                }"""
-            )
-            rail_notice = await page.text_content(".kc-sub-agent-notice")
-            await page.click(".kc-agent-card")
-            opened = await page.evaluate(_ENTRIES_JS)
-            header = await page.inner_text(".kc-agent-header")
-            header_status = await page.inner_text(".kc-agent-header .kc-tool-status")
-            header_notice = await page.inner_text(".kc-agent-header-notice")
-            await page.click(".kc-agent-back")
-            restored = await page.evaluate(_ENTRIES_JS)
-        finally:
-            await browser.close()
+    async with player_page() as page:
+        await page.goto(delegating_url)
+        await page.wait_for_selector(".kc-entry")
+        await _step_to_end(page)
+        main_thread = await page.evaluate(_ENTRIES_JS)
+        card = await page.evaluate(
+            """() => {
+                const el = document.querySelector('.kc-agent-card');
+                return el && {
+                    text: el.innerText,
+                    status: el.dataset.status,
+                    key: el.dataset.agentKey,
+                    notice: el.querySelector('.kc-agent-card-notice')?.textContent ?? null,
+                };
+            }"""
+        )
+        rail_notice = await page.text_content(".kc-sub-agent-notice")
+        await page.click(".kc-agent-card")
+        opened = await page.evaluate(_ENTRIES_JS)
+        header = await page.inner_text(".kc-agent-header")
+        header_status = await page.inner_text(".kc-agent-header .kc-tool-status")
+        header_notice = await page.inner_text(".kc-agent-header-notice")
+        await page.click(".kc-agent-back")
+        restored = await page.evaluate(_ENTRIES_JS)
 
     assert card is not None, "the dispatch left no entry in the main thread"
     assert "investigator" in card["text"] and card["status"] == "completed"
@@ -541,35 +500,26 @@ def workflow_url(tmp_path: Path) -> Iterator[str]:
     yield from _bundle(_workflow_turn(), tmp_path / "bundle", "workflow")
 
 
-@pytest.mark.asyncio
 async def test_tool_output_is_collapsed_until_asked_for(bundle_url: str) -> None:
     """A transcript of expanded tool results is unreadable.
 
     Every result rendered in full, so following the conversation meant scrolling
     past screens of output to find the sentence between two calls.
     """
-    async with playwright_api.async_playwright() as driver:
-        try:
-            browser = await driver.chromium.launch(headless=True)
-        except Exception as exc:  # pragma: no cover - depends on the local install
-            pytest.skip(f"chromium is not installed for playwright: {exc}")
-        try:
-            page = await browser.new_page()
-            await page.goto(bundle_url)
-            await page.wait_for_selector(".kc-entry")
-            await _step_to_end(page)
+    async with player_page() as page:
+        await page.goto(bundle_url)
+        await page.wait_for_selector(".kc-entry")
+        await _step_to_end(page)
 
-            count = "() => document.querySelectorAll('.kc-tool-output').length"
-            collapsed = await page.evaluate(count)
-            # The head still says what ran and how it went.
-            head = await page.inner_text(".kc-tool-head")
-            await page.click("[data-tool-key] >> nth=0")
-            expanded = await page.evaluate(count)
-            opened_text = await page.inner_text(".kc-tool-output")
-            await page.click("[data-tool-key] >> nth=0")
-            recollapsed = await page.evaluate(count)
-        finally:
-            await browser.close()
+        count = "() => document.querySelectorAll('.kc-tool-output').length"
+        collapsed = await page.evaluate(count)
+        # The head still says what ran and how it went.
+        head = await page.inner_text(".kc-tool-head")
+        await page.click("[data-tool-key] >> nth=0")
+        expanded = await page.evaluate(count)
+        opened_text = await page.inner_text(".kc-tool-output")
+        await page.click("[data-tool-key] >> nth=0")
+        recollapsed = await page.evaluate(count)
 
     assert collapsed == 0, "tool output was rendered before anyone asked for it"
     assert "read_file" in head and "done" in head.lower()
@@ -577,61 +527,49 @@ async def test_tool_output_is_collapsed_until_asked_for(bundle_url: str) -> None
     assert recollapsed == 0, "clicking again did not put it away"
 
 
-@pytest.mark.asyncio
 async def test_tool_subject_is_literal_single_line_and_keeps_status_and_expansion(
     tool_subject_url: tuple[str, str],
 ) -> None:
     url, subject = tool_subject_url
-    async with playwright_api.async_playwright() as driver:
-        try:
-            browser = await driver.chromium.launch(headless=True)
-        except Exception as exc:  # pragma: no cover - depends on the local install
-            pytest.skip(f"chromium is not installed for playwright: {exc}")
-        try:
-            page = await browser.new_page()
-            await page.goto(url)
-            await page.wait_for_selector(".kc-entry")
-            await page.eval_on_selector("#scrub", "(el) => { el.value = '600'; el.dispatchEvent(new Event('input')); }")
-            await page.wait_for_selector(".kc-tool-subject")
-            assert (await page.inner_text(".kc-tool-status")).lower() == "running"
-            assert await page.text_content(".kc-tool-subject") == subject
-            assert await page.locator(".kc-tool-subject a").count() == 0
-            await page.click("[data-tool-key] >> nth=0")
+    async with player_page() as page:
+        await page.goto(url)
+        await page.wait_for_selector(".kc-entry")
+        await page.eval_on_selector("#scrub", "(el) => { el.value = '600'; el.dispatchEvent(new Event('input')); }")
+        await page.wait_for_selector(".kc-tool-subject")
+        assert (await page.inner_text(".kc-tool-status")).lower() == "running"
+        assert await page.text_content(".kc-tool-subject") == subject
+        assert await page.locator(".kc-tool-subject a").count() == 0
+        await page.click("[data-tool-key] >> nth=0")
 
-            for width in (1200, 640, 320):
-                await page.set_viewport_size({"width": width, "height": 900})
-                await page.wait_for_function(
-                    """() => {
-                        const subject = document.querySelector('.kc-tool-subject');
-                        const status = document.querySelector('.kc-tool-status');
-                        const head = document.querySelector('.kc-tool-head');
-                        const range = document.createRange();
-                        range.selectNodeContents(subject);
-                        const a = subject.getBoundingClientRect();
-                        const b = status.getBoundingClientRect();
-                        const h = head.getBoundingClientRect();
-                        // Ellipsis can produce both full and clipped rectangles.
-                        // A single visual line has overlapping vertical bounds.
-                        const rects = [...range.getClientRects()];
-                        return rects.length > 0 &&
-                            Math.max(...rects.map(r => r.top)) < Math.min(...rects.map(r => r.bottom)) &&
-                            Math.abs((a.top + a.bottom) - (b.top + b.bottom)) < 2 &&
-                            b.right <= Math.min(h.right, innerWidth) + 1;
-                    }"""
-                )
-                assert await page.locator(".kc-tool-output").count() == 1
-
-            await page.eval_on_selector(
-                "#scrub", "(el) => { el.value = '1000'; el.dispatchEvent(new Event('input')); }"
+        for width in (1200, 640, 320):
+            await page.set_viewport_size({"width": width, "height": 900})
+            await page.wait_for_function(
+                """() => {
+                    const subject = document.querySelector('.kc-tool-subject');
+                    const status = document.querySelector('.kc-tool-status');
+                    const head = document.querySelector('.kc-tool-head');
+                    const range = document.createRange();
+                    range.selectNodeContents(subject);
+                    const a = subject.getBoundingClientRect();
+                    const b = status.getBoundingClientRect();
+                    const h = head.getBoundingClientRect();
+                    // Ellipsis can produce both full and clipped rectangles.
+                    // A single visual line has overlapping vertical bounds.
+                    const rects = [...range.getClientRects()];
+                    return rects.length > 0 &&
+                        Math.max(...rects.map(r => r.top)) < Math.min(...rects.map(r => r.bottom)) &&
+                        Math.abs((a.top + a.bottom) - (b.top + b.bottom)) < 2 &&
+                        b.right <= Math.min(h.right, innerWidth) + 1;
+                }"""
             )
-            assert (await page.inner_text(".kc-tool-status")).lower() == "done"
-            assert await page.text_content(".kc-tool-subject") == subject
-            assert await page.inner_text(".kc-tool-output") == "12 lines"
-        finally:
-            await browser.close()
+            assert await page.locator(".kc-tool-output").count() == 1
+
+        await page.eval_on_selector("#scrub", "(el) => { el.value = '1000'; el.dispatchEvent(new Event('input')); }")
+        assert (await page.inner_text(".kc-tool-status")).lower() == "done"
+        assert await page.text_content(".kc-tool-subject") == subject
+        assert await page.inner_text(".kc-tool-output") == "12 lines"
 
 
-@pytest.mark.asyncio
 async def test_clicking_an_agent_narrows_the_transcript_to_its_own_work(workflow_url: str) -> None:
     """A fan-out is unreadable as one merged stream.
 
@@ -639,33 +577,25 @@ async def test_clicking_an_agent_narrows_the_transcript_to_its_own_work(workflow
     shares the name "general-agent", so without per-agent identity and a way to
     isolate one there is no way to follow what any single agent did.
     """
-    async with playwright_api.async_playwright() as driver:
-        try:
-            browser = await driver.chromium.launch(headless=True)
-        except Exception as exc:  # pragma: no cover - depends on the local install
-            pytest.skip(f"chromium is not installed for playwright: {exc}")
-        try:
-            page = await browser.new_page()
-            await page.goto(workflow_url)
-            await page.wait_for_selector(".kc-entry")
-            await _step_to_end(page)
+    async with player_page() as page:
+        await page.goto(workflow_url)
+        await page.wait_for_selector(".kc-entry")
+        await _step_to_end(page)
 
-            labels = await page.evaluate(
-                "() => [...document.querySelectorAll('#subAgents [data-agent-key]')]"
-                ".map(b => b.querySelector('.kc-sub-agent-name').innerText)"
-            )
-            everything = await page.evaluate(_ENTRIES_JS)
+        labels = await page.evaluate(
+            "() => [...document.querySelectorAll('#subAgents [data-agent-key]')]"
+            ".map(b => b.querySelector('.kc-sub-agent-name').innerText)"
+        )
+        everything = await page.evaluate(_ENTRIES_JS)
 
-            await page.click('[data-agent-key="wf-beta"]')
-            focused = await page.evaluate(_ENTRIES_JS)
-            back_label = await page.inner_text(".kc-sub-agent-all")
+        await page.click('[data-agent-key="wf-beta"]')
+        focused = await page.evaluate(_ENTRIES_JS)
+        back_label = await page.inner_text(".kc-sub-agent-all")
 
-            await page.click(".kc-sub-agent-all")
-            restored = await page.evaluate(_ENTRIES_JS)
+        await page.click(".kc-sub-agent-all")
+        restored = await page.evaluate(_ENTRIES_JS)
 
-            workflow_rows = [entry for entry in everything if entry["kind"] == "workflow"]
-        finally:
-            await browser.close()
+        workflow_rows = [entry for entry in everything if entry["kind"] == "workflow"]
 
     assert len(labels) == 2, f"parallel agents were not listed separately: {labels}"
     assert any("alpha" in label for label in labels) and any("beta" in label for label in labels)

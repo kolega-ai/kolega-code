@@ -24,9 +24,12 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.events import AgentEvent, KnownEventType
 from kolega_code.web.hosting import ShareServer
 
-playwright_api = pytest.importorskip("playwright.async_api", reason="playwright is required for player tests")
+from tests.web._player_browser import player_page, shared_player_browser  # noqa: F401 - fixture registration
 
-pytestmark = pytest.mark.usefixtures("isolated_cli_env")
+pytestmark = [
+    pytest.mark.asyncio(loop_scope="module"),
+    pytest.mark.usefixtures("isolated_cli_env", "shared_player_browser"),
+]
 
 SESSION_ID = "a" * 32
 
@@ -68,7 +71,6 @@ async def _wait_for(page: Any, predicate: str, *, timeout: float = 10.0) -> Any:
         await handle.dispose()
 
 
-@pytest.mark.asyncio
 async def test_a_share_link_follows_the_session_as_it_runs(tmp_path: Path) -> None:
     store = SessionStore(tmp_path / "state")
     store.create(tmp_path, "cli", {}, session_id=SESSION_ID, title="live")
@@ -81,14 +83,8 @@ async def test_a_share_link_follows_the_session_as_it_runs(tmp_path: Path) -> No
     await server.start()
     url = server.session_url(SESSION_ID)
 
-    async with playwright_api.async_playwright() as driver:
-        try:
-            browser = await driver.chromium.launch(headless=True)
-        except Exception as exc:  # pragma: no cover - depends on the local install
-            await server.stop()
-            pytest.skip(f"chromium is not installed for playwright: {exc}")
-        try:
-            page = await browser.new_page()
+    try:
+        async with player_page() as page:
             errors: list[str] = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             async with page.expect_websocket() as attached_socket:
@@ -139,14 +135,12 @@ async def test_a_share_link_follows_the_session_as_it_runs(tmp_path: Path) -> No
             await page.click("#live")
             caught_up = await _wait_for(page, "snap => snap.text.includes('Missed while reading.')")
             assert caught_up["liveState"] == "following"
-        finally:
-            await browser.close()
-            await server.stop()
+    finally:
+        await server.stop()
 
     assert not errors, f"the player raised: {errors}"
 
 
-@pytest.mark.asyncio
 async def test_a_finished_session_opens_at_the_start_and_does_not_claim_to_be_live(tmp_path: Path) -> None:
     store = SessionStore(tmp_path / "state")
     store.create(tmp_path, "cli", {}, session_id=SESSION_ID, title="done")
@@ -158,20 +152,13 @@ async def test_a_finished_session_opens_at_the_start_and_does_not_claim_to_be_li
     server = ShareServer(store)
     await server.start()
 
-    async with playwright_api.async_playwright() as driver:
-        try:
-            browser = await driver.chromium.launch(headless=True)
-        except Exception as exc:  # pragma: no cover - depends on the local install
-            await server.stop()
-            pytest.skip(f"chromium is not installed for playwright: {exc}")
-        try:
-            page = await browser.new_page()
+    try:
+        async with player_page() as page:
             await page.goto(server.session_url(SESSION_ID))
             await page.wait_for_selector(".kc-entry")
             snapshot = await page.evaluate(_SNAPSHOT_JS)
-        finally:
-            await browser.close()
-            await server.stop()
+    finally:
+        await server.stop()
 
     # The socket stays attachable forever, so being attached is not evidence of
     # life. Nothing arrived, so the player must not offer to "jump to live", and
@@ -180,7 +167,6 @@ async def test_a_finished_session_opens_at_the_start_and_does_not_claim_to_be_li
     assert "Finished." not in snapshot["text"], "a closed session opens at the beginning"
 
 
-@pytest.mark.asyncio
 async def test_a_served_session_renders_an_image_from_the_artifact_endpoint(tmp_path: Path) -> None:
     """A shared link should show a screenshot, not a badge describing one.
 
@@ -220,14 +206,8 @@ async def test_a_served_session_renders_an_image_from_the_artifact_endpoint(tmp_
     await server.start()
     url = server.session_url(SESSION_ID)
 
-    async with playwright_api.async_playwright() as driver:
-        try:
-            browser = await driver.chromium.launch(headless=True)
-        except Exception as exc:  # pragma: no cover - depends on the local install
-            await server.stop()
-            pytest.skip(f"chromium is not installed for playwright: {exc}")
-        try:
-            page = await browser.new_page()
+    try:
+        async with player_page() as page:
             failed: list[str] = []
             page.on("requestfailed", lambda request: failed.append(request.url))
             await page.goto(url)
@@ -236,9 +216,8 @@ async def test_a_served_session_renders_an_image_from_the_artifact_endpoint(tmp_
                 "#scrub", "(el) => { el.value = el.max; el.dispatchEvent(new Event('input')); }"
             )
             shown = await _wait_for_image(page)
-        finally:
-            await browser.close()
-            await server.stop()
+    finally:
+        await server.stop()
 
     assert failed == [], f"the player requested something that 404'd: {failed}"
     assert shown is not None, "a served session still shows a badge where the image should be"
@@ -246,7 +225,6 @@ async def test_a_served_session_renders_an_image_from_the_artifact_endpoint(tmp_
     assert f"/api/sessions/{SESSION_ID}/artifacts/{ref.sha256}" in shown["src"]
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("live", [False, True], ids=["served-replay", "served-live"])
 async def test_user_images_load_and_fail_safely_in_served_sessions(tmp_path: Path, live: bool) -> None:
     png = base64.b64decode(
@@ -300,53 +278,45 @@ async def test_user_images_load_and_fail_safely_in_served_sessions(tmp_path: Pat
     await server.start()
     url = server.session_url(SESSION_ID)
     try:
-        async with playwright_api.async_playwright() as driver:
-            try:
-                browser = await driver.chromium.launch(headless=True)
-            except Exception as exc:  # pragma: no cover - depends on the local install
-                pytest.skip(f"chromium is not installed for playwright: {exc}")
-            try:
-                page = await browser.new_page(viewport={"width": 1200, "height": 1800})
-                requests: list[str] = []
-                responses: list[tuple[str, int]] = []
-                errors: list[str] = []
-                page.on("request", lambda request: requests.append(request.url))
-                page.on("response", lambda response: responses.append((response.url, response.status)))
-                page.on("pageerror", lambda error: errors.append(str(error)))
-                await page.goto(url)
-                await page.wait_for_selector(".kc-entry")
-                if live:
-                    attached = await _wait_for(page, "snap => snap.liveState === 'following'")
-                    assert attached["liveState"] == "following"
-                    for event in later:
-                        await events.append(event)
-                else:
-                    await page.eval_on_selector(
-                        "#scrub", "(el) => { el.value = el.max; el.dispatchEvent(new Event('input')); }"
-                    )
-                await page.wait_for_function(
-                    """() => {
+        async with player_page(viewport={"width": 1200, "height": 1800}) as page:
+            requests: list[str] = []
+            responses: list[tuple[str, int]] = []
+            errors: list[str] = []
+            page.on("request", lambda request: requests.append(request.url))
+            page.on("response", lambda response: responses.append((response.url, response.status)))
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            await page.goto(url)
+            await page.wait_for_selector(".kc-entry")
+            if live:
+                attached = await _wait_for(page, "snap => snap.liveState === 'following'")
+                assert attached["liveState"] == "following"
+                for event in later:
+                    await events.append(event)
+            else:
+                await page.eval_on_selector(
+                    "#scrub", "(el) => { el.value = el.max; el.dispatchEvent(new Event('input')); }"
+                )
+            await page.wait_for_function(
+                """() => {
                       const images = [...document.querySelectorAll('#transcript img')];
                       return images.length === 3 && images.every(img => img.complete && img.naturalWidth === 1)
                         && document.querySelectorAll('.kc-missing-image').length === 4;
                     }"""
-                )
-                users = page.locator('.kc-entry[data-kind="user"]')
-                assert await users.count() == 4
-                assert await users.nth(0).locator("img").count() == 2
-                assert await users.nth(1).locator("img").count() == 1
-                assert await users.nth(2).locator(".kc-missing-image").count() == 3
-                assert await users.nth(3).locator("img").count() == 0
-                assert not errors
-                assert all(request.startswith(url.split("/s/", 1)[0] + "/") for request in requests)
-                assert not any(
-                    "forbidden.invalid" in request or opaque.sha256 in request or text_ref.sha256 in request
-                    for request in requests
-                )
-                assert any(missing.sha256 in address and status == 410 for address, status in responses)
-                assert any(corrupt.sha256 in address and status == 200 for address, status in responses)
-            finally:
-                await browser.close()
+            )
+            users = page.locator('.kc-entry[data-kind="user"]')
+            assert await users.count() == 4
+            assert await users.nth(0).locator("img").count() == 2
+            assert await users.nth(1).locator("img").count() == 1
+            assert await users.nth(2).locator(".kc-missing-image").count() == 3
+            assert await users.nth(3).locator("img").count() == 0
+            assert not errors
+            assert all(request.startswith(url.split("/s/", 1)[0] + "/") for request in requests)
+            assert not any(
+                "forbidden.invalid" in request or opaque.sha256 in request or text_ref.sha256 in request
+                for request in requests
+            )
+            assert any(missing.sha256 in address and status == 410 for address, status in responses)
+            assert any(corrupt.sha256 in address and status == 200 for address, status in responses)
     finally:
         await server.stop()
 
@@ -366,7 +336,6 @@ async def _wait_for_image(page: Any, *, timeout: float = 10.0) -> Any:
         await handle.dispose()
 
 
-@pytest.mark.asyncio
 async def test_losing_the_network_stops_the_badge_claiming_to_be_live(tmp_path: Path) -> None:
     """A frozen transcript under a "LIVE" badge is the one lie it must not tell.
 
@@ -384,28 +353,20 @@ async def test_losing_the_network_stops_the_badge_claiming_to_be_live(tmp_path: 
     await server.start()
     url = server.session_url(SESSION_ID)
 
-    async with playwright_api.async_playwright() as driver:
-        try:
-            browser = await driver.chromium.launch(headless=True)
-        except Exception as exc:  # pragma: no cover - depends on the local install
-            await server.stop()
-            pytest.skip(f"chromium is not installed for playwright: {exc}")
-        try:
-            context = await browser.new_context()
-            page = await context.new_page()
+    try:
+        async with player_page() as page:
             await page.goto(url)
             await page.wait_for_selector(".kc-entry")
             attached = await _wait_for(page, "snap => snap.liveState === 'following'")
             assert attached["liveState"] == "following", "the player never attached its live stream"
 
-            await context.set_offline(True)
+            await page.context.set_offline(True)
             dropped = await _wait_for(page, "snap => snap.liveState !== 'following'")
             assert dropped["liveState"] == "detached", "an offline viewer was still told the session was live"
             assert "LIVE" not in dropped["live"]
 
-            await context.set_offline(False)
+            await page.context.set_offline(False)
             back = await _wait_for(page, "snap => snap.liveState === 'following'", timeout=15.0)
             assert back["liveState"] == "following", "the viewer never reattached after the network returned"
-        finally:
-            await browser.close()
-            await server.stop()
+    finally:
+        await server.stop()

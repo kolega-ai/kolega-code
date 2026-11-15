@@ -24,6 +24,7 @@ from kolega_code.session.inmemory import InMemoryArtifactStore
 from kolega_code.web import singlefile
 from kolega_code.web.bundle import export_bundle
 from kolega_code.web.singlefile import SingleFileError, build_single_file
+from tests.web._player_browser import player_page, shared_player_browser  # noqa: F401 - fixture registration
 
 SECRET = "sk-live-51H9xTOTALLYSECRETvalue0000"
 
@@ -155,10 +156,9 @@ def test_payload_cannot_break_out_of_its_script_tag() -> None:
 
 # --------------------------------------------------------------------- browser ---
 
-playwright_api = pytest.importorskip("playwright.async_api", reason="playwright is required for player tests")
 
-
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
+@pytest.mark.usefixtures("shared_player_browser")
 async def test_double_clicking_the_file_plays_the_replay(tmp_path: Path) -> None:
     """The end-to-end promise: a recipient opens the file and sees the session.
 
@@ -167,12 +167,7 @@ async def test_double_clicking_the_file_plays_the_replay(tmp_path: Path) -> None
     """
     await export_bundle(_session(), tmp_path / "replay.html", session_id="s1", title="shipped", single_file=True)
 
-    async with playwright_api.async_playwright() as driver:
-        try:
-            browser = await driver.chromium.launch()
-        except Exception as exc:  # pragma: no cover - environment without chromium
-            pytest.skip(f"chromium is unavailable: {exc}")
-        page = await browser.new_page()
+    async with player_page() as page:
         errors: list[str] = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.on("requestfailed", lambda request: errors.append(f"failed request: {request.url}"))
@@ -188,7 +183,6 @@ async def test_double_clicking_the_file_plays_the_replay(tmp_path: Path) -> None
 
         text = await page.eval_on_selector("#transcript", "node => node.textContent")
         banner = await page.eval_on_selector("#error", "node => node.textContent.trim()")
-        await browser.close()
 
     assert "ship the thing" in text
     assert "Done." in text

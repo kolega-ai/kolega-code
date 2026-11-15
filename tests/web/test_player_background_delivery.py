@@ -12,6 +12,7 @@ from kolega_code.events import AgentEvent, ArtifactRef
 from kolega_code.session.recording import _preview
 from kolega_code.web.bundle import export_bundle
 from tests.web.test_background_delivery_fold import DELIVERY, DELIVERY_EVENT, METADATA, WORKER
+from tests.web._player_browser import shared_player_browser  # noqa: F401 - fixture registration
 from tests.web.test_player_task_list import (
     SESSION_ID,
     _Recording,
@@ -25,7 +26,10 @@ from tests.web.test_player_task_list import (
     _static_url,
 )
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("isolated_cli_env")]
+pytestmark = [
+    pytest.mark.asyncio(loop_scope="module"),
+    pytest.mark.usefixtures("isolated_cli_env", "shared_player_browser"),
+]
 
 HOSTILE = (
     '<img src="https://background-delivery.invalid/image" onerror="globalThis.deliveryExecuted=true">\n'
