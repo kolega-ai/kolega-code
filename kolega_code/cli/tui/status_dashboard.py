@@ -83,11 +83,11 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         mode = state.mode.title()
         permission_mode = state.permission_mode.title()
         gigacode = "On" if state.gigacode_enabled else "Off"
-        turn_style = tui_state.turn_state_color(state.turn_state)
-        context_style = self._context_style(state.usage_percentage, state.compression_threshold)
+        turn_style = theme.textual_color(tui_state.turn_state_color(state.turn_state))
+        context_style = theme.textual_color(self._context_style(state.usage_percentage, state.compression_threshold))
 
         def label(text: str) -> str:
-            return theme.styled(text, Color.MUTED)
+            return theme.styled_textual(text, Color.MUTED)
 
         goal_line = ""
         if state.goal:
@@ -105,10 +105,10 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
                 f"{label('Context')}\n[{context_style}]{self._context_bar(state.usage_percentage)}[/] "
                 f"[bold {context_style}]{percentage}[/]\n"
                 f"{token_line}\n"
-                f"{theme.styled(threshold, Color.MUTED)}"
+                f"{theme.styled_textual(threshold, Color.MUTED)}"
             )
         if state.context_note:
-            note_style = self._context_note_style(state.alert_level)
+            note_style = theme.textual_color(self._context_note_style(state.alert_level))
             context_lines += f"\n[{note_style}]{escape(state.context_note)}[/{note_style}]"
 
         if state.is_compacting:
@@ -185,7 +185,7 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         session_line = f"Session: [bold]{self._format_token_count(total)}[/bold] tokens"
         if partial:
             # Turns journaled before accounting existed: totals are a floor.
-            session_line += theme.styled(" (partial)", Color.MUTED)
+            session_line += theme.styled_textual(" (partial)", Color.MUTED)
 
         split_line = (
             f"In {self._format_token_count(combined('input_tokens'))}"
@@ -199,7 +199,7 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         requests_line = f"Requests: {combined('requests'):,}"
         failed = combined("failed")
         if failed:
-            requests_line += " · " + theme.styled(f"{failed:,} failed", Color.ERROR)
+            requests_line += " · " + theme.styled_textual(f"{failed:,} failed", Color.ERROR)
 
         prior_costs = baseline.get("costs") or ({"complete": False} if baseline else {})
         cost_line = usage_cost_summary(prior_costs, getattr(live, "costs", None))
@@ -224,7 +224,7 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
 
     def _context_token_line(self, input_tokens: Optional[int], max_tokens: Optional[int]) -> str:
         if input_tokens is None or max_tokens is None:
-            return theme.styled(messages.STATUS_TOKENS_UNKNOWN, Color.MUTED)
+            return theme.styled_textual(messages.STATUS_TOKENS_UNKNOWN, Color.MUTED)
         return f"Tokens: {input_tokens:,} / {max_tokens:,}"
 
     def _compression_threshold_line(self, compression_threshold: Optional[float]) -> str:

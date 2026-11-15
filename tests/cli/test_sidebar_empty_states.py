@@ -199,5 +199,6 @@ async def test_context_distinguishes_unmeasured_from_zero_and_keeps_warnings(
         app._apply_compaction_status({"phase": "started", "message": "Compacting context"})
         dashboard = app._format_status_dashboard()
         assert "Context · Not measured" in dashboard
-        assert f"[{theme.Color.ERROR}]Context warning[/{theme.Color.ERROR}]" in dashboard
+        error_style = theme.textual_color(theme.Color.ERROR)
+        assert f"[{error_style}]Context warning[/{error_style}]" in dashboard
         assert "Compacting context" in dashboard

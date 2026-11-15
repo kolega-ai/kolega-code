@@ -38,6 +38,15 @@ def test_default_theme_uses_ansi_role_colors():
     assert theme.Color.TOOL == "bright_blue"
 
 
+def test_textual_markup_uses_the_spelling_textual_parses():
+    # Textual drops a Rich-spelled bright colour tag after a difflib scan over
+    # its colour table, so dashboard markup uses the ansi_ spelling instead.
+    assert theme.textual_color("bright_black") == "ansi_bright_black"
+    assert theme.textual_color("cyan") == "cyan"
+    assert theme.styled_textual("x", theme.Color.ERROR) == "[ansi_bright_red]x[/ansi_bright_red]"
+    assert theme.styled("x", theme.Color.ERROR) == "[bright_red]x[/bright_red]"
+
+
 def test_apply_theme_updates_color_log_levels_and_lazy_dicts():
     theme.apply_theme("Dracula")
     assert theme.Color.AGENT == "#ff79c6"
