@@ -6,13 +6,51 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.51.0 - 2026-11-15
+
+### Added
+
+- **New model support.** Google **Gemini 4 Hydrogen** (`gemini-4-hydrogen`) on
+  the native Google provider — unified 1M-token context window, 64K output,
+  multimodal vision input, and `low`/`medium`/`high`/`xhigh` thinking effort
+  (default `high`).
+- **Shared session presentation & ACP lifecycle events.** Sub-agent dispatch
+  and replay linking, task-list updates, token and cost usage accounting,
+  background delivery results, queued-input state, goal lifecycle state, and
+  plan-approval control requests now emit shared session presentation events
+  across frontends.
+
+### Changed
+
+- **Larger ChatGPT subscription context windows.** `gpt-6.1-sol` now uses a
+  500K-token default context window, and ChatGPT subscription models accept
+  `--context-window-tokens` overrides up to their 872K-token ceiling.
+- **Refreshed Ollama Cloud catalog.** Added `kimi-k3.1-pro` (1M context,
+  vision, thinking ladder) and removed retired models (`minimax-m2.7`,
+  `mistral-large-3:675b`, `nemotron-3-nano:30b`).
+- **Performance.** Google streaming and gateway reply assembly now accumulate
+  text in parts (linear time instead of quadratic string copying), web session
+  streams stop promptly when their viewer disconnects, terminal replay caps
+  logical lines per segment rather than per character, bright ANSI colours in
+  the TUI use Textual's native naming, and CLI startup defers `httpx` imports
+  until a request needs a client.
+
+### Fixed
+
+- Retried TUI scrollback expansion compensation when layout lags so scrolling
+  to the top no longer stalls partway through long session histories.
+- Settled request producers before usage shutdown and preserved string message
+  content in ATIF session exports.
+
 ### Security
 
-- Updated Soup Sieve, BeautifulSoup's selector engine, to 4.1. It fixes two
-  denial-of-service advisories in CSS selector matching over untrusted HTML
-  (CVE-2026-126190 / GHSA-mmhr-3c5m-f64f and CVE-2026-126192 /
-  GHSA-4j63-6c4x-wfg4). Soup Sieve 4 requires Python 3.11.5, which is now the
-  supported floor.
+- Updated `soupsieve` to 4.1 to address CSS selector denial-of-service
+  advisories (CVE-2026-126190 / GHSA-mmhr-3c5m-f64f and CVE-2026-126192 /
+  GHSA-4j63-6c4x-wfg4), raising the minimum supported Python version to
+  3.11.5.
+- Updated `opentelemetry-api` to 1.45.2 (with its lockstep SDK/exporter
+  packages) to address a traceparent header ReDoS advisory (CVE-2026-126360 /
+  GHSA-mf5v-w3w3-f6cg).
 
 ## 0.50.0 - 2026-11-10
 
