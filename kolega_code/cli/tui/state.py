@@ -185,7 +185,6 @@ class QueuedMessage:
 class SessionFileChange:
     """One UI-only file edit preview captured during the live TUI session."""
 
-    change_id: str
     index: int
     path: str
     preview: dict
