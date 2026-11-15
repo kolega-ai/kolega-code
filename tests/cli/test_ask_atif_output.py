@@ -2,6 +2,9 @@
 
 import base64
 import json
+from collections.abc import AsyncIterator
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -36,6 +39,60 @@ def test_saved_run_writes_a_validated_trajectory(tmp_path, capsys, monkeypatch, 
     assert trajectory.schema_version == "ATIF-v1.7"
     sources = [step.source for step in trajectory.steps]
     assert sources.count("agent") == 2
+    assert trajectory.extra is not None
+    assert trajectory.extra["kolega"]["status"]["outcome"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_run_ask_exports_literal_string_response_exactly(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    prompt = " \tQuestion 世界 👩🏽‍💻\r\n\nKeep whitespace. \n"
+    response = "\t Réponse 世界 👩🏽‍💻 e\u0301\r\n\n  Done.\t \n"
+
+    class LiteralStringAgent(SemanticAskFakeAgent):
+        async def process_message_stream(self, message: str, attachments: Any = None) -> AsyncIterator[dict[str, Any]]:
+            self.messages.append(message)
+            recorder = self.session_recorder
+            assert recorder is not None
+            user = Message(role="user", content=message)
+            assistant = self._settled_message(Message(role="assistant", content=response, stop_reason="end_turn"))
+            recorder.start_turn(user)
+            self.history.append(user)
+            recorder.record_assistant(assistant)
+            self.history.append(assistant)
+            recorder.finish_turn("completed")
+            yield {"type": "response", "content": response, "complete": True, "uuid": "literal-response"}
+
+    main_module, project = _setup(tmp_path, monkeypatch, LiteralStringAgent)
+    out = tmp_path / "trajectory.json"
+    args = main_module.parse_args(["ask", prompt, "--project", str(project), "--save", "--atif-output", str(out)])
+
+    assert await main_module._run_ask(args) == 0
+    captured = capsys.readouterr()
+    assert captured.out == response + "\n"
+    assert "Wrote ATIF trajectory" in captured.err
+    agent = SemanticAskFakeAgent.instances[-1]
+    assert agent.session_recorder is not None
+    journal = agent.session_recorder.journal
+    events = journal.read_events(repair_tail=False)
+    assert events[-1].event_type == "run.completed"
+    raw_user = next(event.payload["message"]["content"] for event in events if event.event_type == "turn.started")
+    raw_response = next(
+        event.payload["message"]["content"] for event in events if event.event_type == "assistant.message"
+    )
+    assert raw_user == prompt
+    assert raw_response == response
+    assert agent.history[-1].content == response
+
+    trajectory = _validate(out)
+    assert [(step.source, step.message) for step in trajectory.steps] == [
+        ("user", raw_user),
+        ("agent", raw_response),
+    ]
     assert trajectory.extra is not None
     assert trajectory.extra["kolega"]["status"]["outcome"] == "completed"
 

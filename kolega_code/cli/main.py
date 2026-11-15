@@ -2244,6 +2244,7 @@ async def _run_ask_owned(args: argparse.Namespace, tearing_down: asyncio.Event) 
             run_metadata=(
                 {"context_budget": budget_marker} if (budget_marker := strict_context_budget_marker(config)) else None
             ),
+            owner_task=asyncio.current_task(),
         )
         usage_sink = sink
         usage_ledger.observer = sink

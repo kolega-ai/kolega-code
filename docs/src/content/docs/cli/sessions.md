@@ -99,3 +99,8 @@ assets to `<output-stem>.assets/` with relative paths, atomically. Legacy (v1)
 sessions convert with explicit `conversion_warnings` in the document's
 `extra`. `ask --atif-output FILE` writes the same document directly at the end
 of a run — completed, failed, or cancelled, with or without `--save`.
+Plain-string user and assistant messages are exported like text blocks,
+preserving Unicode and whitespace subject to the same secret redaction.
+Text normalization is export-only; stored message content is unchanged.
+Reading a damaged journal can still repair an incomplete final line before
+conversion.
