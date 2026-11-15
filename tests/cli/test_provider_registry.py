@@ -255,10 +255,29 @@ def test_google_models_include_38_and_use_it_as_default() -> None:
 
 
 @pytest.mark.parametrize(
-    "provider,model,label,efforts,context,output,default_model",
+    "provider,model,label,efforts,default_effort,context,output,default_model",
     [
-        ("google", "gemini-4-argon", "Gemini 4 Argon", ("low", "medium", "high"), 1048576, 65536, "gemini-3.8-flash"),
-        ("xai", "grok-4.7", "Grok 4.7", ("low", "medium", "high", "xhigh"), 500000, 32768, "grok-4.5"),
+        (
+            "google",
+            "gemini-4-argon",
+            "Gemini 4 Argon",
+            ("low", "medium", "high"),
+            "medium",
+            1048576,
+            65536,
+            "gemini-3.8-flash",
+        ),
+        (
+            "google",
+            "gemini-4-hydrogen",
+            "Gemini 4 Hydrogen",
+            ("low", "medium", "high", "xhigh"),
+            "high",
+            1048576,
+            65536,
+            "gemini-3.8-flash",
+        ),
+        ("xai", "grok-4.7", "Grok 4.7", ("low", "medium", "high", "xhigh"), "medium", 500000, 32768, "grok-4.5"),
     ],
 )
 def test_latest_native_models_are_selectable_without_changing_provider_defaults(
@@ -266,11 +285,12 @@ def test_latest_native_models_are_selectable_without_changing_provider_defaults(
     model: str,
     label: str,
     efforts: tuple[str, ...],
+    default_effort: str,
     context: int,
     output: int,
     default_model: str,
 ) -> None:
-    assert ui_model_options(provider)[-1] == (label, model)
+    assert (label, model) in ui_model_options(provider)
     assert dict(ui_model_options(provider, vision_only=True))[label] == model
     assert default_model_for_provider(ModelProvider(provider)) == default_model
     option = get_ui_model(provider, model)
@@ -279,7 +299,7 @@ def test_latest_native_models_are_selectable_without_changing_provider_defaults(
     assert option.context_length == context
     assert option.max_completion_tokens == output
     assert option.thinking_efforts == efforts
-    assert option.default_thinking_effort == "medium"
+    assert option.default_thinking_effort == default_effort
     assert [value for _label, value in ui_thinking_effort_options(provider, model)] == list(efforts)
 
 

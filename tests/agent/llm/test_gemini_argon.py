@@ -26,7 +26,7 @@ def test_argon_catalog_specs() -> None:
 
 
 def test_argon_is_appended_without_reordering_existing_models() -> None:
-    assert list(GOOGLE_SPECS) == [
+    assert list(GOOGLE_SPECS)[:7] == [
         ("google", "gemini-3.8-flash"),
         ("google", "gemini-3.7-flash"),
         ("google", "gemini-3.6-flash"),

@@ -1,4 +1,5 @@
 import base64
+import warnings
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
@@ -38,11 +39,55 @@ class _FakeGoogleModels:
         return self.stream
 
 
+@pytest.mark.filterwarnings("error::UserWarning")
+def test_google_xhigh_compatibility_restores_warning_filters() -> None:
+    provider = GoogleProvider(api_key="test-key")
+    original_filters = list(warnings.filters)
+
+    config = provider._prepare_thinking_config("gemini-4-hydrogen", GenerationParams(thinking="xhigh"))
+
+    assert config is not None
+    assert config.model_dump(exclude_none=True)["thinking_level"].lower() == "xhigh"
+    assert warnings.filters == original_filters
+
+
+@pytest.mark.filterwarnings("error::UserWarning")
+@pytest.mark.parametrize(
+    "message,warning_module",
+    [
+        ("Unrelated SDK warning", "google.genai"),
+        ("xhigh is not a valid ThinkingLevel", __name__),
+    ],
+)
+def test_google_xhigh_compatibility_does_not_hide_unrelated_warnings(
+    monkeypatch: pytest.MonkeyPatch, message: str, warning_module: str
+) -> None:
+    provider = GoogleProvider(api_key="test-key")
+    original_config = genai_types.ThinkingConfig
+    original_filters = list(warnings.filters)
+
+    def warn_and_build_config(**kwargs: Any) -> genai_types.ThinkingConfig:
+        warnings.warn_explicit(message, UserWarning, filename=__file__, lineno=1, module=warning_module)
+        return original_config(**kwargs)
+
+    monkeypatch.setattr(genai_types, "ThinkingConfig", warn_and_build_config)
+
+    with pytest.raises(UserWarning, match=message):
+        provider._prepare_thinking_config("gemini-4-hydrogen", GenerationParams(thinking="xhigh"))
+
+    assert warnings.filters == original_filters
+
+
 @pytest.mark.asyncio
+@pytest.mark.filterwarnings("error::UserWarning")
 @pytest.mark.parametrize("method", ["generate", "stream"])
 @pytest.mark.parametrize(
     "model,thinking,expected_temperature",
     [
+        ("gemini-4-hydrogen", "low", None),
+        ("gemini-4-hydrogen", "medium", None),
+        ("gemini-4-hydrogen", "high", None),
+        ("gemini-4-hydrogen", "xhigh", None),
         ("gemini-4-argon", "low", None),
         ("gemini-4-argon", "medium", None),
         ("gemini-4-argon", "high", None),
@@ -110,10 +155,22 @@ async def test_google_request_config_respects_model_temperature_support(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model", ["gemini-3.8-flash", "gemini-4-argon"])
+@pytest.mark.filterwarnings("error::UserWarning")
+@pytest.mark.parametrize(
+    "model,thinking",
+    [
+        ("gemini-3.8-flash", "medium"),
+        ("gemini-4-argon", "medium"),
+        ("gemini-4-hydrogen", "low"),
+        ("gemini-4-hydrogen", "medium"),
+        ("gemini-4-hydrogen", "high"),
+        ("gemini-4-hydrogen", "xhigh"),
+    ],
+)
 async def test_google_mldev_serializes_function_response_as_user_turn(
     monkeypatch: pytest.MonkeyPatch,
     model: str,
+    thinking: str,
 ) -> None:
     """Exercise the real 2.12.1 ML Dev request path for a complete tool-use round trip."""
 
@@ -152,7 +209,7 @@ async def test_google_mldev_serializes_function_response_as_user_turn(
     config = provider._prepare_generation_config(
         model,
         Message(role="system", content=[TextBlock(text="Be concise")]),
-        GenerationParams(temperature=0.7, max_completion_tokens=65536, thinking="medium"),
+        GenerationParams(temperature=0.7, max_completion_tokens=65536, thinking=thinking),
     )
     request = AsyncMock(return_value=genai_types.HttpResponse(headers={}, body="{}"))
     monkeypatch.setattr(client._api_client, "async_request", request)
@@ -171,10 +228,11 @@ async def test_google_mldev_serializes_function_response_as_user_turn(
     assert request_call is not None
     assert request_call.args[1] == f"models/{model}:generateContent"
     request_payload = cast(dict[str, Any], request_call.args[2])
-    assert request_payload["generationConfig"] == {
-        "maxOutputTokens": 65536,
-        # The pinned SDK retains this nested protobuf field's snake_case spelling.
-        "thinkingConfig": {"thinking_level": genai_types.ThinkingLevel.MEDIUM},
+    generation_config = request_payload["generationConfig"]
+    assert set(generation_config) == {"maxOutputTokens", "thinkingConfig"}
+    assert generation_config["maxOutputTokens"] == 65536
+    assert {key: value.lower() for key, value in generation_config["thinkingConfig"].items()} == {
+        "thinking_level": thinking
     }
     contents = cast(list[dict[str, Any]], request_payload["contents"])
 

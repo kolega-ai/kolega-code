@@ -148,6 +148,24 @@ output, leaving **983,040 input tokens**. The native GenerateContent integration
 uses bounded requests; Google's long-decode continuation and background
 Interactions workflows are not enabled.
 
+**Gemini 4 Hydrogen** (`gemini-4-hydrogen`) is available on the `google` provider.
+[Google released Hydrogen on November 12, 2026](https://aistudio.google.com/docs/changelog#11-12-2026).
+It supports image input and function calling, with `low`, `medium`, `high`, and
+the new `xhigh` thinking level. Unlike Argon, Hydrogen defaults to **`high`**;
+`minimal` and disabled thinking are not supported. Kolega omits temperature
+because Hydrogen ignores sampling controls.
+Its [1,048,576-token unified window](https://aistudio.google.com/docs/models/gemini-4-hydrogen)
+is shared by input, thinking, and output. Kolega reserves **65,536 tokens** for
+thinking and output, leaving **983,040 input tokens**. This bounded limit applies
+to streaming and non-streaming requests; long-decode continuation and background
+Interactions workflows are not enabled.
+
+[Standard paid API pricing](https://aistudio.google.com/docs/pricing#gemini-4-hydrogen)
+is **$1.50 input**, **$0.075 cached input**, and **$7.50 output** per million
+tokens, including thinking in output charges. Rates are flat across the full
+context window, with no announced promotional expiry. Caching is implicit only;
+explicit context caches are not supported. Google also offers a limited free tier.
+
 **Grok 4.7** (`grok-4.7`) is available on the `xai` provider, with image input,
 function calling, and `low`, `medium`, `high`, and `xhigh` reasoning efforts.
 [xAI released it on September 21, 2026](https://docs.x.ai/developers/release-notes).
@@ -158,11 +176,12 @@ includes input and output. Kolega reserves **32,768 output tokens**, leaving
 ceiling published by xAI. Grok 4.7 Fast is not available on the public xAI API;
 it is exclusive to Cursor and Grok Build and is not added to this catalog.
 
-Both are available in the main, Fast, per-agent, and vision model selectors.
-Adding them does not change existing provider defaults. To select either:
+All three are available in the main, Fast, per-agent, and vision model selectors.
+Adding them does not change existing provider defaults. To select one:
 
 ```bash
 kolega-code . --provider google --model gemini-4-argon
+kolega-code . --provider google --model gemini-4-hydrogen
 kolega-code . --provider xai --model grok-4.7
 ```
 
@@ -715,6 +734,7 @@ models in the TUI.
 | Google `gemini-3.5-flash` | `minimal`, `low`, `medium`, `high` | `medium` |
 | Google `gemini-3.1-pro-preview` | `low`, `medium`, `high` | `high` |
 | Google `gemini-4-argon` | `low`, `medium`, `high` | `medium` |
+| Google `gemini-4-hydrogen` | `low`, `medium`, `high`, `xhigh` | `high` |
 | OpenAI / ChatGPT `gpt-6-astra` | `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | OpenAI / ChatGPT `gpt-6-sol`, `gpt-6-luna` | `none`, `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | OpenAI / ChatGPT `gpt-6.1-sol` | `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
