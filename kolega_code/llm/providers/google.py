@@ -1,3 +1,4 @@
+import warnings
 from typing import Any, AsyncContextManager, List, Optional, cast
 
 from google.genai import Client as genai_client
@@ -128,14 +129,24 @@ class GoogleProvider(BaseLLMProvider):
         """Get retry decorator with configured max retries"""
         return self.get_retry_decorator()
 
-    def _prepare_thinking_config(self, model: str, params: Optional[GenerationParams]):
+    def _prepare_thinking_config(
+        self, model: str, params: Optional[GenerationParams]
+    ) -> Optional[genai_types.ThinkingConfig]:
         if not params or not params.thinking:
             return None
         request_params = build_thinking_request_params("google", model, params.thinking)
         thinking_config = request_params.get("thinking_config")
         if not thinking_config:
             return None
-        return genai_types.ThinkingConfig(**thinking_config)
+        # The pinned SDK's forward-compatible enum accepts xhigh but warns about its missing named member.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"^xhigh is not a valid ThinkingLevel$",
+                category=UserWarning,
+                module=r"google\.genai(?:\.|$)",
+            )
+            return genai_types.ThinkingConfig(**thinking_config)
 
     def _prepare_generation_config(
         self,

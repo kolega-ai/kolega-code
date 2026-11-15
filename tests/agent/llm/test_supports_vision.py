@@ -43,6 +43,7 @@ def test_supports_vision_flag_present_on_every_entry():
         ("google", "gemini-3.5-flash", True),
         ("google", "gemini-3.1-pro-preview", True),
         ("google", "gemini-4-argon", True),
+        ("google", "gemini-4-hydrogen", True),
         ("moonshot", "kimi-k3", True),
         ("moonshot", "kimi-k3.1-pro", True),
         ("moonshot", "kimi-k3.1-pro-highspeed", True),

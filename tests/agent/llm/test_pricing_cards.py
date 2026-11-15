@@ -128,6 +128,32 @@ def test_google_promotional_expiry_has_documented_regular_rate(stamp: str, rate:
     assert Decimal(result["amount"]) == Decimal(100) * Decimal(rate) / 1_000_000
 
 
+@pytest.mark.parametrize(
+    ("tier", "amount"),
+    [("standard", "0.000243"), ("batch", "0.0001215"), ("flex", "0.0001215"), ("priority", "0.0004374")],
+)
+def test_google_hydrogen_pricing_includes_cached_input_and_output(tier: str, amount: str) -> None:
+    result = _estimate(
+        "google",
+        "gemini-4-hydrogen",
+        input_tokens=100,
+        output_tokens=20,
+        read=40,
+        service_tier=tier,
+        requested_at="2026-11-15T00:00:00Z",
+    )
+    assert result["complete"], result
+    assert result["amount"] == amount
+
+
+@pytest.mark.parametrize("count", [100, 200001, 983040])
+@pytest.mark.parametrize("stamp", ["2026-11-15T00:00:00Z", "2026-12-01T00:00:00Z", "2027-01-01T00:00:00Z"])
+def test_google_hydrogen_has_no_long_context_premium_or_promotional_expiry(count: int, stamp: str) -> None:
+    result = _estimate("google", "gemini-4-hydrogen", input_tokens=count, requested_at=stamp)
+    assert result["complete"], result
+    assert Decimal(result["amount"]) == Decimal(count) * Decimal("1.5") / 1_000_000
+
+
 def test_chatgpt_credits_are_not_api_dollars_or_included_subscription_usage() -> None:
     result = _estimate("openai_chatgpt", "gpt-6-astra")
     assert result["denomination"] == "openai_codex_credits"
