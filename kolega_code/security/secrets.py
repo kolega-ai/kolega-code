@@ -17,51 +17,158 @@ class SecretFinding:
     end: int
 
 
-_PATTERNS: tuple[tuple[str, re.Pattern[str], str | None], ...] = (
-    (
+@dataclass(frozen=True, slots=True)
+class _PatternSpec:
+    """One detector plus the literal every match of it must contain.
+
+    The literal is checked before the regex runs: most text contains none of
+    them, and a failed ``in`` test costs a fraction of a full regex pass over a
+    tool result or exported session payload.
+    """
+
+    category: str
+    pattern: re.Pattern[str]
+    group: str | None = None
+    #: Every match contains one of these literals. ``folded`` literals are
+    #: lowercase and compared against ``text.casefold()``, which is what an
+    #: ``(?i)`` pattern can match; the others are compared case-sensitively.
+    needles: tuple[str, ...] = ()
+    folded: bool = False
+    #: Starts can be located by finding ``needles`` in an ASCII-lowercased copy
+    #: instead of letting the engine retry a keyword alternation at every
+    #: character of every word.
+    keyword_prefixed: bool = False
+
+
+_CREDENTIAL_KEYWORDS = (
+    "apikey",
+    "api_key",
+    "accesskey",
+    "access_key",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "privatekey",
+    "private_key",
+    "clientsecret",
+    "client_secret",
+)
+
+_PATTERNS: tuple[_PatternSpec, ...] = (
+    _PatternSpec(
         "private-key",
         re.compile(
             r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----.*?"
             r"-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----",
             re.DOTALL,
         ),
-        None,
+        needles=("-----BEGIN ",),
     ),
-    ("anthropic-token", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{8,}"), None),
-    ("api-token", re.compile(r"\b(?:sk|xai)-[A-Za-z0-9_-]{8,}"), None),
-    ("google-api-key", re.compile(r"\bAIza[A-Za-z0-9_-]{10,}"), None),
-    ("github-token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"), None),
-    ("aws-access-key", re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"), None),
-    ("slack-token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"), None),
-    ("npm-token", re.compile(r"\bnpm_[A-Za-z0-9]{20,}"), None),
-    ("cloudflare-token", re.compile(r"\bcf(?:ut|at|k)_[A-Za-z0-9]{40,}"), None),
-    (
+    _PatternSpec("anthropic-token", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{8,}"), needles=("sk-ant-",)),
+    _PatternSpec("api-token", re.compile(r"\b(?:sk|xai)-[A-Za-z0-9_-]{8,}"), needles=("sk-", "xai-")),
+    _PatternSpec("google-api-key", re.compile(r"\bAIza[A-Za-z0-9_-]{10,}"), needles=("AIza",)),
+    _PatternSpec(
+        "github-token",
+        re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
+        needles=("ghp_", "gho_", "ghu_", "ghs_", "ghr_"),
+    ),
+    _PatternSpec("aws-access-key", re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"), needles=("AKIA", "ASIA")),
+    _PatternSpec(
+        "slack-token",
+        re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"),
+        needles=("xoxb-", "xoxa-", "xoxp-", "xoxr-", "xoxs-"),
+    ),
+    _PatternSpec("npm-token", re.compile(r"\bnpm_[A-Za-z0-9]{20,}"), needles=("npm_",)),
+    _PatternSpec(
+        "cloudflare-token",
+        re.compile(r"\bcf(?:ut|at|k)_[A-Za-z0-9]{40,}"),
+        needles=("cfut_", "cfat_", "cfk_"),
+    ),
+    _PatternSpec(
         "authorization",
         re.compile(r"(?i)authorization\s*:\s*(?:bearer|basic)\s+(?P<value>\S+)"),
-        "value",
+        group="value",
+        needles=("authorization",),
+        folded=True,
     ),
-    ("api-key-header", re.compile(r"(?i)x-api-key\s*[:=]\s*(?P<value>\S+)"), "value"),
-    (
-        "credential-assignment",
+    _PatternSpec(
+        "api-key-header",
+        re.compile(r"(?i)x-api-key\s*[:=]\s*(?P<value>\S+)"),
+        group="value",
+        needles=("x-api-key",),
+        folded=True,
+    ),
+    _PatternSpec(
         # The unquoted alternative excludes backslash as well as quotes. Without
         # that, a secret sitting inside already-serialized JSON absorbs the
         # leading backslash of the following \" escape; replacing the span then
         # leaves a bare quote that terminates the JSON string and corrupts the
         # document. Real credentials do not contain backslashes, so excluding it
         # only ever shortens a match.
+        "credential-assignment",
         re.compile(
             r"(?im)\b[A-Za-z0-9_]*(?:API_?KEY|ACCESS_?KEY|TOKEN|SECRET|"
             r"PASSWORD|PASSWD|PRIVATE_?KEY|CLIENT_?SECRET)[A-Za-z0-9_]*\s*[=:]\s*"
             r"(?P<value>[^\s\"'\\]+|\"[^\"]+\"|'[^']+')"
         ),
-        "value",
+        group="value",
+        needles=_CREDENTIAL_KEYWORDS,
+        folded=True,
+        keyword_prefixed=True,
     ),
-    (
+    _PatternSpec(
         "credential-url",
         re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^/\s:@]+:(?P<value>[^@\s/]+)@"),
-        "value",
+        group="value",
+        needles=("://",),
     ),
 )
+
+
+def _is_word_char(char: str) -> bool:
+    return char.isalnum() or char == "_"
+
+
+def _keyword_prefixed_matches(spec: _PatternSpec, text: str) -> list[re.Match[str]]:
+    """Return the same matches as ``spec.pattern.finditer(text)``, found from the keyword.
+
+    ``\\b[A-Za-z0-9_]*(?:API_?KEY|...)`` makes the engine retry the keyword
+    alternation from every word character of every word. For ASCII text the
+    alternative can only match where its lowercase spelling occurs, so locating
+    those occurrences and matching once per containing word start yields the
+    same leftmost, non-overlapping spans for a fraction of the cost. Non-ASCII
+    text can fold into a keyword by a rule ``str.lower`` does not model, so it
+    keeps the plain scan.
+    """
+    if not text.isascii():
+        return list(spec.pattern.finditer(text))
+    lowered = text.lower()
+    starts: set[int] = set()
+    for needle in spec.needles:
+        index = lowered.find(needle)
+        while index >= 0:
+            start = index
+            while start and _is_word_char(lowered[start - 1]):
+                start -= 1
+            starts.add(start)
+            index = lowered.find(needle, index + 1)
+    matches: list[re.Match[str]] = []
+    end = 0
+    for start in sorted(starts):
+        if start < end:
+            continue
+        match = spec.pattern.match(text, start)
+        if match is not None:
+            matches.append(match)
+            end = match.end()
+    return matches
+
+
+def _iter_matches(spec: _PatternSpec, text: str) -> Iterable[re.Match[str]]:
+    if spec.keyword_prefixed:
+        return _keyword_prefixed_matches(spec, text)
+    return spec.pattern.finditer(text)
 
 
 def _environment_values() -> list[str]:
@@ -81,11 +188,24 @@ def detect_secrets(
 ) -> tuple[SecretFinding, ...]:
     """Return non-overlapping probable-secret spans and categories."""
     findings: list[SecretFinding] = []
-    for category, pattern, group in _PATTERNS:
-        for match in pattern.finditer(text):
-            start, end = match.span(group) if group else match.span()
+    folded: str | None = None
+    # `(?i)` matches an ASCII letter for U+0130 and U+0131, which `str.casefold`
+    # does not turn into that letter; such text skips the screen rather than
+    # risk screening out a real match.
+    screenable = "\u0130" not in text and "\u0131" not in text
+    for spec in _PATTERNS:
+        if spec.needles and screenable:
+            if spec.folded:
+                folded = folded if folded is not None else text.casefold()
+                haystack = folded
+            else:
+                haystack = text
+            if not any(needle in haystack for needle in spec.needles):
+                continue
+        for match in _iter_matches(spec, text):
+            start, end = match.span(spec.group) if spec.group else match.span()
             if end > start:
-                findings.append(SecretFinding(category, start, end))
+                findings.append(SecretFinding(spec.category, start, end))
     values = list(extra_values or [])
     if include_environment:
         values.extend(_environment_values())

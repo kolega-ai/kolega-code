@@ -7,12 +7,15 @@ backslash of a JSON ``\\"`` escape, leaving a bare quote behind.
 
 import json
 
+import pytest
+
 from kolega_code.security import (
     SECRET_PLACEHOLDER,
     detect_secrets,
     redact_secrets,
     redact_secrets_in_obj,
 )
+from kolega_code.security.secrets import _PATTERNS, _keyword_prefixed_matches
 
 # Obviously fake, but shaped like the real thing so the patterns fire.
 FAKE_TOKEN = "apify_api_9RtQv3LmZx8KpWn2Yc7BdF4HsJ6Tg1Ae0Nu5"
@@ -117,3 +120,73 @@ def test_quoted_credential_values_are_still_redacted():
     out = redact_secrets(text)
 
     assert "quotedsecretvalue123" not in out
+
+
+# Each detector is screened by a literal every match must contain. One sample
+# per category keeps that screen from silently dropping a whole shape.
+DETECTOR_SAMPLES = [
+    # Split so the repository's private-key pre-commit hook does not read the
+    # fixture itself as a leaked key.
+    ("private-key", "-----BEGIN RSA " + "PRIVATE KEY-----\nMIIEow\n-----END RSA " + "PRIVATE KEY-----"),
+    ("anthropic-token", "sk-ant-api03-abcdefgh12345678"),
+    ("api-token", "sk-proj-abcdefgh12345678"),
+    ("google-api-key", "AIzaSyA1234567890abcdef"),
+    ("github-token", "ghp_abcdefghijklmnopqrstuvwxyz"),
+    ("aws-access-key", "AKIAABCDEFGHIJKLMNOP"),
+    ("slack-token", "xoxb-1234567890-abcdefgh"),
+    ("npm-token", "npm_abcdefghijklmnopqrstuvwxyz"),
+    ("cloudflare-token", "cfut_abcdefghijklmnopqrstuvwxyz0123456789ABCD"),
+    ("authorization", "authorization: Bearer abcdefgh123"),
+    ("api-key-header", "x-api-key: abcdefgh123"),
+    ("credential-assignment", "API_KEY=supersecretvalue"),
+    ("credential-url", "postgres://user:hunter2@db.example.com/app"),
+]
+
+
+@pytest.mark.parametrize(("category", "text"), DETECTOR_SAMPLES)
+def test_every_detector_category_still_fires(category, text):
+    assert category in {finding.category for finding in detect_secrets(text)}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "MY_TOKEN='abc'",
+        "xTOKEN: y",
+        "foo=bartoken=1",
+        "PASSWORD\n=\n hunter2",
+        "private_key:\n  xxx",
+        "API_KEY_NAME = harmless",
+        "TOKEN",
+        "TOKEN=",
+        "éTOKEN=1",
+        "api__key=hunter2hunter2",
+        "a_token_b=1 token_c: 2",
+    ],
+)
+def test_keyword_prefixed_scan_matches_the_plain_regex(text):
+    """The screened scan must return the same spans as the pattern it replaces."""
+    spec = next(spec for spec in _PATTERNS if spec.keyword_prefixed)
+
+    expected = [(match.start(), match.end(), match.group("value")) for match in spec.pattern.finditer(text)]
+    actual = [(match.start(), match.end(), match.group("value")) for match in _keyword_prefixed_matches(spec, text)]
+
+    assert actual == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # `(?i)` folds these to plain ASCII letters, but `str.casefold` does not,
+        # so the letter screen must stand aside rather than miss the credential.
+        "PR\u0130VATE_KEY=hunter2hunter2",
+        "pr\u0131vate_key=hunter2hunter2",
+        "ap\u0130_key=hunter2hunter2",
+        # Long s folds to "s" under both, which the screen may assume.
+        "\u017fecret=hunter2hunter2",
+        "TO\u212aEN=hunter2hunter2",
+    ],
+)
+def test_case_folded_keywords_are_still_redacted(text):
+    assert "hunter2hunter2" not in redact_secrets(text)
+    assert SECRET_PLACEHOLDER in redact_secrets(text)
