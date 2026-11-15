@@ -645,10 +645,11 @@ def _validate_strict_context_budget_limits(
 ) -> None:
     """Validate a strict context-budget pair against one resolved model."""
     specs = get_model_specs(provider.value, model)
-    if window > specs["context_length"]:
+    max_context = specs.get("max_context_length", specs["context_length"])
+    if window > max_context:
         raise StrictContextBudgetError(
             f"--context-window-tokens ({window}) exceeds the catalogued context length "
-            f"({specs['context_length']}) for {provider.value}/{model}."
+            f"({max_context}) for {provider.value}/{model}."
         )
     if output > specs["max_completion_tokens"]:
         raise StrictContextBudgetError(

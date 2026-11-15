@@ -6,6 +6,19 @@ from kolega_code.llm.specs import (
     resolve_max_input_tokens,
     thinking_effort_options,
 )
+from kolega_code.llm.specs.validation import validate_model_spec
+
+
+@pytest.mark.parametrize("maximum", [True, 0, 999, 1000.0, "1200"])
+def test_invalid_max_context_length_rejected(maximum: object) -> None:
+    specs = {
+        "context_length": 1000,
+        "max_completion_tokens": 100,
+        "input_budget": "window_minus_output",
+        "max_context_length": maximum,
+    }
+    with pytest.raises(ValueError, match="max_context_length"):
+        validate_model_spec(specs)
 
 
 @pytest.mark.parametrize(
@@ -74,8 +87,6 @@ def test_gpt56_model_specs(provider, context_length, model):
 
 
 def test_openai_chatgpt_gpt55_context_length():
-    """GPT-5.5 on ChatGPT subscription is capped at 400K context by the Codex
-    backend, with 128K reserved for output → effective max input is ~272K."""
     specs = get_model_specs("openai_chatgpt", "gpt-5.5")
 
     assert specs["context_length"] == 400000
@@ -102,12 +113,13 @@ def test_gpt6_sol_luna_model_specs(provider: str, context_length: int, model: st
     assert specs["thinking_effort"].mode == "openai_responses_reasoning"
 
 
-@pytest.mark.parametrize("provider,context_length", [("openai", 1050000), ("openai_chatgpt", 400000)])
+@pytest.mark.parametrize("provider,context_length", [("openai", 1050000), ("openai_chatgpt", 500000)])
 def test_gpt61_sol_model_specs(provider: str, context_length: int) -> None:
     specs = get_model_specs(provider, "gpt-6.1-sol")
 
     assert specs["context_length"] == context_length
     assert specs["max_completion_tokens"] == 128000
+    assert resolve_max_input_tokens(specs) == context_length - 128000
     assert specs["default_temperature"] == 1.0
     assert specs["supports_temperature"] is False
     assert specs["supports_vision"] is True

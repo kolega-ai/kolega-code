@@ -119,6 +119,55 @@ def test_valid_pair_resolves():
     )
 
 
+@pytest.mark.parametrize(
+    "model,default_window",
+    [
+        ("gpt-6-astra", 400000),
+        ("gpt-6-sol", 400000),
+        ("gpt-6-luna", 400000),
+        ("gpt-6.1-sol", 500000),
+        ("gpt-6.1-terra", 500000),
+        ("gpt-5.6-sol", 400000),
+        ("gpt-5.6-terra", 400000),
+        ("gpt-5.6-luna", 400000),
+    ],
+)
+def test_chatgpt_explicit_maximum_preserves_default(model: str, default_window: int) -> None:
+    from kolega_code.llm.specs import get_model_specs, resolve_max_input_tokens
+
+    specs = get_model_specs("openai_chatgpt", model)
+    assert specs["context_length"] == default_window
+    assert specs["max_context_length"] == 872000
+    assert specs["max_completion_tokens"] == 128000
+    assert resolve_max_input_tokens(specs) == default_window - 128000
+    assert _strict_context_budget(_overrides(None, None), ModelProvider.OPENAI_CHATGPT, model) == (None, None)
+    assert _strict_context_budget(_overrides("872000", "128000"), ModelProvider.OPENAI_CHATGPT, model) == (
+        872000,
+        128000,
+    )
+    with pytest.raises(CliConfigError, match="context length"):
+        _strict_context_budget(_overrides("872001", "128000"), ModelProvider.OPENAI_CHATGPT, model)
+    assert specs["context_length"] == default_window
+    assert resolve_max_input_tokens(specs) == default_window - 128000
+
+
+@pytest.mark.parametrize("has_maximum", [True, False])
+def test_optional_maximum_and_fallback(monkeypatch: pytest.MonkeyPatch, has_maximum: bool) -> None:
+    specs = {"context_length": 400000, "max_completion_tokens": 128000}
+    if has_maximum:
+        specs["max_context_length"] = 872000
+    monkeypatch.setattr("kolega_code.cli.config.get_model_specs", lambda provider, model: specs)
+    maximum = 872000 if has_maximum else 400000
+    assert _strict_context_budget(_overrides(str(maximum), "128000"), ModelProvider.ANTHROPIC, "synthetic") == (
+        maximum,
+        128000,
+    )
+    with pytest.raises(CliConfigError, match="context length"):
+        _strict_context_budget(_overrides(str(maximum + 1), "128000"), ModelProvider.ANTHROPIC, "synthetic")
+    with pytest.raises(CliConfigError, match="completion maximum"):
+        _strict_context_budget(_overrides(str(maximum), "128001"), ModelProvider.ANTHROPIC, "synthetic")
+
+
 # --- end to end -------------------------------------------------------------------
 
 

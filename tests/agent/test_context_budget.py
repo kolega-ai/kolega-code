@@ -45,6 +45,75 @@ def test_max_input_budget_is_window_minus_output(agent):
     assert agent.model_max_input_tokens == specs["context_length"] - specs["max_completion_tokens"]
 
 
+@pytest.mark.parametrize(
+    "window,output,primary_supports_maximum,valid",
+    [
+        (872000, 128000, True, True),
+        (872001, 128000, True, False),
+        (872000, 128001, True, False),
+        (872000, 128000, False, False),
+    ],
+)
+def test_strict_budget_uses_actual_primary_model(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, window: int, output: int, primary_supports_maximum: bool, valid: bool
+) -> None:
+    primary_specs = {
+        "context_length": 400000,
+        "max_completion_tokens": 128000,
+        "input_budget": "window_minus_output",
+    }
+    if primary_supports_maximum:
+        primary_specs["max_context_length"] = 872000
+    headline_specs = {**primary_specs, "max_context_length": 872000}
+    lookups = []
+
+    def get_specs(provider, model):
+        lookups.append(model)
+        return primary_specs if model == "actual-primary" else headline_specs
+
+    monkeypatch.setattr("kolega_code.agent.baseagent.get_model_specs", get_specs)
+    manager = Mock(spec=AgentConnectionManager)
+    manager.workspace_id = "test_workspace"
+    manager.send_message = AsyncMock()
+    config = Mock(spec=AgentConfig)
+    config.context_window_tokens = window
+    config.max_output_tokens = output
+    config.long_context_config = Mock(provider="anthropic", model="headline")
+    primary = Mock(provider="anthropic", model="actual-primary")
+    config.model_config_for_agent.return_value = primary
+    config.openai_api_key = "test_key"
+    config.anthropic_api_key = "test_key"
+    config.browser_use_headless = True
+    config.agent_models = {}
+    config.web_search_mode = "auto"
+    config.llm_client_kwargs.return_value = {}
+
+    def construct():
+        return CoderAgent(
+            project_path=str(tmp_path),
+            workspace_id="test_workspace",
+            thread_id=str(uuid.uuid4()),
+            connection_manager=manager,
+            config=config,
+            agent_mode=AgentMode.CLI,
+        )
+
+    if valid:
+        result = construct()
+        assert result.primary_model_config is primary
+        assert result.strict_context_budget is True
+        assert result.model_context_length == 872000
+        assert result.model_completion_tokens == 128000
+        assert result.model_max_input_tokens == 744000
+        assert not result.compressor.over_budget(706800, result.model_max_input_tokens)
+        assert result.compressor.over_budget(706801, result.model_max_input_tokens)
+        assert primary_specs["context_length"] == 400000
+    else:
+        with pytest.raises(ValueError, match="catalogued .* (length|maximum)"):
+            construct()
+    assert lookups == ["actual-primary"]
+
+
 @pytest.mark.asyncio
 async def test_gauge_denominates_on_input_budget(agent, monkeypatch):
     from kolega_code.llm.providers.models import TokenCount

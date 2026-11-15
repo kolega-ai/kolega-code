@@ -12,6 +12,11 @@ def validate_model_spec(specs: Mapping[str, Any]) -> None:
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(f"{key} must be a positive integer")
 
+    if "max_context_length" in specs:
+        maximum = specs["max_context_length"]
+        if isinstance(maximum, bool) or not isinstance(maximum, int) or maximum < specs["context_length"]:
+            raise ValueError("max_context_length must be an integer no smaller than context_length")
+
     convention = specs.get("input_budget")
     if convention not in INPUT_BUDGET_CONVENTIONS:
         raise ValueError(f"missing or invalid input_budget (got {convention!r})")

@@ -349,8 +349,8 @@ def _add_common_model_args(parser: argparse.ArgumentParser) -> None:
         "--context-window-tokens",
         metavar="TOKENS",
         help="Total input-plus-output context-window limit for this process. "
-        "Must be used with --max-output-tokens; may lower but not exceed the "
-        "model's catalogued context length. Not persisted.",
+        "Must be used with --max-output-tokens; may not exceed the "
+        "model's catalogued maximum context length. Not persisted.",
     )
     parser.add_argument(
         "--max-output-tokens",
