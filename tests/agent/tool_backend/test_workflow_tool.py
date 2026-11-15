@@ -13,9 +13,21 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from kolega_code.agent.tool_backend.workflow_tool import WorkflowTool
+from kolega_code.agent.orchestration import runtime as runtime_module
 from kolega_code.agent.orchestration.accounting import AgentReservation, WorkflowRunAccounting
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider
 from kolega_code.events import AgentConnectionManager
+
+
+@pytest.fixture(autouse=True)
+def _instant_agent_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the production start-stagger: every dispatch here is an instant stub.
+
+    The runtime jitters each agent start by 0-0.75 s to de-synchronize real
+    provider bursts; with a stubbed ``dispatch_workflow_agent`` that delay is
+    pure wall-clock cost.
+    """
+    monkeypatch.setattr(runtime_module, "START_STAGGER_SECONDS", 0)
 
 
 @pytest.fixture
