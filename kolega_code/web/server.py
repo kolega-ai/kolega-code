@@ -18,6 +18,7 @@ require explicitly allowed origins.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import secrets
 from dataclasses import dataclass
@@ -243,13 +244,44 @@ def create_app(config: ServerConfig) -> FastAPI:
 
         await websocket.accept()
         store = _event_store(config, record.session_id)
+
+        async def pump_events() -> None:
+            try:
+                async with contextlib.aclosing(store.tail(record.session_id, from_seq=from_seq)) as stream:
+                    async for event in stream:
+                        await websocket.send_text(json.dumps(event.model_dump(mode="json"), separators=(",", ":")))
+            except WebSocketDisconnect:
+                return
+            except SessionStoreError as exc:
+                await websocket.close(code=4400, reason=str(exc)[:120])
+
+        pump = asyncio.create_task(pump_events())
+
+        async def watch_client() -> None:
+            # ASGI reports a closed peer only to receive(), and the tail loop only
+            # writes. Without a reader a viewer who closes the tab keeps its journal
+            # poller running, and leaves a task behind that a graceful server
+            # shutdown waits on indefinitely.
+            try:
+                while (await websocket.receive())["type"] != "websocket.disconnect":
+                    continue
+            except (WebSocketDisconnect, RuntimeError):
+                pass
+            pump.cancel()
+
+        watcher = asyncio.create_task(watch_client())
         try:
-            async for event in store.tail(record.session_id, from_seq=from_seq):
-                await websocket.send_text(json.dumps(event.model_dump(mode="json"), separators=(",", ":")))
-        except (WebSocketDisconnect, asyncio.CancelledError):
-            return
-        except SessionStoreError as exc:
-            await websocket.close(code=4400, reason=str(exc)[:120])
+            await pump
+        except asyncio.CancelledError:
+            # A viewer that left cancels the pump with no message; the server
+            # cancelling this handler must still propagate as a cancellation.
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise
+        finally:
+            for task in (pump, watcher):
+                task.cancel()
+            await asyncio.gather(pump, watcher, return_exceptions=True)
 
     # -- Artifacts ---------------------------------------------------------
 

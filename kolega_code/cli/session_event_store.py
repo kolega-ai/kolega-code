@@ -24,7 +24,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Collection, Optional
+from typing import Any, AsyncGenerator, Callable, Collection, Optional
 
 from kolega_code.events import AgentEvent, ArtifactRef, KnownEventType
 from kolega_code.session.store import (
@@ -230,7 +230,7 @@ class FileSessionEventStore(SessionEventStore):
             if seq >= from_seq and (to_seq is None or seq <= to_seq) and (types is None or event.event_type in types)
         ]
 
-    async def tail(self, session_id: str, *, from_seq: int = 1) -> AsyncIterator[AgentEvent]:
+    async def tail(self, session_id: str, *, from_seq: int = 1) -> AsyncGenerator[AgentEvent, None]:
         self._require_session(session_id)
         offset = 0
         next_seq = max(1, from_seq)
