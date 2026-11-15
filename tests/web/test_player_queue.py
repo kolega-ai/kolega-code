@@ -8,6 +8,7 @@ import pytest
 from playwright.async_api import Page, expect
 
 from kolega_code.web.bundle import export_bundle
+from tests.web._player_browser import shared_player_browser  # noqa: F401 - fixture registration
 from tests.web.test_player_task_list import (
     SESSION_ID,
     WORKER,
@@ -23,7 +24,10 @@ from tests.web.test_player_task_list import (
     _static_url,
 )
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("isolated_cli_env")]
+pytestmark = [
+    pytest.mark.asyncio(loop_scope="module"),
+    pytest.mark.usefixtures("isolated_cli_env", "shared_player_browser"),
+]
 
 QUEUE_EVENT = "queue_updated"
 CAVEAT = "Historical preview only — not recoverable pending input or semantic-delivery confirmation."

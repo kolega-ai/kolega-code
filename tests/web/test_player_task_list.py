@@ -9,15 +9,19 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from playwright.async_api import Page, async_playwright, expect
+from playwright.async_api import Page, expect
 
 from kolega_code.cli.session_event_store import FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.events import AgentEvent, KnownEventType
 from kolega_code.web.bundle import export_bundle
 from kolega_code.web.hosting import ShareServer
+from tests.web._player_browser import player_page, shared_player_browser  # noqa: F401 - registers the fixture
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("isolated_cli_env")]
+pytestmark = [
+    pytest.mark.asyncio(loop_scope="module"),
+    pytest.mark.usefixtures("isolated_cli_env", "shared_player_browser"),
+]
 
 SESSION_ID = "c" * 32
 TASK_EVENT = "task_list_updated"
@@ -89,16 +93,11 @@ async def _recording(directory: Path) -> _Recording:
 
 @asynccontextmanager
 async def _page() -> AsyncGenerator[Page, None]:
-    async with async_playwright() as driver:
-        browser = await driver.chromium.launch(headless=True)
-        try:
-            page = await browser.new_page(viewport={"width": 1200, "height": 1200})
-            errors: list[str] = []
-            page.on("pageerror", lambda error: errors.append(str(error)))
-            yield page
-            assert not errors, f"player pageerrors: {errors}"
-        finally:
-            await browser.close()
+    async with player_page(viewport={"width": 1200, "height": 1200}) as page:
+        errors: list[str] = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        yield page
+        assert not errors, f"player pageerrors: {errors}"
 
 
 async def _open(page: Page, url: str, *, live: bool = False) -> None:

@@ -9,6 +9,7 @@ from playwright.async_api import Page, expect
 
 from kolega_code.cli.session_usage import derive_session_usage
 from kolega_code.events import KnownEventType
+from tests.web._player_browser import shared_player_browser  # noqa: F401 - fixture registration
 from tests.web.test_player_task_list import (
     WORKER,
     _Recording,
@@ -20,7 +21,10 @@ from tests.web.test_player_task_list import (
     _served,
 )
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("isolated_cli_env")]
+pytestmark = [
+    pytest.mark.asyncio(loop_scope="module"),
+    pytest.mark.usefixtures("isolated_cli_env", "shared_player_browser"),
+]
 
 TOKEN_FIELDS = (
     "input_tokens",
