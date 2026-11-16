@@ -1012,9 +1012,9 @@ async def test_subprocess_creation_keeps_ownership_until_cleanup(
 
 _CHILD_READY = (
     "import json, os, signal, sys\n"
-    "def ready():\n"
+    "def ready(padding=0):\n"
     "    body = json.dumps({'method': 'test/ready'})\n"
-    "    sys.stdout.write(f'Content-Length: {len(body)}\\r\\n\\r\\n{body}')\n"
+    "    sys.stdout.write(f'Content-Length: {len(body)}\\r\\n\\r\\n{body}' + 'x' * padding)\n"
     "    sys.stdout.flush()\n"
 )
 
@@ -1039,16 +1039,16 @@ async def test_stop_escalates_term_resistant_child(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
-async def test_stop_drains_stdout_while_child_handles_term() -> None:
+@pytest.mark.parametrize("ready_padding", [0, 4 * 1024 * 1024], ids=["idle", "blocked-stdout-write"])
+async def test_stop_drains_stdout_while_child_handles_term(ready_padding: int) -> None:
     code = (
         _CHILD_READY + "def terminate(signum, frame):\n"
-        "    block = b'x' * 65536\n"
-        "    for _ in range(64):\n"
-        "        sys.stdout.buffer.write(block)\n"
-        "    sys.stdout.buffer.flush()\n"
+        "    block = memoryview(b'x' * (4 * 1024 * 1024))\n"
+        "    while block:\n"
+        "        block = block[os.write(sys.stdout.fileno(), block):]\n"
         "    sys.exit(0)\n"
         "signal.signal(signal.SIGTERM, terminate)\n"
-        "ready()\n"
+        f"ready({ready_padding})\n"
         "signal.pause()\n"
     )
     client = LspClient([sys.executable, "-c", code])
