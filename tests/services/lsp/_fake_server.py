@@ -14,6 +14,7 @@ Configurable via environment variables:
 - ``FAKE_LSP_STRICT_OPEN``: if ``"1"``, ignore didChange for unopened docs.
 - ``FAKE_LSP_SOURCE``: diagnostic/source label (default ``"fake-lsp"``).
 - ``FAKE_LSP_IGNORE_SHUTDOWN``: if ``"1"``, consume shutdown without replying.
+- ``FAKE_LSP_STDERR_BYTES``: no-newline stderr bytes to emit after initialization.
 """
 
 from __future__ import annotations
@@ -258,6 +259,12 @@ def handle_initialize(msg: dict) -> dict:
 
 
 def handle_initialized(msg: dict) -> None:
+    stderr_bytes = int(os.environ.get("FAKE_LSP_STDERR_BYTES", "0"))
+    while stderr_bytes > 0:
+        size = min(stderr_bytes, 65536)
+        sys.stderr.buffer.write(b"x" * size)
+        sys.stderr.buffer.flush()
+        stderr_bytes -= size
     # Send a workspace/configuration request to test server→client request handling
     write_message(
         {
@@ -572,6 +579,11 @@ def handle_incoming_message(msg: dict) -> bool:
         return True
 
     # Requests (have id → must respond)
+    if method == "test/stopReading":
+        write_message({"jsonrpc": "2.0", "id": msg_id, "result": True})
+        while True:
+            time.sleep(3600)
+
     if method == "shutdown" and _IGNORE_SHUTDOWN:
         return True
 

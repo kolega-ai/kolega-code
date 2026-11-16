@@ -492,9 +492,7 @@ class TestLspEditTool:
 
         result = await lsp_edit_tool._diagnostics_for_paths(("first.py", "second.py", "first.py"))
 
-        mock_lsp_manager.get_fresh_diagnostics_for_paths.assert_awaited_once_with(
-            {"first.py": "pyright", "second.py": "pyright"}
-        )
+        mock_lsp_manager.get_fresh_diagnostics_for_paths.assert_awaited_once_with(["first.py", "second.py"])
         assert result.index("first issue") < result.index("second issue")
 
     async def test_rename_preview_does_not_write_file(self, lsp_edit_tool, mock_lsp_manager, project_path):
@@ -544,6 +542,56 @@ class TestLspEditTool:
 
         assert result.startswith("Applied LSP edit `format_document`.")
         assert path.read_text(encoding="utf-8") == "x = 1\n"
+
+    async def test_post_mutation_diagnostic_failure_preserves_success(
+        self, lsp_edit_tool, mock_lsp_manager, project_path
+    ):
+        path = project_path / "foo.py"
+        path.write_text("x = 1   \n", encoding="utf-8")
+        mock_lsp_manager._config.auto_diagnostics_on_edit = True
+        mock_lsp_manager.get_fresh_diagnostics_for_paths = AsyncMock(side_effect=RuntimeError("unavailable"))
+        mock_lsp_manager.get_document_formatting.return_value = [
+            {
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 1, "character": 0}},
+                "newText": "x = 1\n",
+            }
+        ]
+        lsp_edit_tool.send_edit_preview = AsyncMock()
+
+        result = await lsp_edit_tool.lsp_edit(operation="format_document", path="foo.py")
+
+        assert result.startswith("Applied LSP edit `format_document`.")
+        assert path.read_text() == "x = 1\n"
+        lsp_edit_tool.send_edit_preview.assert_awaited_once()
+        mock_lsp_manager.get_fresh_diagnostics_for_paths.assert_awaited_once_with(["foo.py"])
+
+    async def test_diagnostics_filters_deleted_files_and_looks_up_labels_after_batch(
+        self, lsp_edit_tool, mock_lsp_manager, project_path
+    ):
+        (project_path / "exists.py").write_text("x = 1\n")
+        mock_lsp_manager._initialized = False
+        mock_lsp_manager._config.auto_diagnostics_on_edit = True
+        diagnostic = LspDiagnostic(
+            range={"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}},
+            severity=1,
+            message="fresh issue",
+        )
+
+        async def batch(paths: list[str]) -> dict[str, list[LspDiagnostic]]:
+            mock_lsp_manager._initialized = True
+            return {"exists.py": [diagnostic]}
+
+        def server(path: str) -> str:
+            assert mock_lsp_manager._initialized
+            return "pyright"
+
+        mock_lsp_manager.get_fresh_diagnostics_for_paths = AsyncMock(side_effect=batch)
+        mock_lsp_manager.server_for_path.side_effect = server
+        result = await lsp_edit_tool._diagnostics_for_paths(["deleted.py", "exists.py", "exists.py"])
+
+        assert "fresh issue" in result
+        mock_lsp_manager.get_fresh_diagnostics_for_paths.assert_awaited_once_with(["exists.py"])
+        mock_lsp_manager.initialize.assert_not_awaited()
 
     async def test_apply_code_action_selects_by_action_id(self, lsp_edit_tool, mock_lsp_manager, project_path):
         path = project_path / "foo.py"

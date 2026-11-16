@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
 from urllib.parse import unquote, urlparse
@@ -15,6 +16,9 @@ from kolega_code.services.lsp.edits import WorkspaceEditApplier, WorkspaceEditEr
 
 if TYPE_CHECKING:
     from kolega_code.services.snapshots import SnapshotService
+
+
+logger = logging.getLogger(__name__)
 
 
 class LspTool(BaseTool):
@@ -968,25 +972,25 @@ class LspEditTool(BaseTool):
 
     async def _diagnostics_for_paths(self, paths: list[str] | tuple[str, ...]) -> str:
         assert self._lsp_manager is not None
-        if not self._lsp_manager._config.auto_diagnostics_on_edit:
+        if not self._lsp_manager.enabled or not self._lsp_manager._config.auto_diagnostics_on_edit:
             return ""
-        servers: dict[str, str] = {}
-        for path in dict.fromkeys(paths):
-            if not path or not self.filesystem.exists(path) or self.filesystem.is_dir(path):
-                continue
-            server_name = self._lsp_manager.server_for_path(path)
-            if server_name is not None:
-                servers[path] = server_name
-        if not servers:
+        try:
+            surviving_paths = [
+                path
+                for path in dict.fromkeys(paths)
+                if path and self.filesystem.exists(path) and not self.filesystem.is_dir(path)
+            ]
+            if not surviving_paths:
+                return ""
+            results = await self._lsp_manager.get_fresh_diagnostics_for_paths(surviving_paths)
+            return "\n\n".join(
+                format_diagnostics(results[path], path, source=server_name)
+                for path in surviving_paths
+                if results.get(path) and (server_name := self._lsp_manager.server_for_path(path)) is not None
+            )
+        except Exception as exc:
+            logger.debug("Automatic LSP diagnostics unavailable: %s", exc)
             return ""
-
-        results = await self._lsp_manager.get_fresh_diagnostics_for_paths(servers)
-        lines: list[str] = []
-        for path, server_name in servers.items():
-            diagnostics = results.get(path, [])
-            if diagnostics:
-                lines.append(format_diagnostics(diagnostics, path, source=server_name))
-        return "\n\n".join(lines)
 
     def _first_blocked_path(self, paths: list[str] | tuple[str, ...]) -> Optional[str]:
         for path in paths:

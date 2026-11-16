@@ -12,7 +12,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from kolega_code.services.lsp.client import LspClientError, LspDiagnostic
+from kolega_code.services.lsp.client import LspClient, LspClientError, LspDiagnostic
+import kolega_code.services.lsp.manager as manager_module
 from kolega_code.services.lsp.config import LspConfig
 from kolega_code.services.lsp.diagnostics import dedupe_and_sort
 from kolega_code.services.lsp.detector import DetectionReport, DetectionResult, ResolvedLanguage
@@ -538,17 +539,22 @@ async def test_push_publish_releases_all_concurrent_waiters(manager: LspManager)
 async def test_fresh_diagnostics_batch_is_ordered_unique_bounded_and_isolates_failures(
     manager: LspManager,
 ):
+    manager._initialized = True
     active = 0
     max_active = 0
     calls: list[str] = []
+    admitted = asyncio.Event()
+    release = asyncio.Event()
 
     async def get_fresh(path: str) -> list[LspDiagnostic]:
         nonlocal active, max_active
         calls.append(path)
         active += 1
         max_active = max(max_active, active)
+        if active == 4:
+            admitted.set()
         try:
-            await asyncio.sleep(0.01)
+            await release.wait()
             if path == "bad.py":
                 raise RuntimeError("broken server")
             return [_make_diag(0, path)]
@@ -558,10 +564,356 @@ async def test_fresh_diagnostics_batch_is_ordered_unique_bounded_and_isolates_fa
     manager.get_fresh_diagnostics = get_fresh  # type: ignore[method-assign]
     paths = ["a.py", "b.py", "c.py", "d.py", "e.py", "bad.py", "a.py"]
 
-    results = await manager.get_fresh_diagnostics_for_paths(paths)
+    batch = asyncio.create_task(manager.get_fresh_diagnostics_for_paths(paths))
+    await asyncio.wait_for(admitted.wait(), 10)
+    release.set()
+    results = await asyncio.wait_for(batch, 10)
 
     assert list(results) == paths[:-1]
     assert calls.count("a.py") == 1
     assert max_active == 4
     assert results["a.py"][0].message == "a.py"
     assert results["bad.py"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked_on", ["lock", "detection"])
+async def test_batch_budget_includes_lazy_initialization(
+    manager: LspManager, monkeypatch: pytest.MonkeyPatch, blocked_on: str
+) -> None:
+    monkeypatch.setattr(manager_module, "_AUTO_DIAGNOSTICS_TIMEOUT_SECONDS", 0.05)
+    detection_cancelled = asyncio.Event()
+
+    async def detect(*args: object) -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            detection_cancelled.set()
+
+    monkeypatch.setattr(manager_module, "detect_languages", detect)
+    query = AsyncMock()
+    monkeypatch.setattr(manager, "get_fresh_diagnostics", query)
+    if blocked_on == "lock":
+        await manager._init_lock.acquire()
+    try:
+        result = await asyncio.wait_for(manager.get_fresh_diagnostics_for_paths(["a.py", "a.py"]), 10)
+    finally:
+        if manager._init_lock.locked():
+            manager._init_lock.release()
+
+    assert result == {"a.py": []}
+    assert not manager._initialized
+    query.assert_not_awaited()
+    assert detection_cancelled.is_set() == (blocked_on == "detection")
+
+
+@pytest.mark.asyncio
+async def test_batch_timeout_preserves_partial_results_and_settles_queued_work(
+    manager: LspManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager._initialized = True
+    monkeypatch.setattr(manager_module, "_AUTO_DIAGNOSTICS_TIMEOUT_SECONDS", 0.1)
+    active = 0
+    maximum = 0
+    settled: set[str] = set()
+    calls: list[str] = []
+
+    async def query(path: str) -> list[LspDiagnostic]:
+        nonlocal active, maximum
+        calls.append(path)
+        active += 1
+        maximum = max(maximum, active)
+        try:
+            if path.startswith("healthy"):
+                return [_make_diag(0, path)]
+            await asyncio.Event().wait()
+            return []
+        finally:
+            active -= 1
+            settled.add(path)
+
+    monkeypatch.setattr(manager, "get_fresh_diagnostics", query)
+    paths = ["stuck1", "stuck2", "stuck3", "healthy1", "healthy2", "stuck4", "queued", "healthy1"]
+    result = await asyncio.wait_for(manager.get_fresh_diagnostics_for_paths(paths), 10)
+
+    assert list(result) == paths[:-1]
+    assert result["healthy1"][0].message == "healthy1"
+    assert result["healthy2"][0].message == "healthy2"
+    assert result["queued"] == []
+    assert "queued" not in calls
+    assert maximum == 4
+    assert active == 0
+    assert settled == set(calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_batch_waits_for_cancelled_query_cleanup(
+    manager: LspManager, monkeypatch: pytest.MonkeyPatch, cancel: bool
+) -> None:
+    manager._initialized = True
+    monkeypatch.setattr(manager_module, "_AUTO_DIAGNOSTICS_TIMEOUT_SECONDS", 10 if cancel else 0.05)
+    started = asyncio.Event()
+    cleaning = asyncio.Event()
+    release = asyncio.Event()
+
+    async def query(path: str) -> list[LspDiagnostic]:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+            return []
+        finally:
+            cleaning.set()
+            await release.wait()
+
+    monkeypatch.setattr(manager, "get_fresh_diagnostics", query)
+    task = asyncio.create_task(manager.get_fresh_diagnostics_for_paths(["a.py"]))
+    await asyncio.wait_for(started.wait(), 10)
+    if cancel:
+        task.cancel()
+    await asyncio.wait_for(cleaning.wait(), 10)
+    assert not task.done()
+    release.set()
+    if cancel:
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 10)
+    else:
+        assert await asyncio.wait_for(task, 10) == {"a.py": []}
+
+
+def _startup_client() -> MagicMock:
+    client = MagicMock()
+    client.running = True
+    client.start = AsyncMock()
+    client.request = AsyncMock(return_value={"capabilities": {}})
+    client.notify = AsyncMock()
+    client.stop = AsyncMock()
+    return client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["start", "request", "notify"])
+async def test_startup_cancellation_settles_cleanup(
+    manager: LspManager, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    client = _startup_client()
+    monkeypatch.setattr(manager_module, "LspClient", lambda *args, **kwargs: client)
+    entered = asyncio.Event()
+    cleaning = asyncio.Event()
+    release = asyncio.Event()
+
+    async def block(*args: object, **kwargs: object) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    async def stop() -> None:
+        cleaning.set()
+        await release.wait()
+
+    getattr(client, stage).side_effect = block
+    client.stop.side_effect = stop
+    task = asyncio.create_task(manager._get_session("python", manager._resolved["python"]))
+    await asyncio.wait_for(entered.wait(), 10)
+    task.cancel()
+    await asyncio.wait_for(cleaning.wait(), 10)
+    assert manager._sessions["python"] is client
+    assert not task.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 10)
+    client.stop.assert_awaited_once()
+    assert manager._sessions == {}
+    assert manager._session_records == {}
+    assert manager._starting_sessions == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["start", "request", "notify"])
+async def test_startup_failure_retains_ownership_when_cleanup_fails(
+    manager: LspManager, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    client = _startup_client()
+    getattr(client, stage).side_effect = RuntimeError("startup failed")
+    client.stop.side_effect = LspClientError("cleanup failed")
+    monkeypatch.setattr(manager_module, "LspClient", lambda *args, **kwargs: client)
+
+    assert await asyncio.wait_for(manager._get_session("python", manager._resolved["python"]), 10) is None
+    assert manager._sessions["python"] is client
+    assert manager._session_records["python"].client is client
+    client.stop.assert_awaited_once()
+    assert manager._starting_sessions == {}
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_pending_start_and_rejects_new_starts(
+    manager: LspManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _startup_client()
+    constructor = MagicMock(return_value=client)
+    monkeypatch.setattr(manager_module, "LspClient", constructor)
+    entered = asyncio.Event()
+    cleaning = asyncio.Event()
+    release = asyncio.Event()
+
+    async def initialize(*args: object, **kwargs: object) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    async def stop() -> None:
+        cleaning.set()
+        await release.wait()
+
+    client.request.side_effect = initialize
+    client.stop.side_effect = stop
+    starting = asyncio.create_task(manager._get_session("python", manager._resolved["python"]))
+    await asyncio.wait_for(entered.wait(), 10)
+    shutdown = asyncio.create_task(manager.shutdown())
+    await asyncio.wait_for(cleaning.wait(), 10)
+    assert await manager._get_session("other", manager._resolved["python"]) is None
+    assert not shutdown.done()
+    release.set()
+    await asyncio.wait_for(shutdown, 10)
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(starting, 10)
+    constructor.assert_called_once()
+    assert manager._sessions == {}
+    assert manager._starting_sessions == {}
+
+
+@pytest.mark.asyncio
+async def test_shutdown_deadline_includes_blocked_exit(manager: LspManager, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(manager_module, "_LSP_SHUTDOWN_REQUEST_TIMEOUT_SECONDS", 0.05)
+    client = _startup_client()
+    exit_cancelled = asyncio.Event()
+
+    async def exit_notification(*args: object, **kwargs: object) -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            exit_cancelled.set()
+
+    client.notify.side_effect = exit_notification
+    manager._sessions["python"] = client
+    await asyncio.wait_for(manager.shutdown(), 10)
+
+    assert exit_cancelled.is_set()
+    client.stop.assert_awaited_once()
+    assert manager._sessions == {}
+
+
+@pytest.mark.asyncio
+async def test_shutdown_is_retained_through_caller_cancellation_and_stops_all_clients(manager: LspManager) -> None:
+    clients = [_startup_client(), _startup_client()]
+    both_cleaning = asyncio.Event()
+    release = asyncio.Event()
+    count = 0
+
+    async def stop() -> None:
+        nonlocal count
+        count += 1
+        if count == 2:
+            both_cleaning.set()
+        await release.wait()
+
+    for key, client in zip(("python", "extra"), clients):
+        client.stop.side_effect = stop
+        manager._sessions[key] = client
+    first = asyncio.create_task(manager.shutdown())
+    await asyncio.wait_for(both_cleaning.wait(), 10)
+    first.cancel()
+    second = asyncio.create_task(manager.shutdown())
+    assert not first.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(first, 10)
+    await asyncio.wait_for(second, 10)
+    await manager.shutdown()
+    for client in clients:
+        client.stop.assert_awaited_once()
+    assert manager._sessions == {}
+    assert manager._shutdown_task is not None and manager._shutdown_task.done()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_preserves_failed_cleanup_maps_and_settles_other_clients(manager: LspManager) -> None:
+    failed, healthy = _startup_client(), _startup_client()
+    failed.stop.side_effect = LspClientError("unreaped process")
+    manager._sessions.update(failed=failed, healthy=healthy)
+    manager._session_records.update(failed=MagicMock(), healthy=MagicMock())
+    manager._extra_sessions[("python", "failed")] = failed
+    manager._extra_sessions[("python", "healthy")] = healthy
+
+    await asyncio.wait_for(manager.shutdown(), 10)
+
+    assert manager._sessions == {"failed": failed}
+    assert set(manager._session_records) == {"failed"}
+    assert manager._extra_sessions == {("python", "failed"): failed}
+    healthy.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_restart_replaces_document_state_and_sends_did_open(
+    manager: LspManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = manager._project_path / "test.py"
+    path.write_text("value = 1\n")
+    uri = path.as_uri()
+    old = _startup_client()
+    old.running = False
+    manager._sessions["python"] = old
+    manager._session_records["python"] = _LspSession("python", "python", "pyright", old, manager._project_path.as_uri())
+    manager._session_records["python"].opened_docs[uri] = "python"
+    manager._session_records["python"].doc_versions[uri] = 7
+    manager._open_files[uri] = "python"
+    new = _startup_client()
+    monkeypatch.setattr(manager_module, "LspClient", lambda *args, **kwargs: new)
+
+    assert await asyncio.wait_for(manager._get_session("python", manager._resolved["python"]), 10) is new
+    await manager._ensure_document_open(new, uri, "test.py", "python", session_key="python")
+
+    old.stop.assert_awaited_once()
+    assert new.notify.await_args_list[-1].args[0] == "textDocument/didOpen"
+    assert new.notify.await_args_list[-1].args[1]["textDocument"]["version"] == 1
+    assert manager._session_records["python"].client is new
+
+
+@pytest.mark.asyncio
+async def test_shutdown_settles_start_semaphore_waiters_without_starting_clients(
+    manager: LspManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager._start_semaphore = asyncio.Semaphore(0)
+    queued = asyncio.Event()
+    original_start = manager._start_session
+
+    async def start(lang_id: str, rl: ResolvedLanguage, key: str, *, extra: bool) -> LspClient | None:
+        queued.set()
+        return await original_start(lang_id, rl, key, extra=extra)
+
+    monkeypatch.setattr(manager, "_start_session", start)
+    constructor = MagicMock()
+    monkeypatch.setattr(manager_module, "LspClient", constructor)
+    starting = asyncio.create_task(manager._get_session("python", manager._resolved["python"]))
+    await asyncio.wait_for(queued.wait(), 10)
+
+    await asyncio.wait_for(manager.shutdown(), 10)
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(starting, 10)
+    assert manager._sessions == {}
+    assert manager._starting_sessions == {}
+    constructor.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_rejects_session_lock_waiters(manager: LspManager, monkeypatch: pytest.MonkeyPatch) -> None:
+    constructor = MagicMock()
+    monkeypatch.setattr(manager_module, "LspClient", constructor)
+    lock = asyncio.Lock()
+    manager._session_locks["python"] = lock
+    await lock.acquire()
+    starting = asyncio.create_task(manager._get_session("python", manager._resolved["python"]))
+    try:
+        await asyncio.wait_for(manager.shutdown(), 10)
+    finally:
+        lock.release()
+    assert await asyncio.wait_for(starting, 10) is None
+    constructor.assert_not_called()

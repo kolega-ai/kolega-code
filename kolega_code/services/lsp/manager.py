@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 _MAX_CONCURRENT_STARTS = 4
 # Maximum concurrent diagnostics queries for a multi-file edit.
 _MAX_CONCURRENT_DIAGNOSTICS = 4
+_AUTO_DIAGNOSTICS_TIMEOUT_SECONDS = 5.0
 # Grace period for a language server to acknowledge shutdown before termination.
 _LSP_SHUTDOWN_REQUEST_TIMEOUT_SECONDS = 1.0
 
@@ -125,6 +126,9 @@ class LspManager:
         # Per-key locks serializing session creation (prevents the race where two
         # concurrent callers for the same language both spawn a subprocess).
         self._session_locks: dict[str, asyncio.Lock] = {}
+        self._starting_sessions: dict[str, asyncio.Task[Optional[LspClient]]] = {}
+        self._shutdown_task: Optional[asyncio.Task[None]] = None
+        self._shutting_down: bool = False
         # Caps concurrent server starts to avoid a thundering herd of subprocesses.
         self._start_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_STARTS)
         # Maps file URI to language_id for tracking open documents
@@ -378,16 +382,28 @@ class LspManager:
         unique_paths = tuple(dict.fromkeys(paths))
         semaphore = asyncio.Semaphore(_MAX_CONCURRENT_DIAGNOSTICS)
 
-        async def query(path: str) -> list[LspDiagnostic]:
+        results: dict[str, list[LspDiagnostic]] = {path: [] for path in unique_paths}
+        if not unique_paths or not self.enabled:
+            return results
+
+        async def query(path: str) -> None:
             async with semaphore:
                 try:
-                    return await self.get_fresh_diagnostics(path)
-                except Exception:
-                    logger.exception("Failed to get fresh LSP diagnostics for %s", path)
-                    return []
+                    results[path] = await self.get_fresh_diagnostics(path)
+                except Exception as exc:
+                    logger.debug("Fresh LSP diagnostics unavailable for %s: %s", path, exc)
 
-        results = await asyncio.gather(*(query(path) for path in unique_paths))
-        return dict(zip(unique_paths, results))
+        try:
+            async with asyncio.timeout(_AUTO_DIAGNOSTICS_TIMEOUT_SECONDS):
+                await self.initialize()
+                async with asyncio.TaskGroup() as group:
+                    for path in unique_paths:
+                        group.create_task(query(path))
+        except TimeoutError:
+            logger.debug("Automatic LSP diagnostics collection budget expired")
+        except Exception as exc:
+            logger.debug("Automatic LSP diagnostics unavailable: %s", exc)
+        return results
 
     # -- code intelligence ---------------------------------------
 
@@ -953,25 +969,53 @@ class LspManager:
     async def reload(self) -> list[str]:
         """Re-run detection and restart all sessions."""
         await self.shutdown()
+        if self._sessions:
+            raise LspClientError("Cannot reload LSP while session cleanup is incomplete")
+        self._shutdown_task = None
+        self._shutting_down = False
         self._initialized = False
         self.report = None
         return await self.initialize()
 
     async def shutdown(self) -> None:
         """Send ``shutdown`` + ``exit`` to all language servers and terminate them."""
-        for lang_id, client in list(self._sessions.items()):
+        if self._shutdown_task is None:
+            self._shutting_down = True
+            self._shutdown_task = asyncio.create_task(self._shutdown())
+        cancelled = False
+        while not self._shutdown_task.done():
             try:
-                if client.running:
-                    await client.request("shutdown", timeout=_LSP_SHUTDOWN_REQUEST_TIMEOUT_SECONDS)
-                    await client.notify("exit")
-            except Exception as exc:
+                await asyncio.shield(self._shutdown_task)
+            except asyncio.CancelledError:
+                cancelled = True
+        self._shutdown_task.result()
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _shutdown(self) -> None:
+        starts = tuple(self._starting_sessions.values())
+        for task in starts:
+            task.cancel()
+        await asyncio.gather(*starts, return_exceptions=True)
+
+        async def stop_session(lang_id: str, client: LspClient) -> None:
+            try:
+                async with asyncio.timeout(_LSP_SHUTDOWN_REQUEST_TIMEOUT_SECONDS):
+                    if client.running:
+                        await client.request("shutdown", timeout=_LSP_SHUTDOWN_REQUEST_TIMEOUT_SECONDS)
+                        await client.notify("exit")
+            except (Exception, asyncio.CancelledError) as exc:
                 logger.debug("Graceful shutdown failed for LSP session %s; forcing termination: %s", lang_id, exc)
             try:
                 await client.stop()
-            except Exception:
+            except (Exception, asyncio.CancelledError):
                 logger.exception("Error stopping LSP session for %s", lang_id)
-        self._sessions.clear()
-        self._session_records.clear()
+                return
+            self._forget_session(lang_id, client)
+
+        await asyncio.gather(*(stop_session(key, client) for key, client in tuple(self._sessions.items())))
+        if self._sessions:
+            return
         self._open_files.clear()
         self._diagnostics.clear()
         self._diag_waiters.clear()
@@ -980,6 +1024,14 @@ class LspManager:
         self._diag_versions.clear()
         self._registered_capabilities.clear()
         self._extra_sessions.clear()
+
+    def _forget_session(self, key: str, client: LspClient) -> None:
+        if self._sessions.get(key) is client:
+            self._sessions.pop(key)
+            self._session_records.pop(key, None)
+        for extra_key, extra_client in tuple(self._extra_sessions.items()):
+            if extra_client is client:
+                self._extra_sessions.pop(extra_key)
 
     def server_for_path(self, path: str) -> Optional[str]:
         """Return the server name used for *path*, or ``None`` if none available."""
@@ -1003,35 +1055,63 @@ class LspManager:
                 Use a compound key like ``"python:ruff-lsp"`` for extra diagnostic servers.
         """
         key = session_key or lang_id
+        if self._shutting_down:
+            return None
         # Serialize session creation per key so two concurrent callers for the
         # same language cannot both spawn + initialize a subprocess (the second
         # would overwrite the first client, orphaning its process).
         lock = self._session_locks.setdefault(key, asyncio.Lock())
         async with lock:
+            if self._shutting_down:
+                return None
             # Re-check after acquiring: another caller may have created it.
             if key in self._sessions:
                 client = self._sessions[key]
-                if client.running:
+                if client.running and client.status == "initialized":
                     return client
                 # Restart crashed session
                 await client.stop()
-                self._session_records.pop(key, None)
+                self._forget_session(key, client)
 
-            if not rl.server_bin:
+            if not rl.server_bin or self._shutting_down:
                 return None
 
-            cmd = [rl.server_bin] + list(rl.server_args)
-            client = LspClient(cmd, env=rl.env or None)
+            task = asyncio.create_task(self._start_session(lang_id, rl, key, extra=session_key is not None))
+            self._starting_sessions[key] = task
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                task.cancel()
+                while not task.done():
+                    try:
+                        await asyncio.shield(task)
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        break
+                if not task.cancelled():
+                    task.exception()
+                raise
+            finally:
+                self._starting_sessions.pop(key, None)
 
-            # Cap concurrent subprocess starts across all languages to avoid a
-            # thundering herd when many files are queried at once.
-            async with self._start_semaphore:
-                try:
-                    await client.start()
-                except Exception as exc:
-                    logger.warning("Failed to start LS %s for %s: %s", rl.server_name, lang_id, exc)
-                    client.last_error = str(exc)
-                    return None
+    async def _start_session(self, lang_id: str, rl: ResolvedLanguage, key: str, *, extra: bool) -> Optional[LspClient]:
+        async with self._start_semaphore:
+            if self._shutting_down:
+                return None
+            assert rl.server_bin is not None
+            client = LspClient([rl.server_bin, *rl.server_args], env=rl.env or None)
+            root_uri = _path_to_uri(self._project_path, str(self._project_path))
+            self._sessions[key] = client
+            self._session_records[key] = _LspSession(
+                key=key,
+                language_id=lang_id,
+                server_name=rl.server_name,
+                client=client,
+                root_uri=root_uri,
+            )
+            try:
+                await client.start()
 
                 # Register push-diagnostics handler
                 client.on_notification(
@@ -1042,43 +1122,35 @@ class LspManager:
                 # Register server→client request handlers
                 self._register_server_request_handlers(client, server_name=rl.server_name)
 
-                root_uri = _path_to_uri(self._project_path, str(self._project_path))
                 client.active_root = root_uri
-                record = _LspSession(
-                    key=key,
-                    language_id=lang_id,
-                    server_name=rl.server_name,
-                    client=client,
-                    root_uri=root_uri,
+
+                init_result = await client.request(
+                    "initialize",
+                    {
+                        "processId": client.server_pid,
+                        "rootUri": root_uri,
+                        "initializationOptions": rl.initialization_options or {},
+                        "capabilities": _CLIENT_CAPABILITIES,
+                        "workspaceFolders": [{"uri": root_uri, "name": "workspace"}],
+                    },
                 )
-
-                # LSP initialize handshake
+                await client.notify("initialized", {})
+                client.server_capabilities = init_result.get("capabilities") if isinstance(init_result, dict) else None
+                client.status = "initialized"
+            except BaseException as exc:
+                client.status = "error"
+                client.last_error = str(exc)
                 try:
-                    init_result = await client.request(
-                        "initialize",
-                        {
-                            "processId": client.server_pid,
-                            "rootUri": root_uri,
-                            "initializationOptions": rl.initialization_options or {},
-                            "capabilities": _CLIENT_CAPABILITIES,
-                            "workspaceFolders": [{"uri": root_uri, "name": "workspace"}],
-                        },
-                    )
-                    await client.notify("initialized", {})
-                    client.server_capabilities = (
-                        init_result.get("capabilities") if isinstance(init_result, dict) else None
-                    )
-                    client.status = "initialized"
-                except LspClientError as exc:
-                    logger.warning("LSP initialize failed for %s: %s", lang_id, exc)
-                    client.status = "error"
-                    client.last_error = str(exc)
                     await client.stop()
-                    return None
-
-            self._sessions[key] = client
-            self._session_records[key] = record
-            if session_key is not None:
+                except (Exception, asyncio.CancelledError):
+                    logger.exception("Error cleaning up failed LSP startup for %s", lang_id)
+                else:
+                    self._forget_session(key, client)
+                if not isinstance(exc, Exception):
+                    raise
+                logger.warning("LSP startup failed for %s: %s", lang_id, exc)
+                return None
+            if extra:
                 self._extra_sessions[(lang_id, rl.server_name)] = client
             logger.debug("LSP session started: %s (%s)", lang_id, rl.server_name)
             return client

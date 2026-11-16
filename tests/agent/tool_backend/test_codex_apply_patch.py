@@ -328,7 +328,29 @@ async def test_apply_patch_batches_diagnostics_for_surviving_files_in_change_ord
         )
     )
 
-    lsp_manager.get_fresh_diagnostics_for_paths.assert_awaited_once_with(
-        {"first.py": "pyright", "second.py": "pyright"}
-    )
+    lsp_manager.get_fresh_diagnostics_for_paths.assert_awaited_once_with(["first.py", "second.py"])
     assert result.index("first issue") < result.index("second issue")
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_diagnostic_failure_does_not_fail_applied_mutations(
+    tmp_path: Path, caller: Mock, config: AgentConfig
+) -> None:
+    manager = Mock()
+    manager.enabled = True
+    manager._config.auto_diagnostics_on_edit = True
+    manager.get_fresh_diagnostics_for_paths = AsyncMock(side_effect=RuntimeError("diagnostics unavailable"))
+    manager.initialize = AsyncMock(side_effect=AssertionError("initialization must be inside the batch budget"))
+    tool = EditTool(tmp_path, "workspace", "thread", AsyncMock(), config, caller, lsp_manager=manager)
+    tool.send_edit_preview = AsyncMock()
+
+    result = await tool.apply_patch(
+        patch("*** Add File: first.py", "+first = 1", "*** Add File: second.py", "+second = 2")
+    )
+
+    assert not result.startswith("Error")
+    assert (tmp_path / "first.py").read_text() == "first = 1\n"
+    assert (tmp_path / "second.py").read_text() == "second = 2\n"
+    assert tool.send_edit_preview.await_count == 2
+    manager.get_fresh_diagnostics_for_paths.assert_awaited_once_with(["first.py", "second.py"])
+    manager.initialize.assert_not_awaited()
