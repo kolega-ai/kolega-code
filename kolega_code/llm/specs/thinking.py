@@ -170,6 +170,7 @@ _REASONING_REPLAY_FIELDS: Dict[str, str] = {
     # Workers AI's field varies by model (Kimi K2.6+ emit ``reasoning``, older
     # models ``reasoning_content``), so echo whichever one the server emitted.
     "cloudflare_workers_ai": "auto",
+    "dashscope": "reasoning_content",
     "fireworks": "reasoning_content",
     "ollama_cloud": "reasoning",
     # OpenRouter emits reasoning as delta.reasoning and requires it echoed back on

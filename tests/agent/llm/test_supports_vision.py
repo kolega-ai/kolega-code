@@ -68,6 +68,7 @@ def test_supports_vision_flag_present_on_every_entry():
         ("thinking_machines", "thinkingmachines/Inkling", True),
         ("thinking_machines", "thinkingmachines/Inkling-Small", True),
         ("thinking_machines", "thinkingmachines/Inkling-2-Small", True),
+        ("dashscope", "qwen4-max", True),
         # Non-vision models
         ("deepseek", "deepseek-v4-pro", False),
         # Released Flash (V4.1), replacing the retired V4 Flash / Vision Exp ids; it is

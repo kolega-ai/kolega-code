@@ -503,3 +503,16 @@ def test_tinker_effort_request_params():
     # Effort values outside the documented Tinker set are rejected.
     with pytest.raises(ValueError, match="Unsupported thinking effort"):
         build_thinking_request_params("thinking_machines", "thinkingmachines/Inkling", "turbo")
+
+
+def test_dashscope_qwen4_max_model_specs() -> None:
+    specs = get_model_specs("dashscope", "qwen4-max")
+
+    assert specs["context_length"] == 1000000
+    assert specs["max_completion_tokens"] == 393216
+    assert specs["input_budget"] == "window_minus_output"
+    assert specs["default_temperature"] == 0.7
+    assert specs["supports_vision"] is True
+    assert specs["thinking_effort"].options == ("none", "low", "medium", "high", "xhigh", "max")
+    assert specs["thinking_effort"].default == "high"
+    assert specs["thinking_effort"].mode == "openai_reasoning_effort"

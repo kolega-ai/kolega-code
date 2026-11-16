@@ -253,6 +253,16 @@ def test_dashscope_implicit_cache_uses_regional_input_discount() -> None:
     assert not _estimate("dashscope", "qwen3-coder-flash", cache_ttl="5m")["complete"]
 
 
+def test_dashscope_qwen4_max_regional_pricing() -> None:
+    sg = _estimate("dashscope", "qwen4-max", input_tokens=100, output_tokens=20, read=40)
+    assert sg["complete"]
+    assert sg["amount"] == "0.000183"
+    eu = _estimate("dashscope", "qwen4-max", input_tokens=100, output_tokens=20, read=40, region="frankfurt")
+    assert eu["complete"]
+    assert eu["amount"] == "0.00017242"
+    assert not _estimate("dashscope", "qwen4-max", cache_ttl="5m")["complete"]
+
+
 def test_kimi_write_cache_partitions_are_not_an_additional_base_input_charge() -> None:
     result = _estimate(
         "moonshot",
