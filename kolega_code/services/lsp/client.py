@@ -15,6 +15,26 @@ from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
+_SEND_TIMEOUT_SECONDS = 30.0
+_TERMINATE_TIMEOUT_SECONDS = 3.0
+_KILL_TIMEOUT_SECONDS = 1.0
+
+
+async def _settle(task: asyncio.Task[None], *, cancelled: bool = False) -> None:
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+        except Exception:
+            break
+    if cancelled:
+        if not task.cancelled():
+            task.exception()
+        raise asyncio.CancelledError
+    task.result()
+
+
 # ---------------------------------------------------------------------------
 # subprocess environment policy
 # ---------------------------------------------------------------------------
@@ -115,6 +135,8 @@ class LspClient:
         self._notification_handlers: dict[str, list[Callable[[dict[str, Any]], None]]] = {}
         self._request_handlers: dict[str, Callable[[dict[str, Any]], Any]] = {}
         self._reader_task: Optional[asyncio.Task[None]] = None
+        self._start_task: Optional[asyncio.Task[None]] = None
+        self._stop_task: Optional[asyncio.Task[None]] = None
         self._lock = asyncio.Lock()
         self._running = False
 
@@ -133,51 +155,107 @@ class LspClient:
 
     async def start(self) -> None:
         """Launch the language server subprocess and begin reading messages."""
+        while self._stop_task is not None:
+            cleanup = self._stop_task
+            await _settle(cleanup)
+            if self._stop_task is cleanup:
+                self._stop_task = None
         if self._running:
             return
+        if self._start_task is None or self._start_task.done():
+            self._start_task = asyncio.create_task(self._start_process())
+        try:
+            await _settle(self._start_task)
+        except asyncio.CancelledError:
+            await _settle(self._begin_stop(), cancelled=True)
+            raise
 
+    async def _start_process(self) -> None:
         env = self._subprocess_env()
-
         self._proc = await asyncio.create_subprocess_exec(
             *self._command,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
             env=env or None,
         )
-        self._running = True
+        self._running = self._stop_task is None
         self.server_pid = self._proc.pid
         self.status = "starting"
         self._reader_task = asyncio.create_task(self._read_loop())
         logger.debug("LSP client started: %s (pid=%s)", self._command, self.server_pid)
 
     async def stop(self) -> None:
-        """Terminate the subprocess and cancel the reader task."""
+        await _settle(self._begin_stop())
+
+    def _begin_stop(self, error: Optional[str] = None) -> asyncio.Task[None]:
         self._running = False
-        self.status = "stopped"
-        if self._reader_task:
-            self._reader_task.cancel()
-            try:
-                await self._reader_task
-            except asyncio.CancelledError:
-                pass
-            self._reader_task = None
-
-        # Fail outstanding requests
-        for rid, fut in self._pending.items():
+        if error is not None:
+            self.last_error = error
+            self.status = "error"
+        for fut in self._pending.values():
             if not fut.done():
-                fut.set_exception(LspClientError("Language server stopped"))
+                fut.set_exception(LspClientError(error or "Language server stopped"))
         self._pending.clear()
+        if self._stop_task is None or (self._stop_task.done() and self._proc is not None):
+            self._stop_task = asyncio.create_task(self._stop_process())
+            self._stop_task.add_done_callback(self._report_stop_failure)
+        return self._stop_task
 
-        if self._proc and self._proc.returncode is None:
+    @staticmethod
+    def _report_stop_failure(task: asyncio.Task[None]) -> None:
+        if not task.cancelled() and (error := task.exception()) is not None:
+            logger.error("LSP cleanup failed: %s", error)
+
+    async def _stop_process(self) -> None:
+        if self._start_task is not None:
             try:
-                self._proc.terminate()
-                await asyncio.wait_for(self._proc.wait(), timeout=3)
-            except (ProcessLookupError, asyncio.TimeoutError):
-                self._proc.kill()
-                await self._proc.wait()
+                await _settle(self._start_task)
+            except Exception:
+                pass
+        self._running = False
+        if self._reader_task is not None:
+            self._reader_task.cancel()
+            await asyncio.gather(self._reader_task, return_exceptions=True)
+
+        proc = self._proc
+        if proc is not None:
+            drain = asyncio.create_task(self._drain_stdout(proc))
+            transport: asyncio.SubprocessTransport = getattr(proc, "_transport")
+            try:
+                if proc.returncode is None:
+                    try:
+                        proc.terminate()
+                    except ProcessLookupError:
+                        pass
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS)
+                except asyncio.TimeoutError:
+                    if proc.returncode is None:
+                        try:
+                            proc.kill()
+                        except ProcessLookupError:
+                            pass
+                    transport.close()
+                    await asyncio.wait_for(proc.wait(), timeout=_KILL_TIMEOUT_SECONDS)
+            except Exception as exc:
+                self.status = "error"
+                self.last_error = f"Language server cleanup failed: {exc}"
+                raise LspClientError(self.last_error) from exc
+            finally:
+                transport.close()
+                drain.cancel()
+                await asyncio.gather(drain, return_exceptions=True)
         self._proc = None
+        self._reader_task = None
+        self.status = "stopped"
         logger.debug("LSP client stopped: %s", self._command)
+
+    @staticmethod
+    async def _drain_stdout(proc: asyncio.subprocess.Process) -> None:
+        if proc.stdout is not None:
+            while await proc.stdout.read(65536):
+                pass
 
     # -- request / notification --------------------------------------------
 
@@ -187,28 +265,49 @@ class LspClient:
         Args:
             method: LSP method name.
             params: Request parameters (sent as ``params``).
-            timeout: Maximum seconds to wait for a response (default 30).
+            timeout: Maximum seconds for lock acquisition, send, and response (default 30).
         """
         if not self._running:
             raise LspClientError("Client not running")
-        async with self._lock:
-            rid = self._request_id = self._request_id + 1
-            payload = {"jsonrpc": "2.0", "id": rid, "method": method, "params": params if params is not None else {}}
-            fut: asyncio.Future[Any] = asyncio.get_event_loop().create_future()
-            self._pending[rid] = fut
-            await self._send(payload)
+        rid: Optional[int] = None
+        fut: Optional[asyncio.Future[Any]] = None
         try:
-            return await asyncio.wait_for(fut, timeout=timeout)
+            async with asyncio.timeout(timeout):
+                async with self._lock:
+                    if not self._running:
+                        raise LspClientError("Client not running")
+                    rid = self._request_id = self._request_id + 1
+                    payload = {
+                        "jsonrpc": "2.0",
+                        "id": rid,
+                        "method": method,
+                        "params": params if params is not None else {},
+                    }
+                    fut = asyncio.get_running_loop().create_future()
+                    self._pending[rid] = fut
+                    await self._send(payload)
+                return await fut
         except asyncio.TimeoutError:
-            self._pending.pop(rid, None)
-            raise LspClientError(f"Request '{method}' timed out after {timeout}s")
+            raise LspClientError(f"Request '{method}' timed out after {timeout}s") from None
+        finally:
+            if rid is not None:
+                self._pending.pop(rid, None)
+            if fut is not None:
+                if not fut.done():
+                    fut.cancel()
+                elif not fut.cancelled():
+                    fut.exception()
 
-    async def notify(self, method: str, params: Any = None) -> None:
+    async def notify(self, method: str, params: Any = None, *, timeout: float = 30) -> None:
         """Send a JSON-RPC notification (no response expected)."""
         if not self._running:
             raise LspClientError("Client not running")
         payload = {"jsonrpc": "2.0", "method": method, "params": params if params is not None else {}}
-        await self._send(payload)
+        try:
+            async with asyncio.timeout(timeout):
+                await self._send(payload)
+        except asyncio.TimeoutError:
+            raise LspClientError(f"Notification '{method}' timed out after {timeout}s") from None
 
     def on_notification(self, method: str, handler: Callable[[dict[str, Any]], None]) -> None:
         """Register a handler for server→client notifications."""
@@ -226,11 +325,23 @@ class LspClient:
     # -- internals ----------------------------------------------------------
 
     async def _send(self, payload: dict[str, Any]) -> None:
-        assert self._proc is not None and self._proc.stdin is not None
+        proc = self._proc
+        if not self._running or proc is None or proc.stdin is None:
+            raise LspClientError("Client not running")
         body = json.dumps(payload)
         header = f"Content-Length: {len(body)}\r\n\r\n"
-        self._proc.stdin.write((header + body).encode("utf-8"))
-        await self._proc.stdin.drain()
+        try:
+            async with asyncio.timeout(_SEND_TIMEOUT_SECONDS):
+                proc.stdin.write((header + body).encode("utf-8"))
+                await proc.stdin.drain()
+        except (asyncio.CancelledError, OSError, asyncio.TimeoutError) as exc:
+            error = "LSP send interrupted" if isinstance(exc, asyncio.CancelledError) else f"LSP send failed: {exc}"
+            cleanup = self._begin_stop(error if self._running else None)
+            if asyncio.current_task() is not self._reader_task:
+                await _settle(cleanup, cancelled=isinstance(exc, asyncio.CancelledError))
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            raise LspClientError(error) from exc
 
     async def _send_response(self, rid: Any, result: Any = None, error: Optional[dict[str, Any]] = None) -> None:
         """Send a JSON-RPC response to a server→client request."""
@@ -251,12 +362,14 @@ class LspClient:
                     break  # EOF
                 buffer += chunk
                 buffer = await self._process_buffer(buffer)
-        except (asyncio.CancelledError, ConnectionResetError, BrokenPipeError):
+        except asyncio.CancelledError:
             pass
-        except Exception:
+        except Exception as exc:
+            self._begin_stop(f"LSP reader failed: {exc}")
             logger.exception("LSP reader loop error")
         finally:
-            self._running = False
+            if self._running:
+                self._begin_stop("Language server closed stdout")
 
     async def _process_buffer(self, buffer: bytes) -> bytes:
         header_end = buffer.find(b"\r\n\r\n")
@@ -327,13 +440,14 @@ class LspClient:
             if handler is not None:
                 try:
                     result = handler(params)
-                    await self._send_response(rid, result=result)
                 except Exception as exc:
                     logger.exception("LSP request handler error for %s", method)
                     await self._send_response(
                         rid,
                         error={"code": -32603, "message": f"Internal error: {exc}"},
                     )
+                else:
+                    await self._send_response(rid, result=result)
             else:
                 # Method not found — respond so the server doesn't hang
                 await self._send_response(

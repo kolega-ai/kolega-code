@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -8,6 +9,9 @@ from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimi
 from kolega_code.agent.tool_backend.edit_tool import EditTool
 from kolega_code.sandbox.filesystem import SandboxFileSystem
 from kolega_code.services.file_system import LocalFileSystem
+from kolega_code.services.lsp import LspManager
+from kolega_code.services.snapshots import SnapshotService
+import kolega_code.services.lsp.manager as manager_module
 
 
 @pytest.fixture
@@ -546,7 +550,7 @@ def _make_mock_lsp_manager(*, auto_diagnostics_on_edit: bool, diagnostics=None) 
     manager._config.auto_diagnostics_on_edit = auto_diagnostics_on_edit
     manager._initialized = True
     manager.server_for_path = Mock(return_value="pyright")
-    manager.get_fresh_diagnostics = AsyncMock(return_value=diagnostics or [])
+    manager.get_fresh_diagnostics_for_paths = AsyncMock(return_value={"test.py": diagnostics or []})
     return manager
 
 
@@ -581,7 +585,7 @@ class TestEditToolLspDiagnostics:
         assert result == "Edited test.py"
         assert "LSP diagnostics" not in result
         # The diagnostics path is short-circuited before any LSP queries happen.
-        lsp_manager.get_fresh_diagnostics.assert_not_called()
+        lsp_manager.get_fresh_diagnostics_for_paths.assert_not_called()
 
     async def test_edit_queries_diagnostics_when_auto_diagnostics_enabled(
         self, project_path, mock_connection_manager, agent_config, mock_base_agent
@@ -599,4 +603,70 @@ class TestEditToolLspDiagnostics:
         # Mock returns empty diagnostics, so no diagnostics block is appended.
         assert "LSP diagnostics" not in result
         # But the manager WAS queried for fresh diagnostics.
-        lsp_manager.get_fresh_diagnostics.assert_awaited_once_with("test.py")
+        lsp_manager.get_fresh_diagnostics_for_paths.assert_awaited_once_with(["test.py"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["write", "edit", "claude_write", "claude_edit"])
+@pytest.mark.parametrize("outcome", ["timeout", "error", "cancel"])
+async def test_applied_edit_survives_optional_initialization_failure(
+    edit_tool: EditTool, project_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, outcome: str
+) -> None:
+    path = project_path / "test.py"
+    path.write_text("x = 1\n")
+    edit_tool.observe_read("test.py")
+    manager = LspManager(project_path)
+    edit_tool._lsp_manager = manager
+    monkeypatch.setattr(manager_module, "_AUTO_DIAGNOSTICS_TIMEOUT_SECONDS", 0.1 if outcome == "timeout" else 10)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    settled = asyncio.Event()
+
+    async def initialize() -> list[str]:
+        entered.set()
+        try:
+            await release.wait()
+            raise RuntimeError("detection unavailable")
+        finally:
+            settled.set()
+
+    monkeypatch.setattr(manager, "initialize", initialize)
+    preview = AsyncMock()
+    monkeypatch.setattr(edit_tool, "send_edit_preview", preview)
+    snapshots = SnapshotService(
+        project_path, "workspace", "thread", "session", edit_tool.filesystem, root=project_path / "state"
+    )
+    edit_tool._snapshot_service = snapshots
+    if operation == "edit":
+        mutation = edit_tool.edit("test.py", block("x = 1", "x = 2"))
+    elif operation == "claude_edit":
+        mutation = edit_tool.claude_edit("test.py", "x = 1", "x = 2")
+    else:
+        mutation = getattr(edit_tool, operation)("test.py", "x = 2\n")
+
+    with patch.object(edit_tool.filesystem, "write_text", wraps=edit_tool.filesystem.write_text) as write:
+        task = asyncio.create_task(mutation)
+        await asyncio.wait_for(entered.wait(), 10)
+        assert path.read_text() == "x = 2\n"
+        preview.assert_awaited_once()
+        write.assert_called_once()
+        assert edit_tool._read_versions["test.py"] == edit_tool._content_digest("x = 2\n")
+        assert len(snapshots.list_snapshots()) == 1
+        if outcome == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 10)
+        else:
+            if outcome == "error":
+                release.set()
+            expected = "Edited test.py" if operation.endswith("edit") else "Wrote test.py"
+            assert await asyncio.wait_for(task, 10) == expected
+        assert settled.is_set()
+        preview.assert_awaited_once()
+        write.assert_called_once()
+        assert path.read_text() == "x = 2\n"
+
+    record = snapshots.latest_snapshot()
+    assert record is not None
+    snapshots.restore_snapshot(record.snapshot_id)
+    assert path.read_text() == "x = 1\n"

@@ -18,6 +18,11 @@ permission prompts. `resolve` mutates files only when it applies a pending
 preview, so it is gated the same way. Kolega Code does not expose raw arbitrary
 LSP requests.
 
+Automatic post-edit diagnostics are best-effort. All files in an edit share a
+five-second collection budget, including lazy initialization, followed by bounded
+cleanup when needed. Unavailable diagnostics are omitted; this does not mean the
+edit failed, and an applied edit is not retried or rolled back.
+
 ## Enabling and disabling
 
 LSP can be turned off (or forced back on) at three levels, resolved as

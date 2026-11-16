@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from hashlib import sha256
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,9 @@ from .hashline_v2 import apply_hashline_edits, parse_edits
 if TYPE_CHECKING:
     from kolega_code.services.lsp import LspManager
     from kolega_code.services.snapshots import SnapshotService
+
+
+logger = logging.getLogger(__name__)
 
 
 _BLOCK_PATTERN = re.compile(r"<<<<<<< SEARCH\r?\n(.*?)\r?\n=======\r?\n(.*?)\r?\n>>>>>>> REPLACE", re.DOTALL)
@@ -895,32 +899,8 @@ class EditTool(BaseTool):
 
         Returns an empty string if LSP is unavailable, disabled, or produces no diagnostics.
         """
-        if self._lsp_manager is None or not self._lsp_manager.enabled:
-            return ""
-
-        if not self._lsp_manager._config.auto_diagnostics_on_edit:
-            return ""
-
-        if not self._lsp_manager._initialized:
-            await self._lsp_manager.initialize()
-
-        server_name = self._lsp_manager.server_for_path(path)
-        if server_name is None:
-            return ""
-
-        try:
-            diagnostics = await self._lsp_manager.get_fresh_diagnostics(path)
-        except Exception:
-            return ""
-
-        if not diagnostics:
-            return ""
-
-        from kolega_code.services.lsp import format_diagnostics
-
-        # Blank-line separator so the diagnostics block reads as a distinct section
-        # after the result line (e.g. "Edited foo.py\n\nLSP diagnostics (...)").
-        return "\n\n" + format_diagnostics(diagnostics, path, source=server_name)
+        diagnostics = await self._lsp_diagnostics_for_paths([path])
+        return "\n\n" + "\n\n".join(diagnostics) if diagnostics else ""
 
     async def _lsp_diagnostics_for_paths(self, paths: list[str]) -> list[str]:
         """Query and format post-edit diagnostics for multiple paths."""
@@ -928,26 +908,19 @@ class EditTool(BaseTool):
             return []
         if not self._lsp_manager._config.auto_diagnostics_on_edit:
             return []
-        if not self._lsp_manager._initialized:
-            await self._lsp_manager.initialize()
-
-        servers = {
-            path: server_name
-            for path in dict.fromkeys(paths)
-            if (server_name := self._lsp_manager.server_for_path(path)) is not None
-        }
-        if not servers:
+        unique_paths = list(dict.fromkeys(paths))
+        if not unique_paths:
             return []
 
         try:
-            results = await self._lsp_manager.get_fresh_diagnostics_for_paths(servers)
-        except Exception:
+            results = await self._lsp_manager.get_fresh_diagnostics_for_paths(unique_paths)
+            from kolega_code.services.lsp import format_diagnostics
+
+            return [
+                format_diagnostics(results[path], path, source=server_name)
+                for path in unique_paths
+                if results.get(path) and (server_name := self._lsp_manager.server_for_path(path)) is not None
+            ]
+        except Exception as exc:
+            logger.debug("Automatic LSP diagnostics unavailable: %s", exc)
             return []
-
-        from kolega_code.services.lsp import format_diagnostics
-
-        return [
-            format_diagnostics(results[path], path, source=server_name)
-            for path, server_name in servers.items()
-            if results.get(path)
-        ]
