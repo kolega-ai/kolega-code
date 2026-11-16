@@ -1041,15 +1041,19 @@ async def test_stop_escalates_term_resistant_child(monkeypatch: pytest.MonkeyPat
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ready_padding", [0, 4 * 1024 * 1024], ids=["idle", "blocked-stdout-write"])
 async def test_stop_drains_stdout_while_child_handles_term(ready_padding: int) -> None:
+    # Queue a wakeup if SIGTERM arrives immediately before the child's blocking read.
     code = (
         _CHILD_READY + "def terminate(signum, frame):\n"
         "    block = memoryview(b'x' * (4 * 1024 * 1024))\n"
         "    while block:\n"
         "        block = block[os.write(sys.stdout.fileno(), block):]\n"
         "    sys.exit(0)\n"
+        "wakeup_read, wakeup_write = os.pipe()\n"
+        "os.set_blocking(wakeup_write, False)\n"
+        "signal.set_wakeup_fd(wakeup_write)\n"
         "signal.signal(signal.SIGTERM, terminate)\n"
         f"ready({ready_padding})\n"
-        "signal.pause()\n"
+        "os.read(wakeup_read, 1)\n"
     )
     client = LspClient([sys.executable, "-c", code])
     ready = asyncio.Event()
