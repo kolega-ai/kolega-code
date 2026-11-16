@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11.5"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -21,16 +21,16 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P1W"
 
 [options.exclude-newer-package]
-brotli = "2026-10-23T00:00:00Z"
+setuptools = "2026-10-20T00:00:00Z"
 brotlicffi = "2026-10-23T00:00:00Z"
+pillow = "2026-10-17T00:00:00Z"
+brotli = "2026-10-23T00:00:00Z"
+pyasn1 = "2026-10-28T00:00:00Z"
+tinker-cookbook = "2026-10-28T00:00:00Z"
 certifi = "2026-10-21T00:00:00Z"
 cryptography = "2026-08-01T00:00:00Z"
-h2 = "2026-08-04T00:00:00Z"
-pillow = "2026-10-17T00:00:00Z"
-pyasn1 = "2026-10-28T00:00:00Z"
-setuptools = "2026-10-20T00:00:00Z"
 soupsieve = "2026-11-11T00:00:00Z"
-tinker-cookbook = "2026-10-28T00:00:00Z"
+h2 = "2026-08-04T00:00:00Z"
 
 [[package]]
 name = "agent-client-protocol"
@@ -1907,7 +1907,7 @@ wheels = [
 
 [[package]]
 name = "kolega-code"
-version = "0.51.0"
+version = "0.52.0"
 source = { editable = "." }
 dependencies = [
     { name = "agent-client-protocol" },
@@ -2220,7 +2220,7 @@ dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "onnxruntime", version = "1.19.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'darwin'" },
-    { name = "onnxruntime", version = "1.20.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.13.*' or (python_full_version < '3.13' and platform_machine != 'x86_64') or (python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'win32') or sys_platform == 'win32'" },
+    { name = "onnxruntime", version = "1.20.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.14' and platform_machine != 'x86_64') or (python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'darwin') or (python_full_version < '3.14' and sys_platform != 'darwin') or sys_platform == 'win32'" },
     { name = "onnxruntime", version = "1.27.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and sys_platform != 'win32'" },
     { name = "python-dotenv" },
 ]
@@ -3026,8 +3026,8 @@ resolution-markers = [
 dependencies = [
     { name = "coloredlogs" },
     { name = "flatbuffers" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and platform_machine != 'x86_64') or (python_full_version >= '3.14' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version < '3.12' and sys_platform == 'win32') or (python_full_version < '3.12' and sys_platform != 'darwin' and sys_platform != 'win32') or (python_full_version >= '3.14' and sys_platform != 'darwin' and sys_platform != 'win32')" },
-    { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and python_full_version < '3.14') or (python_full_version >= '3.14' and sys_platform == 'win32') or (platform_machine == 'x86_64' and sys_platform == 'darwin')" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and platform_machine != 'x86_64') or (python_full_version >= '3.14' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (python_full_version < '3.12' and sys_platform != 'darwin') or (python_full_version < '3.12' and sys_platform == 'win32') or (python_full_version >= '3.14' and sys_platform != 'darwin' and sys_platform != 'win32')" },
+    { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and python_full_version < '3.14' and platform_machine != 'x86_64') or (python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform != 'darwin') or (python_full_version >= '3.12' and sys_platform == 'win32') or (platform_machine == 'x86_64' and sys_platform == 'darwin')" },
     { name = "packaging" },
     { name = "protobuf" },
     { name = "sympy" },
