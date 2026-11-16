@@ -6,6 +6,24 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.52.0 - 2026-11-16
+
+### Added
+
+- **New model support.** Alibaba **Qwen 4 Max** (`qwen4-max` on DashScope,
+  `qwen/qwen4-max` on OpenRouter) — 1M-token context window, 393K output,
+  multimodal vision input, and `none`/`low`/`medium`/`high`/`xhigh`/`max`
+  thinking effort (`none`/`low`/`high`/`xhigh` on OpenRouter, default `high`).
+
+### Changed
+
+- **Refreshed OpenRouter catalog.** Updated to this week's rankings (297
+  tool-capable models, 21 featured) and current pricing and capability
+  metadata.
+- **Performance.** Secret redaction now pre-screens detectors by a required
+  literal before running regular expressions, speeding up redaction of large
+  tool outputs and transcripts with identical findings.
+
 ## 0.51.0 - 2026-11-15
 
 ### Added
