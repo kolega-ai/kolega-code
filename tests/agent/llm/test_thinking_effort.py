@@ -395,3 +395,13 @@ def test_kimi_k3_rejects_unsupported_thinking_effort() -> None:
 
     with pytest.raises(ValueError, match="Unsupported thinking effort"):
         client._prepare_thinking_param("high", model="kimi-k3")
+
+
+def test_dashscope_qwen4_max_reasoning_effort_and_replay() -> None:
+    from kolega_code.llm.specs.thinking import build_thinking_request_params, reasoning_replay_field
+
+    assert reasoning_replay_field("dashscope", "qwen4-max") == "reasoning_content"
+    assert build_thinking_request_params("dashscope", "qwen4-max", "high") == {"reasoning_effort": "high"}
+
+    client = LLMClient(provider="dashscope", api_key="test-key")
+    assert client._prepare_thinking_param("high", model="qwen4-max") == "high"

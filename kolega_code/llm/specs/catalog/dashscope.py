@@ -1,3 +1,5 @@
+from kolega_code.llm.specs.types import ThinkingEffortSpec
+
 # DashScope / Qwen models
 DASHSCOPE_SPECS = {
     ("dashscope", "qwen3-coder-plus"): {
@@ -276,6 +278,110 @@ DASHSCOPE_SPECS = {
                 "Implicit-cache hits cost 20% of regional input. Explicit 5-minute cache creation/hits "
                 "require their distinct write/read schedule; this implicit-cache card must not be applied "
                 "to explicit caching.",
+                "Singapore International pricing is not interchangeable with Global/China deployment scope.",
+            ],
+            "requires_schedule": True,
+        },
+    },
+    ("dashscope", "qwen4-max"): {
+        "context_length": 1000000,
+        "max_completion_tokens": 393216,
+        "input_budget": "window_minus_output",
+        "default_temperature": 0.7,
+        "supports_vision": True,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "xhigh", "max"),
+            default="high",
+            mode="openai_reasoning_effort",
+        ),
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "dashscope:qwen4-max:2026-11-16",
+            "provider": "dashscope",
+            "model": "qwen4-max",
+            "billing_model": "qwen4-max",
+            "status": "priced",
+            "billing_mode": "pay_as_you_go",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "checked_at": "2026-11-16",
+            "rates": {},
+            "default_context": {
+                "service_tier": "standard",
+                "region": "singapore",
+                "modality": "text",
+                "billing_surface": "api",
+                "cache_ttl": "implicit",
+            },
+            "sources": [
+                {
+                    "url": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
+                    "model_id": "qwen4-max",
+                    "checked_at": "2026-11-16",
+                },
+                {
+                    "url": "https://www.alibabacloud.com/help/en/model-studio/context-cache",
+                    "model_id": "qwen4-max",
+                    "checked_at": "2026-11-16",
+                },
+            ],
+            "conditions": {},
+            "schedules": [
+                {
+                    "id": "published-0",
+                    "mode": "whole_request",
+                    "when": {
+                        "region": "singapore",
+                        "service_tier": "standard",
+                        "cache_ttl": "implicit",
+                        "min_input_tokens": 0,
+                        "max_input_tokens": 1000000,
+                    },
+                    "rates": {"input": "1.5", "output": "4.5", "cache_read": "0.075"},
+                },
+                {
+                    "id": "published-1",
+                    "mode": "whole_request",
+                    "when": {
+                        "region": "beijing",
+                        "service_tier": "standard",
+                        "cache_ttl": "implicit",
+                        "min_input_tokens": 0,
+                        "max_input_tokens": 1000000,
+                    },
+                    "rates": {"input": "1.413", "output": "4.24", "cache_read": "0.071"},
+                },
+                {
+                    "id": "published-2",
+                    "mode": "whole_request",
+                    "when": {
+                        "region": "frankfurt",
+                        "service_tier": "standard",
+                        "cache_ttl": "implicit",
+                        "min_input_tokens": 0,
+                        "max_input_tokens": 1000000,
+                    },
+                    "rates": {"input": "1.413", "output": "4.24", "cache_read": "0.071"},
+                },
+                {
+                    "id": "published-3",
+                    "mode": "whole_request",
+                    "when": {
+                        "region": "virginia",
+                        "service_tier": "standard",
+                        "cache_ttl": "implicit",
+                        "min_input_tokens": 0,
+                        "max_input_tokens": 1000000,
+                    },
+                    "rates": {"input": "1.413", "output": "4.24", "cache_read": "0.071"},
+                },
+            ],
+            "cache_policy": {"cache_read": "separate", "cache_write": "included"},
+            "exclusions": [
+                "Taxes, negotiated discounts and account-level allowances.",
+                "Explicit 5-minute ($1.875 International / $1.767 Global) and 1-hour ($3 International / "
+                "$2.827 Global) cache-creation schedules require their distinct write rates; this implicit-cache "
+                "card must not be applied to explicit caching.",
                 "Singapore International pricing is not interchangeable with Global/China deployment scope.",
             ],
             "requires_schedule": True,

@@ -176,6 +176,7 @@ MODEL_LABELS: dict[str, str] = {
     # DashScope / Qwen
     "qwen3-coder-plus": "Qwen3 Coder Plus",
     "qwen3-coder-flash": "Qwen3 Coder Flash",
+    "qwen4-max": "Qwen 4 Max",
     # Ollama Cloud
     "deepseek-v3.1:671b": "DeepSeek V3.1 671B",
     "deepseek-v3.2": "DeepSeek V3.2",

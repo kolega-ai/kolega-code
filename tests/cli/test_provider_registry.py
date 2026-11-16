@@ -425,3 +425,10 @@ def test_tinker_checkpoint_paths_resolve_through_wildcard_and_other_entry():
     assert option.thinking_efforts == ()
     # The Settings picker offers the typed-id "Other…" entry for tinker.
     assert settings_model_options("tinker")[-1] == ("Other…", CUSTOM_MODEL_SENTINEL)
+
+
+def test_dashscope_includes_qwen4_max_with_vision_and_effort() -> None:
+    options = dict(ui_model_options(ModelProvider.DASHSCOPE.value))
+    assert options["Qwen 4 Max"] == "qwen4-max"
+    assert ui_model_options(ModelProvider.DASHSCOPE.value, vision_only=True) == [("Qwen 4 Max", "qwen4-max")]
+    assert default_model_for_provider(ModelProvider.DASHSCOPE) == "qwen3-coder-plus"
