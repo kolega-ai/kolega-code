@@ -245,3 +245,70 @@ class TestToolCollectionRegistry:
             await collection.call("echo_conflicting_inputs", name="some-skill", tool_name="payload")
             == "some-skill:payload"
         )
+
+
+class TestHandlerSignatures:
+    """The cached handler signature must equal what ``inspect.signature`` returns."""
+
+    def test_supported_handlers_match_inspect_signature(self):
+        import inspect
+
+        from kolega_code.tools.core import _handler_signature
+
+        class Handlers:
+            async def method(self, path: str, limit: int = 1) -> str:
+                return path
+
+            @classmethod
+            async def class_method(cls, value: str) -> str:
+                return value
+
+            @staticmethod
+            async def static_method(value: str, **rest: object) -> str:
+                return value
+
+            async def __call__(self, value: str) -> str:
+                return value
+
+        async def plain(first: str, *, second: int = 2) -> str:
+            return first
+
+        handlers = [
+            Handlers().method,
+            Handlers.class_method,
+            Handlers.static_method,
+            Handlers(),
+            plain,
+        ]
+        for handler in handlers:
+            assert _handler_signature(handler) == inspect.signature(handler)
+
+    def test_uninspectable_handler_has_no_signature(self):
+        import inspect
+
+        import pytest
+
+        from kolega_code.tools.core import _handler_signature
+
+        with pytest.raises((TypeError, ValueError)):
+            inspect.signature(dict.update)
+        assert _handler_signature(dict.update) is None
+
+    def test_same_named_methods_on_different_classes_keep_their_parameters(self):
+        class First:
+            async def run(self, alpha: str) -> str:
+                return alpha
+
+        class Second:
+            async def run(self, beta: str, gamma: int = 0) -> str:
+                return beta
+
+        def accepted(handler) -> frozenset:
+            return Tool(
+                name="run",
+                definition=ToolDefinition(name="run", description="run tool", parameters=[]),
+                handler=handler,
+            ).accepted_params
+
+        assert accepted(First().run) == frozenset({"alpha"})
+        assert accepted(Second().run) == frozenset({"beta", "gamma"})
