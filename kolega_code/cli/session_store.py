@@ -10,6 +10,7 @@ import shutil
 import sys
 import threading
 import uuid
+from concurrent.futures import CancelledError
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -296,9 +297,9 @@ class SessionRecord:
 
 @dataclass(frozen=True)
 class SessionBugExport:
-    session_json: str
-    events_jsonl: str
-    artifact_manifest_json: str
+    session: dict[str, Any]
+    events: list[SessionEvent]
+    artifact_manifest: dict[str, Any]
 
 
 def _now() -> str:
@@ -724,21 +725,35 @@ class SessionStore:
         ]
         return "".join(line + "\n" for line in lines)
 
-    def bug_export(self, session_id: str) -> SessionBugExport:
+    def bug_export(self, session_id: str, *, cancel_event: threading.Event | None = None) -> SessionBugExport:
+        def check_cancelled() -> None:
+            if cancel_event is not None and cancel_event.is_set():
+                raise CancelledError()
+
+        check_cancelled()
         self._ensure_migrated(session_id)
+        check_cancelled()
         journal = self.journal(session_id)
         try:
-            events = journal.read_events(repair_tail=True)
-            metadata = self._metadata_projection(session_id, events)
+            with self._lock_for(session_id):
+                check_cancelled()
+                events = journal.read_events(repair_tail=True)
+                check_cancelled()
+                metadata = self._metadata_projection(session_id, events)
+            check_cancelled()
             history, compaction = self._replay(events, journal, hydrate_artifacts=False)
+            check_cancelled()
+            usage = derive_session_usage(events)
+            check_cancelled()
             projection = SessionRecord.from_dict(
-                {**metadata, "history": history, "compaction": compaction, "usage": derive_session_usage(events)}
+                {**metadata, "history": history, "compaction": compaction, "usage": usage}
             ).to_dict()
-            events_jsonl = journal.raw_events()
         except SessionJournalError as exc:
             raise SessionStoreError(str(exc)) from exc
+        check_cancelled()
         refs: dict[str, dict[str, Any]] = {}
         for event in events:
+            check_cancelled()
             for ref in event.artifacts:
                 digest = str(ref.get("sha256") or "")
                 if digest:
@@ -752,10 +767,11 @@ class SessionStore:
             "artifacts_included": False,
             "artifacts": list(refs.values()),
         }
+        check_cancelled()
         return SessionBugExport(
-            session_json=json.dumps(projection, indent=2, sort_keys=True) + "\n",
-            events_jsonl=events_jsonl,
-            artifact_manifest_json=json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            session=projection,
+            events=events,
+            artifact_manifest=manifest,
         )
 
     def _iter_records(self, *, recover: bool = True) -> Iterable[SessionRecord]:

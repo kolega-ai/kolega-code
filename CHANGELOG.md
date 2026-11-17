@@ -8,6 +8,9 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Fixed
 
+- Kept `/bug` responsive while preparing reports in the background, with one
+  session-journal snapshot and streamed, credential-redacted ZIP assembly for
+  long conversations.
 - Avoided repeated full-journal scans during ordinary tool recovery, keeping
   long sessions responsive without delaying event delivery behind history parsing.
 

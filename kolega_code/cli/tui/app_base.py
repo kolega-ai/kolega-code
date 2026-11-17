@@ -67,6 +67,7 @@ if TYPE_CHECKING:
     from . import state as tui_state
     from . import widgets as tui_widgets
     from .background_status import BackgroundStatus
+    from .bug_report import BugReportJob
     from .changes_screen import ChangesInspectorScreen
     from .memory_screen import MemoryScreen
     from .onboarding_screen import OnboardingScreen
@@ -110,6 +111,8 @@ class KolegaAppBase(App):
         _file_index_refreshing: bool
         _diag: DiagnosticsLog | None
         _watchdog: ResponsivenessWatchdog | None
+        _bug_export_job: BugReportJob | None
+        _bug_export_stopping: bool
         browser_visible: bool
         sidebar_visible: bool
         check_for_updates: bool

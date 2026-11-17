@@ -308,7 +308,7 @@ def test_rewinds_epochs_exports_and_metadata_do_not_reprice_or_subtract_facts(tm
     store.save(record)
     assert store.load(session.session_id).usage == baseline
     assert json.loads(store.export(session.session_id))["usage"] == baseline
-    assert json.loads(store.bug_export(session.session_id).session_json)["usage"] == baseline
+    assert store.bug_export(session.session_id).session["usage"] == baseline
     assert "usage" not in json.loads(store.path_for(session.session_id).read_text())
 
 

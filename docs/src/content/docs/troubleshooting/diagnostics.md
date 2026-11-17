@@ -30,7 +30,7 @@ owner-only (`0700`/`0600`) where the platform supports it.
 | `stalls.log` | Full thread-stack dumps taken automatically whenever the UI stops responding |
 | `manual-dump.log` | Stacks captured on demand with the `SIGUSR1` escape hatch (below) |
 | `crash-<ts>.log` | The traceback from an unhandled exception, if the app ever exits with one |
-| `bug-<ts>.zip` | A zip assembled by `/bug` for sharing |
+| `bug-<ts>-<suffix>.zip` | A zip assembled by `/bug` for sharing |
 
 The most recent sessions are kept (older `session-*.jsonl` files are pruned), and a
 single session file is capped in size, so the folder does not grow without bound.
@@ -97,14 +97,33 @@ the transcript:
 ## `/bug`
 
 Run `/bug` to package everything into a single shareable zip at
-`diagnostics/bug-<timestamp>.zip`:
+`diagnostics/bug-<timestamp>-<suffix>.zip`. A “Preparing bug report…” entry appears
+immediately, and preparation runs in the background so you can keep using the
+composer. Another `/bug` while it is running reports that preparation is already
+in progress; it does not restart the export or queue another one. After it
+finishes, you can request another report. The unique suffix keeps reports from
+overwriting each other, even when created in the same second.
+
+The archive contains:
 
 - `summary.md` — the `/diagnostics` snapshot;
 - the session timeline(s) and any stack dumps / crash logs;
-- `session.json` — the full conversation for this session.
+- `session.json` — the session projection, including conversation, compaction, and usage;
+- `session-events.jsonl` — the canonical event journal;
+- `session-artifacts.json` — a manifest of referenced artifacts, without their
+  payload files.
+
+All three session entries come from one journal snapshot. The session entries
+are redacted and written incrementally, without truncating ordinary conversation
+content or loading artifact payloads.
 
 The zip path is copied to your clipboard, and Kolega Code prints a link to open a
 new GitHub issue.
+If you switch sessions before preparation finishes, a notification identifies the
+originating session and archive path instead; it does not add a completion to the
+new session's transcript or replace its clipboard. Quitting cancels unfinished
+preparation and cleans up the temporary archive. An archive already published
+before shutdown remains available.
 
 ## Privacy model
 

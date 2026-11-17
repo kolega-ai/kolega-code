@@ -18,13 +18,15 @@ import json
 import os
 import signal
 import sys
+import tempfile
 import threading
 import time
 import traceback
 import zipfile
+from concurrent.futures import CancelledError
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Optional
+from typing import IO, TYPE_CHECKING, Any, Iterable, Optional
 
 from kolega_code.local_state import ensure_private_dir, ensure_private_file
 from kolega_code.security import (
@@ -32,6 +34,7 @@ from kolega_code.security import (
     redact_secrets,
     redact_secrets_in_obj,
 )
+from kolega_code.security.secrets import _environment_values
 
 if TYPE_CHECKING:
     from .session_store import SessionBugExport
@@ -60,35 +63,122 @@ def scrub_secrets_in_obj(obj: Any, extra_values: Optional[Iterable[str]] = None)
     return redact_secrets_in_obj(obj, extra_values, include_environment=True)
 
 
-def _scrub_json_document(
-    text: str,
-    extra_values: Optional[Iterable[str]] = None,
+_BUNDLE_CHUNK_BYTES = 64 * 1024
+
+
+def _check_bundle_cancelled(cancel_event: threading.Event | None) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise CancelledError()
+
+
+class _BundleWriter:
+    def __init__(self, target: IO[bytes], cancel_event: threading.Event | None) -> None:
+        self.target = target
+        self.cancel_event = cancel_event
+        self.buffer = bytearray()
+
+    def write(self, text: str) -> None:
+        for offset in range(0, len(text), _BUNDLE_CHUNK_BYTES // 4):
+            _check_bundle_cancelled(self.cancel_event)
+            data = text[offset : offset + _BUNDLE_CHUNK_BYTES // 4].encode("utf-8")
+            if len(self.buffer) + len(data) > _BUNDLE_CHUNK_BYTES:
+                self.flush()
+            self.buffer.extend(data)
+
+    def flush(self) -> None:
+        _check_bundle_cancelled(self.cancel_event)
+        if self.buffer:
+            self.target.write(self.buffer)
+            self.buffer.clear()
+            _check_bundle_cancelled(self.cancel_event)
+
+
+def _write_json_string(writer: _BundleWriter, text: str) -> None:
+    writer.write('"')
+    for offset in range(0, len(text), 8192):
+        _check_bundle_cancelled(writer.cancel_event)
+        writer.write(json.dumps(text[offset : offset + 8192])[1:-1])
+    writer.write('"')
+
+
+def _write_scrubbed_json(
+    writer: _BundleWriter,
+    value: Any,
+    secret_values: Iterable[str],
     *,
-    indent: Optional[int] = None,
-    sort_keys: bool = False,
-) -> str:
-    """Redact one JSON document structurally, falling back to text scrubbing.
+    pretty: bool = False,
+    level: int = 0,
+) -> None:
+    _check_bundle_cancelled(writer.cancel_event)
+    if isinstance(value, dict):
+        writer.write("{")
+        items = sorted(value.items()) if pretty else value.items()
+        for index, (key, item) in enumerate(items):
+            _check_bundle_cancelled(writer.cancel_event)
+            if index:
+                writer.write("," if pretty else ", ")
+            if pretty:
+                writer.write("\n" + "  " * (level + 1))
+            if not isinstance(key, str):
+                if key is None or isinstance(key, (int, float, bool)):
+                    key = json.dumps(key)
+                else:
+                    raise TypeError(f"Unsupported JSON key: {type(key).__name__}")
+            _write_json_string(writer, key)
+            writer.write(": ")
+            _write_scrubbed_json(writer, item, secret_values, pretty=pretty, level=level + 1)
+        if value and pretty:
+            writer.write("\n" + "  " * level)
+        writer.write("}")
+    elif isinstance(value, (list, tuple)):
+        writer.write("[")
+        for index, item in enumerate(value):
+            _check_bundle_cancelled(writer.cancel_event)
+            if index:
+                writer.write("," if pretty else ", ")
+            if pretty:
+                writer.write("\n" + "  " * (level + 1))
+            _write_scrubbed_json(writer, item, secret_values, pretty=pretty, level=level + 1)
+        if value and pretty:
+            writer.write("\n" + "  " * level)
+        writer.write("]")
+    elif value is None or isinstance(value, (bool, int, float)):
+        writer.write(json.dumps(value))
+    else:
+        text = value if isinstance(value, str) else str(value)
+        _write_json_string(writer, redact_secrets(text, secret_values))
 
-    ``indent``/``sort_keys`` mirror how the document was written so re-serializing
-    does not flatten a human-readable export.
-    """
+
+def _copy_diagnostic_artifact(archive: zipfile.ZipFile, artifact: Path, cancel_event: threading.Event | None) -> None:
+    _check_bundle_cancelled(cancel_event)
     try:
-        parsed = json.loads(text)
-    except (json.JSONDecodeError, ValueError):
-        return scrub_secrets(text, extra_values)
-    scrubbed = scrub_secrets_in_obj(parsed, extra_values)
-    rendered = json.dumps(scrubbed, indent=indent, sort_keys=sort_keys, default=str)
-    return rendered + "\n" if text.endswith("\n") else rendered
-
-
-def _scrub_jsonl_document(text: str, extra_values: Optional[Iterable[str]] = None) -> str:
-    """Redact JSON Lines structurally, per line, so one bad line cannot poison the rest."""
-    out: list[str] = []
-    for line in text.splitlines():
-        if not line.strip():
-            continue
-        out.append(_scrub_json_document(line, extra_values))
-    return "\n".join(out) + ("\n" if out else "")
+        source = artifact.open("rb")
+    except OSError:
+        _check_bundle_cancelled(cancel_event)
+        return
+    # Stage bounded chunks so a failed source read omits the whole optional entry.
+    with source, tempfile.SpooledTemporaryFile(max_size=_BUNDLE_CHUNK_BYTES, dir=str(artifact.parent)) as staged:
+        while True:
+            _check_bundle_cancelled(cancel_event)
+            try:
+                chunk = source.read(_BUNDLE_CHUNK_BYTES)
+            except OSError:
+                _check_bundle_cancelled(cancel_event)
+                return
+            _check_bundle_cancelled(cancel_event)
+            if not chunk:
+                break
+            staged.write(chunk)
+        staged.seek(0)
+        with archive.open(artifact.name, "w", force_zip64=True) as target:
+            while True:
+                _check_bundle_cancelled(cancel_event)
+                chunk = staged.read(_BUNDLE_CHUNK_BYTES)
+                _check_bundle_cancelled(cancel_event)
+                if not chunk:
+                    break
+                target.write(chunk)
+                _check_bundle_cancelled(cancel_event)
 
 
 def _now_iso() -> str:
@@ -415,8 +505,9 @@ def assemble_bug_bundle(
     diag: DiagnosticsLog,
     *,
     summary: str,
-    session_export: Optional["SessionBugExport"],
-) -> Optional[Path]:
+    session_export: SessionBugExport | None,
+    cancel_event: threading.Event | None = None,
+) -> Path | None:
     """Build a shareable zip: summary + diagnostics timeline + crash/stall dumps + the
     session projection, canonical events, and artifact manifest. Oversized artifact bodies
     are not included. Secrets are scrubbed throughout. Returns the
@@ -425,39 +516,66 @@ def assemble_bug_bundle(
     Entries are written flat at the archive root (same layout the old bundle directory
     had). Diagnostics artifacts are already scrubbed at write time, so they are added
     verbatim; generated session exports are scrubbed here."""
+    _check_bundle_cancelled(cancel_event)
     if not diag.enabled:
         return None
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    zip_path = diag.dir / f"bug-{stamp}.zip"
+    temp_path: Path | None = None
+    fd: int | None = None
     try:
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("summary.md", scrub_secrets(summary, diag._secret_values))
-            # Diagnostics artifacts already scrubbed at write time; add as-is.
-            for artifact in list(diag.dir.glob("session-*.jsonl")) + list(diag.dir.glob("*.log")):
-                try:
-                    zf.write(artifact, artifact.name)
-                except OSError:
-                    pass
-            if session_export is not None:
-                # Structural redaction keeps these parseable; a document that does
-                # not parse to begin with degrades to plain-text scrubbing.
-                # SessionStore writes these two with indent=2/sort_keys=True; keep
-                # that so the bundle stays readable after redaction.
-                zf.writestr(
-                    "session.json",
-                    _scrub_json_document(session_export.session_json, diag._secret_values, indent=2, sort_keys=True),
-                )
-                zf.writestr(
-                    "session-events.jsonl",
-                    _scrub_jsonl_document(session_export.events_jsonl, diag._secret_values),
-                )
-                zf.writestr(
-                    "session-artifacts.json",
-                    _scrub_json_document(
-                        session_export.artifact_manifest_json, diag._secret_values, indent=2, sort_keys=True
-                    ),
-                )
-        ensure_private_file(zip_path)
+        secret_values = [*diag._secret_values, *_environment_values()]
+        ensure_private_dir(diag.dir)
+        _check_bundle_cancelled(cancel_event)
+        fd, temp_name = tempfile.mkstemp(prefix=f".bug-{stamp}-", suffix=".tmp", dir=diag.dir)
+        temp_path = Path(temp_name)
+        zip_path = temp_path.with_name(temp_path.name[1:]).with_suffix(".zip")
+        archive = os.fdopen(fd, "w+b")
+        fd = None
+        with archive:
+            with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+                with zf.open("summary.md", "w", force_zip64=True) as target:
+                    writer = _BundleWriter(target, cancel_event)
+                    writer.write(redact_secrets(summary, secret_values))
+                    writer.flush()
+                for pattern in ("session-*.jsonl", "*.log"):
+                    _check_bundle_cancelled(cancel_event)
+                    for artifact in diag.dir.glob(pattern):
+                        _copy_diagnostic_artifact(zf, artifact, cancel_event)
+                _check_bundle_cancelled(cancel_event)
+                if session_export is not None:
+                    with zf.open("session.json", "w", force_zip64=True) as target:
+                        writer = _BundleWriter(target, cancel_event)
+                        _write_scrubbed_json(writer, session_export.session, secret_values, pretty=True)
+                        writer.write("\n")
+                        writer.flush()
+                    _check_bundle_cancelled(cancel_event)
+                    with zf.open("session-events.jsonl", "w", force_zip64=True) as target:
+                        writer = _BundleWriter(target, cancel_event)
+                        for event in session_export.events:
+                            _check_bundle_cancelled(cancel_event)
+                            _write_scrubbed_json(writer, event.to_dict(), secret_values)
+                            writer.write("\n")
+                        writer.flush()
+                    _check_bundle_cancelled(cancel_event)
+                    with zf.open("session-artifacts.json", "w", force_zip64=True) as target:
+                        writer = _BundleWriter(target, cancel_event)
+                        _write_scrubbed_json(writer, session_export.artifact_manifest, secret_values, pretty=True)
+                        writer.write("\n")
+                        writer.flush()
+        _check_bundle_cancelled(cancel_event)
+        temp_path.replace(zip_path)
         return zip_path
     except OSError:
+        _check_bundle_cancelled(cancel_event)
         return None
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass

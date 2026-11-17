@@ -121,6 +121,7 @@ from .tui.shortcut_bar import ContextFooter, ShortcutHelpScreen
 from .tui.turn_status import TurnStatus
 from .tui.background_status import BackgroundStatus
 from .tui.boot_splash import BootSplash
+from .tui.bug_report import BugReportJob
 from .tui.plan_approval import PlanApprovalOwner
 from .tui import constants as tui_constants
 from .tui import agent_runtime as tui_agent_runtime
@@ -243,6 +244,8 @@ class KolegaCodeApp(
         # Local diagnostics (constructed on mount, once settings/secrets are loaded).
         self._diag: Optional[DiagnosticsLog] = None
         self._watchdog: Optional[ResponsivenessWatchdog] = None
+        self._bug_export_job: BugReportJob | None = None
+        self._bug_export_stopping = False
         self.browser_visible = browser_visible
         self.sidebar_visible = True
         self.check_for_updates = check_for_updates
@@ -2785,6 +2788,7 @@ class KolegaCodeApp(
             self.action_open_sub_agent(activity.agent_id)
 
     async def on_unmount(self) -> None:
+        await self._cancel_bug_export()
         await self._cancel_plan_approval()
         if self._background_jobs is not None:
             self._background_jobs.set_callbacks()
@@ -2887,6 +2891,7 @@ class KolegaCodeApp(
         self._background_paused = True
         self._invalidate_plan_approval()
         try:
+            await self._cancel_bug_export()
             # Release control first, so any prompt still open resolves to its
             # default instead of leaving a turn waiting on a closing window.
             self.control_channel.release(tui_constants.TUI_CLIENT_ID)
