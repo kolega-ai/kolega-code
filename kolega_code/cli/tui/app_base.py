@@ -240,6 +240,7 @@ class KolegaAppBase(App):
         _persistence_lock: asyncio.Lock
         _pending_session_saves: set[asyncio.Task[None]]
         _shutdown_worker_waiters: set[asyncio.Task]
+        _shutdown_callers: set[asyncio.Task]
         _pending_model_selection: tui_state.PendingModelSelection | None
         _pending_effort_selection: tui_state.PendingEffortSelection | None
         _pending_theme_selection: tui_state.PendingThemeSelection | None

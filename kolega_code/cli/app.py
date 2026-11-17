@@ -419,6 +419,7 @@ class KolegaCodeApp(
         self._persistence_lock = asyncio.Lock()
         self._pending_session_saves: set[asyncio.Task[None]] = set()
         self._shutdown_worker_waiters: set[asyncio.Task] = set()
+        self._shutdown_callers: set[asyncio.Task] = set()
         self._pending_model_selection: Optional[tui_state.PendingModelSelection] = None
         self._pending_effort_selection: Optional[tui_state.PendingEffortSelection] = None
         self._pending_theme_selection: Optional[tui_state.PendingThemeSelection] = None
@@ -2850,6 +2851,11 @@ class KolegaCodeApp(
         # Resume runs in a worker; Ctrl-Q can arrive while it is shutting down.
         # All callers share one teardown, which survives cancellation of any
         # individual caller and is also awaited by the launcher.
+        caller = asyncio.current_task()
+        if caller is not None:
+            # A caller tracked as the turn execution (an inline turn) is blocked
+            # on this teardown and would otherwise hold settlement to its timeout.
+            self._shutdown_callers.add(caller)
         if self._session_shutdown_task is None:
             self._turn_controller.close_admission()
             self._invalidate_plan_approval()
@@ -2872,7 +2878,11 @@ class KolegaCodeApp(
             self._shutdown_worker_waiters.add(waiter)
             waiter.add_done_callback(self._shutdown_worker_wait_finished)
             waiters.add(waiter)
-        if await self._turn_controller.wait_settled(timeout=max(1.0, self._stop_force_after_seconds), extra=waiters):
+        if await self._turn_controller.wait_settled(
+            timeout=max(1.0, self._stop_force_after_seconds),
+            extra=waiters,
+            exclude=self._shutdown_callers,
+        ):
             return True
         if self.agent_worker is worker:
             # Cancellation was already requested before waiting. Keep the

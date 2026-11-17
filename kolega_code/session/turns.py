@@ -224,9 +224,19 @@ class TurnController(Generic[InputT]):
         self.closed = True
         self.disarm_watchdog()
 
-    async def wait_settled(self, *, timeout: float | None = None, extra: Iterable[asyncio.Future[Any]] = ()) -> bool:
-        waiters = set(extra) | self.draining_tasks | self._tasks
-        if self.execution_task is not None:
+    async def wait_settled(
+        self,
+        *,
+        timeout: float | None = None,
+        extra: Iterable[asyncio.Future[Any]] = (),
+        exclude: Iterable[asyncio.Future[Any]] = (),
+    ) -> bool:
+        # A task already awaiting this settlement cannot also settle itself.
+        # Leaving such callers in the wait set burns the whole timeout, so skip
+        # them; they resume as soon as the shutdown they await finishes.
+        excluded = set(exclude)
+        waiters = {waiter for waiter in set(extra) | self.draining_tasks | self._tasks if waiter not in excluded}
+        if self.execution_task is not None and self.execution_task not in excluded:
             waiters.add(self.execution_task)
         if not waiters:
             return True

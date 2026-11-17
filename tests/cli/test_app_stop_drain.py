@@ -368,3 +368,25 @@ async def test_quit_bounds_cancellation_resistant_turn_without_tearing_down_its_
             await _wait_for(pilot, task.done)
             await _wait_for(pilot, lambda: not app._agent_execution_draining())
             await _wait_for(pilot, lambda: not app._shutdown_worker_waiters)
+
+
+@pytest.mark.asyncio
+async def test_quit_from_an_inline_turn_does_not_wait_for_the_caller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    app._stop_force_after_seconds = 60
+
+    async with app.run_test():
+        await app._startup_complete.wait()
+        await app._process_message("work")
+        caller = asyncio.current_task()
+        assert caller is not None and app._agent_execution_task is caller
+
+        # Without excluding the caller this waits out the 60 s force timeout:
+        # the caller is blocked awaiting the shutdown that awaits the caller.
+        async with asyncio.timeout(5):
+            await app.action_quit()
+
+    assert app._session_shutdown_task is not None and app._session_shutdown_task.done()
+    assert app._shutdown_callers == {caller}

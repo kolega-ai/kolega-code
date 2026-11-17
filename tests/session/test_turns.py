@@ -215,6 +215,17 @@ async def test_detached_stream_keeps_execution_fenced_and_discards_late_output(s
 
 
 @pytest.mark.asyncio
+async def test_wait_settled_skips_a_caller_that_cannot_settle_itself(scheduling: None) -> None:
+    controller: TurnController[str] = TurnController()
+    controller.track()
+    caller = asyncio.current_task()
+    assert caller is not None
+
+    assert not await controller.wait_settled(timeout=0)
+    assert await controller.wait_settled(timeout=0, exclude=(caller,))
+
+
+@pytest.mark.asyncio
 async def test_boundary_drain_checks_ownership_after_the_frontend_await(scheduling: None) -> None:
     controller: TurnController[dict[str, Any]] = TurnController()
     entered, release = asyncio.Event(), asyncio.Event()
