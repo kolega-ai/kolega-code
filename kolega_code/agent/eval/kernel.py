@@ -69,7 +69,6 @@ class EvalCellResult:
     statuses: List[Dict[str, Any]] = field(default_factory=list)
     error: Optional[KernelErrorInfo] = None
     interrupted: bool = False
-    restarted: bool = False
     notes: List[str] = field(default_factory=list)
 
 
@@ -552,10 +551,10 @@ class EvalKernelManager:
         await kernel.start()
         return kernel, [f"JavaScript kernel running on {runtime.name} ({runtime.path})."]
 
-    async def _get_or_start_kernel(self, language: str) -> Tuple[BaseKernel, List[str], bool]:
+    async def _get_or_start_kernel(self, language: str) -> Tuple[BaseKernel, List[str]]:
         kernel = self._kernels.get(language)
         if kernel is not None and kernel.alive:
-            return kernel, [], False
+            return kernel, []
         restarted = kernel is not None
         if kernel is not None:
             await kernel.shutdown()
@@ -569,7 +568,7 @@ class EvalKernelManager:
         self._kernels[language] = kernel
         if restarted:
             notes = list(notes) + ["The previous kernel died; restarted with fresh state."]
-        return kernel, notes, restarted
+        return kernel, notes
 
     async def _stop_kernel(self, language: str) -> None:
         kernel = self._kernels.pop(language, None)
@@ -631,7 +630,7 @@ class EvalKernelManager:
         async with lock:
             if reset:
                 await self._stop_kernel(language)
-            kernel, notes, restarted = await self._get_or_start_kernel(language)
+            kernel, notes = await self._get_or_start_kernel(language)
             run_id = uuid.uuid4().hex
             bridge = await ToolBridge.ensure()
             registration = BridgeRegistration(
@@ -646,13 +645,12 @@ class EvalKernelManager:
                     # Kernel died between liveness check and write; retry once on
                     # a fresh kernel so a crash does not fail the user's cell.
                     await self._stop_kernel(language)
-                    kernel, notes, restarted = await self._get_or_start_kernel(language)
+                    kernel, notes = await self._get_or_start_kernel(language)
                     notes = list(notes) + ["The kernel died at cell start; retried on a fresh kernel (state lost)."]
                     result = await kernel.execute(code, run_id=run_id, timeout=timeout)
             finally:
                 unregister()
             result.notes = notes + result.notes
-            result.restarted = restarted
             return result
 
     async def shutdown(self) -> None:
