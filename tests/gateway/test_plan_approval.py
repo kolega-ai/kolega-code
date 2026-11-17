@@ -689,6 +689,18 @@ async def test_cancel_during_clear_preparation_retains_partial_cleanup_and_never
     monkeypatch.setattr(sessions, "CoderAgent", BlockedBuild)
     if cancel == "timeout":
         monkeypatch.setattr(sessions, "LIFECYCLE_WAIT_SECONDS", 0.02)
+        wait_operation = AgentTurnHandler._wait_operation
+
+        async def wait_after_initialization(
+            target: AgentTurnHandler, owner: sessions._LifecycleOperation, **kwargs: Any
+        ) -> Any:
+            # Arm the deadline only once startup is blocked. Clear preparation
+            # (persisting, closing jobs, composing the agent) outlasts a short
+            # deadline on a loaded runner and would abort before the build starts.
+            await asyncio.wait_for(initializing.wait(), 10)
+            return await wait_operation(target, owner, **kwargs)
+
+        monkeypatch.setattr(AgentTurnHandler, "_wait_operation", wait_after_initialization)
     await handler.handle(chat_ref(), tap(adapter.tokens[-1], "implement_plan_clear"))
     await asyncio.wait_for(initializing.wait(), 10)
     owner = handler._operations[chat_ref().key]
