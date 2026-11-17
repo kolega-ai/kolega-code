@@ -3,12 +3,51 @@
 import inspect
 import logging
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Awaitable, Callable, Dict, FrozenSet, Optional
 
 from ..llm.models import ToolDefinition
 from .param_aliases import resolve_param_aliases
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1024)
+def _function_signature(function: Callable[..., Any]) -> inspect.Signature:
+    return inspect.signature(function)
+
+
+@lru_cache(maxsize=1024)
+def _bound_method_signature(function: Callable[..., Any]) -> inspect.Signature:
+    """The signature a bound method is called with, i.e. without ``self``/``cls``."""
+
+    signature = _function_signature(function)
+    parameters = list(signature.parameters.values())
+    if not parameters or parameters[0].kind not in (
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    ):
+        raise ValueError("invalid method signature")
+    return signature.replace(parameters=parameters[1:])
+
+
+def _handler_signature(handler: Callable[..., Any]) -> Optional[inspect.Signature]:
+    """The signature ``handler`` is called with, or None when uninspectable.
+
+    Parsing it is roughly half of rebuilding a tool collection, and a
+    collection is rebuilt for every model request and tool call. Built-in
+    handlers are stable class methods, so their signatures are cached by the
+    underlying function and later rebuilds reuse them. Other callables keep
+    the uncached path so host-supplied objects are never retained here.
+    """
+    try:
+        if inspect.ismethod(handler):
+            return _bound_method_signature(handler.__func__)
+        if inspect.isfunction(handler):
+            return _function_signature(handler)
+        return inspect.signature(handler)
+    except (TypeError, ValueError):
+        return None
 
 
 class ToolError(Exception):
@@ -53,15 +92,13 @@ class Tool:
     # when the binding does NOT accept the name: a name the handler itself
     # accepts is a legitimate argument for this binding, never a misspelling.
     accepted_params: FrozenSet[str] = field(init=False, repr=False)
+    _signature: Optional[inspect.Signature] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        try:
-            parameters = inspect.signature(self.handler).parameters
-        except (TypeError, ValueError):
-            accepted: FrozenSet[str] = frozenset()
-        else:
-            accepted = frozenset(parameters)
+        signature = _handler_signature(self.handler)
+        accepted = frozenset(signature.parameters) if signature is not None else frozenset()
         object.__setattr__(self, "accepted_params", accepted)
+        object.__setattr__(self, "_signature", signature)
 
     async def call(self, **inputs: Any) -> Any:
         inputs = await self._resolve_param_aliases(inputs)
@@ -112,9 +149,8 @@ class Tool:
         only arguments — never the handler's internal qualname — and the usage
         string is built from the *public* tool name, so nothing internal leaks.
         """
-        try:
-            signature = inspect.signature(self.handler)
-        except (TypeError, ValueError):
+        signature = self._signature
+        if signature is None:
             return  # Uninspectable callable: let the real call proceed unchanged.
         try:
             signature.bind(**inputs)
