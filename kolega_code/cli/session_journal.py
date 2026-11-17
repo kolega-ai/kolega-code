@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import copy
 import hashlib
+import io
 import json
 import logging
 import os
@@ -959,7 +960,7 @@ class SessionJournal:
     def _parse_event_bytes_locked(self, raw: bytes, *, strict_seq: bool = True) -> list[SessionEvent]:
         events: list[SessionEvent] = []
         expected_seq = 1
-        for line_number, line in enumerate(raw.splitlines(), start=1):
+        for line_number, line in enumerate(io.BytesIO(raw), start=1):
             if not line.strip():
                 raise SessionJournalError(f"Blank line in session event log at line {line_number}")
             try:

@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import CancelledError as ExportCancelledError
+from contextvars import copy_context
+from functools import partial
+from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
 
@@ -47,13 +51,12 @@ from ..provider_registry import (
 )
 from ..skills import activated_skill_names, skill_activation_label
 from ..slash_commands import SKILLS_LIST_COMMAND, TUI_COMMAND_NAMES, agent_command_names
-from ..diagnostics import assemble_bug_bundle
-from ..session_store import SessionStoreError
-from ..updater import check_for_update, current_version, run_self_update, update_status_message
+from ..updater import check_for_update, run_self_update, update_status_message
 from . import app_base as tui_app_base
 from . import constants as tui_constants
 from . import state as tui_state
 from . import widgets as tui_widgets
+from .bug_report import BugReportJob, diagnostics_summary_lines
 
 
 class CommandHandlersMixin(tui_app_base.KolegaAppBase):
@@ -1474,40 +1477,12 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         self._notify_user(messages.COPY_LAST_RESPONSE)
 
     def _diagnostics_summary_lines(self) -> list[str]:
-        """Human-readable snapshot reused by /diagnostics and the /bug bundle."""
         header: dict = {}
         try:
             header = self._diagnostics_header()
         except Exception:
             pass
-        lines = [
-            f"Kolega Code {header.get('kolega_version') or current_version()}",
-            f"Platform: {header.get('platform', '?')}  |  terminal: {header.get('term_program') or header.get('term') or '?'}",
-            f"Python: {header.get('python', '?')}",
-        ]
-        if header.get("provider"):
-            lines.append(f"Model: {header['provider']}/{header.get('model')} (effort: {header.get('thinking_effort')})")
-        gigacode = "on" if header.get("gigacode_enabled") else "off"
-        session_modes = (
-            f"Permission: {header.get('permission_mode')}  |  "
-            f"mode: {header.get('interaction_mode')}  |  gigacode: {gigacode}"
-        )
-        lines.append(session_modes)
-        if header.get("providers_with_keys"):
-            lines.append(f"Providers with keys: {', '.join(header['providers_with_keys'])}")
-        diag = getattr(self, "_diag", None)
-        if diag is not None and diag.enabled:
-            lines.append(f"Diagnostics log: {diag.path}")
-            try:
-                text = diag.path.read_text(encoding="utf-8") if diag.path.exists() else ""
-                stalls = text.count('"kind": "event_loop_stalled"')
-                errors = text.count('"kind": "llm_error"')
-                lines.append(f"This session: {stalls} loop stall(s), {errors} LLM error(s) recorded")
-            except OSError:
-                pass
-        else:
-            lines.append("Diagnostics: disabled (KOLEGA_CODE_NO_DIAGNOSTICS)")
-        return lines
+        return diagnostics_summary_lines(header, self._diag)
 
     async def _command_diagnostics(self, args: str) -> None:
         self._add_conversation_entry(
@@ -1515,7 +1490,9 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         )
 
     async def _command_bug(self, args: str) -> None:
-        diag = getattr(self, "_diag", None)
+        if self._bug_export_stopping or self._session_shutdown_task is not None:
+            return
+        diag = self._diag
         if diag is None or not diag.enabled:
             self._add_conversation_entry(
                 tui_state.ConversationEntry(
@@ -1523,34 +1500,105 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
                 )
             )
             return
-        summary = "\n".join(self._diagnostics_summary_lines())
-        try:
-            session_export = await asyncio.to_thread(self.store.bug_export, self.session.session_id)
-            bundle = await asyncio.to_thread(
-                assemble_bug_bundle,
-                diag,
-                summary=summary,
-                session_export=session_export,
-            )
-        except SessionStoreError:
-            bundle = None
-        if bundle is None:
+        if self._bug_export_job is not None:
             self._add_conversation_entry(
-                tui_state.ConversationEntry(kind="system", content="Could not assemble the bug bundle.")
+                tui_state.ConversationEntry(kind="system", content="A bug report is already being prepared.")
             )
             return
+        entry = tui_state.ConversationEntry(kind="progress", content="Preparing bug report…", complete=False)
+        self._add_conversation_entry(entry)
+        header: dict = {}
+        try:
+            header = self._diagnostics_header()
+        except Exception:
+            pass
+        job = BugReportJob(self.session.session_id, self.session.name, self.store, diag, header, entry)
+        self._bug_export_job = job
+        loop = asyncio.get_running_loop()
+        app_context = copy_context()
+
+        def progress(content: str) -> None:
+            # Timers created by progress rendering need Textual's active-app context.
+            loop.call_soon_threadsafe(self._bug_export_progress, job, content, context=app_context)
+
+        job.future = loop.run_in_executor(None, job.prepare, progress)
+        job.worker = self.run_worker(
+            partial(self._run_bug_export, job), name="kolega-bug-export", group="bug-export", exit_on_error=False
+        )
+
+    def _bug_export_progress(self, job: BugReportJob, content: str) -> None:
+        if (
+            self._bug_export_job is job
+            and not self._bug_export_stopping
+            and self._session_shutdown_task is None
+            and not self._exit
+            and not job.cancel_event.is_set()
+            and self.session.session_id == job.session_id
+            and any(entry is job.entry for entry in self.conversation_entries)
+        ):
+            job.entry.content = content
+            self._invalidate_conversation(job.entry)
+
+    async def _run_bug_export(self, job: BugReportJob) -> None:
+        try:
+            bundle = await job.wait()
+            if (
+                job.cancel_event.is_set()
+                or self._bug_export_stopping
+                or self._session_shutdown_task is not None
+                or self._exit
+            ):
+                return
+            if self.session.session_id != job.session_id:
+                notice = (
+                    f"Bug report for {job.session_name} ({job.session_id}) written to:\n{bundle}"
+                    if bundle is not None
+                    else f"Could not assemble the bug bundle for {job.session_name} ({job.session_id})."
+                )
+                self._notify_user(notice, severity="information" if bundle is not None else "warning")
+                return
+            content = self._bug_export_completion(bundle)
+            job.entry.kind = "system"
+            job.entry.content = content
+            job.entry.complete = True
+            if any(entry is job.entry for entry in self.conversation_entries):
+                self._invalidate_conversation(job.entry)
+            else:
+                self._add_conversation_entry(job.entry)
+        except (asyncio.CancelledError, ExportCancelledError):
+            job.cancel_event.set()
+        finally:
+            if self._bug_export_job is job:
+                self._bug_export_job = None
+
+    def _bug_export_completion(self, bundle: Path | None) -> str:
+        if bundle is None:
+            return "Could not assemble the bug bundle."
         try:
             self.copy_to_clipboard(str(bundle))
             copied = " (path copied to clipboard)"
         except Exception:
             copied = ""
-        content = (
+        return (
             f"Bug report written to:\n  {bundle}{copied}\n\n"
             "It contains this session's conversation and file contents (API keys are scrubbed) — "
             "review before posting publicly.\n"
             "Open an issue: https://github.com/kolega-ai/kolega-code/issues/new"
         )
-        self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=content))
+
+    async def _cancel_bug_export(self) -> None:
+        self._bug_export_stopping = True
+        job = self._bug_export_job
+        if job is None:
+            return
+        job.cancel_event.set()
+        try:
+            await job.wait()
+        except (asyncio.CancelledError, ExportCancelledError):
+            pass
+        finally:
+            if self._bug_export_job is job:
+                self._bug_export_job = None
 
     async def _command_lsp(self, args: str) -> None:
         """Show LSP status: detected languages, servers, and install instructions."""

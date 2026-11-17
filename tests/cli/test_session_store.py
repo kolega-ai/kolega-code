@@ -6,13 +6,16 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import CancelledError
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
 
 from kolega_code.agent.conversation import Conversation
 from kolega_code.cli import session_journal as session_journal_module
+from kolega_code.cli import session_store as session_store_module
 from kolega_code.cli.session_journal import (
     DEFAULT_ROOT_AGENT_NAME,
     TOOL_RESULT_PREVIEW_CHARS,
@@ -28,6 +31,7 @@ from kolega_code.cli.session_store import (
     SessionStoreError,
     default_state_dir,
 )
+from kolega_code.cli.session_usage import derive_session_usage
 from kolega_code.llm.models import (
     ImageBlock,
     Message,
@@ -38,6 +42,7 @@ from kolega_code.llm.models import (
     ToolResult,
     WebSearchCallBlock,
 )
+from kolega_code.llm.usage import normalize_usage
 
 
 def test_default_state_dir_honors_env() -> None:
@@ -348,7 +353,8 @@ def test_event_records_are_ordered_and_have_stable_envelope(tmp_path: Path) -> N
         assert set(data) >= {"agent_id", "agent_name", "parent_agent_id", "parent_tool_call_id", "depth"}
 
 
-def test_incomplete_final_jsonl_fragment_is_repaired(tmp_path: Path) -> None:
+@pytest.mark.parametrize("operation", ["journal", "bug_export"])
+def test_incomplete_final_jsonl_fragment_is_repaired(tmp_path: Path, operation: str) -> None:
     project = tmp_path / "project"
     project.mkdir()
     store = SessionStore(tmp_path / "state")
@@ -359,7 +365,10 @@ def test_incomplete_final_jsonl_fragment_is_repaired(tmp_path: Path) -> None:
     with path.open("ab") as handle:
         handle.write(b'{"version":1,"id":"partial"')
 
-    events = store.journal(record.session_id).read_events(repair_tail=True)
+    if operation == "journal":
+        events = store.journal(record.session_id).read_events(repair_tail=True)
+    else:
+        events = store.bug_export(record.session_id).events
 
     assert len(events) == 2
     assert path.read_bytes() == original
@@ -439,7 +448,7 @@ def test_reader_does_not_repair_an_owned_sessions_incomplete_tail(tmp_path: Path
     elif operation == "export":
         assert reader.export_events(record.session_id).endswith("\n")
     else:
-        assert reader.bug_export(record.session_id).events_jsonl.endswith("\n")
+        assert len(reader.bug_export(record.session_id).events) == 2
 
     assert path.read_bytes() == before
 
@@ -544,7 +553,8 @@ def test_short_append_is_repaired_before_the_next_sequence(tmp_path: Path, monke
     assert events[-1].event_type == "context.message"
 
 
-def test_mid_file_corruption_and_sequence_gaps_are_rejected(tmp_path: Path) -> None:
+@pytest.mark.parametrize("operation", ["load", "bug_export"])
+def test_mid_file_corruption_and_sequence_gaps_are_rejected(tmp_path: Path, operation: str) -> None:
     project = tmp_path / "project"
     project.mkdir()
     store = SessionStore(tmp_path / "state")
@@ -552,16 +562,343 @@ def test_mid_file_corruption_and_sequence_gaps_are_rejected(tmp_path: Path) -> N
     corrupt_path = store.events_path_for(corrupt.session_id)
     lines = corrupt_path.read_text(encoding="utf-8").splitlines()
     corrupt_path.write_text(lines[0] + "\n{not-json}\n" + lines[1] + "\n", encoding="utf-8")
+    before = corrupt_path.read_bytes()
     with pytest.raises(SessionStoreError, match="Invalid JSON"):
-        store.load(corrupt.session_id)
+        getattr(store, operation)(corrupt.session_id)
+    assert corrupt_path.read_bytes() == before
 
     gap = store.create(project, "code", {})
     gap_path = store.events_path_for(gap.session_id)
     rows = [json.loads(line) for line in gap_path.read_text(encoding="utf-8").splitlines()]
     rows[1]["seq"] = 3
     gap_path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    before = gap_path.read_bytes()
     with pytest.raises(SessionStoreError, match="sequence gap"):
-        store.load(gap.session_id)
+        getattr(store, operation)(gap.session_id)
+    assert gap_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("cold", [False, True])
+def test_bug_export_reads_and_parses_one_snapshot_without_serializing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cold: bool
+) -> None:
+    owner = SessionStore(tmp_path / "state")
+    record = owner.create(tmp_path / "project", "code", {})
+    journal = owner.recorder(record.session_id).journal
+    for index in range(128):
+        journal.append(
+            "context.message",
+            actor="user",
+            payload={
+                "message": Message(role="user", content=[TextBlock(f'{index}: 雪 "quoted" \\ ' + "x" * 4096)]).to_dict()
+            },
+        )
+    path = journal.events_path
+    rows = [json.loads(line) for line in path.read_bytes().splitlines()]
+    rows[2] = {
+        key: value
+        for key, value in rows[2].items()
+        if key not in {"schema", "agent_id", "agent_name", "parent_agent_id", "parent_tool_call_id", "depth"}
+    }
+    rows[2]["version"] = 1
+    raw = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows).encode()
+    path.write_bytes(raw)
+    store = SessionStore(owner.root) if cold else owner
+    journal = store.journal(record.session_id)
+    original_parse = journal._parse_event_bytes_locked
+    parsed_inputs: list[bytes] = []
+    parsed_snapshots: list[list[SessionEvent]] = []
+    read_inputs: list[bytes] = []
+    original_read_bytes = Path.read_bytes
+
+    def read_bytes(target: Path) -> bytes:
+        data = original_read_bytes(target)
+        if target == path:
+            read_inputs.append(data)
+        return data
+
+    def parse(data: bytes, *, strict_seq: bool = True) -> list[SessionEvent]:
+        parsed_inputs.append(data)
+        events = original_parse(data, strict_seq=strict_seq)
+        parsed_snapshots.append(events)
+        return events
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    monkeypatch.setattr(journal, "_parse_event_bytes_locked", parse)
+    read_events = Mock(wraps=journal.read_events)
+    monkeypatch.setattr(journal, "read_events", read_events)
+    monkeypatch.setattr(journal, "raw_events", Mock(side_effect=AssertionError("raw_events must not be called")))
+    structured_json = Mock(wraps=json)
+    structured_json.dumps.side_effect = AssertionError("bug_export must not serialize documents")
+    monkeypatch.setattr(session_store_module, "json", structured_json)
+
+    exported = store.bug_export(record.session_id)
+
+    read_events.assert_called_once_with(repair_tail=True)
+    assert read_inputs == parsed_inputs == [raw]
+    assert sum(map(len, parsed_inputs)) == path.stat().st_size
+    assert exported.events is parsed_snapshots[0]
+    assert [event.to_dict() for event in exported.events] == rows
+    assert len(exported.session["history"]) == 128
+    assert exported.session["history"][0] == rows[2]["payload"]["message"]
+    assert exported.artifact_manifest == {
+        "session_id": record.session_id,
+        "artifacts_included": False,
+        "artifacts": [],
+    }
+
+
+@pytest.mark.parametrize("newline", [b"\n", b"\r\n"])
+def test_event_parser_iterates_bytes_without_splitting_the_whole_buffer(tmp_path: Path, newline: bytes) -> None:
+    store = SessionStore(tmp_path / "state")
+    record = store.create(tmp_path / "project", "code", {})
+    journal = store.journal(record.session_id)
+    rows = journal.events_path.read_bytes().splitlines()
+
+    class UnsplitBytes(bytes):
+        def splitlines(self, keepends: bool = False) -> list[bytes]:
+            raise AssertionError("parser must not build a whole-input list of lines")
+
+    raw = UnsplitBytes(newline.join(rows) + newline)
+
+    events = journal._parse_event_bytes_locked(raw)
+
+    assert [event.to_dict() for event in events] == [json.loads(row) for row in rows]
+
+
+@pytest.mark.parametrize(
+    ("bad_line", "error"),
+    [
+        (b" \t\n", "Blank line in session event log at line 2"),
+        (b"{not-json}\n", "Invalid JSON in session event log at line 2"),
+        (b"\xff\n", "Invalid JSON in session event log at line 2"),
+        (b"[]\n", "Session event at line 2 is not an object"),
+    ],
+)
+def test_bug_export_preserves_parser_error_line_numbers_and_journal_bytes(
+    tmp_path: Path, bad_line: bytes, error: str
+) -> None:
+    store = SessionStore(tmp_path / "state")
+    record = store.create(tmp_path / "project", "code", {})
+    path = store.events_path_for(record.session_id)
+    first, second = path.read_bytes().splitlines(keepends=True)
+    raw = first + bad_line + second
+    path.write_bytes(raw)
+
+    with pytest.raises(SessionStoreError, match=error):
+        store.bug_export(record.session_id)
+
+    assert path.read_bytes() == raw
+    assert store.journal(record.session_id)._recovery_valid is False
+
+
+def test_bug_export_keeps_all_surfaces_at_one_unlocked_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SessionStore(tmp_path / "state")
+    record = store.create(tmp_path / "project", "code", {}, title="before")
+    recorder = store.recorder(record.session_id)
+    journal = recorder.journal
+    ref = journal.put_artifact(b"body", media_type="text/plain", purpose="before", encoding="utf-8", chars=4)
+    journal.append(
+        "context.message",
+        actor="user",
+        payload={"message": Message(role="user", content=[TextBlock("before")]).to_dict()},
+        artifacts=[{**ref, "private_field": "omit"}],
+    )
+    journal.append("test.duplicate_artifact", actor="system", artifacts=[ref, {"path": "no-digest"}])
+    recorder.record_compaction({"summary": "before"})
+    journal.append(
+        "llm.message",
+        actor="assistant",
+        payload={
+            "message": {"usage": normalize_usage({"input_tokens": 10, "output_tokens": 5}, "anthropic", "m").to_dict()}
+        },
+    )
+    expected_rows = [json.loads(line) for line in journal.events_path.read_bytes().splitlines()]
+    expected_usage = derive_session_usage(journal.read_events())
+    replay_entered = threading.Event()
+    writer_done = threading.Event()
+    writer_errors: list[BaseException] = []
+    snapshots: list[list[SessionEvent]] = []
+    lock = store._lock_for(record.session_id)
+
+    def check_lock(*, held: bool) -> None:
+        acquired: list[bool] = []
+
+        def probe() -> None:
+            acquired.append(lock.acquire(blocking=False))
+            if acquired[-1]:
+                lock.release()
+
+        probe_thread = threading.Thread(target=probe, daemon=True)
+        probe_thread.start()
+        probe_thread.join(timeout=10)
+        assert not probe_thread.is_alive()
+        assert acquired == [not held]
+
+    original_metadata = store._metadata_projection
+    original_replay = store._replay
+    original_usage = session_store_module.derive_session_usage
+
+    def metadata(session_id: str, events: list[SessionEvent]) -> dict[str, Any]:
+        check_lock(held=True)
+        snapshots.append(events)
+        return original_metadata(session_id, events)
+
+    def replay(
+        events: list[SessionEvent], source: Any, *, hydrate_artifacts: bool
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        assert events is snapshots[0]
+        assert hydrate_artifacts is False
+        check_lock(held=False)
+        replay_entered.set()
+        assert writer_done.wait(timeout=10)
+        assert not writer_errors
+        return original_replay(events, source, hydrate_artifacts=hydrate_artifacts)
+
+    def usage(events: list[SessionEvent]) -> dict[str, Any]:
+        assert events is snapshots[0]
+        check_lock(held=False)
+        return original_usage(events)
+
+    def append_later() -> None:
+        try:
+            assert replay_entered.wait(timeout=10)
+            record.title = "after"
+            store.save(record)
+            recorder.record_context_message(Message(role="user", content=[TextBlock("after")]))
+            recorder.record_compaction({"summary": "after"})
+            journal.append(
+                "llm.message",
+                actor="assistant",
+                payload={
+                    "message": {
+                        "usage": normalize_usage({"input_tokens": 100, "output_tokens": 50}, "anthropic", "m").to_dict()
+                    }
+                },
+            )
+            later_ref = journal.put_artifact(b"later body", media_type="text/plain", purpose="after", encoding="utf-8")
+            journal.append("test.later_artifact", actor="system", artifacts=[later_ref])
+        except BaseException as exc:
+            writer_errors.append(exc)
+        finally:
+            writer_done.set()
+
+    monkeypatch.setattr(store, "_metadata_projection", metadata)
+    monkeypatch.setattr(store, "_replay", replay)
+    monkeypatch.setattr(session_store_module, "derive_session_usage", usage)
+    writer = threading.Thread(target=append_later, daemon=True)
+    writer.start()
+    try:
+        exported = store.bug_export(record.session_id)
+    finally:
+        replay_entered.set()
+        writer.join(timeout=10)
+    assert not writer.is_alive()
+    assert not writer_errors
+    assert len(journal.events_path.read_bytes().splitlines()) > len(expected_rows)
+    assert [event.to_dict() for event in exported.events] == expected_rows
+    assert exported.session["title"] == "before"
+    assert [Message.from_dict(message).get_text_content() for message in exported.session["history"]] == ["before"]
+    assert exported.session["compaction"] == {"summary": "before"}
+    assert exported.session["usage"] == expected_usage
+    assert expected_usage["total_tokens"] == 15
+    assert exported.artifact_manifest == {
+        "session_id": record.session_id,
+        "artifacts_included": False,
+        "artifacts": [{key: value for key, value in ref.items() if key != "path"}],
+    }
+
+
+def test_bug_export_cancellation_at_entry_does_not_touch_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SessionStore(tmp_path / "state")
+    cancel_event = threading.Event()
+    cancel_event.set()
+    migrate = Mock(side_effect=AssertionError("cancelled export must not access storage"))
+    monkeypatch.setattr(store, "_ensure_migrated", migrate)
+
+    with pytest.raises(CancelledError):
+        store.bug_export("not-created", cancel_event=cancel_event)
+
+    migrate.assert_not_called()
+    assert not store.root.exists()
+
+
+@pytest.mark.parametrize("cancel_stage", ["migration", "read", "metadata", "replay", "usage"])
+def test_bug_export_checks_cancellation_between_preparation_stages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel_stage: str
+) -> None:
+    store = SessionStore(tmp_path / "state")
+    record = store.create(tmp_path / "project", "code", {})
+    journal = store.journal(record.session_id)
+    cancel_event = threading.Event()
+    calls: list[str] = []
+    stages = [
+        ("migration", store, "_ensure_migrated"),
+        ("read", journal, "read_events"),
+        ("metadata", store, "_metadata_projection"),
+        ("replay", store, "_replay"),
+        ("usage", session_store_module, "derive_session_usage"),
+    ]
+    for name, owner, attribute in stages:
+        original = getattr(owner, attribute)
+
+        def run_stage(*args: Any, _name: str = name, _original: Any = original, **kwargs: Any) -> Any:
+            calls.append(_name)
+            result = _original(*args, **kwargs)
+            if _name == cancel_stage:
+                cancel_event.set()
+            return result
+
+        monkeypatch.setattr(owner, attribute, run_stage)
+
+    with pytest.raises(CancelledError):
+        store.bug_export(record.session_id, cancel_event=cancel_event)
+
+    names = [name for name, _, _ in stages]
+    assert calls == names[: names.index(cancel_stage) + 1]
+
+
+def test_bug_export_checks_cancellation_during_manifest_preparation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SessionStore(tmp_path / "state")
+    record = store.create(tmp_path / "project", "code", {})
+    journal = store.journal(record.session_id)
+    events = journal.read_events()
+    cancel_event = threading.Event()
+
+    class CancellingRef(dict[str, Any]):
+        def items(self) -> Any:
+            cancel_event.set()
+            return super().items()
+
+    events[-1].artifacts.append(CancellingRef(sha256="a" * 64, bytes=1))
+    monkeypatch.setattr(journal, "read_events", Mock(return_value=events))
+
+    with pytest.raises(CancelledError):
+        store.bug_export(record.session_id, cancel_event=cancel_event)
+
+
+def test_bug_export_retains_validated_recovery_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = SessionStore(tmp_path / "state")
+    record = store.create(tmp_path / "project", "code", {})
+    recorder = store.recorder(record.session_id)
+    recorder.start_turn(Message(role="user", content=[TextBlock("work")]))
+    recorder.record_assistant(Message(role="assistant", content=[ToolCall(id="pending", name="read", input={})]))
+    recorder.record_tool_results([ToolResult(tool_use_id="pending", name="read", content="answered", is_error=False)])
+
+    exported = store.bug_export(record.session_id, cancel_event=threading.Event())
+
+    assert any(event.event_type == "assistant.message" for event in exported.events)
+    monkeypatch.setattr(
+        recorder.journal, "_read_events_locked", Mock(side_effect=AssertionError("validated recovery must not rescan"))
+    )
+    assert recorder.repair_interrupted_tool_results() is None
+    assert SessionRecorder(recorder.journal, recover=False).repair_interrupted_tool_results() is None
 
 
 def test_context_epochs_replay_only_the_current_epoch(tmp_path: Path) -> None:
@@ -628,9 +965,9 @@ def test_large_tool_result_uses_artifact_and_bounded_preview(tmp_path: Path) -> 
     assert isinstance(loaded_result, ToolResult)
     assert loaded_result.content == prepared[0].content
     bug_export = store.bug_export(record.session_id)
-    assert full not in bug_export.session_json
-    assert full not in bug_export.events_jsonl
-    assert ref["sha256"] in bug_export.artifact_manifest_json
+    assert full not in json.dumps(bug_export.session)
+    assert full not in json.dumps([event.to_dict() for event in bug_export.events])
+    assert ref["sha256"] in json.dumps(bug_export.artifact_manifest)
 
 
 def test_reused_provider_tool_call_id_preserves_execution_pairs_through_session_replay(tmp_path: Path) -> None:
@@ -722,7 +1059,8 @@ def test_terminal_spill_path_round_trips_without_resume_rewriting(tmp_path: Path
     assert spill_path.exists()
 
 
-def test_images_and_provider_opaque_fields_are_hydrated_from_artifacts(tmp_path: Path) -> None:
+@pytest.mark.parametrize("damage", ["missing", "corrupt"])
+def test_images_and_provider_opaque_fields_are_hydrated_from_artifacts(tmp_path: Path, damage: str) -> None:
     project = tmp_path / "project"
     project.mkdir()
     store = SessionStore(tmp_path / "state")
@@ -769,17 +1107,25 @@ def test_images_and_provider_opaque_fields_are_hydrated_from_artifacts(tmp_path:
     assert "signed-provider-value" not in raw_events
     assert "encrypted-provider-value" not in raw_events
     bug_export = store.bug_export(record.session_id)
-    assert image_data not in bug_export.session_json
-    assert "signed-provider-value" not in bug_export.session_json
-    assert "encrypted-provider-value" not in bug_export.session_json
+    session_json = json.dumps(bug_export.session)
+    assert image_data not in session_json
+    assert "signed-provider-value" not in session_json
+    assert "encrypted-provider-value" not in session_json
 
     # Bug reporting remains available even if a referenced binary artifact is
     # damaged; the bundle carries the event-safe projection and manifest.
     image_event = next(event for event in store.journal(record.session_id).read_events() if event.artifacts)
     image_ref = image_event.artifacts[0]
-    (store.journal(record.session_id).artifacts_dir / image_ref["sha256"]).unlink()
-    assert store.bug_export(record.session_id).session_json
-    with pytest.raises(SessionStoreError, match="Missing session artifact"):
+    artifact_path = store.journal(record.session_id).artifacts_dir / image_ref["sha256"]
+    if damage == "missing":
+        artifact_path.unlink()
+    else:
+        artifact_path.write_bytes(b"damaged-body")
+    damaged_export = store.bug_export(record.session_id)
+    assert damaged_export.session == bug_export.session
+    assert damaged_export.events == bug_export.events
+    assert damaged_export.artifact_manifest == bug_export.artifact_manifest
+    with pytest.raises(SessionStoreError, match="Missing session artifact|failed integrity check"):
         store.load(record.session_id)
 
 

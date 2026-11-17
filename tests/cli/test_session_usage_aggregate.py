@@ -176,7 +176,7 @@ def test_exports_carry_usage_and_metadata_never_does(tmp_path):
     assert exported["usage"]["total_tokens"] == 15
 
     bug = store.bug_export(session.session_id)
-    assert json.loads(bug.session_json)["usage"]["total_tokens"] == 15
+    assert bug.session["usage"]["total_tokens"] == 15
 
     record = store.load(session.session_id)
     store.save(record)  # metadata-only save cycle
