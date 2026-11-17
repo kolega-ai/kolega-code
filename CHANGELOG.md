@@ -6,6 +6,11 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Avoided repeated full-journal scans during ordinary tool recovery, keeping
+  long sessions responsive without delaying event delivery behind history parsing.
+
 ## 0.52.0 - 2026-11-16
 
 ### Added

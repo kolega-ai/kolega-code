@@ -590,15 +590,22 @@ class SessionStore:
         automatically on exit, so there is no stale-lock cleanup. A second
         instance opening the same session is refused here.
         """
-        lock = self._session_lock_for(session_id)
-        try:
-            lock.acquire(timeout=0)
-        except Timeout as exc:
-            raise SessionLockedError(
-                f"Session {session_id} is already open in another kolega-code instance; close it there before retrying."
-            ) from exc
-        with self._locks_guard:
-            self._owned_session_locks.add(session_id)
+        with self._lock_for(session_id):
+            lock = self._session_lock_for(session_id)
+            try:
+                lock.acquire(timeout=0)
+            except Timeout as exc:
+                raise SessionLockedError(
+                    f"Session {session_id} is already open in another kolega-code instance; close it there before retrying."
+                ) from exc
+            with self._locks_guard:
+                if (
+                    session_id not in self._owned_session_locks
+                    and (journal := self._journals.get(session_id)) is not None
+                ):
+                    journal._loaded = False
+                    journal._recovery_valid = False
+                self._owned_session_locks.add(session_id)
 
     def _release_owned_session_lock(self, session_id: str, *, force: bool = False) -> None:
         """Release this process's claim, or balance one nested claim.

@@ -11,13 +11,14 @@ import os
 import threading
 import uuid
 from dataclasses import dataclass, replace
+from dataclasses import field as dataclass_field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, cast
 
 from filelock import BaseFileLock, Timeout
 
-from kolega_code.llm.models import ContentBlock, Message, ToolResult
+from kolega_code.llm.models import ContentBlock, Message, ToolInputKind, ToolResult
 from kolega_code.local_state import ensure_private_dir, ensure_private_file, write_private_bytes
 
 logger = logging.getLogger(__name__)
@@ -266,6 +267,113 @@ def _turn_user_text(message: Any) -> str:
     return "\n".join(part for part in parts if part)
 
 
+@dataclass(frozen=True)
+class _RecoveryToolCall:
+    tool_use_id: str
+    name: str
+    execution_id: Optional[str]
+    input_kind: ToolInputKind
+
+    def interrupted_result(self) -> ToolResult:
+        return ToolResult(
+            tool_use_id=self.tool_use_id,
+            content="Tool execution was interrupted before a durable result was recorded. The tool was not re-run.",
+            name=self.name,
+            is_error=True,
+            execution_id=self.execution_id,
+            input_kind=self.input_kind,
+        )
+
+
+@dataclass(frozen=True)
+class _RootTurnRecoverySnapshot:
+    epoch_id: str
+    turn_id: str
+    status: str
+    has_assistant: bool
+    has_tool_calls: bool
+    missing: tuple[_RecoveryToolCall, ...]
+
+
+@dataclass
+class _RootTurnRecovery:
+    epoch_id: str
+    turn_id: str
+    boundary_seq: int
+    status: str = "open"
+    has_assistant: bool = False
+    has_tool_calls: bool = False
+    calls: tuple[_RecoveryToolCall, ...] = ()
+    result_execution_ids: set[str] = dataclass_field(default_factory=set)
+    result_provider_ids: set[str] = dataclass_field(default_factory=set)
+    legacy_result_provider_ids: set[str] = dataclass_field(default_factory=set)
+
+    def apply(self, event: SessionEvent) -> None:
+        if (
+            event.depth
+            or event.epoch_id != self.epoch_id
+            or event.turn_id != self.turn_id
+            or event.seq < self.boundary_seq
+        ):
+            return
+        if event.event_type == "assistant.message" and isinstance(event.payload.get("message"), dict):
+            blocks = _message_blocks(event.payload["message"])
+            self.has_assistant = True
+            self.has_tool_calls = any(block.get("type") == "tool_call" for block in blocks)
+            self.calls = tuple(
+                _RecoveryToolCall(
+                    tool_use_id=str(block["id"]),
+                    name=str(block.get("name") or "unknown_tool"),
+                    execution_id=block.get("execution_id"),
+                    input_kind=block.get("input_kind", "json"),
+                )
+                for block in blocks
+                if block.get("type") == "tool_call" and block.get("id")
+            )
+        elif event.event_type == "tool.results":
+            for block in _message_blocks(event.payload.get("message")):
+                if block.get("type") != "tool_result" or not block.get("tool_use_id"):
+                    continue
+                provider_id = str(block["tool_use_id"])
+                self.result_provider_ids.add(provider_id)
+                if execution_id := block.get("execution_id"):
+                    self.result_execution_ids.add(execution_id)
+                else:
+                    self.legacy_result_provider_ids.add(provider_id)
+        elif event.event_type in TERMINAL_TURN_EVENTS:
+            self.status = event.event_type.split(".", 1)[1]
+
+    def snapshot(self) -> _RootTurnRecoverySnapshot:
+        missing = tuple(
+            call
+            for call in self.calls
+            if not (
+                call.execution_id in self.result_execution_ids or call.tool_use_id in self.legacy_result_provider_ids
+                if call.execution_id
+                else call.tool_use_id in self.result_provider_ids
+            )
+        )
+        return _RootTurnRecoverySnapshot(
+            epoch_id=self.epoch_id,
+            turn_id=self.turn_id,
+            status=self.status,
+            has_assistant=self.has_assistant,
+            has_tool_calls=self.has_tool_calls,
+            missing=missing,
+        )
+
+
+def _rebuild_root_turn_recovery(events: list[SessionEvent], epoch_id: str) -> Optional[_RootTurnRecovery]:
+    turns = collect_epoch_turns(events, epoch_id)
+    if not turns:
+        return None
+    latest = turns[-1]
+    recovery = _RootTurnRecovery(epoch_id, latest.turn_id, latest.boundary_seq, status=latest.status)
+    for event in events:
+        recovery.apply(event)
+    return recovery
+
+
 class SessionJournal:
     """Single-session JSONL writer and artifact store.
 
@@ -298,6 +406,8 @@ class SessionJournal:
         self._tail_requires_recovery = False
         self._next_seq = 1
         self._epoch_id: Optional[str] = None
+        self._root_turn_recovery: Optional[_RootTurnRecovery] = None
+        self._recovery_valid = False
         self._root_stamp = AgentStamp(
             agent_id=derive_root_agent_id(session_id),
             agent_name=DEFAULT_ROOT_AGENT_NAME,
@@ -347,6 +457,15 @@ class SessionJournal:
             self._set_state_from_events_locked(events)
             return events
 
+    def _root_recovery_snapshot(self) -> Optional[_RootTurnRecoverySnapshot]:
+        with self._lock:
+            shared = self._cross_process_lock is not None and not self._owns_cross_process_lock()
+            if shared or not self._loaded or self._tail_requires_recovery or not self._recovery_valid:
+                self.read_events(repair_tail=True)
+            if self._epoch_id is None:
+                raise SessionJournalError(f"Session {self.session_id} has no context epoch")
+            return self._root_turn_recovery.snapshot() if self._root_turn_recovery is not None else None
+
     @property
     def tail_requires_recovery(self) -> bool:
         """Whether the last non-repairing read excluded an incomplete tail."""
@@ -355,6 +474,8 @@ class SessionJournal:
 
     def raw_events(self) -> str:
         with self._lock:
+            self._loaded = False
+            self._recovery_valid = False
             raw = self._read_event_bytes_with_recovery_locked(repair_tail=True)
             events = self._parse_event_bytes_locked(raw)
             self._set_state_from_events_locked(events)
@@ -445,19 +566,35 @@ class SessionJournal:
         )
         try:
             self._write_event_locked(event)
+            self._next_seq += 1
+            if event_type == "context.epoch_started":
+                self._epoch_id = resolved_epoch
+            self._advance_root_recovery_locked(event)
+            for listener in tuple(self._listeners):
+                try:
+                    listener(event)
+                except Exception:
+                    logger.exception("Session event listener failed for %s", event_type)
         except BaseException:
-            # A failed close can leave a complete event on disk without advancing our state.
+            # The event may be durable even if its write, close, or projection was interrupted.
             self._loaded = False
+            self._recovery_valid = False
             raise
-        self._next_seq += 1
-        if event_type == "context.epoch_started":
-            self._epoch_id = resolved_epoch
-        for listener in tuple(self._listeners):
-            try:
-                listener(event)
-            except Exception:
-                logger.exception("Session event listener failed for %s", event_type)
         return event
+
+    def _advance_root_recovery_locked(self, event: SessionEvent) -> None:
+        if event.event_type == "context.epoch_started":
+            self._root_turn_recovery = None
+            self._recovery_valid = True
+            return
+        if not self._recovery_valid or event.depth or event.epoch_id != self._epoch_id:
+            return
+        if event.event_type == "context.rewound" and isinstance(event.payload.get("boundary_seq"), int):
+            self._recovery_valid = False
+        elif event.event_type == "turn.started":
+            self._root_turn_recovery = _RootTurnRecovery(event.epoch_id, event.turn_id or "", event.seq)
+        elif self._root_turn_recovery is not None:
+            self._root_turn_recovery.apply(event)
 
     def _resync_seq_from_tail_locked(self) -> None:
         """Reconcile ``_next_seq`` with the durable tail after another writer appended.
@@ -472,6 +609,7 @@ class SessionJournal:
             self._set_state_from_events_locked(events)
             return
         if tail_seq + 1 != self._next_seq:
+            self._recovery_valid = False
             self._next_seq = tail_seq + 1
 
     def _read_tail_seq_locked(self) -> Optional[int]:
@@ -523,11 +661,10 @@ class SessionJournal:
             return 0
         needs_rewrite = any(event.seq != index for index, event in enumerate(events, start=1))
         if needs_rewrite:
+            events = [replace(event, seq=index) for index, event in enumerate(events, start=1)]
             payload = b"".join(
-                (
-                    json.dumps(replace(event, seq=index).to_dict(), separators=(",", ":"), ensure_ascii=False) + "\n"
-                ).encode("utf-8")
-                for index, event in enumerate(events, start=1)
+                (json.dumps(event.to_dict(), separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
+                for event in events
             )
             tmp_path = self.events_path.with_name(f".{self.events_path.name}.repair-{uuid.uuid4().hex}")
             try:
@@ -747,6 +884,8 @@ class SessionJournal:
         self._set_state_from_events_locked(events)
 
     def _read_events_with_recovery_locked(self, *, repair_tail: bool) -> list[SessionEvent]:
+        self._loaded = False
+        self._recovery_valid = False
         if not repair_tail or self._cross_process_lock is None:
             return self._read_events_locked(repair_tail=repair_tail)
         try:
@@ -771,15 +910,23 @@ class SessionJournal:
             self._cross_process_lock.release()
 
     def _set_state_from_events_locked(self, events: Iterable[SessionEvent]) -> None:
+        self._loaded = False
+        self._recovery_valid = False
         events = list(events)
         self._next_seq = events[-1].seq + 1 if events else 1
         self._epoch_id = None
         for event in events:
             if event.event_type == "context.epoch_started":
                 self._epoch_id = event.epoch_id
+        self._root_turn_recovery = (
+            _rebuild_root_turn_recovery(events, self._epoch_id) if self._epoch_id is not None else None
+        )
+        self._recovery_valid = True
         self._loaded = True
 
     def _read_events_locked(self, *, repair_tail: bool, strict_seq: bool = True) -> list[SessionEvent]:
+        self._loaded = False
+        self._recovery_valid = False
         raw = self._read_event_bytes_locked(repair_tail=repair_tail)
         return self._parse_event_bytes_locked(raw, strict_seq=strict_seq)
 
@@ -1581,63 +1728,6 @@ class SessionRecorder:
                 user_message_text=target.user_text,
             )
 
-    def _latest_root_turn(
-        self, events: list[SessionEvent]
-    ) -> Optional[tuple[TurnSummary, Optional[dict[str, Any]], list[ToolResult]]]:
-        """Inspect only the latest surviving root turn, never discarded rewind branches."""
-        current_epoch = self.journal.epoch_id
-        turns = collect_epoch_turns(events, current_epoch)
-        if not turns:
-            return None
-        last_turn = turns[-1]
-        turn_events = [
-            event
-            for event in events
-            if event.epoch_id == current_epoch
-            and not event.depth
-            and event.turn_id == last_turn.turn_id
-            and event.seq >= last_turn.boundary_seq
-        ]
-        assistant_messages = [
-            event.payload["message"]
-            for event in turn_events
-            if event.event_type == "assistant.message" and isinstance(event.payload.get("message"), dict)
-        ]
-        result_blocks = [
-            block
-            for event in turn_events
-            if event.event_type == "tool.results"
-            for block in _message_blocks(event.payload.get("message"))
-            if block.get("type") == "tool_result" and block.get("tool_use_id")
-        ]
-        last_assistant = assistant_messages[-1] if assistant_messages else None
-        missing: list[ToolResult] = []
-        for block in _message_blocks(last_assistant):
-            if (
-                block.get("type") != "tool_call"
-                or not block.get("id")
-                or any(
-                    result.get("execution_id") == block["execution_id"]
-                    if result.get("execution_id") and block.get("execution_id")
-                    else result["tool_use_id"] == block["id"]
-                    for result in result_blocks
-                )
-            ):
-                continue
-            missing.append(
-                ToolResult(
-                    tool_use_id=str(block["id"]),
-                    content=(
-                        "Tool execution was interrupted before a durable result was recorded. The tool was not re-run."
-                    ),
-                    name=str(block.get("name") or "unknown_tool"),
-                    is_error=True,
-                    execution_id=block.get("execution_id"),
-                    input_kind=block.get("input_kind", "json"),
-                )
-            )
-        return last_turn, last_assistant, missing
-
     def repair_interrupted_tool_results(self, *, defer_projection: bool = False) -> Optional[list[ToolResult]]:
         """Pair unanswered root tools at a safe boundary, without closing an active turn.
 
@@ -1650,17 +1740,14 @@ class SessionRecorder:
                 raise SessionJournalError("Unsettled assistant message must be projected before repairing tool results")
             if self._pending_tool_results is not None:
                 return self.retry_pending_tool_results(defer_projection=defer_projection)
-            latest = self._latest_root_turn(self.journal.read_events(repair_tail=True))
-            if latest is None:
-                return None
-            last_turn, _, missing = latest
-            if not missing:
+            latest = self.journal._root_recovery_snapshot()
+            if latest is None or not latest.missing:
                 return None
             self._pending_tool_results = _PendingToolResults(
                 batch_id=str(uuid.uuid4()),
-                epoch_id=self.journal.epoch_id,
-                turn_id=last_turn.turn_id,
-                results=missing,
+                epoch_id=latest.epoch_id,
+                turn_id=latest.turn_id,
+                results=[call.interrupted_result() for call in latest.missing],
             )
             return self.retry_pending_tool_results(defer_projection=defer_projection)
 
@@ -1669,18 +1756,16 @@ class SessionRecorder:
         if self.agent_stamp.depth:
             return False
         with self._lock:
-            latest = self._latest_root_turn(self.journal.read_events(repair_tail=True))
+            latest = self.journal._root_recovery_snapshot()
             if latest is None:
                 return False
-            last_turn, last_assistant, missing = latest
-            if last_turn.status != "open" and not missing:
+            if latest.status != "open" and not latest.missing:
                 return False
-            if last_turn.status == "open":
-                self.current_turn_id = last_turn.turn_id
+            if latest.status == "open":
+                self.current_turn_id = latest.turn_id
             self.repair_interrupted_tool_results()
-            if last_turn.status == "open":
-                has_tool_calls = any(block.get("type") == "tool_call" for block in _message_blocks(last_assistant))
-                if last_assistant is not None and not has_tool_calls:
+            if latest.status == "open":
+                if latest.has_assistant and not latest.has_tool_calls:
                     self.finish_turn("completed")
                 else:
                     self.finish_turn("failed", error="Process exited before the turn reached a durable terminal marker")
@@ -1693,7 +1778,7 @@ class SessionRecorder:
 
 
 def _message_blocks(message: Any) -> list[dict[str, Any]]:
-    if not isinstance(message, dict) or not isinstance(message.get("content"), list):
+    if not isinstance(message, dict) or not isinstance(message.get("content"), (list, tuple)):
         return []
     return [block for block in message["content"] if isinstance(block, dict)]
 
