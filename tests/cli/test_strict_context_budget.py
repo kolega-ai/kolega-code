@@ -127,6 +127,8 @@ def test_valid_pair_resolves():
         ("gpt-6-luna", 400000),
         ("gpt-6.1-sol", 500000),
         ("gpt-6.1-terra", 500000),
+        ("gpt-6.2-sol", 500000),
+        ("gpt-6.2-astra", 400000),
         ("gpt-5.6-sol", 400000),
         ("gpt-5.6-terra", 400000),
         ("gpt-5.6-luna", 400000),

@@ -138,10 +138,10 @@ ChatGPT provider the Codex backend advertises a 500,000-token default window for
 both GPT-6.1 Sol and Terra, leaving 372,000 input tokens after the 128K output
 reservation.
 
-For GPT-6 Astra, GPT-6 Sol and Luna, GPT-6.1 Sol and Terra, and GPT-5.6 Sol,
-Terra and Luna on `openai_chatgpt`, the Codex catalog also advertises an
-**872,000-token maximum override**. Kolega retains its default budgets unless
-you opt in for a run, for example:
+For GPT-6 Astra, GPT-6 Sol and Luna, GPT-6.1 Sol and Terra, GPT-6.2 Sol and
+Astra, and GPT-5.6 Sol, Terra and Luna on `openai_chatgpt`, the Codex catalog
+also advertises an **872,000-token maximum override**. Kolega retains its default
+budgets unless you opt in for a run, for example:
 
 ```sh
 kolega-code tui --context-window-tokens 872000 --max-output-tokens 128000
@@ -155,6 +155,25 @@ local budgeting rather than a provider-enforced cap. The advertised maximum is
 an override ceiling, not proof of a hard server-side rejection limit.
 These process-wide flags also apply to subagents: a subagent routed to a model
 with a smaller catalogued window or output maximum cannot start with this pair.
+
+**GPT-6.2 Sol** (`gpt-6.2-sol`) and **GPT-6.2 Astra** (`gpt-6.2-astra`) are
+available on both `openai` and `openai_chatgpt`. Both support image input,
+hosted web search, `codex_apply_patch`, and reasoning efforts from `low` through
+`max` (`medium` by default; `none` and `minimal` are rejected, and temperature
+is omitted). On the API provider, both use a
+[1,050,000-token context window](https://developers.openai.com/api/docs/models/gpt-6.2-sol)
+with 128,000 tokens reserved for output (922,000 input tokens). On the ChatGPT
+provider, `gpt-6.2-sol` uses Codex's 500,000-token default window (372,000 input
+tokens) and `gpt-6.2-astra` keeps a 400,000-token default budget (272,000 input
+tokens, matching Codex's 272K default compaction window), both with the 872,000
+maximum override above.
+
+Standard API pricing per million tokens is **$2.00 input / $0.10 cached input /
+$10.00 output** for `gpt-6.2-sol` and **$8.00 input / $0.40 cached input / $40.00
+output** for `gpt-6.2-astra` (with 2x input/cache and 1.5x output above 272K
+input tokens; `service_tier="flex"` is not supported). Ultrafast costs 3x
+Standard through February 28, 2027 Pacific time and 6x Standard starting
+March 1, 2027.
 
 **Gemini 4 Argon** (`gemini-4-argon`) is available on the `google` provider.
 [Google released Argon on October 13, 2026](https://ai.google.dev/gemini-api/docs/changelog).
@@ -756,6 +775,8 @@ models in the TUI.
 | OpenAI / ChatGPT `gpt-6-astra` | `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | OpenAI / ChatGPT `gpt-6-sol`, `gpt-6-luna` | `none`, `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | OpenAI / ChatGPT `gpt-6.1-sol` | `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
+| OpenAI / ChatGPT `gpt-6.1-terra` | `none`, `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
+| OpenAI / ChatGPT `gpt-6.2-sol`, `gpt-6.2-astra` | `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | OpenAI `gpt-5.6-*` | `none`, `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | OpenAI `gpt-5.5` | `minimal`, `low`, `medium`, `high`, `xhigh` | `medium` |
 | OpenAI `gpt-5.4*` | `minimal`, `low`, `medium`, `high` | `medium` |

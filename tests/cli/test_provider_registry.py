@@ -181,14 +181,28 @@ def test_astra_is_first_and_sol_is_default_for_openai_providers() -> None:
         ("Max", "max"),
     ]
 
-    # GPT-6 Sol / Luna / 6.1 Sol / 6.1 Terra are appended, so the [:4] fallback
-    # head and the gpt-5.6-sol default above are unchanged.
+    # GPT-6 Sol / Luna / 6.1 Sol / 6.1 Terra / 6.2 Sol / 6.2 Astra are
+    # appended, so the [:4] fallback head and the gpt-5.6-sol default above are
+    # unchanged.
     for provider in (ModelProvider.OPENAI, ModelProvider.OPENAI_CHATGPT):
         options = dict(ui_model_options(provider.value))
         assert options["GPT-6 Sol"] == "gpt-6-sol"
         assert options["GPT-6 Luna"] == "gpt-6-luna"
         assert options["GPT-6.1 Sol"] == "gpt-6.1-sol"
         assert options["GPT-6.1 Terra"] == "gpt-6.1-terra"
+        assert options["GPT-6.2 Sol"] == "gpt-6.2-sol"
+        assert options["GPT-6.2 Astra"] == "gpt-6.2-astra"
+        vision_options = dict(ui_model_options(provider.value, vision_only=True))
+        assert vision_options["GPT-6.2 Sol"] == "gpt-6.2-sol"
+        assert vision_options["GPT-6.2 Astra"] == "gpt-6.2-astra"
+        for model in ("gpt-6.2-sol", "gpt-6.2-astra"):
+            assert ui_thinking_effort_options(provider.value, model) == [
+                ("Low", "low"),
+                ("Medium", "medium"),
+                ("High", "high"),
+                ("Extra high", "xhigh"),
+                ("Max", "max"),
+            ]
     assert ui_thinking_effort_options("openai", "gpt-6.1-sol") == [
         ("Low", "low"),
         ("Medium", "medium"),

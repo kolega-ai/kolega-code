@@ -163,6 +163,41 @@ def test_gpt61_terra_rejects_minimal_effort(provider: str) -> None:
         build_thinking_request_params(provider, "gpt-6.1-terra", "minimal")
 
 
+@pytest.mark.parametrize(
+    "provider,model,context_length",
+    [
+        ("openai", "gpt-6.2-sol", 1050000),
+        ("openai_chatgpt", "gpt-6.2-sol", 500000),
+        ("openai", "gpt-6.2-astra", 1050000),
+        ("openai_chatgpt", "gpt-6.2-astra", 400000),
+    ],
+)
+def test_gpt62_model_specs(provider: str, model: str, context_length: int) -> None:
+    specs = get_model_specs(provider, model)
+
+    assert specs["context_length"] == context_length
+    assert specs["max_completion_tokens"] == 128000
+    assert resolve_max_input_tokens(specs) == context_length - 128000
+    if provider == "openai_chatgpt":
+        assert specs["max_context_length"] == 872000
+    assert specs["default_temperature"] == 1.0
+    assert specs["supports_temperature"] is False
+    assert specs["supports_vision"] is True
+    assert specs["supports_hosted_web_search"] is True
+    assert specs["preferred_edit_protocol"] == "codex_apply_patch"
+    assert specs["thinking_effort"].options == ("low", "medium", "high", "xhigh", "max")
+    assert specs["thinking_effort"].default == "medium"
+    assert specs["thinking_effort"].mode == "openai_responses_reasoning"
+
+
+@pytest.mark.parametrize("provider", ["openai", "openai_chatgpt"])
+@pytest.mark.parametrize("model", ["gpt-6.2-sol", "gpt-6.2-astra"])
+@pytest.mark.parametrize("effort", ["none", "minimal", "ultra"])
+def test_gpt62_rejects_unsupported_efforts(provider: str, model: str, effort: str) -> None:
+    with pytest.raises(ValueError, match="Unsupported thinking effort"):
+        build_thinking_request_params(provider, model, effort)
+
+
 @pytest.mark.parametrize("provider", ["openai", "openai_chatgpt"])
 def test_gpt54_mini_thinking_efforts(provider):
     specs = get_model_specs(provider, "gpt-5.4-mini")

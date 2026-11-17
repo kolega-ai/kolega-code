@@ -153,7 +153,12 @@ def test_llmclient_routes_compatible_provider_to_chat_completions():
 
 @pytest.mark.parametrize(
     "model,effort",
-    [("gpt-5.5", "high"), *[("gpt-6-astra", effort) for effort in ("low", "medium", "high", "xhigh", "max")]],
+    [
+        ("gpt-5.5", "high"),
+        *[("gpt-6-astra", effort) for effort in ("low", "medium", "high", "xhigh", "max")],
+        *[("gpt-6.2-sol", effort) for effort in ("low", "medium", "high", "xhigh", "max")],
+        *[("gpt-6.2-astra", effort) for effort in ("low", "medium", "high", "xhigh", "max")],
+    ],
 )
 def test_build_request_is_responses_shaped_with_reasoning(model: str, effort: str) -> None:
     provider = OpenAIResponsesProvider(api_key="sk-test")
