@@ -151,8 +151,15 @@ async def test_details_remain_complete_and_selectable_across_resize(
     async with app.run_test(size=(100, 40)) as pilot:
         app._set_sidebar_visible(False)
         app._render_event(_event("tool_call", name, "details", args))
-        await _wait_for_layout(
-            pilot, lambda: any(widget.entry.tool_call_id == "details" for widget in app.query(ToolEntryWidget))
+        await wait_for_layout(
+            pilot,
+            lambda: any(
+                widget.entry.tool_call_id == "details"
+                and widget.query(CollapsibleTitle)
+                and widget.query(".tool-command-preview")
+                and widget.query(".tool-details")
+                for widget in app.query(ToolEntryWidget)
+            ),
         )
         widget = app.query(ToolEntryWidget).last()
         title = widget.query_one(CollapsibleTitle)

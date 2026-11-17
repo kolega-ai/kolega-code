@@ -6,8 +6,20 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.52.1 - 2026-11-17
+
+### Changed
+
+- Refreshed the OpenRouter catalog with current model availability, rankings,
+  pricing and token limits; the default model is unchanged.
+- Reused tool-handler signatures across registry rebuilds, reducing the
+  overhead of preparing tools for each turn.
+
 ### Fixed
 
+- Prevented stalled language servers from hanging edits after files were
+  already changed. Automatic diagnostics now have a shared time budget, and
+  language-server writes and shutdown no longer wait indefinitely.
 - Kept `/bug` responsive while preparing reports in the background, with one
   session-journal snapshot and streamed, credential-redacted ZIP assembly for
   long conversations.
