@@ -1085,7 +1085,6 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         content = event.content
         activity.context_percentage = self._as_optional_float(content.get("usage_percentage"))
         activity.context_input_tokens = self._as_optional_int(content.get("input_tokens"))
-        activity.context_max_tokens = self._as_optional_int(content.get("max_tokens"))
         self._refresh_sub_agent_entry(activity)
         self._invalidate_sub_agent_detail(activity)
 

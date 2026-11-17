@@ -279,7 +279,6 @@ class SubAgentActivity:
     # from llm_context_update events. Distinct from cumulative `tokens` above.
     context_percentage: Optional[float] = None
     context_input_tokens: Optional[int] = None
-    context_max_tokens: Optional[int] = None
     depth: int = 1
     parent_agent_id: Optional[str] = None
     parent_tool_call_id: Optional[str] = None
