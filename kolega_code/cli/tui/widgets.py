@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Optional, cast
@@ -374,6 +375,11 @@ class ToolEntryWidget(Vertical):
         self._body_len = 0
         self._preview_key = ""
         self._preview_visible = False
+        self.start_expanded = False
+
+    @property
+    def is_expanded(self) -> bool:
+        return not self._collapsible.collapsed if self._collapsible is not None else self.start_expanded
 
     def compose(self) -> ComposeResult:
         # Keep the title first, followed by the always-visible edit preview and then
@@ -390,7 +396,7 @@ class ToolEntryWidget(Vertical):
             self._details,
             self._body,
             title=self._title_factory(self.entry),
-            collapsed=True,
+            collapsed=not self.start_expanded,
             persistent_children=(self._command_preview, self._preview),
         )
         yield self._collapsible
@@ -515,19 +521,9 @@ _EXPAND_COMPENSATION_RETRIES = 3
 
 
 class ScrollbackWindow:
-    """Maintains a mounted trailing window over an append-mostly entry list.
+    """Mounts a contiguous slice of an append-mostly list.
 
-    Textual reflows cost O(mounted widgets): a session that mounts every
-    transcript entry forever gets slower the longer it runs. This helper mounts
-    only the newest ``max_mounted`` entries, mounts older chunks on demand when
-    the user scrolls near the top, and trims the oldest entries while the view
-    follows the bottom — keeping per-flush layout cost bounded no matter how
-    long the session grows.
-
-    Invariant after :meth:`sync`/:meth:`rebuild`: ``list(self.widgets)`` equals
-    ``[e.entry_id for e in entries[mounted_start:]]``. Live entry lists are
-    append-only; any mid-list insertion or removal breaks the mounted-span
-    alignment and is handled by a full (re)windowing in :meth:`rebuild`.
+    Chat slides both edges while browsing; the inspector still expands a suffix.
     """
 
     def __init__(
@@ -547,6 +543,11 @@ class ScrollbackWindow:
         self.widgets: dict[str, ConversationEntryWidget | ToolEntryWidget] = {}
         self.mounted_start = 0
         self._expand_pending = False
+        self._expanded_ids: set[str] = set()
+
+    @property
+    def mounted_end(self) -> int:
+        return self.mounted_start + len(self.widgets)
 
     # ---- incremental maintenance --------------------------------------------
 
@@ -566,8 +567,16 @@ class ScrollbackWindow:
         if not self._can_render:
             dirty_ids.clear()
             return
-        unmounted_tail = len(entries) - (self.mounted_start + len(self.widgets))
-        if not self._mounted_span_matches(entries) or unmounted_tail > self.max_mounted:
+        unmounted_tail = len(entries) - self.mounted_end
+        if not self._mounted_span_matches(entries):
+            self.rebuild(entries)
+            dirty_ids.clear()
+            return
+        if isinstance(self._view, ConversationView) and not follow_bottom:
+            self._view.has_newer_entries = unmounted_tail > 0
+            self.refresh_dirty(dirty_ids)
+            return
+        if unmounted_tail > self.max_mounted:
             self.rebuild(entries)
             dirty_ids.clear()
             return
@@ -576,17 +585,31 @@ class ScrollbackWindow:
             self._mount_entries(entries[len(entries) - unmounted_tail :])
         if follow_bottom:
             self._trim_above()
+        if isinstance(self._view, ConversationView):
+            self._view.has_newer_entries = False
 
     def rebuild(self, entries: list[ConversationEntry]) -> None:
         """Re-mount only the trailing window of ``entries`` (restore, reset, structural edits)."""
         if not self._can_render:
             return
         if isinstance(self._view, ConversationView):
-            self._view._prepend_anchor = None
+            self._view._scrollback_anchor = None
+            self._view.has_newer_entries = False
+            self._remember_disclosures(self.widgets.values())
+            if self._expanded_ids:
+                self._expanded_ids.intersection_update(entry.entry_id for entry in entries)
         self._view.remove_children()
         self.widgets = {}
         self.mounted_start = max(0, len(entries) - self.max_mounted)
         self._mount_entries(entries[self.mounted_start :])
+
+    def show_tail(self, entries: list[ConversationEntry]) -> None:
+        if not self._can_render:
+            return
+        if self.mounted_end != len(entries) or not self._mounted_span_matches(entries):
+            self.rebuild(entries)
+        else:
+            self._trim_above(force=True)
 
     def refresh_dirty(self, dirty_ids: set[str]) -> None:
         """Re-render mounted widgets for ``dirty_ids`` (skipping unmounted) and consume the set."""
@@ -615,10 +638,10 @@ class ScrollbackWindow:
         The inspector retains its deferred height compensation.
         Returns False when already fully expanded or an expansion is in flight.
         """
-        if self._expand_pending or self.mounted_start <= 0 or not self.widgets:
-            return False
         view = self._view
-        if not self._can_render or (isinstance(view, ConversationView) and view._prepend_anchor is not None):
+        if isinstance(view, ConversationView):
+            return self._page_chat(view, entries, older=True)
+        if self._expand_pending or self.mounted_start <= 0 or not self.widgets or not self._can_render:
             return False
         new_start = max(0, self.mounted_start - self.expand_chunk)
         chunk = entries[new_start : self.mounted_start]
@@ -635,25 +658,59 @@ class ScrollbackWindow:
         self.mounted_start = new_start
         self.widgets = {**new_widgets, **old_widgets}
         try:
-            with view.app.batch_update():
-                if isinstance(view, ConversationView):
-                    view._prepend_anchor = _PrependAnchor(
-                        first_widget, first_widget.virtual_region.y, tuple(new_widgets.values())
-                    )
-                view.mount(*new_widgets.values(), before=first_widget)
+            view.mount(*new_widgets.values(), before=first_widget)
         except Exception:
             # Mount failed (e.g. view mid-teardown): roll back to the pre-expand
             # state so a later attempt can retry cleanly.
             self.widgets = old_widgets
             self.mounted_start = old_start
             self._expand_pending = False
-            if isinstance(view, ConversationView):
-                view._prepend_anchor = None
             return False
-        if isinstance(view, ConversationView):
-            self._expand_pending = False
+        self._schedule_expand_compensation(old_virtual_height)
+        return True
+
+    def expand_down(self, entries: list[ConversationEntry]) -> bool:
+        view = self._view
+        return isinstance(view, ConversationView) and self._page_chat(view, entries, older=False)
+
+    def _page_chat(self, view: ConversationView, entries: list[ConversationEntry], *, older: bool) -> bool:
+        if not self.widgets or not self._can_render or view._scrollback_anchor is not None:
+            return False
+        start, end = self.mounted_start, self.mounted_end
+        if older:
+            chunk = entries[max(0, start - self.expand_chunk) : start]
         else:
-            self._schedule_expand_compensation(old_virtual_height)
+            chunk = entries[end : end + self.expand_chunk]
+        if not chunk or not self._mounted_span_matches(entries):
+            return False
+
+        cap = max(cli_theme.TRANSCRIPT_WINDOW_BROWSE_MAX, 2 * view.content_region.height + self.expand_chunk)
+        excess = max(0, len(self.widgets) + len(chunk) - cap)
+        ids = list(self.widgets)
+        dropped = ids[len(ids) - excess :] if older else ids[:excess]
+        kept = ids[: len(ids) - excess] if older else ids[excess:]
+        anchor = next(
+            (self.widgets[key] for key in kept if self.widgets[key].virtual_region.bottom > view.scroll_y),
+            self.widgets[kept[0]],
+        )
+        added = {entry.entry_id: self._build_widget(entry) for entry in chunk}
+        removed = tuple(self.widgets[key] for key in dropped)
+        with view.app.batch_update():
+            view._scrollback_anchor = _ScrollbackAnchor(anchor, anchor.virtual_region.y, tuple(added.values()), removed)
+            try:
+                view.mount(*added.values(), before=self.widgets[ids[0]] if older else None)
+            except Exception:
+                view._scrollback_anchor = None
+                return False
+            self._remember_disclosures(removed)
+            if removed:
+                view.remove_children(removed)
+            retained = {key: self.widgets[key] for key in kept}
+            self.widgets = {**added, **retained} if older else {**retained, **added}
+            self.mounted_start = start - len(chunk) if older else start + excess
+            view.has_newer_entries = self.mounted_end < len(entries)
+            view.set_auto_follow(False)
+            view.anchor(False)
         return True
 
     def _schedule_expand_compensation(self, old_virtual_height: int) -> None:
@@ -690,39 +747,56 @@ class ScrollbackWindow:
 
     def _mounted_span_matches(self, entries: list[ConversationEntry]) -> bool:
         """Mounted ids still align with ``entries[mounted_start : mounted_start + len(widgets)]``."""
-        end = self.mounted_start + len(self.widgets)
+        end = self.mounted_end
         if end > len(entries):
             return False
         return all(
             entry.entry_id == widget_id for entry, widget_id in zip(entries[self.mounted_start : end], self.widgets)
         )
 
+    def _build_widget(self, entry: ConversationEntry) -> ConversationEntryWidget | ToolEntryWidget:
+        widget = self._make_widget(entry)
+        if isinstance(widget, ToolEntryWidget):
+            widget.start_expanded = entry.entry_id in self._expanded_ids
+        return widget
+
+    def _remember_disclosures(self, widgets: Iterable[ConversationEntryWidget | ToolEntryWidget]) -> None:
+        for widget in widgets:
+            if isinstance(widget, ToolEntryWidget):
+                if widget.is_expanded:
+                    self._expanded_ids.add(widget.entry.entry_id)
+                else:
+                    self._expanded_ids.discard(widget.entry.entry_id)
+
     def _mount_entries(self, new_entries: list[ConversationEntry]) -> None:
         if not new_entries:
             return
         widgets = []
         for entry in new_entries:
-            widget = self._make_widget(entry)
+            widget = self._build_widget(entry)
             self.widgets[entry.entry_id] = widget
             widgets.append(widget)
         self._view.mount(*widgets)
 
-    def _trim_above(self) -> None:
+    def _trim_above(self, *, force: bool = False) -> None:
         """Remove the oldest entries once the window reaches max + trim_chunk (back to max)."""
         excess = len(self.widgets) - self.max_mounted
-        if excess < self.trim_chunk:
+        if excess <= 0 or (not force and excess < self.trim_chunk):
             return
         oldest_ids = list(self.widgets)[:excess]
         oldest_widgets = [self.widgets.pop(entry_id) for entry_id in oldest_ids]
         self.mounted_start += excess
+        if isinstance(self._view, ConversationView):
+            self._remember_disclosures(oldest_widgets)
         self._view.remove_children(oldest_widgets)
 
 
 @dataclass
-class _PrependAnchor:
+class _ScrollbackAnchor:
     widget: Widget
     virtual_y: int
     new_widgets: tuple[Widget, ...]
+    removed_widgets: tuple[Widget, ...]
     wheel_deltas: list[float] = field(default_factory=list)
 
 
@@ -734,25 +808,30 @@ class ConversationView(VerticalScroll):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.auto_follow_bottom = True
-        self._prepend_anchor: _PrependAnchor | None = None
+        self.has_newer_entries = False
+        self._scrollback_anchor: _ScrollbackAnchor | None = None
 
     def is_at_bottom(self) -> bool:
         """Return whether the current scroll position is effectively at the end."""
-        return self.max_scroll_y <= 0 or self.scroll_y >= self.max_scroll_y - self.bottom_tolerance
+        return (
+            not self.has_newer_entries
+            and self._scrollback_anchor is None
+            and self.scroll_y >= self.max_scroll_y - self.bottom_tolerance
+        )
 
     def set_auto_follow(self, enabled: bool) -> None:
         """Record whether transcript updates should keep the view pinned to the end."""
         self.auto_follow_bottom = enabled
         if enabled:
-            self._prepend_anchor = None
+            self._scrollback_anchor = None
 
     def arrange(self, size: Size, optimal: bool = False) -> DockArrangeResult:
         arrangement = super().arrange(size, optimal)
-        anchor = self._prepend_anchor
+        anchor = self._scrollback_anchor
         if anchor is None or optimal or size.height <= 0:
             return arrangement
         if self._pruning or anchor.widget not in arrangement.widgets:
-            self._prepend_anchor = None
+            self._scrollback_anchor = None
             return arrangement
 
         placement = next(p for p in arrangement.placements if p.widget is anchor.widget)
@@ -763,8 +842,10 @@ class ConversationView(VerticalScroll):
             scroll_y = clamp(scroll_y + delta, 0, maximum)
         anchor.virtual_y = virtual_y
         anchor.wheel_deltas.clear()
-        if all(widget.is_mounted for widget in anchor.new_widgets):
-            self._prepend_anchor = None
+        if all(widget.is_mounted for widget in anchor.new_widgets) and all(
+            widget not in arrangement.widgets for widget in anchor.removed_widgets
+        ):
+            self._scrollback_anchor = None
 
         # Textual reads the scroll offset just after arrange(), before updating
         # virtual_size. Like its bottom anchor, bypass the stale scroll bounds
@@ -775,33 +856,53 @@ class ConversationView(VerticalScroll):
             self.vertical_scrollbar.set_reactive(ScrollBar.position, scroll_y)
         return arrangement
 
-    def _queue_prepend_wheel(self, event: events.MouseEvent, direction: int) -> None:
-        anchor = self._prepend_anchor
-        if anchor is not None and not (event.ctrl or event.shift) and self.allow_vertical_scroll:
-            # Apply input against the expanded range, not the old top boundary.
+    def _queue_scrollback_wheel(self, event: events.MouseEvent, direction: int) -> None:
+        if event.ctrl or event.shift:
+            return
+        if self._scrollback_anchor is None:
+            # A wheel at a clamped edge can't trigger the scroll watcher.
+            if direction < 0 and self.scroll_y <= 0:
+                expand = getattr(self.app, "_maybe_expand_transcript_window", None)
+                if expand is not None:
+                    expand()
+            if direction > 0 and self.has_newer_entries and self.scroll_y >= self.max_scroll_y:
+                expand = getattr(self.app, "_maybe_expand_transcript_window_down", None)
+                if expand is not None:
+                    expand()
+        anchor = self._scrollback_anchor
+        if anchor is not None:
+            # Apply input against the new range, not the old boundary.
             anchor.wheel_deltas.append(direction * self.app.scroll_sensitivity_y)
             event.stop()
             event.prevent_default()
 
     def _on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
-        self._queue_prepend_wheel(event, -1)
+        self._queue_scrollback_wheel(event, -1)
 
     def _on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
-        self._queue_prepend_wheel(event, 1)
+        self._queue_scrollback_wheel(event, 1)
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         super().watch_scroll_y(old_value, new_value)
+        was_following = self.auto_follow_bottom
         self.auto_follow_bottom = self.is_at_bottom()
         try:
             update = getattr(self.app, "_update_jump_button", None)
             expand = getattr(self.app, "_maybe_expand_transcript_window", None)
+            expand_down = getattr(self.app, "_maybe_expand_transcript_window_down", None)
+            restore_tail = getattr(self.app, "_restore_transcript_tail", None)
         except Exception:
             return
         if update is not None:
             update()
-        # Near the top of the mounted window: pull older history into view.
-        if expand is not None and new_value <= max(1.0, float(self.outer_size.height)):
+        threshold = max(1, self.outer_size.height)
+        if new_value < old_value and new_value <= threshold and expand is not None:
             expand()
+        elif new_value > old_value and self.max_scroll_y - new_value <= threshold:
+            if self.has_newer_entries and expand_down is not None:
+                expand_down()
+            elif self.auto_follow_bottom and not was_following and restore_tail is not None:
+                restore_tail()
 
 
 class TrajectoryScrollView(VerticalScroll):

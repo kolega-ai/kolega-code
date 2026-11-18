@@ -1,10 +1,9 @@
 # ruff: noqa: F401,F811,E402
 """Scrollback-window behavior: bounded mounted widgets on large transcripts.
 
-The transcript and the sub-agent inspector mount only a trailing window of their
-entries so Textual reflows stay O(window) no matter how long a session runs.
-These tests cover trimming while following the bottom, history expansion on
-scroll-up, windowed restores, modal-cover deferral, and the inspector's window.
+The transcript mounts a sliding window of its entries so Textual reflows stay
+O(window). These tests also cover windowed restores, modal-cover deferral, and
+the sub-agent inspector's expanding suffix.
 """
 
 from pathlib import Path
@@ -17,7 +16,7 @@ from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.geometry import Size
 from textual.screen import ModalScreen
-from textual.widgets import Static
+from textual.widgets import Collapsible, Static
 
 from kolega_code.cli import theme
 from kolega_code.cli.tui import state as tui_state
@@ -91,30 +90,47 @@ async def test_transcript_trims_oldest_entries_while_following_bottom(tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_transcript_does_not_trim_while_scrolled_up(tmp_path: Path, monkeypatch) -> None:
+async def test_transcript_keeps_visible_history_when_output_arrives(tmp_path: Path, monkeypatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
-        await _settle(pilot)
+        await wait_for_layout(pilot, app._startup_complete.is_set)
         stage_one = WINDOW_MAX - 1
         _add_entries(app, stage_one)
         app._flush_conversation_render()
-        await _settle(pilot)
-
         view = app._conversation
-        view.scroll_to(y=0, animate=False)
-        await _settle(pilot)
-        assert view.auto_follow_bottom is False
+        await wait_for_layout(
+            pilot, lambda: view.max_scroll_y > 20 and view.is_at_bottom() and not app._conversation_anchor_pending
+        )
+        view.scroll_to(y=20, animate=False, immediate=True)
+        window = _window(app)
+        before = list(window.widgets)
+        anchor = next(widget for widget in window.widgets.values() if widget.virtual_region.bottom > 20)
+        await wait_for_layout(pilot, lambda: anchor in view.screen._compositor.visible_widgets)
+        offset = anchor.region.y - view.content_region.y
 
-        # Append within the burst guard (≤ max_mounted) so sync mounts incrementally.
-        stage_two = WINDOW_MAX - 20
-        _add_entries(app, stage_two, start=stage_one)
-        app._flush_conversation_render()
-        await _settle(pilot)
+        # Both incremental updates and bursts beyond the usual rebuild guard
+        # should leave the same mounted interval and screen position.
+        for count in (1, 300):
+            _add_entries(app, count, start=len(app.conversation_entries))
+            app._flush_conversation_render()
+            await wait_for_layout(pilot, lambda: view.has_newer_entries and not view.auto_follow_bottom)
+            assert list(window.widgets) == before
+            assert anchor.region.y - view.content_region.y == offset
+            assert view.scroll_y == 20
 
-        # Nothing trimmed: the user is reading history, so the window only grows.
-        assert len(app._entry_widgets) == stage_one + stage_two + 1
-        assert _window(app).mounted_start == 0
+        # Arrive at the mounted edge without paging on the preceding scroll,
+        # as can happen when a swap or a coverage modal suppresses its watcher.
+        with monkeypatch.context() as setup:
+            setup.setattr(app, "_maybe_expand_transcript_window_down", lambda: None)
+            view.scroll_to(y=view.max_scroll_y, animate=False, immediate=True)
+            await wait_for_layout(pilot, lambda: view.scroll_y == view.max_scroll_y)
+        old_end = window.mounted_end
+        await view._on_message(events.MouseScrollDown(view, 0, 0, 0, 0, 0, False, False, False))
+        await wait_for_layout(
+            pilot, lambda: window.mounted_end == old_end + EXPAND_CHUNK and view._scrollback_anchor is None
+        )
+        assert not view.auto_follow_bottom
 
 
 @pytest.mark.asyncio
@@ -279,7 +295,10 @@ async def test_transcript_prepend_bounds_each_batch_and_services_queued_input(
 
         while window.mounted_start:
             old_start = window.mounted_start
-            old_height = view.virtual_size.height
+            # The first row survives an upward swap even when it evicts the
+            # opposite edge and net virtual height is unchanged.
+            retained = next(iter(window.widgets.values()))
+            old_y = retained.virtual_region.y
             built.clear()
             batches.clear()
             for _ in range(int(view.scroll_y / step) + 1):
@@ -293,13 +312,90 @@ async def test_transcript_prepend_bounds_each_batch_and_services_queued_input(
             crossing_y = view.scroll_y
 
             def queued_wheel_applied() -> bool:
-                growth = view.virtual_size.height - old_height
-                return growth > 0 and view.scroll_y == crossing_y + growth + step
+                distance = retained.virtual_region.y - old_y
+                return (
+                    distance > 0 and view.scroll_y == crossing_y + distance + step and view._scrollback_anchor is None
+                )
 
             await wait_for_layout(pilot, queued_wheel_applied)
-            assert list(window.widgets) == expected[window.mounted_start :]
+            assert list(window.widgets) == expected[window.mounted_start : window.mounted_end]
 
-        assert list(window.widgets) == expected
+        assert list(window.widgets)[0] == expected[0]
+
+
+@pytest.mark.asyncio
+async def test_transcript_history_stays_bounded_in_both_directions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(90, 26)) as pilot:
+        await wait_for_layout(pilot, app._startup_complete.is_set)
+        for index in range(480):
+            app._add_conversation_entry(
+                ConversationEntry(
+                    kind="thinking" if index % 7 == 0 else "user",
+                    content=f"Entry {index}: " + "wrapped history " * (3 + index % 9),
+                )
+            )
+        app._render_conversation()
+        view = app._conversation
+        window = _window(app)
+        await wait_for_layout(pilot, lambda: view.is_at_bottom() and not app._conversation_anchor_pending)
+        expected = [entry.entry_id for entry in app.conversation_entries]
+        initial_count = len(expected)
+        disclosure_id = expected[-4]  # thinking entry 476
+        disclosure = window.widgets[disclosure_id].query_one(Collapsible)
+        disclosure.collapsed = False
+        await wait_for_layout(pilot, lambda: disclosure.region.height > 3 and view.is_at_bottom())
+
+        async def page(direction: int) -> None:
+            old_start = window.mounted_start
+            old_end = window.mounted_end
+            target_y = 0 if direction < 0 else view.max_scroll_y
+            anchor = next(widget for widget in window.widgets.values() if widget.virtual_region.bottom > target_y)
+            old_offset = anchor.virtual_region.y - target_y
+            view.scroll_to(y=target_y, animate=False, immediate=True)
+            if direction > 0 and window.mounted_end == initial_count and len(expected) == initial_count:
+                # The last page is mounted in the DOM but the old bottom is
+                # still published. New output must not restore follow here.
+                assert view._scrollback_anchor is not None
+                incoming = ConversationEntry(kind="user", content="arrived in flight")
+                app._add_conversation_entry(incoming)
+                expected.append(incoming.entry_id)
+                app._flush_conversation_render()
+                assert view.has_newer_entries and not view.auto_follow_bottom
+                assert incoming.entry_id not in window.widgets
+
+            def settled() -> bool:
+                end = window.mounted_start + len(window.widgets)
+                moved = window.mounted_start < old_start if direction < 0 else end > old_end
+                return (
+                    moved
+                    and list(view.children) == list(window.widgets.values())
+                    and all(widget.is_mounted and widget.region.height > 0 for widget in window.widgets.values())
+                    and view._scrollback_anchor is None
+                )
+
+            await wait_for_layout(pilot, settled)
+            start = window.mounted_start
+            end = start + len(window.widgets)
+            assert len(view.children) <= 160
+            assert list(window.widgets) == expected[start:end]
+            assert start < old_end and end > old_start
+            assert anchor in window.widgets.values()
+            assert anchor.region.y - view.content_region.y == old_offset
+
+        while window.mounted_start:
+            await page(-1)
+        assert disclosure_id not in window.widgets and not disclosure.is_attached
+        while window.mounted_end < len(expected):
+            await page(1)
+        assert not window.widgets[disclosure_id].query_one(Collapsible).collapsed
+
+        view.scroll_to(y=view.max_scroll_y, animate=False, immediate=True)
+        await wait_for_layout(pilot, lambda: view.auto_follow_bottom and list(window.widgets) == expected[-WINDOW_MAX:])
+        assert view.is_at_bottom()
 
 
 @pytest.mark.asyncio
@@ -316,15 +412,20 @@ async def test_transcript_jump_to_bottom_refollows_and_trims(tmp_path: Path, mon
         await _settle(pilot)
 
         view = app._conversation
-        view.scroll_to(y=0, animate=False)
-        await _settle(pilot)
-        expanded = len(app._entry_widgets)
-        assert expanded > WINDOW_MAX  # expansion grew the window while reading
+        window = _window(app)
+        tail = [entry.entry_id for entry in app.conversation_entries[-WINDOW_MAX:]]
+        for _ in range(5):
+            before = window.mounted_start
+            view.scroll_to(y=0, animate=False, immediate=True)
+            await wait_for_layout(pilot, lambda: window.mounted_start < before and view._scrollback_anchor is None)
+        assert view.has_newer_entries  # Jump from a window that does not contain the tail.
 
         bar = app.query_one("#jump_to_bottom", JumpToBottomBar)
         app.on_jump_to_bottom_bar_pressed(JumpToBottomBar.Pressed(bar))
-        await _settle(pilot)
-        assert view.auto_follow_bottom is True
+        await wait_for_layout(
+            pilot, lambda: view.auto_follow_bottom and view.is_at_bottom() and not app._conversation_anchor_pending
+        )
+        assert list(window.widgets) == tail
 
         _add_entries(app, 150, start=450)
         app._flush_conversation_render()
@@ -350,34 +451,9 @@ async def test_restore_mounts_only_the_trailing_window(tmp_path: Path, monkeypat
         assert len(app._entry_widgets) == WINDOW_MAX
         assert _window(app).mounted_start == total - WINDOW_MAX
 
-        # Scrolling to the top repeatedly expands until the whole history is mounted.
-        view = app._conversation
-        window = _window(app)
-
-        async def scroll_to_top_until_expanded(timeout: float = 10.0) -> None:
-            """Scroll to the top until the mounted window grows.
-
-            An expansion whose scroll compensation has not been applied yet leaves
-            the viewport on the top row, where scrolling to the top again changes
-            nothing, so keep re-issuing the scroll until it takes effect.
-            """
-            before = window.mounted_start
-            deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                view.scroll_to(y=0, animate=False)
-                await pilot.pause()
-                if window.mounted_start != before:
-                    return
-            raise AssertionError(f"history expansion stalled at {window.mounted_start} of {total} entries")
-
-        while window.mounted_start > 0:
-            await scroll_to_top_until_expanded()
-
-        assert len(app._entry_widgets) == total
-
 
 class _LateLayoutView:
-    """Conversation-view double whose mounted height lags one refresh behind.
+    """Inspector-view double whose mounted height lags one refresh behind.
 
     Forwards every attribute to the real view, but serves the height recorded by
     :meth:`hide_next_growth` to the compensation read that follows the expansion:
@@ -415,31 +491,29 @@ async def test_expansion_compensates_when_the_first_height_read_is_stale(tmp_pat
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
-        await _settle(pilot)
-        history = [
-            {"role": "user" if index % 2 == 0 else "assistant", "content": f"turn {index}"} for index in range(700)
-        ]
-        app._restore_conversation_history(history)
-        await _settle(pilot)
-
-        view = app._conversation
-        window = _window(app)
+        app._render_event(_sub_agent_event(uuid="s0", text="start"))
+        activity = app._sub_agent_activities["agent-1"]
+        for index in range(350):
+            activity.steps.append(ConversationEntry(kind="user", content=f"step {index}", complete=True))
+        app.action_open_sub_agent()
+        screen = app._sub_agent_inspector
+        assert screen is not None
+        await wait_for_layout(pilot, lambda: len(screen._step_widgets) == INSPECTOR_MAX)
+        view = screen.query_one("#inspector_trajectory", TrajectoryScrollView)
+        await wait_for_layout(pilot, lambda: view.scroll_y > 0)
+        window = screen._get_trajectory_window(view)
         late_layout = _LateLayoutView(view)
         monkeypatch.setattr(window, "_view", cast(VerticalScroll, late_layout))
 
         while window.mounted_start > 0:
             before = window.mounted_start
-            deadline = time.monotonic() + 10
-            while window.mounted_start == before:
-                assert time.monotonic() < deadline, f"history expansion stalled at {window.mounted_start}"
-                late_layout.hide_next_growth()
-                view.scroll_to(y=0, animate=False)
-                await pilot.pause()
+            late_layout.hide_next_growth()
+            view.scroll_to(y=0, animate=False, immediate=True)
             # Without a compensating scroll the viewport stays on the top row,
             # where scrolling up again changes nothing and expansion stops for good.
-            await _wait_for_layout(pilot, lambda: view.scroll_y > 0, timeout=10.0)
+            await wait_for_layout(pilot, lambda: window.mounted_start < before and view.scroll_y > 0)
 
-        assert len(app._entry_widgets) == len(app.conversation_entries)
+        assert list(window.widgets) == [step.entry_id for step in activity.steps]
 
 
 @pytest.mark.asyncio
