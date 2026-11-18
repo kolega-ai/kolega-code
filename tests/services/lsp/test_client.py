@@ -1,6 +1,7 @@
 """Unit tests for LSP JSON-RPC client (message framing, request/response, notifications)."""
 
 import asyncio
+import asyncio.base_subprocess
 import json
 import signal
 import sys
@@ -1034,6 +1035,35 @@ async def test_stop_escalates_term_resistant_child(monkeypatch: pytest.MonkeyPat
         await asyncio.wait_for(client.stop(), timeout=10)
         assert proc.returncode == -signal.SIGKILL
         _assert_stopped(client, proc, reader)
+    finally:
+        await asyncio.wait_for(client.stop(), timeout=10)
+
+
+@pytest.mark.asyncio
+async def test_stop_reaps_killed_child_before_closing_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Closing a subprocess transport polls the child, so closing one whose SIGKILL
+    # status is still unreaped steals that status from asyncio's child watcher.
+    code = _CHILD_READY + "signal.signal(signal.SIGTERM, signal.SIG_IGN)\nready()\nsignal.pause()\n"
+    client = LspClient([sys.executable, "-c", code])
+    ready = asyncio.Event()
+    client.on_notification("test/ready", lambda params: ready.set())
+    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.1)
+    original_close = asyncio.base_subprocess.BaseSubprocessTransport.close
+    returncodes_at_close: list[int | None] = []
+
+    def recording_close(transport: asyncio.base_subprocess.BaseSubprocessTransport) -> None:
+        returncodes_at_close.append(transport.get_returncode())
+        original_close(transport)
+
+    monkeypatch.setattr(asyncio.base_subprocess.BaseSubprocessTransport, "close", recording_close)
+    await asyncio.wait_for(client.start(), timeout=10)
+    proc = client._proc
+    assert proc is not None
+    try:
+        await asyncio.wait_for(ready.wait(), timeout=10)
+        await asyncio.wait_for(client.stop(), timeout=10)
+        assert returncodes_at_close[0] == -signal.SIGKILL
+        assert proc.returncode == -signal.SIGKILL
     finally:
         await asyncio.wait_for(client.stop(), timeout=10)
 
