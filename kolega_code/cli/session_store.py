@@ -671,6 +671,25 @@ class SessionStore:
             return self.load(identifier)
         return self.load_by_thread_id(identifier)
 
+    def load_session_or_thread_metadata(self, identifier: str) -> SessionRecord:
+        """Resolve a session without replaying history or writing session state."""
+        if self.session_dir_for(identifier).exists():
+            try:
+                metadata = self._read_metadata(identifier)
+            except SessionStoreError:
+                try:
+                    events = self.journal(identifier).read_events(repair_tail=False)
+                    metadata = self._metadata_projection(identifier, events, repair=False)
+                except SessionJournalError as exc:
+                    raise SessionStoreError(str(exc)) from exc
+        elif (legacy := self.legacy_path_for(identifier)).exists():
+            metadata = self._read_metadata_file(legacy)
+        else:
+            return self.load_by_thread_id(identifier)
+        if metadata.get("session_id") != identifier:
+            raise SessionStoreError(f"Session not found: {identifier}")
+        return SessionRecord.from_dict({**metadata, "history": [], "compaction": {}, "usage": {}})
+
     def delete(self, session_id: str) -> None:
         self._ensure_migrated(session_id)
         path = self.session_dir_for(session_id)
@@ -807,7 +826,10 @@ class SessionStore:
             return self._locks.setdefault(session_id, threading.RLock())
 
     def _read_metadata(self, session_id: str) -> dict[str, Any]:
-        path = self.path_for(session_id)
+        return self._read_metadata_file(self.path_for(session_id))
+
+    @staticmethod
+    def _read_metadata_file(path: Path) -> dict[str, Any]:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
@@ -835,7 +857,9 @@ class SessionStore:
                 result["active_project_path"] = new_root if new_root != result.get("project_path") else None
         return result
 
-    def _metadata_projection(self, session_id: str, events: list[SessionEvent]) -> dict[str, Any]:
+    def _metadata_projection(
+        self, session_id: str, events: list[SessionEvent], *, repair: bool = True
+    ) -> dict[str, Any]:
         """Read metadata or rebuild it from canonical events, then apply newer patches."""
         original: Optional[dict[str, Any]]
         try:
@@ -861,7 +885,7 @@ class SessionStore:
         metadata = self._metadata_with_event_patches(metadata, events)
         # Validate the projection before publishing a repair.
         SessionRecord.from_dict({**metadata, "history": [], "compaction": {}})
-        if original != metadata:
+        if repair and original != metadata:
             try:
                 self._write_metadata(metadata)
             except OSError:
