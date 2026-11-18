@@ -1599,7 +1599,9 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
 
     def _maybe_expand_transcript_window(self) -> None:
         """Mount older transcript entries when the user scrolls near the top."""
-        if self._modal_cover_active or self._conversation_anchor_pending:
+        # A pending tail anchor that no longer follows must not swallow paging
+        # input, especially if the reader has already reached the mounted top.
+        if self._modal_cover_active or (self._conversation_anchor_pending and self._conversation.auto_follow_bottom):
             return
         window = self._transcript_window
         if window is None:
@@ -1757,10 +1759,11 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         self._conversation_anchor_pending = True
 
         def anchor_after_refresh() -> None:
-            if not view.is_attached:
+            # A scroll away from the bottom can arrive between scheduling and
+            # refresh. Explicit Jump requests follow again through the scheduler.
+            if not view.is_attached or not view.auto_follow_bottom:
                 self._conversation_anchor_pending = False
                 return
-            view.set_auto_follow(True)
             # Textual anchoring bottom-aligns even a short transcript (negative
             # scroll offset). A fresh startup card belongs at the top instead.
             fresh = len(self.conversation_entries) <= 2 and all(
