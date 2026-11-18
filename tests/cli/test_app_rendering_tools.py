@@ -41,6 +41,7 @@ from ._app_test_utils import (
     install_fake_agents,
     question_payload,
     renderable_text,
+    wait_for_layout,
 )
 
 
@@ -501,12 +502,15 @@ async def test_tool_entries_render_as_collapsibles_with_full_output(
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Collapsible
+    from textual.widgets import Collapsible, Static
 
+    from kolega_code.cli import theme
     from kolega_code.cli.tui.widgets import ToolEntryWidget
     from kolega_code.cli.theme import TOOL_RESULT_PREVIEW_CHARS
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    cap = TOOL_RESULT_PREVIEW_CHARS + 100
+    monkeypatch.setattr(theme, "TOOL_FULL_CONTENT_CAP_CHARS", cap)
 
     async with app.run_test() as pilot:
         app._turn_active = True
@@ -526,13 +530,94 @@ async def test_tool_entries_render_as_collapsibles_with_full_output(
         app._flush_conversation_render()
         await pilot.pause()
 
-        # The same widget is updated in place: title flips to done, body holds full output
+        # The same widget is updated in place; the title flips to done.
         same_widget = app.query(ToolEntryWidget).last()
         assert same_widget is widget
         assert "done" in str(widget.query_one(Collapsible).title)
         entry = widget.entry
         assert len(entry.content) == TOOL_RESULT_PREVIEW_CHARS + 1  # preview stays truncated
-        assert entry.full_content == long_output  # expand-on-demand shows everything
+        capped_output = long_output[:cap] + theme.g(theme.Glyph.ELLIPSIS)
+        assert entry.full_content == capped_output
+        collapsible.collapsed = False
+        await wait_for_layout(pilot, lambda: bool(widget.query(".tool-body")))
+        assert widget.query_one(".tool-body", Static).content == capped_output
+
+
+@pytest.mark.asyncio
+async def test_tool_result_bodies_are_built_only_when_disclosed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.selection import Selection
+    from textual.widgets import Collapsible, Static
+
+    from kolega_code.cli.tui.state import ConversationEntry
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    entries = [
+        ConversationEntry(
+            kind="tool_result",
+            content="read result",
+            full_content=f"{index:02d}" * 10_000,
+            tool_name="read_file",
+            tool_subject=f"src/{index}.py",
+            complete=True,
+        )
+        for index in range(20)
+    ]
+    first = entries[0]
+
+    async with app.run_test(size=(100, 24)) as pilot:
+        await wait_for_layout(pilot, app._startup_complete.is_set)
+        app.conversation_entries = entries
+        app._render_conversation()
+
+        def mounted_titles() -> bool:
+            return len(app._entry_widgets) == 20 and all(
+                widget.region.height and widget.query(Collapsible) for widget in app._entry_widgets.values()
+            )
+
+        await wait_for_layout(pilot, mounted_titles)
+        widget = app._entry_widgets[first.entry_id]
+        disclosure = widget.query_one(Collapsible)
+        assert disclosure.collapsed and "0.py" in disclosure.title
+        bodies = list(app.query(".tool-body").results(Static))
+        assert (len(bodies), sum(len(str(body.content)) for body in bodies)) == (0, 0)
+
+        first.full_content = "Current [literal] result\n" + first.full_content
+        widget.refresh_content()
+        assert not widget.query(".tool-body")
+        disclosure.collapsed = False
+        await wait_for_layout(pilot, lambda: bool(widget.query(".tool-body")))
+        body = widget.query_one(".tool-body", Static)
+        assert body.get_selection(Selection(None, None)) == (first.full_content, "\n")
+        assert len(app.query(".tool-body")) == 1
+
+        disclosure.collapsed = True
+        first.full_content = "Updated while collapsed\nSecond line"
+        widget.refresh_content()
+        disclosure.collapsed = False
+        await wait_for_layout(pilot, lambda: str(body.content) == first.full_content)
+        assert widget.query_one(".tool-body", Static) is body
+        assert body.get_selection(Selection(None, None)) == (first.full_content, "\n")
+
+        app._render_conversation()
+        remounted = app._entry_widgets[first.entry_id]
+        assert remounted is not widget
+        await wait_for_layout(pilot, lambda: bool(remounted.query(".tool-body")))
+        assert not remounted.query_one(Collapsible).collapsed
+        assert remounted.query_one(".tool-body", Static).get_selection(Selection(None, None)) == (
+            first.full_content,
+            "\n",
+        )
+        assert len(app.query(".tool-body")) == 1
+
+        remounted.query_one(Collapsible).collapsed = True
+        app._render_conversation()
+        await wait_for_layout(pilot, mounted_titles)
+        assert app._entry_widgets[first.entry_id].query_one(Collapsible).collapsed
+        assert not app.query(".tool-body")
 
 
 @pytest.mark.asyncio
@@ -573,7 +658,6 @@ async def test_tool_edit_preview_stays_between_title_and_expanded_output(
         collapsible = widget.query_one(Collapsible)
         title = widget.query_one(CollapsibleTitle)
         preview = widget.query_one(".tool-preview", Static)
-        body = widget.query_one(".tool-body", Static)
 
         assert collapsible.collapsed is True
         assert preview.display is True
@@ -581,7 +665,8 @@ async def test_tool_edit_preview_stays_between_title_and_expanded_output(
         assert preview.content_region.x == widget.region.x + 4
 
         collapsible.collapsed = False
-        await pilot.pause()
+        await wait_for_layout(pilot, lambda: any(body.region.height > 0 for body in widget.query(".tool-body")))
+        body = widget.query_one(".tool-body", Static)
 
         assert title.region.y < preview.region.y < body.region.y
         assert body.region.x == widget.region.x + 4

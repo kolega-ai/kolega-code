@@ -43,6 +43,14 @@ async def _open_inspector(app: KolegaCodeApp, pilot: Pilot) -> SubAgentInspector
     return app.screen
 
 
+async def _disclose_step(pilot: Pilot, screen: SubAgentInspectorScreen, step: SubAgentTerminalEntry) -> None:
+    await wait_for_layout(
+        pilot,
+        lambda: step.entry_id in screen._step_widgets and bool(screen._step_widgets[step.entry_id].query(Collapsible)),
+    )
+    screen._step_widgets[step.entry_id].query_one(Collapsible).collapsed = False
+
+
 def _body(screen: SubAgentInspectorScreen, step: SubAgentTerminalEntry) -> str:
     widget = screen._step_widgets.get(step.entry_id)
     if widget is None:
@@ -71,10 +79,7 @@ async def test_terminal_first_creates_activity_and_updates_open_inspector(
         step = activity.terminal_steps["shell-1"]
         assert step.tool_call_id == "shell-1"
         screen = await _open_inspector(app, pilot)
-        await wait_for_layout(pilot, lambda: step.entry_id in screen._step_widgets)
-        widget = screen._step_widgets[step.entry_id]
-        await wait_for_layout(pilot, lambda: bool(widget.query(Collapsible)))
-        widget.query_one(Collapsible).collapsed = False
+        await _disclose_step(pilot, screen, step)
         progress = Mock()
         monkeypatch.setattr(app, "_update_activity_progress", progress)
 
@@ -150,6 +155,8 @@ async def test_parallel_workers_and_commands_with_reused_tool_ids_are_isolated_f
             screen._selected_key = agent_id
             screen._select_changed()
             activity = app._sub_agent_activities[agent_id]
+            for key in expected:
+                await _disclose_step(pilot, screen, activity.terminal_steps[key])
             await wait_for_layout(
                 pilot,
                 lambda: all(_body(screen, activity.terminal_steps[key]) == text for key, text in expected.items()),
@@ -234,6 +241,9 @@ async def test_terminal_parser_survives_invocation_and_worker_completion(
     async with app.run_test() as pilot:
         app._render_event(_event("terminal_output", {"output": prefix, "tool_call_id": "shell"}))
         screen = await _open_inspector(app, pilot)
+        activity = app._sub_agent_activities["worker"]
+        step = activity.terminal_steps["shell"]
+        await _disclose_step(pilot, screen, step)
         if boundary in {"tool_result", "tool_error"}:
             app._render_event(
                 _event(
@@ -250,8 +260,6 @@ async def test_terminal_parser_survives_invocation_and_worker_completion(
         elif boundary == "turn_finalized":
             app._finalize_sub_agent_activities()
         app._render_event(_event("terminal_output", {"output": suffix, "tool_call_id": "shell"}))
-        activity = app._sub_agent_activities["worker"]
-        step = activity.terminal_steps["shell"]
         assert step.materialize() == expected
         await wait_for_layout(pilot, lambda: _body(screen, step) == expected)
         assert app._terminal_output_buffer == []
@@ -310,6 +318,7 @@ async def test_real_terminal_control_sequence_spans_running_tool_result(
             step = activity.terminal_steps["shell"]
             assert step.materialize().splitlines()[0] == "red"
             screen = await _open_inspector(app, pilot)
+            await _disclose_step(pilot, screen, step)
             await wait_for_layout(pilot, lambda: _body(screen, step).splitlines()[:1] == ["red"])
             assert app._terminal_output_buffer == []
         finally:
@@ -373,6 +382,7 @@ async def test_terminal_chunks_survive_tool_result_and_agent_lifecycle_with_zero
         screen = await _open_inspector(app, pilot)
         activity = app._sub_agent_activities["worker"]
         step = activity.terminal_steps["shell"]
+        await _disclose_step(pilot, screen, step)
         app._render_event(
             _event("chat_message", {"message_type": "tool_result", "tool_call_id": "shell", "text": "Process exited"})
         )
@@ -424,9 +434,9 @@ async def test_terminal_presentation_finalizes_only_foreground_activity(
         )
         screen._selected_key = "background"
         screen._select_changed()
-        await wait_for_layout(
-            pilot, lambda: _body(screen, background_activity.terminal_steps["shell"]) == "background continues"
-        )
+        step = background_activity.terminal_steps["shell"]
+        await _disclose_step(pilot, screen, step)
+        await wait_for_layout(pilot, lambda: _body(screen, step) == "background continues")
 
 
 @pytest.mark.asyncio
