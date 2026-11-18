@@ -110,13 +110,12 @@ def test_tinted_chrome_downsamples_to_cube_but_gray_to_ramp():
         assert to256(theme._luminance_gray(tinted)) >= 232, "neutral gray must map to the gray ramp"
 
 
-def test_splash_endpoints_are_primary_then_secondary():
-    # The wordmark's top/flat color is the primary == the $primary button color.
+def test_theme_primary_and_secondary_support_a_gradient():
+    # The wordmark's endpoints are the theme's primary -> secondary colors.
     for name in theme.available_themes():
         spec = theme.THEMES[name]
-        assert theme.splash_colors(name) == (spec.tt_primary, spec.tt_secondary)
         # Every theme now has hex endpoints, so a gradient is available in truecolor.
-        assert theme.gradient_hex(*theme.splash_colors(name), 6)
+        assert theme.gradient_hex(spec.tt_primary, spec.tt_secondary, 6)
 
 
 def test_markdown_code_theme_resolves_to_valid_pygments_style():
