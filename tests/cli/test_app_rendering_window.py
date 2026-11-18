@@ -12,6 +12,7 @@ import time
 from typing import Any, cast
 
 import pytest
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.geometry import Size
@@ -24,7 +25,7 @@ from kolega_code.cli.tui.state import ConversationEntry
 from kolega_code.cli.tui.sub_agent_screen import SubAgentRosterRow
 from kolega_code.cli.tui.widgets import JumpToBottomBar, TrajectoryScrollView
 
-from ._app_test_utils import _build_sub_agent_test_app, _sub_agent_event
+from ._app_test_utils import _build_sub_agent_test_app, _sub_agent_event, wait_for_layout
 
 WINDOW_MAX = theme.TRANSCRIPT_WINDOW_MAX
 
@@ -146,6 +147,97 @@ async def test_transcript_expand_on_scroll_up_preserves_position(tmp_path: Path,
         assert view.scroll_y == pytest.approx(view.virtual_size.height - old_virtual_height, abs=1)
         anchor_widget = app._entry_widgets[anchor_entry.entry_id]
         assert 0 <= anchor_widget.region.y - view.content_region.y <= 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("wheel_during_prepend", "start_near_zero"),
+    [(False, False), (True, False), (True, True)],
+    ids=["single-wheel", "queued-wheel", "queued-wheel-at-zero"],
+)
+async def test_transcript_prepend_never_displays_an_unanchored_frame(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wheel_during_prepend: bool, start_near_zero: bool
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(90, 24)) as pilot:
+        await wait_for_layout(pilot, app._startup_complete.is_set)
+        for index in range(240):
+            kind = "thinking" if index % 2 else "user"
+            app._add_conversation_entry(
+                ConversationEntry(kind=kind, content=f"Entry {index}: " + "wrapped history " * (3 + index % 7))
+            )
+        app._render_conversation()
+        view = app._conversation
+        window = _window(app)
+        await wait_for_layout(pilot, lambda: view.is_at_bottom() and not app._conversation_anchor_pending)
+        old_start = window.mounted_start
+        step = int(app.scroll_sensitivity_y)
+        start_y = 1 if start_near_zero else view.outer_size.height + 2 * step - 1
+
+        def anchor_at_start() -> str | None:
+            visible = view.screen._compositor.visible_widgets
+            for entry_id, widget in window.widgets.items():
+                if widget in visible:
+                    row = visible[widget][0].y - view.content_region.y
+                    if 1 <= row <= 8 and widget.virtual_region.y - row == start_y:
+                        return entry_id
+            return None
+
+        with monkeypatch.context() as setup:
+            # Put the reader one line from the old top without triggering paging
+            # during setup. The first input will exhaust the old scroll range.
+            if start_near_zero:
+                setup.setattr(app, "_maybe_expand_transcript_window", lambda: None)
+            view.scroll_to(y=start_y, animate=False, immediate=True)
+            await wait_for_layout(pilot, lambda: anchor_at_start() is not None)
+        anchor_id = anchor_at_start()
+        assert anchor_id is not None
+
+        def row() -> int | None:
+            geometry = view.screen._compositor.visible_widgets.get(window.widgets[anchor_id])
+            return None if geometry is None else geometry[0].y - view.content_region.y
+
+        initial_row = row()
+        assert initial_row is not None
+        before = initial_row
+        if not start_near_zero:
+            # First wheel remains above the paging threshold.
+            assert view._scroll_up_for_pointer(animate=False)
+            before += step
+            await wait_for_layout(pilot, lambda: row() == before)
+        assert window.mounted_start == old_start
+        frames = []
+        original_display = app._display
+
+        def display(screen, renderable) -> None:
+            if renderable is not None and not app._batch_count:
+                frames.append(row())
+            original_display(screen, renderable)
+
+        monkeypatch.setattr(app, "_display", display)
+
+        async def wheel_up() -> None:
+            # Dispatch synchronously with respect to layout, including Textual's
+            # default handler, so the second wheel is definitely in flight.
+            await view._on_message(events.MouseScrollUp(view, 0, 0, 0, 0, 0, False, False, False))
+
+        # Crossing the threshold mounts a page. Send a second wheel before
+        # yielding to the layout pass, while those widgets are still pending.
+        await wheel_up()
+        assert window.mounted_start < old_start
+        if start_near_zero:
+            assert view.scroll_y == 0
+        after_crossing = before + min(step, start_y)
+        if wheel_during_prepend:
+            await wheel_up()
+        intended = after_crossing + (step if wheel_during_prepend else 0)
+        await wait_for_layout(
+            pilot, lambda: view.scroll_y > view.outer_size.height and bool(frames) and row() == frames[-1]
+        )
+
+        assert frames[-1] == intended, frames
+        assert set(frames) <= {before, after_crossing, intended}, frames
 
 
 @pytest.mark.asyncio
