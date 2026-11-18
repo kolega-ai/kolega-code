@@ -156,16 +156,23 @@ class ChangesInspectorScreen(ModalScreen):
             index = (paths.index(self._selected_path) + delta) % len(paths)
         else:
             index = 0
-        self._selected_path = paths[index]
-        self._select_changed()
+        self._select_changed(paths[index])
 
     def on_change_file_roster_row_selected(self, message: ChangeFileRosterRow.Selected) -> None:
         if message.path != self._selected_path:
-            self._selected_path = message.path
-            self._select_changed()
+            self._select_changed(message.path)
 
-    def _select_changed(self) -> None:
-        self._sync_roster()
+    def _select_changed(self, path: str) -> None:
+        previous_path = self._selected_path
+        self._selected_path = path
+        if self._flush_pending:
+            # A pending refresh can change the roster or follow selection before it renders.
+            self._sync_roster()
+        elif previous_path != path:
+            for changed_path in (previous_path, path):
+                change = self._diff_for_path(changed_path)
+                if change is not None:
+                    self._update_roster_row(change)
         self._refresh_header()
         self._sync_previews(force=True)
         row = self._rows.get(self._selected_path)
@@ -196,9 +203,12 @@ class ChangesInspectorScreen(ModalScreen):
             if rows:
                 roster.mount(*rows)
         for change in self._ordered_diffs():
-            row = self._rows.get(change.path)
-            if row is not None:
-                row.update(self._roster_row(change, selected=change.path == self._selected_path))
+            self._update_roster_row(change)
+
+    def _update_roster_row(self, change: SessionDiffFile) -> None:
+        row = self._rows.get(change.path)
+        if row is not None:
+            row.update(self._roster_row(change, selected=change.path == self._selected_path))
 
     def _roster_row(self, change: SessionDiffFile, *, selected: bool) -> Text:
         row_style = "bold" if selected else ""
