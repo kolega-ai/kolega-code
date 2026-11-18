@@ -430,17 +430,6 @@ def textual_theme_name(name: Optional[str] = None) -> str:
     return (spec or active_theme()).slug
 
 
-def splash_colors(name: Optional[str] = None) -> tuple[str, str]:
-    """(top, bottom) splash endpoints: the theme's primary -> secondary.
-
-    The top/flat color is the primary (== the $primary button color), so the
-    wordmark always matches the primary buttons.
-    """
-    spec = THEMES.get(name) if name else None
-    spec = spec or active_theme()
-    return spec.tt_primary, spec.tt_secondary
-
-
 def apply_theme(name: Optional[str]) -> ThemeSpec:
     """Make ``name`` the active theme, syncing Color and LOG_LEVEL_COLORS.
 
