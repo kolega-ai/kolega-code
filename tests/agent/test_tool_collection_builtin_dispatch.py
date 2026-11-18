@@ -120,7 +120,7 @@ class TestToolCollection:
         result = await tool_collection.read(path)
         assert result == expected_response
         tool_collection.read_file_tool.read.assert_called_once_with(
-            file_path=path, offset=1, limit=None, line_formatter=None
+            file_path=path, offset=1, limit=None, line_formatter=None, on_success=None
         )
 
     async def test_read_section(self, tool_collection: AsyncMock) -> None:
@@ -133,7 +133,7 @@ class TestToolCollection:
         result = await tool_collection.read(path, offset=offset, limit=limit)
         assert result == expected_response
         tool_collection.read_file_tool.read.assert_called_once_with(
-            file_path=path, offset=offset, limit=limit, line_formatter=None
+            file_path=path, offset=offset, limit=limit, line_formatter=None, on_success=None
         )
 
     async def test_write(self, tool_collection: AsyncMock) -> None:

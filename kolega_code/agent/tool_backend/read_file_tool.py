@@ -63,6 +63,7 @@ class ReadFileTool(BaseTool):
         limit: Optional[int] = None,
         *,
         line_formatter: Optional[Callable[[str, int], str]] = None,
+        on_success: Optional[Callable[[str, str], None]] = None,
     ) -> str:
         """
         Read the contents of a file, optionally starting at a 1-indexed offset
@@ -72,6 +73,7 @@ class ReadFileTool(BaseTool):
             file_path: Path to the file. Relative to the project root is preferred; an absolute path is also accepted.
             offset: The 1-indexed first line to read (default 1).
             limit: The maximum number of lines to read; omitted reads from the top.
+            on_success: Receives the path and full text after the excerpt is formatted.
 
         Returns:
             The contents of the file as a string formatted as markdown.
@@ -142,7 +144,7 @@ class ReadFileTool(BaseTool):
             section_content = line_formatter(section_content, first_line) if section_content else ""
 
         cap_name = "50KB" if byte_cap_bound else "2000-line"
-        return self._format_file_content(
+        result = self._format_file_content(
             path=file_path,
             content=section_content,
             first_line=first_line,
@@ -153,3 +155,6 @@ class ReadFileTool(BaseTool):
             giant_line=giant_line,
             giant_line_size=giant_line_size,
         )
+        if on_success is not None:
+            on_success(file_path, file_content)
+        return result

@@ -63,12 +63,15 @@ class EditTool(BaseTool):
         self._snapshot_service = snapshot_service
         self._read_versions: dict[str, str] = {}
 
-    def observe_read(self, path: str) -> None:
-        """Record the current contents after a successful model-facing read."""
+    def observe_read(self, path: str, content: Optional[str] = None) -> None:
+        """Record the full text from a successful read, or load it if not supplied."""
 
         normalized = self._normalize_claude_path(path)
-        if self.filesystem.exists(normalized) and self.filesystem.is_file(normalized):
-            self._read_versions[normalized] = self._content_digest(self.filesystem.read_text(normalized))
+        if content is None:
+            if not self.filesystem.exists(normalized) or not self.filesystem.is_file(normalized):
+                return
+            content = self.filesystem.read_text(normalized)
+        self._read_versions[normalized] = self._content_digest(content)
 
     def _write_file(self, path: str, content: str) -> None:
         """Write ``content`` to ``path`` (creating parents) and record it as read-equivalent.

@@ -964,15 +964,13 @@ class ToolCollection(LogMixin):
     async def read(self, file_path: str, offset: int = 1, limit: Optional[int] = None) -> str:
         """Read the contents of a file."""
         formatter = format_hash_lines if self._hashline_output_enabled() else None
-        result = await self.read_file_tool.read(
+        return await self.read_file_tool.read(
             file_path=file_path,
             offset=offset,
             limit=limit,
             line_formatter=formatter,
+            on_success=self.edit_tool.observe_read if self.edit_protocol == EditProtocol.CLAUDE_CODE else None,
         )
-        if self.edit_protocol == EditProtocol.CLAUDE_CODE:
-            self.edit_tool.observe_read(file_path)
-        return result
 
     async def write(self, path: str, content: str) -> str:
         """Write content to a file in the project."""
