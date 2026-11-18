@@ -1,7 +1,9 @@
 import asyncio
 import json
+from importlib.metadata import version as installed_version
 from pathlib import Path
 from unittest.mock import Mock
+from urllib import request
 
 import pytest
 
@@ -110,32 +112,17 @@ def test_parse_tui_show_logs_flag() -> None:
     assert args.show_logs is True
 
 
-def test_version_flag_prints_package_version(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
-    from kolega_code.cli import main as main_module
+@pytest.mark.usefixtures("isolated_cli_env")
+@pytest.mark.parametrize("argv", [["--version"], ["tui", "--version"]])
+def test_version_flag_prints_installed_version_without_http(
+    argv: list[str], capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    urlopen = Mock(side_effect=AssertionError("outbound HTTP is forbidden"))
+    monkeypatch.setattr(request, "urlopen", urlopen)
 
-    monkeypatch.setattr(main_module, "check_for_update", no_update_result)
-
-    exit_code = main_module.main(["--version"])
-
-    assert exit_code == 0
-    assert f"kolega-code {__version__}" in capsys.readouterr().out
-
-
-def test_version_flag_prints_available_update(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
-    from kolega_code.cli import main as main_module
-
-    monkeypatch.setattr(
-        main_module,
-        "check_for_update",
-        lambda: UpdateCheckResult(current_version="0.2.0", latest_version="0.3.0", update_available=True),
-    )
-
-    exit_code = main_module.main(["--version"])
-
-    assert exit_code == 0
-    output = capsys.readouterr().out
-    assert "kolega-code" in output
-    assert "Update available: 0.2.0 -> 0.3.0" in output
+    assert main(argv) == 0
+    assert capsys.readouterr().out == f"kolega-code {installed_version('kolega-code')}\n"
+    urlopen.assert_not_called()
 
 
 def test_parse_tui_resume_latest() -> None:
