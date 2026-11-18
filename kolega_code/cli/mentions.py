@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import re
+from codecs import getincrementaldecoder
 from dataclasses import dataclass
+from io import IncrementalNewlineDecoder
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, BinaryIO, Dict, List, Tuple
 
 from kolega_code.utils.images import MAX_IMAGE_BYTES, encode_image_attachment, image_media_type
 
@@ -17,6 +19,8 @@ MAX_ATTACHMENT_LINES = 2000
 MAX_ATTACHMENT_BYTES = 48 * 1024
 MAX_DIR_ENTRIES = 200
 MAX_MENTIONS_PER_MESSAGE = 20
+_BINARY_SNIFF_BYTES = 8192
+_LINE_ENDINGS = "\n\v\f\x1c\x1d\x1e\x85\u2028\u2029"
 
 
 @dataclass(frozen=True)
@@ -122,42 +126,56 @@ def _resolve_relative(candidate: str, project_path: Path) -> str | None:
 
 
 def _read_file_content(target: Path) -> Tuple[str, bool]:
-    if _looks_binary(target):
-        return "[binary file - content not attached]", False
-
     try:
-        raw = target.read_text(encoding="utf-8", errors="replace")
+        with target.open("rb", buffering=0) as handle:
+            sample = bytearray()
+            while len(sample) < _BINARY_SNIFF_BYTES:
+                chunk = handle.read(_BINARY_SNIFF_BYTES - len(sample))
+                if not chunk:
+                    break
+                sample.extend(chunk)
+            if b"\x00" in sample:
+                return "[binary file - content not attached]", False
+            return _read_text_prefix(handle, bytes(sample))
     except OSError as exc:
         return f"[could not read file: {exc}]", False
 
-    lines = raw.splitlines(keepends=True)
-    total_lines = len(lines)
-    truncated = False
 
-    if total_lines > MAX_ATTACHMENT_LINES:
-        lines = lines[:MAX_ATTACHMENT_LINES]
-        truncated = True
-    content = "".join(lines)
-    if len(content.encode("utf-8", errors="replace")) > MAX_ATTACHMENT_BYTES:
-        content = content.encode("utf-8", errors="replace")[:MAX_ATTACHMENT_BYTES].decode("utf-8", errors="replace")
-        truncated = True
+def _read_text_prefix(handle: BinaryIO, sample: bytes) -> tuple[str, bool]:
+    decoder = IncrementalNewlineDecoder(getincrementaldecoder("utf-8")("replace"), True)
+    remaining_lines = MAX_ATTACHMENT_LINES
+    remaining_bytes = MAX_ATTACHMENT_BYTES
+    parts: list[str] = []
+    chunk = sample
+    eof = len(sample) < _BINARY_SNIFF_BYTES
+    while True:
+        text = decoder.decode(chunk, final=eof)
+        lines = text.splitlines(keepends=True)
+        extra_lines = len(lines) > remaining_lines
+        if extra_lines:
+            text = "".join(lines[:remaining_lines])
+        encoded = text.encode("utf-8")
+        if len(encoded) > remaining_bytes:
+            parts.append(encoded[:remaining_bytes].decode("utf-8", errors="ignore"))
+            limit = f"{MAX_ATTACHMENT_BYTES // 1024} KiB"
+            break
+        parts.append(text)
+        if extra_lines:
+            limit = f"{MAX_ATTACHMENT_LINES:,}-line"
+            break
+        if eof:
+            return "".join(parts), False
 
-    if truncated:
-        shown_lines = content.count("\n") + (0 if content.endswith("\n") or not content else 1)
-        content += (
-            f"\n[truncated: showing first {shown_lines} of {total_lines} lines"
-            " - ask the agent to read specific sections for more]"
-        )
-    return content, truncated
+        if lines:
+            # A partial last line still occupies the same slot in the next chunk.
+            remaining_lines -= len(lines) - (text[-1] not in _LINE_ENDINGS)
+        remaining_bytes -= len(encoded)
+        size = min(_BINARY_SNIFF_BYTES, remaining_bytes + 1) if remaining_lines else 1
+        chunk = handle.read(size)
+        eof = not chunk
 
-
-def _looks_binary(target: Path) -> bool:
-    try:
-        with target.open("rb") as handle:
-            chunk = handle.read(8192)
-    except OSError:
-        return False
-    return b"\x00" in chunk
+    parts.append(f"\n[truncated at the {limit} attachment limit - ask the agent to read specific sections for more]")
+    return "".join(parts), True
 
 
 def _directory_listing(target: Path) -> str:

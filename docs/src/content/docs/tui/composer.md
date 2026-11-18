@@ -76,7 +76,9 @@ Explain @src/main.py and how it wires up the CLI
 
 - The file index is **gitignore-aware**, so ignored files don't clutter the
   results.
-- Mentioned files are attached to your prompt so the agent has their contents.
+- Text file mentions attach up to 2,000 lines or 48 KiB per file, whichever
+  limit is reached first. If the attachment is truncated, ask the agent to read
+  specific sections of the file.
 - Mentions also work in [`kolega-code ask`](../../cli/ask/).
 
 ## Slash commands with `/`
