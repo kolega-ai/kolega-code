@@ -1594,7 +1594,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
 
     @property
     def _entry_widgets(self) -> dict[str, tui_widgets.ConversationEntryWidget | tui_widgets.ToolEntryWidget]:
-        """Mounted entry widgets (the trailing window of the transcript)."""
+        """Mounted entry widgets in transcript order."""
         return self._get_transcript_window().widgets
 
     def _maybe_expand_transcript_window(self) -> None:
@@ -1607,6 +1607,17 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         if window is None:
             return
         window.expand_up(self.conversation_entries)
+
+    def _maybe_expand_transcript_window_down(self) -> None:
+        window = self._transcript_window
+        if not self._modal_cover_active and window is not None:
+            window.expand_down(self.conversation_entries)
+
+    def _restore_transcript_tail(self) -> None:
+        window = self._transcript_window
+        if not self._modal_cover_active and window is not None:
+            window.show_tail(self.conversation_entries)
+        self._schedule_conversation_bottom_anchor()
 
     def _flush_conversation_render(self) -> None:
         if not self._render_pending:
@@ -1799,7 +1810,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 pass
 
     def on_jump_to_bottom_bar_pressed(self, message: JumpToBottomBar.Pressed) -> None:
-        self._schedule_conversation_bottom_anchor()
+        self._restore_transcript_tail()
 
     def _format_conversation_entry(self, entry: ConversationEntry) -> RenderableType:
         """Render an entry.

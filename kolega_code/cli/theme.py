@@ -114,12 +114,12 @@ SUB_AGENT_TASK_PREVIEW_CHARS = 120
 CONTEXT_BAR_WIDTH = 18
 TRANSCRIPT_INDENT = 2
 MARKDOWN_CODE_THEME = "monokai"
-# Scrollback window bounds (see tui.widgets.ScrollbackWindow). The transcript and the
-# sub-agent inspector mount only a trailing window of their entries so Textual's
-# O(mounted-widgets) reflow stays cheap no matter how long the session runs.
-# Scrolling near the top mounts older chunks; following the bottom trims the oldest.
+# Chat follows with a 120-row trailing window and trims in batches of 40.
+# Browsing caps the settled window at 160 rows, or two viewport heights plus
+# a page on unusually tall terminals, so opposite-edge eviction stays offscreen.
 TRANSCRIPT_WINDOW_MAX = 120
 TRANSCRIPT_WINDOW_TRIM_CHUNK = 40
+TRANSCRIPT_WINDOW_BROWSE_MAX = 160
 # Each near-top scroll pulls one page. Keep synchronous construction and mount
 # small so the message pump can handle queued input before loading more history.
 TRANSCRIPT_WINDOW_EXPAND_CHUNK = 12
