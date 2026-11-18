@@ -7,7 +7,9 @@ run as their own turn before the next goal verdict or loop fire.
 
 from __future__ import annotations
 
+import os
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +19,14 @@ from kolega_code.cli.peer_messaging import HeadlessPeerInbox, start_headless_pee
 from kolega_code.cli.session_event_store import FileSessionEventStore
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.events import KnownEventType
-from kolega_code.session.inbox import send_over_socket
+from kolega_code.session.inbox import (
+    InboxRegistry,
+    PeerMessage,
+    PeerSocketServer,
+    discover_peers,
+    messaging_dir,
+    send_over_socket,
+)
 
 
 class _FakeAgent:
@@ -65,18 +74,57 @@ def _inbox(state_root: Path):
     return inbox, store, session
 
 
-def test_store_title_lookup_uses_non_recovering_discovery() -> None:
-    calls: list[tuple[None, bool]] = []
+@pytest.mark.asyncio
+@pytest.mark.parametrize("socket_count", [0, 2])
+async def test_discovery_only_reads_discovered_peer_metadata(
+    monkeypatch: pytest.MonkeyPatch, socket_count: int
+) -> None:
+    state_root = _short_state_root()
+    store = SessionStore(state_root)
+    for index in range(200):
+        store.create(state_root, "code", {}, session_id=f"archived-{index}")
 
-    class FakeStore:
-        def list(self, project_path=None, *, recover=True):
-            calls.append((project_path, recover))
-            return [type("Record", (), {"session_id": "session-1", "name": "worker"})()]
+    async def deliver(_message: PeerMessage) -> str:
+        return "accepted"
 
-    lookup = store_title_lookup(FakeStore())
+    directory = messaging_dir(state_root)
+    servers = []
+    names = {"1" * 32: "Zulu", "2" * 32: "alpha"} if socket_count else {}
+    for session_id, name in names.items():
+        store.create(state_root, "code", {}, session_id=session_id, name=name, title="Not an address")
+        servers.append(
+            PeerSocketServer(
+                directory=directory,
+                session_id=session_id,
+                pid=os.getpid(),
+                describe_status=lambda: "busy",
+                deliver_message=deliver,
+            )
+        )
 
-    assert lookup("session-1") == "worker"
-    assert calls == [(None, False)]
+    reads: list[tuple[str, int]] = []
+    read_metadata = store._read_metadata
+    caller = threading.get_ident()
+
+    def track_read(session_id: str) -> dict[str, Any]:
+        reads.append((session_id, threading.get_ident()))
+        return read_metadata(session_id)
+
+    monkeypatch.setattr(store, "_read_metadata", track_read)
+    try:
+        for server in servers:
+            await server.start()
+        peers = await discover_peers(InboxRegistry(), directory, title_lookup=store_title_lookup(store))
+    finally:
+        for server in servers:
+            await server.stop()
+
+    assert [(peer.session_id, peer.title, peer.status) for peer in peers] == (
+        [("2" * 32, "alpha", "busy"), ("1" * 32, "Zulu", "busy")] if socket_count else []
+    )
+    assert len(reads) == socket_count
+    assert {session_id for session_id, _ in reads} == names.keys()
+    assert all(thread != caller for _, thread in reads)
 
 
 @pytest.mark.asyncio

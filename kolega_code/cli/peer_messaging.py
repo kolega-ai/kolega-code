@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from kolega_code.events import AgentEvent, KnownEventType
 from kolega_code.session.queue import QueuePresentation, QueueReason, queue_item
@@ -32,6 +32,8 @@ from kolega_code.session.inbox import (
     peer_model_text,
     peer_origin,
 )
+
+from .session_store import SessionStore, SessionStoreError
 
 
 class HeadlessPeerInbox:
@@ -216,10 +218,16 @@ async def start_headless_peer_inbox(
     return inbox
 
 
-def store_title_lookup(store: Any) -> Any:
+def store_title_lookup(store: SessionStore) -> Callable[[str], Optional[str]]:
     """A discovery ``title_lookup`` backed by the shared session store."""
-    titles_by_id = {record.session_id: record.name for record in store.list(recover=False)}
-    return titles_by_id.get
+
+    def lookup(session_id: str) -> Optional[str]:
+        try:
+            return store.load_session_metadata(session_id).name
+        except (SessionStoreError, OSError, ValueError, TypeError, KeyError):
+            return None
+
+    return lookup
 
 
 def format_peer_table(peers: Any) -> str:

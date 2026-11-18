@@ -751,7 +751,6 @@ async def discover_peers(
         entries = []
 
     async def probe(entry: Path, session_id: str) -> AgentSummary:
-        title = (title_lookup(session_id) if title_lookup else None) or session_id[:8]
         try:
             response = await send_over_socket(
                 entry,
@@ -766,7 +765,7 @@ async def discover_peers(
             )
         return AgentSummary(
             session_id=session_id,
-            title=title,
+            title=session_id[:8],
             project_path="",
             status=status,
             source="socket",
@@ -780,8 +779,14 @@ async def discover_peers(
         and parsed[0] != exclude_session_id
         and parsed[0] not in peers
     ]
-    for summary in await asyncio.gather(*probes):
-        peers[summary.session_id] = summary
+    socket_peers = {summary.session_id: summary for summary in await asyncio.gather(*probes)}
+    if socket_peers and title_lookup is not None:
+        lookup = title_lookup
+        titles = await asyncio.to_thread(lambda: {session_id: lookup(session_id) for session_id in socket_peers})
+        for session_id, title in titles.items():
+            if title:
+                socket_peers[session_id].title = title
+    peers.update(socket_peers)
 
     return sorted(peers.values(), key=lambda peer: (peer.title.casefold(), peer.session_id))
 
