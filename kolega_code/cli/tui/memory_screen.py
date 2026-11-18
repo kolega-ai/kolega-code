@@ -160,7 +160,7 @@ class MemoryScreen(ModalScreen[None]):
             if (
                 status.available
                 and (status.enabled or self._inspect_disabled)
-                and self._supports(MemoryCapability.LIST)
+                and MemoryCapability.LIST in status.capabilities
             ):
                 entries = await asyncio.to_thread(
                     self._manager.list_entries,
@@ -347,8 +347,7 @@ class MemoryScreen(ModalScreen[None]):
         return next((entry for entry in self._entries if entry.reference == reference), None)
 
     def _supports(self, capability: MemoryCapability) -> bool:
-        backend = self._manager.backend
-        return bool(backend is not None and capability in backend.metadata.capabilities)
+        return self._status is not None and capability in self._status.capabilities
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy

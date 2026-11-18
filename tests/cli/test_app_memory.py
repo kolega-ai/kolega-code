@@ -2,6 +2,7 @@
 import asyncio
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -428,6 +429,93 @@ async def test_memory_screen_refresh_worker_bails_when_the_app_prunes_the_screen
         await worker.wait()
 
     assert app._exception is None
+
+
+@pytest.mark.asyncio
+async def test_memory_filter_renders_while_backend_status_holds_the_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Button, Input, OptionList
+
+    from kolega_code.cli.tui.memory_screen import MemoryScreen
+    from kolega_code.memory import MemoryBackendStatus, MemoryCapability, ProjectMemoryManager
+    from kolega_code.memory.protocol import MemoryBackend
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    manager = app.memory_manager
+    assert manager.write_entry("MEMORY.md", "# Index\n").ok
+    assert manager.write_entry("topics/build.md", "# Build\n").ok
+    backend = manager.backend
+    assert backend is not None
+    original_status = backend.status
+    original_backend = ProjectMemoryManager.backend.fget
+    assert original_backend is not None
+    entered = threading.Event()
+    release = threading.Event()
+    ui_thread = threading.get_ident()
+
+    def status() -> MemoryBackendStatus:
+        entered.set()
+        if not release.wait(30):
+            raise AssertionError("status gate was not released")
+        return original_status()
+
+    def checked_backend(source: ProjectMemoryManager) -> MemoryBackend | None:
+        # Break the deadlock on the failing path without a timing assertion.
+        if source is manager and threading.get_ident() == ui_thread and entered.is_set():
+            release.set()
+        return original_backend(source)
+
+    async with app.run_test() as pilot:
+        app.action_open_memory()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, MemoryScreen)
+        await _wait_for_entry(screen, pilot, "MEMORY.md")
+        roster = screen.query_one("#memory_entries", OptionList)
+        new_button = screen.query_one("#memory_new", Button)
+        assert roster.option_count == 2
+        assert not new_button.disabled
+        writable_status = screen._status
+        assert writable_status is not None
+        stale_generation = screen._work_generation
+
+        monkeypatch.setattr(backend, "status", status)
+        monkeypatch.setattr(ProjectMemoryManager, "backend", property(checked_backend))
+        screen._start_refresh()
+        worker = next(w for w in reversed(screen.workers) if w.name == "Refresh project memory")
+        try:
+            assert await asyncio.to_thread(entered.wait, 15)
+            filter_input = screen.query_one("#memory_filter", Input)
+            filter_input.focus()
+            marker = asyncio.Event()
+            asyncio.get_running_loop().call_soon(marker.set)
+            await pilot.press("m", "e", "m")
+            await wait_for_layout(pilot, lambda: roster.option_count == 1 and marker.is_set())
+            assert not release.is_set(), "filter needed the backend lifecycle lock"
+            assert str(roster.get_option_at_index(0).prompt).splitlines()[0] == "Index"
+            monkeypatch.setattr(
+                backend,
+                "metadata",
+                replace(backend.metadata, capabilities=frozenset({MemoryCapability.LIST, MemoryCapability.READ})),
+            )
+        finally:
+            release.set()
+            await worker.wait()
+
+        assert roster.option_count == 1
+        assert new_button.disabled
+        read_only_status = screen._status
+        assert read_only_status is not None
+        assert read_only_status.capabilities == frozenset({MemoryCapability.LIST, MemoryCapability.READ})
+
+        monkeypatch.setattr(manager, "status", lambda: writable_status)
+        await screen._refresh(stale_generation, None)
+        assert screen._status is read_only_status
+        assert roster.option_count == 1
+        assert new_button.disabled
 
 
 @pytest.mark.asyncio

@@ -189,6 +189,7 @@ class ProjectMemoryManager:
             backend = self.backend if registered and manifest_error is None and not closed else None
             available = backend is not None
             backend_status = backend.status() if backend is not None else None
+            capabilities = backend.metadata.capabilities if backend is not None else frozenset()
             diagnostic = (
                 ("project memory manager is closed" if closed else None)
                 or manifest_error
@@ -206,6 +207,7 @@ class ProjectMemoryManager:
             backend_status,
             diagnostic,
             self.identity.display_path,
+            capabilities=capabilities,
         )
 
     def set_enabled(self, enabled: bool) -> None:

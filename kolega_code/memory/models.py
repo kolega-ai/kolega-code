@@ -105,6 +105,7 @@ class ProjectMemoryStatus:
     backend: MemoryBackendStatus | None = None
     diagnostic: str | None = None
     display_path: str | None = None
+    capabilities: frozenset[MemoryCapability] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
