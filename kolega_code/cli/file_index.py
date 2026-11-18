@@ -6,7 +6,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 import pathspec
 
@@ -84,6 +84,13 @@ class IndexEntry:
     is_dir: bool
 
 
+@dataclass(frozen=True)
+class _CachedRanking:
+    snapshot: tuple[IndexEntry, ...]
+    query: str
+    matches: list[tuple[float, IndexEntry]]
+
+
 class WorkspaceFileIndex:
     """Cached, gitignore-aware listing of workspace files for completion."""
 
@@ -92,13 +99,14 @@ class WorkspaceFileIndex:
 
     def __init__(self, project_path: Path) -> None:
         self.project_path = Path(project_path)
-        self._entries: List[IndexEntry] = []
+        self._entries: tuple[IndexEntry, ...] = ()
         self._refreshed_at: Optional[float] = None
+        self._cached_ranking: _CachedRanking | None = None
 
     def entries(self) -> List[IndexEntry]:
         if self.is_stale():
             self.refresh()
-        return self._entries
+        return list(self._entries)
 
     def is_stale(self) -> bool:
         """Whether the cache is empty or older than the TTL (a refresh is due)."""
@@ -138,12 +146,12 @@ class WorkspaceFileIndex:
                 entries = entries[: self.MAX_FILES]
                 break
 
-        self._entries = entries
+        self._entries = tuple(entries)
         self._refreshed_at = time.monotonic()
 
     def search(self, query: str, limit: int = 8) -> List[IndexEntry]:
         """Search, refreshing the cache first if stale (may block on os.walk)."""
-        return self._rank(self.entries(), query, limit)
+        return [entry for _, entry in self._rank(self.entries(), query)[:limit]]
 
     def cached_search(self, query: str, limit: int = 8) -> List[IndexEntry]:
         """Search the current cached entries WITHOUT refreshing.
@@ -151,17 +159,29 @@ class WorkspaceFileIndex:
         The UI uses this so a keystroke never blocks on ``os.walk``; a background
         refresh (see ``app._refresh_file_index``) updates the cache out-of-band.
         """
-        return self._rank(self._entries, query, limit)
+        snapshot = self._entries
+        previous = self._cached_ranking
+        candidates: Iterable[IndexEntry] = snapshot
+        if previous is not None and previous.snapshot is snapshot:
+            if query == previous.query:
+                return [entry for _, entry in previous.matches[:limit]]
+            # A subsequence can only lose matches as it grows. Check the
+            # lowercase prefix too, since appending can change a final sigma.
+            if query.startswith(previous.query) and query.lower().startswith(previous.query.lower()):
+                candidates = (entry for _, entry in previous.matches)
+        matches = self._rank(candidates, query)
+        self._cached_ranking = _CachedRanking(snapshot, query, matches)
+        return [entry for _, entry in matches[:limit]]
 
     @staticmethod
-    def _rank(entries: List[IndexEntry], query: str, limit: int) -> List[IndexEntry]:
+    def _rank(entries: Iterable[IndexEntry], query: str) -> list[tuple[float, IndexEntry]]:
         scored = []
         for entry in entries:
             score = fuzzy_score(query, entry.path)
             if score is not None:
                 scored.append((score, entry))
         scored.sort(key=lambda pair: (-pair[0], pair[1].path))
-        return [entry for _, entry in scored[:limit]]
+        return scored
 
     def _load_gitignore_spec(self) -> Optional[pathspec.PathSpec]:
         gitignore_path = self.project_path / ".gitignore"
