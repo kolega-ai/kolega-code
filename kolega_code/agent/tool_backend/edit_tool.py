@@ -640,8 +640,8 @@ class EditTool(BaseTool):
         try:
             original_content = self.filesystem.read_text(path)
             resolved = [self._resolve_replacement(original_content, block) for block in blocks]
-            self._validate_non_overlapping(resolved)
-            updated_content = self._apply_replacements(original_content, resolved)
+            ordered = self._sort_non_overlapping(resolved)
+            updated_content = self._apply_replacements(original_content, ordered)
 
             # Preserve the file's dominant line ending. ``read_text`` may normalize
             # CRLF -> LF (Python universal newlines), so detect the true on-disk
@@ -785,7 +785,7 @@ class EditTool(BaseTool):
             self._normalize_unicode_punctuation(content), self._normalize_unicode_punctuation(search_text)
         )
 
-    def _validate_non_overlapping(self, replacements: list[ResolvedReplacement]) -> None:
+    def _sort_non_overlapping(self, replacements: list[ResolvedReplacement]) -> list[ResolvedReplacement]:
         ordered = sorted(replacements, key=lambda replacement: (replacement.start, replacement.end))
         previous = None
         for replacement in ordered:
@@ -794,12 +794,17 @@ class EditTool(BaseTool):
                     f"Search block #{replacement.block_number} overlaps with search block #{previous.block_number}."
                 )
             previous = replacement
+        return ordered
 
-    def _apply_replacements(self, content: str, replacements: list[ResolvedReplacement]) -> str:
-        updated = content
-        for replacement in sorted(replacements, key=lambda item: item.start, reverse=True):
-            updated = updated[: replacement.start] + replacement.replace_text + updated[replacement.end :]
-        return updated
+    def _apply_replacements(self, content: str, ordered: list[ResolvedReplacement]) -> str:
+        parts: list[str] = []
+        cursor = 0
+        for replacement in ordered:
+            parts.append(content[cursor : replacement.start])
+            parts.append(replacement.replace_text)
+            cursor = replacement.end
+        parts.append(content[cursor:])
+        return "".join(parts)
 
     def _find_spans(self, content: str, search_text: str) -> list[tuple[int, int]]:
         if search_text == "":

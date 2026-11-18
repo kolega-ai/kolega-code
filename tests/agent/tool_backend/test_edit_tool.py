@@ -222,15 +222,17 @@ class TestEditTool:
         assert result == "Edited test.txt with 2 replacements"
         assert file_path.read_text() == "beta\ngamma\n"
 
-    async def test_multi_edit_applies_replacements_in_reverse_offset_order(self, edit_tool, project_path):
+    async def test_multi_edit_assembles_out_of_order_adjacent_replacements(
+        self, edit_tool: EditTool, project_path: Path
+    ) -> None:
         file_path = project_path / "test.txt"
-        file_path.write_text("aa\nbb\ncc\n")
-        blocks = block("aa", "AAAA") + "\n" + block("cc", "C")
+        file_path.write_text("head<aa><bb> keep <cc> tail\n")
+        blocks = "\n".join([block("<cc>", "C"), block("<aa>", "AAAAAA"), block("<bb>", "B")])
 
         result = await edit_tool.multi_edit("test.txt", blocks)
 
-        assert result == "Edited test.txt with 2 replacements"
-        assert file_path.read_text() == "AAAA\nbb\nC\n"
+        assert result == "Edited test.txt with 3 replacements"
+        assert file_path.read_text() == "headAAAAAAB keep C tail\n"
 
     async def test_multi_edit_fails_without_writing_when_any_block_fails(self, edit_tool, project_path):
         file_path = project_path / "test.txt"
