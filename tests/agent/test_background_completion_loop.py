@@ -198,7 +198,9 @@ async def test_completion_during_text_only_model_delivers_after_turn_and_leaves_
     release.set()
     chunks = await asyncio.wait_for(task, timeout=3)
 
-    assert [chunk["content"] for chunk in chunks if chunk["type"] == "response"] == ["done"]
+    response = [chunk for chunk in chunks if chunk["type"] == "response"]
+    assert [(chunk["content"], chunk["complete"]) for chunk in response] == [("done", False), ("", True)]
+    assert response[0]["uuid"] == response[1]["uuid"]
     completions = _completion_messages(base_agent.history)
     assert len(completions) == 1
     assert "child report" in completions[0].get_text_content()
@@ -426,34 +428,33 @@ async def test_cancel_during_threaded_tool_call_persistence_waits_for_commit_and
     await base_agent.get_background_jobs().close()
 
 
-async def _close_or_cancel_after_first_chunk(base_agent, mode: str) -> dict[str, Any]:
+async def _close_or_cancel_after_completed_response(base_agent: BaseAgent, mode: str) -> list[dict[str, Any]]:
+    completed = asyncio.Event()
+    observed: list[dict[str, Any]] = []
+
+    async def consume() -> None:
+        async with aclosing(base_agent.process_message_stream("work")) as stream:
+            async for chunk in stream:
+                observed.append(chunk)
+                if chunk["type"] == "response" and chunk["complete"]:
+                    if mode == "cancel":
+                        completed.set()
+                        await asyncio.Future[None]()
+                    break
+
     if mode == "close":
-        gen = base_agent.process_message_stream("work")
-        first = await gen.__anext__()
-        await gen.aclose()
-        return first
-
-    if mode == "cancel":
-        pause = asyncio.Event()
-        observed: list[dict[str, Any]] = []
-
-        async def consume() -> None:
-            async with aclosing(base_agent.process_message_stream("work")) as stream:
-                async for chunk in stream:
-                    observed.append(chunk)
-                    await pause.wait()
-
+        await consume()
+    elif mode == "cancel":
         task = asyncio.create_task(consume())
-        deadline = asyncio.get_running_loop().time() + 3
-        while not observed and asyncio.get_running_loop().time() < deadline:
-            await asyncio.sleep(0.01)
-        assert observed, "first chunk was never yielded"
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(task, timeout=3)
-        return observed[0]
-
-    raise AssertionError(f"unexpected mode: {mode}")
+        try:
+            await asyncio.wait_for(completed.wait(), timeout=10)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=10)
+    else:
+        raise AssertionError(f"unexpected mode: {mode}")
+    return observed
 
 
 @pytest.mark.asyncio
@@ -474,11 +475,10 @@ async def test_early_generator_close_or_cancel_after_tool_call_chunk_records_int
     _configure_agent(base_agent, llm)
     base_agent.process_tool_calls = AsyncMock(return_value=[_tool_result(tool_call, content="tool unexpectedly ran")])
 
-    first = await _close_or_cancel_after_first_chunk(base_agent, mode)
-
-    assert first["type"] == "response"
-    assert first["content"] == text
-    assert first["complete"] is True
+    chunks = await _close_or_cancel_after_completed_response(base_agent, mode)
+    response = [chunk for chunk in chunks if chunk["type"] == "response"]
+    assert [(chunk["content"], chunk["complete"]) for chunk in response] == [(text, False), ("", True)]
+    assert response[0]["uuid"] == response[1]["uuid"]
 
     results = _tool_results(base_agent.history)
     assert len(results) == 1
