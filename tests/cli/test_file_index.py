@@ -1,7 +1,9 @@
 """Tests for the workspace file index behind @ mention autocomplete."""
 
 from pathlib import Path
+from unittest.mock import Mock
 
+from kolega_code.cli import file_index
 from kolega_code.cli.file_index import WorkspaceFileIndex, fuzzy_score
 
 
@@ -86,6 +88,57 @@ def test_cached_search_does_not_walk_until_refreshed(tmp_path: Path) -> None:
     assert index.cached_search("main") == []
     index.refresh()
     assert _paths(index.cached_search("main")) == ["main.py"]
+
+
+def test_cached_search_rescores_no_paths_after_extending_a_miss(tmp_path: Path, monkeypatch) -> None:
+    for number in range(64):
+        (tmp_path / f"widget-{number:02d}.py").touch()
+    index = WorkspaceFileIndex(tmp_path)
+    index.refresh()
+    score = Mock(wraps=fuzzy_score)
+    monkeypatch.setattr(file_index, "fuzzy_score", score)
+
+    assert index.cached_search("wgtz") == []
+    assert score.call_count == 64
+    score.reset_mock()
+    assert index.cached_search("wgtzz") == []
+    assert score.call_count == 0
+
+
+def test_cached_search_extensions_match_full_ranking(tmp_path: Path) -> None:
+    tied_paths = [f"wgt-{number:02d}.txt" for number in range(12)]
+    hidden_path = "longer-widget-z.md"
+    for path in [*tied_paths, hidden_path, "notes.md"]:
+        (tmp_path / path).touch()
+    index = WorkspaceFileIndex(tmp_path)
+    index.refresh()
+
+    def check(query: str) -> list[str]:
+        ranked = sorted(
+            (-score, entry.path) for entry in index.entries() if (score := fuzzy_score(query, entry.path)) is not None
+        )
+        results = _paths(index.cached_search(query))
+        assert results == [path for _, path in ranked[:8]]
+        return results
+
+    assert check("w") == tied_paths[:8]
+    assert check("wg") == tied_paths[:8]
+    assert check("wgt") == tied_paths[:8]
+    assert check("wgtz") == [hidden_path]
+    assert check("wgt") == tied_paths[:8]  # backspace
+    assert check("notes") == ["notes.md"]  # replacement
+    assert check("wgtzz") == []
+    (tmp_path / "wgtzzz.txt").touch()
+    index.refresh()
+    assert check("wgtzzz") == ["wgtzzz.txt"]
+
+
+def test_cached_search_handles_context_dependent_lowercase(tmp_path: Path) -> None:
+    (tmp_path / "ασβ.txt").touch()
+    index = WorkspaceFileIndex(tmp_path)
+    index.refresh()
+    assert index.cached_search("ΑΣ") == []  # lowercased with final sigma
+    assert _paths(index.cached_search("ΑΣΒ")) == ["ασβ.txt"]
 
 
 def test_is_stale_tracks_refresh_and_ttl(tmp_path: Path, monkeypatch) -> None:
