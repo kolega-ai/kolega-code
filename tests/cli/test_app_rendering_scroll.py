@@ -41,6 +41,7 @@ from ._app_test_utils import (
     first_text_styles,
     question_payload,
     renderable_text,
+    wait_for_layout,
 )
 
 
@@ -82,6 +83,84 @@ async def test_conversation_scroll_position_survives_streaming(tmp_path: Path, m
         await pilot.pause()
         assert view.scroll_y == view.max_scroll_y
         assert app.query_one("#jump_to_bottom", JumpToBottomBar).display is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", ["reply", "tool"])
+async def test_manual_scroll_wins_over_pending_live_anchor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stream: str
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import JumpToBottomBar
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    def stream_chunk(text: str) -> None:
+        if stream == "reply":
+            app._apply_stream_chunk({"uuid": "reply-1", "content": text, "complete": False}, kind="assistant")
+        else:
+            app._apply_tool_streaming_update(
+                {"tool_call_id": "tool-1", "tool_name": "shell", "text": text, "stream_mode": "append"}
+            )
+        app._flush_conversation_render()
+
+    async with app.run_test(size=(92, 28)) as pilot:
+        await wait_for_layout(pilot, app._startup_complete.is_set)
+        view = app._conversation
+        bar = app.query_one("#jump_to_bottom", JumpToBottomBar)
+        history = [ConversationEntry(kind="user", content=f"message {index}") for index in range(40)]
+        for entry in history:
+            app._add_conversation_entry(entry)
+        stream_chunk("stream start")
+        await wait_for_layout(pilot, lambda: view.max_scroll_y > 0 and not app._conversation_anchor_pending)
+        assert view.auto_follow_bottom and view.is_at_bottom()
+        anchor = app._entry_widgets[history[-6].entry_id]
+
+        def anchor_row() -> int | None:
+            geometry = view.screen._compositor.visible_widgets.get(anchor)
+            return None if geometry is None else geometry[0].y - view.content_region.y
+
+        def reading_frame_visible() -> bool:
+            row = anchor_row()
+            return bar.display and row is not None and anchor.virtual_region.y - row == view.scroll_offset.y
+
+        old_count = len(app._entry_widgets)
+        held = []
+        call_after_refresh = app.call_after_refresh
+
+        def capture_anchor(callback, *args, **kwargs):
+            if callback.__name__ == "anchor_after_refresh":
+                held.append(callback)
+                return True
+            return call_after_refresh(callback, *args, **kwargs)
+
+        with monkeypatch.context() as capture:
+            capture.setattr(app, "call_after_refresh", capture_anchor)
+            stream_chunk("\n" + "new live output " * 12)
+            assert len(held) == 1 and app._conversation_anchor_pending
+            for _ in range(4):
+                assert view._scroll_up_for_pointer(animate=False)
+            await wait_for_layout(pilot, reading_frame_visible)
+            assert not view.auto_follow_bottom
+            reading_position = view.scroll_y
+            reading_row = anchor_row()
+
+        held.pop()()
+        await pilot.pause()
+        assert not app._conversation_anchor_pending
+        assert view.scroll_y == reading_position
+        assert anchor_row() == reading_row
+        assert not view.auto_follow_bottom and bar.display
+        assert len(app._entry_widgets) == old_count
+
+        app.on_jump_to_bottom_bar_pressed(JumpToBottomBar.Pressed(bar))
+        await wait_for_layout(pilot, lambda: view.is_at_bottom() and not bar.display)
+        assert view.auto_follow_bottom
+        stream_chunk("\n" + "after explicit jump " * 12)
+        await wait_for_layout(pilot, lambda: not app._conversation_anchor_pending and view.is_at_bottom())
+        assert view.auto_follow_bottom and not bar.display
 
 
 @pytest.mark.asyncio
