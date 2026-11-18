@@ -31,7 +31,7 @@ from starlette.staticfiles import StaticFiles
 
 from kolega_code.cli import theme as cli_theme
 from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
-from kolega_code.cli.session_store import SessionStore, SessionStoreError as CliSessionStoreError
+from kolega_code.cli.session_store import SessionRecord, SessionStore, SessionStoreError as CliSessionStoreError
 from kolega_code.events import ArtifactPurpose
 from kolega_code.session.projection import replay
 from kolega_code.session.store import SessionStoreError
@@ -481,7 +481,7 @@ def _in_scope(config: ServerConfig, session_id: str) -> bool:
     return config.session_ids is None or session_id in config.session_ids
 
 
-def _record(config: ServerConfig, session_id: str):
+def _record(config: ServerConfig, session_id: str) -> SessionRecord:
     """Resolve a session, refusing anything this server is not scoped to.
 
     The scope check runs on the *resolved* id, because this accepts a thread id
@@ -493,7 +493,7 @@ def _record(config: ServerConfig, session_id: str):
     machine has recorded, which is exactly what the scope is for.
     """
     try:
-        record = config.store.load_session_or_thread(session_id)
+        record = config.store.load_session_or_thread_metadata(session_id)
     except CliSessionStoreError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if not _in_scope(config, record.session_id):

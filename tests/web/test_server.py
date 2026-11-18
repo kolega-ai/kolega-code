@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Iterable
 
 import pytest
 from fastapi.testclient import TestClient
 
 from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
-from kolega_code.cli.session_store import SessionStore
+from kolega_code.cli.session_journal import SessionEvent, SessionJournal
+from kolega_code.cli.session_store import SessionRecord, SessionStore
 from kolega_code.events import AgentEvent, ArtifactPurpose, KnownEventType
 from kolega_code.web.server import ServerConfig, create_app
 
@@ -496,3 +498,85 @@ async def test_scope_is_checked_after_a_thread_id_is_resolved(store: SessionStor
     app = create_app(ServerConfig(store=store, token=TEST_TOKEN, session_ids=frozenset({shared.session_id})))
     with TestClient(app, base_url="http://127.0.0.1", headers={"Authorization": f"Bearer {TEST_TOKEN}"}) as client:
         assert client.get(f"/api/sessions/{thread_id}/events").status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_replay_routes_do_not_rebuild_model_history(
+    store: SessionStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record = await _seed(store, tmp_path, count=128)
+    private = store.create(tmp_path / "private", "code", {})
+    app = create_app(ServerConfig(store=store, token=TEST_TOKEN, session_ids=frozenset({record.session_id})))
+    replays: list[int] = []
+
+    def forbid_replay(events: Iterable[SessionEvent], _journal: SessionJournal) -> None:
+        replays.append(len(list(events)))
+        raise AssertionError("Provider-history replay is forbidden when serving presentation events")
+
+    monkeypatch.setattr(store, "_replay", forbid_replay)
+    with TestClient(
+        app,
+        base_url="http://127.0.0.1",
+        headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+        raise_server_exceptions=False,
+    ) as client:
+        suffixes = ("", "/manifest.json", "/events.jsonl")
+        direct = [client.get(f"/s/{record.session_id}{suffix}") for suffix in suffixes]
+        assert replays == []
+        assert [response.status_code for response in direct] == [200, 200, 200]
+        assert f'<base href="/s/{record.session_id}/" />' in direct[0].text
+        manifest = direct[1].json()
+        assert manifest["session_id"] == record.session_id
+        assert manifest["title"] == "Fix the parser"
+        assert manifest["event_count"] == 130
+        events = [json.loads(line) for line in direct[2].text.splitlines()]
+        assert len(events) == 130
+        assert events[1]["content"]["text"] == "step 0"
+        for suffix, expected in zip(suffixes, direct, strict=True):
+            alias = client.get(f"/s/{record.thread_id}{suffix}")
+            assert alias.status_code == 200
+            assert alias.content == expected.content
+            for identifier in (private.session_id, private.thread_id, "missing-session"):
+                assert client.get(f"/s/{identifier}{suffix}").status_code == 404
+        assert replays == []
+
+
+def test_replay_routes_read_legacy_metadata_without_migrating(store: SessionStore, tmp_path: Path) -> None:
+    record = SessionRecord.create(tmp_path, "code", {}, session_id="legacy", title="Legacy title")
+    record.history = [{"role": "user", "content": "Provider history without presentation events"}]
+    data = record.to_dict()
+    del data["name"]
+    store.ensure_dirs()
+    legacy = store.legacy_path_for(record.session_id)
+    original = json.dumps(data)
+    legacy.write_text(original, encoding="utf-8")
+
+    with _client(store) as client:
+        for identifier in (record.session_id, record.thread_id):
+            response = client.get(f"/s/{identifier}")
+            assert response.status_code == 200
+            assert '<base href="/s/legacy/" />' in response.text
+            manifest = client.get(f"/s/{identifier}/manifest.json").json()
+            assert manifest["title"] == "Legacy title"
+            assert manifest["event_count"] == 0
+            events = client.get(f"/s/{identifier}/events.jsonl")
+            assert events.status_code == 200
+            assert events.text == ""
+
+    assert legacy.read_text(encoding="utf-8") == original
+    assert not store.session_dir_for(record.session_id).exists()
+
+
+@pytest.mark.asyncio
+async def test_replay_recovers_missing_metadata_in_memory(store: SessionStore, tmp_path: Path) -> None:
+    record = await _seed(store, tmp_path)
+    metadata = store.path_for(record.session_id)
+    metadata.unlink()
+
+    with _client(store) as client:
+        response = client.get(f"/s/{record.session_id}/manifest.json")
+
+    assert response.status_code == 200
+    assert response.json()["title"] == "Fix the parser"
+    assert response.json()["event_count"] == 6
+    assert not metadata.exists()
