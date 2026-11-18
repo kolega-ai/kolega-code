@@ -120,7 +120,9 @@ MARKDOWN_CODE_THEME = "monokai"
 # Scrolling near the top mounts older chunks; following the bottom trims the oldest.
 TRANSCRIPT_WINDOW_MAX = 120
 TRANSCRIPT_WINDOW_TRIM_CHUNK = 40
-TRANSCRIPT_WINDOW_EXPAND_CHUNK = 100
+# Each near-top scroll pulls one page. Keep synchronous construction and mount
+# small so the message pump can handle queued input before loading more history.
+TRANSCRIPT_WINDOW_EXPAND_CHUNK = 12
 INSPECTOR_WINDOW_MAX = 150
 INSPECTOR_WINDOW_EXPAND_CHUNK = 100
 
