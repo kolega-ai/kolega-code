@@ -3282,8 +3282,9 @@ class BaseAgent(LogMixin):
 
                                 current_response += event.text
 
-                                # Send periodic updates as the response grows
-                                if len(current_response) >= self.STREAM_FLUSH_CHARS:
+                                if current_response and (
+                                    not response_started or len(current_response) >= self.STREAM_FLUSH_CHARS
+                                ):
                                     yield _stream_chunk("response", current_response, False, response_uuid)
                                     current_response = ""
                                     response_started = True
@@ -3297,7 +3298,7 @@ class BaseAgent(LogMixin):
 
                                 current_thinking += event.thinking
 
-                                if len(current_thinking) >= self.STREAM_FLUSH_CHARS:
+                                if not thinking_started or len(current_thinking) >= self.STREAM_FLUSH_CHARS:
                                     thinking_started = True
                                     yield _stream_chunk("thinking", current_thinking, False, thinking_uuid)
                                     current_thinking = ""

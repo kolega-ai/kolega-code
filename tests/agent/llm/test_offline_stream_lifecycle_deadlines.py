@@ -482,8 +482,8 @@ async def test_agent_continues_after_visible_mixed_output_without_releasing_part
             registry=MagicMock(),
         ),
     )
-    partial_thinking = "t" * (guarded.STREAM_FLUSH_CHARS + 1)
-    partial_response = "x" * (guarded.STREAM_FLUSH_CHARS + 1)
+    partial_thinking = "thinking"
+    partial_response = "partial"
     first = ResponsesStreamWrapper(
         _FiniteEventStream(
             [
