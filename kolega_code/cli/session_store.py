@@ -673,21 +673,27 @@ class SessionStore:
 
     def load_session_or_thread_metadata(self, identifier: str) -> SessionRecord:
         """Resolve a session without replaying history or writing session state."""
-        if self.session_dir_for(identifier).exists():
+        if self.session_dir_for(identifier).exists() or self.legacy_path_for(identifier).exists():
+            return self.load_session_metadata(identifier, recover_missing=True)
+        return self.load_by_thread_id(identifier)
+
+    def load_session_metadata(self, session_id: str, *, recover_missing: bool = False) -> SessionRecord:
+        """Read a session by exact id, optionally rebuilding missing metadata in memory."""
+        if self.session_dir_for(session_id).exists():
             try:
-                metadata = self._read_metadata(identifier)
+                metadata = self._read_metadata(session_id)
             except SessionStoreError:
+                if not recover_missing:
+                    raise
                 try:
-                    events = self.journal(identifier).read_events(repair_tail=False)
-                    metadata = self._metadata_projection(identifier, events, repair=False)
+                    events = self.journal(session_id).read_events(repair_tail=False)
+                    metadata = self._metadata_projection(session_id, events, repair=False)
                 except SessionJournalError as exc:
                     raise SessionStoreError(str(exc)) from exc
-        elif (legacy := self.legacy_path_for(identifier)).exists():
-            metadata = self._read_metadata_file(legacy)
         else:
-            return self.load_by_thread_id(identifier)
-        if metadata.get("session_id") != identifier:
-            raise SessionStoreError(f"Session not found: {identifier}")
+            metadata = self._read_metadata_file(self.legacy_path_for(session_id))
+        if metadata.get("session_id") != session_id:
+            raise SessionStoreError(f"Session not found: {session_id}")
         return SessionRecord.from_dict({**metadata, "history": [], "compaction": {}, "usage": {}})
 
     def delete(self, session_id: str) -> None:
