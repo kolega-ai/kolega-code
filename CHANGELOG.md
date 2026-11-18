@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.53.0 - 2026-11-18
+
 ### Added
 
 - **New model support.** OpenAI **GPT-6.2 Sol** (`gpt-6.2-sol`) and
