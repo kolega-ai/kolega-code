@@ -39,7 +39,7 @@ from kolega_code.worktrees import list_worktrees
 from .checkpoint_store import CheckpointBlobStore
 
 if TYPE_CHECKING:
-    from kolega_code.services.snapshots import FileState, SnapshotService
+    from kolega_code.services.snapshots import FileState, SnapshotRecord, SnapshotService
 
 # Files above this size are never read: they get a stat-signature baseline,
 # show as changed without a textual diff, and cannot be restored.
@@ -1312,22 +1312,18 @@ class SnapshotLedgerDiffTracker(SessionDiffTrackerBase):
         del event_paths  # ledger records are authoritative for tracked edits
         candidates: set[str] = set()
         for record in self._records_since(checkpoint):
-            candidates.update(record.before)
+            for repo_path, state in record.before.items():
+                if repo_path in candidates:
+                    continue
+                candidates.add(repo_path)
+                key = (checkpoint.checkpoint_id, repo_path)
+                if key not in self._ledger_baseline_cache:
+                    self._ledger_baseline_cache[key] = self._baseline_from_state(repo_path, state)
         return candidates
 
     def _fallback_baseline(self, checkpoint: TurnCheckpoint, repo_path: str) -> FileBaseline:
-        key = (checkpoint.checkpoint_id, repo_path)
-        baseline = self._ledger_baseline_cache.get(key)
-        if baseline is not None:
-            return baseline
-        state: Optional["FileState"] = None
-        for record in self._records_since(checkpoint):
-            if repo_path in record.before:
-                state = record.before[repo_path]
-                break
-        baseline = self._baseline_from_state(repo_path, state)
-        self._ledger_baseline_cache[key] = baseline
-        return baseline
+        # Candidate discovery seeds every path from its oldest eligible record.
+        return self._ledger_baseline_cache[checkpoint.checkpoint_id, repo_path]
 
     def _abs_path(self, repo_path: str) -> Path:
         return self.project_path / repo_path
@@ -1340,7 +1336,7 @@ class SnapshotLedgerDiffTracker(SessionDiffTrackerBase):
 
     # ---- ledger helpers ------------------------------------------------------
 
-    def _records_since(self, checkpoint: TurnCheckpoint):
+    def _records_since(self, checkpoint: TurnCheckpoint) -> list[SnapshotRecord]:
         """Mutation records at/after the checkpoint, oldest first."""
         boundary = datetime.fromtimestamp(checkpoint.created_at, timezone.utc).isoformat()
         records = [
@@ -1351,8 +1347,8 @@ class SnapshotLedgerDiffTracker(SessionDiffTrackerBase):
         records.sort(key=lambda record: record.created_at)
         return records
 
-    def _baseline_from_state(self, repo_path: str, state: Optional["FileState"]) -> FileBaseline:
-        if state is None or state.kind == "missing":
+    def _baseline_from_state(self, repo_path: str, state: FileState) -> FileBaseline:
+        if state.kind == "missing":
             return FileBaseline(path=repo_path, exists=False)
         if state.kind != "file" or state.sha256 is None:
             return FileBaseline(path=repo_path, exists=True, binary_or_unreadable=True)

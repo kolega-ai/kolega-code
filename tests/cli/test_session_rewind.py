@@ -5,6 +5,7 @@ import random
 import subprocess
 import time
 import tracemalloc
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -21,7 +22,7 @@ from kolega_code.cli.tui.session_diff import (
     SnapshotLedgerDiffTracker,
 )
 from kolega_code.services.file_system import LocalFileSystem
-from kolega_code.services.snapshots import SnapshotService
+from kolega_code.services.snapshots import SnapshotRecord, SnapshotService
 
 
 @pytest.fixture(autouse=True)
@@ -642,20 +643,52 @@ def test_ledger_diff_and_restore_roundtrip(tmp_path: Path) -> None:
     assert tracker.refresh() == []
 
 
-def test_ledger_checkpoint_scoping_and_restore(tmp_path: Path) -> None:
+@pytest.mark.parametrize("path_count", [1, 64])
+def test_ledger_refresh_lists_snapshots_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path_count: int) -> None:
+    project, service, tracker = _ledger_setup(tmp_path)
+    paths = {f"file-{index}.txt" for index in range(path_count)}
+    for path in sorted(paths):
+        _mutate(service, project, path, "new contents\n")
+
+    list_snapshots = service.list_snapshots
+    listings: list[int] = []
+
+    def count_listing(*, limit: int = 20) -> list[SnapshotRecord]:
+        assert limit == 10_000
+        records = list_snapshots(limit=limit)
+        listings.append(len(records))
+        return records
+
+    monkeypatch.setattr(service, "list_snapshots", count_listing)
+
+    assert {change.path: change.status for change in tracker.refresh()} == dict.fromkeys(paths, "added")
+    assert (len(listings), sum(listings)) == (1, path_count)
+
+    listings.clear()
+    _mutate(service, project, "later.txt", "later contents\n")
+
+    assert {change.path: change.status for change in tracker.refresh()} == dict.fromkeys(paths | {"later.txt"}, "added")
+    assert (len(listings), sum(listings)) == (1, path_count + 1)
+
+
+def test_ledger_checkpoint_scoping_and_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     project, service, tracker = _ledger_setup(tmp_path)
     (project / "a.txt").write_text("v1\n", encoding="utf-8")
 
     _mutate(service, project, "a.txt", "v2\n")
     time.sleep(0.01)
     turn = tracker.capture_checkpoint("turn 2")
-    _mutate(service, project, "a.txt", "v3\n")
+    boundary = datetime.fromtimestamp(turn.created_at, timezone.utc).isoformat()
+    with monkeypatch.context() as patch:
+        patch.setattr("kolega_code.services.snapshots._now", lambda: boundary)
+        _mutate(service, project, "a.txt", "v3\n")
+    _mutate(service, project, "a.txt", "v4\n")
 
     since_turn = _by_path(tracker.refresh(checkpoint_id=turn.checkpoint_id))
     preview = since_turn["a.txt"].preview
     assert preview is not None
     lines = [row[1] for row in preview["lines"] if row[0] in {"add", "del"}]
-    assert lines == ["-v2", "+v3"]
+    assert lines == ["-v2", "+v4"]
 
     tracker.apply_restore_plan(tracker.build_restore_plan(checkpoint_id=turn.checkpoint_id))
     assert (project / "a.txt").read_text(encoding="utf-8") == "v2\n"
@@ -665,6 +698,9 @@ def test_ledger_checkpoint_scoping_and_restore(tmp_path: Path) -> None:
     assert preview is not None
     lines = [row[1] for row in preview["lines"] if row[0] in {"add", "del"}]
     assert lines == ["-v1", "+v2"]
+
+    tracker.apply_restore_plan(tracker.build_restore_plan())
+    assert (project / "a.txt").read_text(encoding="utf-8") == "v1\n"
 
 
 def test_restore_invalidates_stat_caches_when_timestamp_tick_repeats(tmp_path: Path) -> None:
