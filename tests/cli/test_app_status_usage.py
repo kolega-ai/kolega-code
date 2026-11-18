@@ -1,11 +1,14 @@
 """The Status tab's Usage card: lifetime baseline + live ledger, rendered
 at render time with no pushed state."""
 
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
-from kolega_code.llm.ledger import LlmCallOrigin, llm_call_origin
+from kolega_code.llm.accounting import UsageObservation, reported_cost
+from kolega_code.llm.ledger import LlmCallOrigin, UsageLedger, llm_call_origin
 from kolega_code.llm.usage import normalize_usage
 
 from ._app_test_utils import build_test_config, install_fake_agents
@@ -158,6 +161,80 @@ async def test_usage_card_widget_renders_and_refreshes(tmp_path, monkeypatch):
     assert "1.3k" in rendered  # 1200 + 100 total, compact
     assert "Requests: 1" in rendered
     assert "Session:" in rendered
+
+
+@pytest.mark.asyncio
+async def test_activity_changes_do_not_recount_unchanged_usage(tmp_path, monkeypatch):
+    app = _build_app(tmp_path, monkeypatch)
+    ledger = app._usage_ledger
+    async with app.run_test():
+        for _ in range(512):
+            _settle(ledger, inp=12, out=3)
+        app._refresh_status_dashboard()
+        before = str(app._status_usage.render())
+        assert "Requests: 512" in before
+
+        snapshot = Mock(wraps=ledger.snapshot)
+        monkeypatch.setattr(ledger, "snapshot", snapshot)
+        for index in range(20):
+            activity = f"Phase {index}"
+            app._set_status_activity(activity)
+            assert activity in str(app._status_dashboard.render())
+            assert str(app._status_usage.render()) == before
+
+        snapshot.assert_not_called()
+
+
+def test_usage_card_updates_snapshot_by_revision_and_ledger_identity(tmp_path, monkeypatch):
+    app = _build_app(tmp_path, monkeypatch)
+    ledger = app._usage_ledger
+    assert app._usage_summary_lines() == "Usage · None yet"
+    request = ledger.begin("openrouter", "m")
+    ledger.record_observation(
+        request,
+        UsageObservation(
+            "openrouter",
+            "m",
+            input_tokens=12,
+            output_tokens=3,
+            cost=reported_cost("openrouter", {"cost": "0.25"}),
+        ),
+    )
+    ledger.record_failure(request, "boom")
+    partial = app._usage_summary_lines()
+    assert "Session: [bold]15[/bold] tokens" in partial
+    assert "(partial)" in partial and "1 failed" in partial
+    assert "Cost: USD 0.25 (recorded)" in partial
+
+    ledger.record_observation(
+        request,
+        UsageObservation(
+            "openrouter",
+            "m",
+            input_tokens=20,
+            output_tokens=5,
+            complete=True,
+            cost=reported_cost("openrouter", {"cost": "0.5"}),
+        ),
+    )
+    settled = app._usage_summary_lines()
+    assert "Session: [bold]25[/bold] tokens" in settled
+    assert "(partial)" not in settled and "1 failed" in settled
+    assert "Cost: USD 0.5 (recorded)" in settled
+
+    app.session = replace(app.session, session_id="resumed", usage={"total_tokens": 100, "requests": 3})
+    resumed = app._usage_summary_lines()
+    assert "Session: [bold]125[/bold] tokens" in resumed
+    assert "Requests: 4" in resumed
+
+    replacement = UsageLedger()
+    _settle(replacement, inp=30, out=10)
+    _settle(replacement, inp=60, out=20)
+    assert replacement.revision == ledger.revision
+    app._usage_ledger = replacement
+    switched = app._usage_summary_lines()
+    assert "Session: [bold]220[/bold] tokens" in switched
+    assert "Requests: 5" in switched and "failed" not in switched
 
 
 def test_format_token_count_boundaries(tmp_path, monkeypatch):

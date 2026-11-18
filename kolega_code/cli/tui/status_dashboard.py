@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from rich.cells import cell_len
 from rich.markup import escape
@@ -21,8 +21,13 @@ from . import state as tui_state
 from .turn_status import TurnStatus
 from .background_status import BackgroundStatus
 
+if TYPE_CHECKING:
+    from kolega_code.llm.ledger import UsageLedger, UsageSnapshot
+
 
 class StatusDashboardMixin(tui_app_base.KolegaAppBase):
+    _status_usage_snapshot: tuple[UsageLedger, UsageSnapshot] | None = None
+
     @property
     def _status_session(self) -> Static:
         return self.query_one("#status_session", Static)
@@ -144,11 +149,16 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
 
         The baseline (``session.usage``) is derived once at load and never
         includes this process's run (the accounting marker is written after
-        load), so adding the live ledger snapshot cannot double-count. Pulled
-        fresh at render time — no pushed state.
+        load), so adding the live ledger snapshot cannot double-count.
         """
         baseline = self.session.usage or {}
-        live = self._usage_ledger.snapshot()
+        ledger = self._usage_ledger
+        cached = self._status_usage_snapshot
+        if cached is not None and cached[0] is ledger and cached[1].revision == ledger.revision:
+            live = cached[1]
+        else:
+            live = ledger.snapshot()
+            self._status_usage_snapshot = (ledger, live)
 
         def combined(key: str) -> int:
             base = baseline.get(key)
