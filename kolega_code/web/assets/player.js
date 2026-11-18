@@ -54,6 +54,7 @@ const BAR_FILLED = "█";
 const BAR_EMPTY = "░";
 
 const dom = {};
+const turnControls = [];
 let events = [];
 let manifest = {};
 /** Cumulative capped playback offset per event index. */
@@ -400,8 +401,7 @@ function absorbLiveEvent(event) {
   // refreshed whether or not the viewer is watching the edge. Tick positions are
   // a fraction of the total and therefore move on every append.
   renderMeta();
-  renderTicks();
-  renderTurns();
+  positionTicks();
   if (following) seek(totalPlaybackMs);
   else syncTransport();
 }
@@ -415,21 +415,25 @@ function absorbLiveChrome(event) {
   const turnId = String(content.turn_id || "");
   if (event.event_type === "turn_started") {
     manifest.turns = manifest.turns || [];
-    manifest.turns.push({
+    const turn = {
       turn_id: turnId,
       user_text: String(content.user_text || ""),
       elapsed_ms: event.elapsed_ms || 0,
       seq: event.seq ?? null,
       status: "open",
       ended_ms: null,
-    });
+    };
+    manifest.turns.push(turn);
+    appendTurnControls(turn);
     return;
   }
   if (event.event_type !== "turn_ended") return;
-  for (let index = (manifest.turns || []).length - 1; index >= 0; index -= 1) {
-    if (manifest.turns[index].turn_id === turnId) {
-      manifest.turns[index].status = String(content.status || "completed");
-      manifest.turns[index].ended_ms = event.elapsed_ms || 0;
+  for (let index = turnControls.length - 1; index >= 0; index -= 1) {
+    const { turn, mark } = turnControls[index];
+    if (turn.turn_id === turnId) {
+      turn.status = String(content.status || "completed");
+      turn.ended_ms = event.elapsed_ms || 0;
+      renderTurnStatus(mark, turn.status);
       break;
     }
   }
@@ -473,8 +477,13 @@ function populateChrome() {
   }
   dom.theme.value = manifest.theme || "kolega-dark";
 
-  renderTicks();
-  renderTurns();
+  const turns = manifest.turns || [];
+  if (turns.length) {
+    turns.forEach(appendTurnControls);
+    positionTicks();
+  } else {
+    dom.turns.innerHTML = '<p class="kc-empty">No turns recorded.</p>';
+  }
 }
 
 function renderMeta() {
@@ -485,23 +494,18 @@ function renderMeta() {
   dom.meta.textContent = parts.join("  ·  ");
 }
 
-function renderTicks() {
-  dom.ticks.replaceChildren();
-  for (const turn of manifest.turns || []) {
+function positionTicks() {
+  for (const { turn, tick } of turnControls) {
     const offset = playbackOffsetForElapsed(turn.elapsed_ms || 0);
-    const tick = document.createElement("span");
-    tick.className = "kc-tick";
     tick.style.left = `${totalPlaybackMs ? (offset / totalPlaybackMs) * 100 : 0}%`;
-    tick.title = turn.user_text || turn.turn_id;
-    dom.ticks.append(tick);
   }
 }
 
 /** Nearest playback offset for a session-time value, used for turn seeking. */
 function playbackOffsetForElapsed(elapsedMs) {
   // The recorder guarantees elapsed_ms is non-decreasing along the log, so this
-  // is a binary search. It runs per tick per appended event while following a
-  // live session, and a linear scan there made redrawing the ticks quadratic in
+  // is a binary search. It runs per tick per appended event in a live
+  // session, and a linear scan there made updating the ticks quadratic in
   // session length.
   //
   // Recordings made before that guarantee existed can step backwards where two
@@ -518,37 +522,39 @@ function playbackOffsetForElapsed(elapsedMs) {
   return low < playbackAt.length ? playbackAt[low] : totalPlaybackMs;
 }
 
-function renderTurns() {
-  const turns = manifest.turns || [];
-  if (!turns.length) {
-    dom.turns.innerHTML = '<p class="kc-empty">No turns recorded.</p>';
-    return;
-  }
-  dom.turns.replaceChildren();
-  turns.forEach((turn, index) => {
-    const button = document.createElement("button");
-    button.className = "kc-turn";
-    button.type = "button";
-    const mark = document.createElement("span");
-    mark.className = "kc-turn-mark";
-    mark.dataset.status = turn.status || "open";
-    mark.textContent = turn.status === "failed" ? "✗" : turn.status === "completed" ? "✓" : "○";
-    const text = document.createElement("span");
-    text.className = "kc-turn-text";
-    text.textContent = turn.user_text || `Turn ${index + 1}`;
-    // The rail is narrow and long prompts are elided, so keep the full text
-    // reachable on hover rather than only in the accessibility tree.
-    button.title = turn.user_text || `Turn ${index + 1}`;
-    const time = document.createElement("span");
-    time.className = "kc-turn-time";
-    time.textContent = formatDuration(turn.elapsed_ms || 0);
-    button.append(mark, text, time);
-    button.addEventListener("click", () => {
-      setPlaying(false);
-      seek(playbackOffsetForElapsed(turn.elapsed_ms || 0));
-    });
-    dom.turns.append(button);
+function appendTurnControls(turn) {
+  if (!turnControls.length) dom.turns.replaceChildren(); // Remove the empty-state message.
+  const button = document.createElement("button");
+  button.className = "kc-turn";
+  button.type = "button";
+  const mark = document.createElement("span");
+  mark.className = "kc-turn-mark";
+  renderTurnStatus(mark, turn.status);
+  const text = document.createElement("span");
+  text.className = "kc-turn-text";
+  text.textContent = turn.user_text || `Turn ${turnControls.length + 1}`;
+  // The rail is narrow and long prompts are elided, so keep the full text
+  // reachable on hover rather than only in the accessibility tree.
+  button.title = text.textContent;
+  const time = document.createElement("span");
+  time.className = "kc-turn-time";
+  time.textContent = formatDuration(turn.elapsed_ms || 0);
+  button.append(mark, text, time);
+  button.addEventListener("click", () => {
+    setPlaying(false);
+    seek(playbackOffsetForElapsed(turn.elapsed_ms || 0));
   });
+  const tick = document.createElement("span");
+  tick.className = "kc-tick";
+  tick.title = turn.user_text || turn.turn_id;
+  dom.turns.append(button);
+  dom.ticks.append(tick);
+  turnControls.push({ turn, mark, tick });
+}
+
+function renderTurnStatus(mark, status) {
+  mark.dataset.status = status || "open";
+  mark.textContent = status === "failed" ? "✗" : status === "completed" ? "✓" : "○";
 }
 
 function wireControls() {

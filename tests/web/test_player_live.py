@@ -46,7 +46,13 @@ _SNAPSHOT_JS = """
 
 
 async def _append(
-    events: FileSessionEventStore, event_type: str, *, elapsed_ms: int, uuid: str | None = None, **content
+    events: FileSessionEventStore,
+    event_type: str,
+    *,
+    elapsed_ms: int,
+    uuid: str | None = None,
+    sub_agent_info: dict[str, Any] | None = None,
+    **content,
 ) -> None:
     event = AgentEvent(
         session_id=SESSION_ID,
@@ -54,6 +60,7 @@ async def _append(
         event_type=event_type,
         content=dict(content),
         elapsed_ms=elapsed_ms,
+        sub_agent_info=sub_agent_info,
     )
     if uuid is not None:
         event.uuid = uuid
@@ -139,6 +146,93 @@ async def test_a_share_link_follows_the_session_as_it_runs(tmp_path: Path) -> No
         await server.stop()
 
     assert not errors, f"the player raised: {errors}"
+
+
+async def test_live_turn_controls_survive_stream_deltas_and_update_in_place(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "state")
+    store.create(tmp_path, "cli", {}, session_id=SESSION_ID, title="live turns")
+    events = FileSessionEventStore(store.journal(SESSION_ID))
+    await _append(events, KnownEventType.TURN_STARTED, elapsed_ms=0, turn_id="t1", user_text="first")
+    await _append(events, KnownEventType.TURN_STARTED, elapsed_ms=100, turn_id="t2", user_text="second")
+
+    server = ShareServer(store)
+    await server.start()
+    try:
+        async with player_page() as page:
+            await page.goto(server.session_url(SESSION_ID))
+            await _wait_for(page, "snap => snap.liveState === 'following'")
+            await page.eval_on_selector("#scrub", "(el) => { el.value = '0'; el.dispatchEvent(new Event('input')); }")
+            await page.evaluate(
+                """() => {
+                    window.savedTurns = [...document.querySelectorAll('.kc-turn')];
+                    window.savedTicks = [...document.querySelectorAll('.kc-tick')];
+                    savedTurns[1].focus();
+                    window.createdControls = [];
+                    window.turnClickListeners = 0;
+                    const create = document.createElement.bind(document);
+                    document.createElement = (...args) => {
+                        const element = create(...args);
+                        createdControls.push(element);
+                        return element;
+                    };
+                    const listen = EventTarget.prototype.addEventListener;
+                    EventTarget.prototype.addEventListener = function(type, ...args) {
+                        if (type === 'click' && this instanceof Element && this.matches('.kc-turn')) {
+                            window.turnClickListeners++;
+                        }
+                        return listen.call(this, type, ...args);
+                    };
+                }"""
+            )
+            for elapsed in range(200, 1000, 100):
+                await _append(
+                    events, KnownEventType.ASSISTANT_DELTA, elapsed_ms=elapsed, uuid="as", text="delta", complete=False
+                )
+            await page.wait_for_function("() => document.getElementById('meta').textContent.startsWith('10 events')")
+            after_deltas = await page.evaluate(
+                """() => ({
+                    sameFocus: document.activeElement === savedTurns[1],
+                    sameTick: document.querySelectorAll('.kc-tick')[1] === savedTicks[1],
+                    newControls: createdControls.filter(el => el.matches('.kc-turn, .kc-tick')).length,
+                    newHandlers: turnClickListeners,
+                    secondTick: parseFloat(savedTicks[1].style.left),
+                })"""
+            )
+            assert after_deltas == {
+                "sameFocus": True,
+                "sameTick": True,
+                "newControls": 0,
+                "newHandlers": 0,
+                "secondTick": pytest.approx(100 / 900 * 100, rel=1e-5),
+            }
+
+            delegated = {"agent_name": "worker"}
+            await _append(events, KnownEventType.TURN_STARTED, elapsed_ms=1000, turn_id="t2", sub_agent_info=delegated)
+            await _append(events, KnownEventType.TURN_ENDED, elapsed_ms=1100, turn_id="t2", sub_agent_info=delegated)
+            await _append(events, KnownEventType.TURN_STARTED, elapsed_ms=1200, turn_id="t3", user_text="third")
+            third = page.get_by_role("button", name="third", exact=False)
+            mark = third.locator(".kc-turn-mark")
+            await mark.wait_for()
+            assert await mark.get_attribute("data-status") == "open"
+            await mark.evaluate("el => { window.savedMark = el; }")
+            await _append(events, KnownEventType.TURN_ENDED, elapsed_ms=1500, turn_id="t3", status="completed")
+            await third.locator('.kc-turn-mark[data-status="completed"]').wait_for()
+            assert await mark.evaluate("el => el === savedMark")
+            assert await mark.inner_text() == "✓"
+            assert await page.locator('.kc-turn-mark[data-status="open"]').count() == 2
+            assert await page.locator(".kc-turn").count() == 3
+            offsets = await page.locator(".kc-tick").evaluate_all("els => els.map(el => parseFloat(el.style.left))")
+            assert offsets == pytest.approx([0, 100 / 1500 * 100, 1200 / 1500 * 100], rel=1e-5)
+            new_controls = await page.evaluate(
+                "() => createdControls.filter(el => el.matches('.kc-turn, .kc-tick')).length"
+            )
+            assert new_controls == 2
+            assert await page.evaluate("() => turnClickListeners") == 1
+
+            await page.get_by_role("button", name="second", exact=False).click()
+            assert await page.locator("#scrub").input_value() == "67"
+    finally:
+        await server.stop()
 
 
 async def test_a_finished_session_opens_at_the_start_and_does_not_claim_to_be_live(tmp_path: Path) -> None:
