@@ -241,6 +241,68 @@ async def test_transcript_prepend_never_displays_an_unanchored_frame(
 
 
 @pytest.mark.asyncio
+async def test_transcript_prepend_bounds_each_batch_and_services_queued_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(90, 24)) as pilot:
+        await wait_for_layout(pilot, app._startup_complete.is_set)
+        _add_entries(app, 240)
+        app._render_conversation()
+        view = app._conversation
+        window = _window(app)
+        await wait_for_layout(pilot, lambda: view.is_at_bottom() and not app._conversation_anchor_pending)
+
+        built: list[str] = []
+        batches: list[tuple[str, ...]] = []
+        make_widget = window._make_widget
+        mount = view.mount
+
+        def record_build(entry: ConversationEntry):
+            built.append(entry.entry_id)
+            return make_widget(entry)
+
+        def record_mount(*widgets, **kwargs):
+            batches.append(tuple(widget.entry.entry_id for widget in widgets))
+            result = mount(*widgets, **kwargs)
+            # Queue real input on the view's message pump before yielding, not
+            # a direct scroll offset write after the batch has settled.
+            assert view.post_message(events.MouseScrollDown(view, 0, 0, 0, 0, 0, False, False, False))
+            return result
+
+        monkeypatch.setattr(window, "_make_widget", record_build)
+        monkeypatch.setattr(view, "mount", record_mount)
+        expected = [entry.entry_id for entry in app.conversation_entries]
+        step = app.scroll_sensitivity_y
+        view.scroll_to(y=view.outer_size.height + 1, animate=False, immediate=True)
+
+        while window.mounted_start:
+            old_start = window.mounted_start
+            old_height = view.virtual_size.height
+            built.clear()
+            batches.clear()
+            for _ in range(int(view.scroll_y / step) + 1):
+                await view._on_message(events.MouseScrollUp(view, 0, 0, 0, 0, 0, False, False, False))
+                if window.mounted_start < old_start:
+                    break
+            assert window.mounted_start < old_start
+            assert 1 <= len(built) <= 12  # the per-input work budget, independent of the configured chunk
+            assert batches == [tuple(built)]
+            assert built == expected[window.mounted_start : old_start]
+            crossing_y = view.scroll_y
+
+            def queued_wheel_applied() -> bool:
+                growth = view.virtual_size.height - old_height
+                return growth > 0 and view.scroll_y == crossing_y + growth + step
+
+            await wait_for_layout(pilot, queued_wheel_applied)
+            assert list(window.widgets) == expected[window.mounted_start :]
+
+        assert list(window.widgets) == expected
+
+
+@pytest.mark.asyncio
 async def test_transcript_jump_to_bottom_refollows_and_trims(tmp_path: Path, monkeypatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
