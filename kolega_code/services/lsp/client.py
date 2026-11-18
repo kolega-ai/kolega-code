@@ -236,8 +236,10 @@ class LspClient:
                             proc.kill()
                         except ProcessLookupError:
                             pass
-                    transport.close()
+                    # transport.close() polls the child, which can reap the SIGKILL
+                    # status before asyncio's watcher and report 255 instead.
                     await asyncio.wait_for(proc.wait(), timeout=_KILL_TIMEOUT_SECONDS)
+                    transport.close()
             except Exception as exc:
                 self.status = "error"
                 self.last_error = f"Language server cleanup failed: {exc}"
