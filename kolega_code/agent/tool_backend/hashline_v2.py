@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+import struct
 from typing import Any, Iterable, Mapping, Sequence
 
 
@@ -29,40 +30,43 @@ def _rotl32(value: int, count: int) -> int:
     return ((value << count) | (value >> (32 - count))) & _MASK32
 
 
-def _round32(accumulator: int, value: int) -> int:
-    accumulator = (accumulator + value * _PRIME32_2) & _MASK32
-    accumulator = _rotl32(accumulator, 13)
-    return (accumulator * _PRIME32_1) & _MASK32
-
-
 def xxhash32(data: bytes, seed: int = 0) -> int:
     """Return the canonical xxHash32 digest used by ``Bun.hash.xxHash32``."""
 
     length = len(data)
     offset = 0
+    unpack = struct.unpack_from
     if length >= 16:
         v1 = (seed + _PRIME32_1 + _PRIME32_2) & _MASK32
         v2 = (seed + _PRIME32_2) & _MASK32
         v3 = seed & _MASK32
         v4 = (seed - _PRIME32_1) & _MASK32
         limit = length - 16
+        # Line anchors hash thousands of short strings per read, so the rounds
+        # are inlined: a per-word helper call costs more than the arithmetic,
+        # and one unpack per 16-byte block beats four sliced int.from_bytes.
         while offset <= limit:
-            v1 = _round32(v1, int.from_bytes(data[offset : offset + 4], "little"))
-            offset += 4
-            v2 = _round32(v2, int.from_bytes(data[offset : offset + 4], "little"))
-            offset += 4
-            v3 = _round32(v3, int.from_bytes(data[offset : offset + 4], "little"))
-            offset += 4
-            v4 = _round32(v4, int.from_bytes(data[offset : offset + 4], "little"))
-            offset += 4
+            w1, w2, w3, w4 = unpack("<4I", data, offset)
+            v1 = (v1 + w1 * _PRIME32_2) & _MASK32
+            v1 = ((v1 << 13) | (v1 >> 19)) & _MASK32
+            v1 = (v1 * _PRIME32_1) & _MASK32
+            v2 = (v2 + w2 * _PRIME32_2) & _MASK32
+            v2 = ((v2 << 13) | (v2 >> 19)) & _MASK32
+            v2 = (v2 * _PRIME32_1) & _MASK32
+            v3 = (v3 + w3 * _PRIME32_2) & _MASK32
+            v3 = ((v3 << 13) | (v3 >> 19)) & _MASK32
+            v3 = (v3 * _PRIME32_1) & _MASK32
+            v4 = (v4 + w4 * _PRIME32_2) & _MASK32
+            v4 = ((v4 << 13) | (v4 >> 19)) & _MASK32
+            v4 = (v4 * _PRIME32_1) & _MASK32
+            offset += 16
         digest = (_rotl32(v1, 1) + _rotl32(v2, 7) + _rotl32(v3, 12) + _rotl32(v4, 18)) & _MASK32
     else:
         digest = (seed + _PRIME32_5) & _MASK32
 
     digest = (digest + length) & _MASK32
     while offset + 4 <= length:
-        value = int.from_bytes(data[offset : offset + 4], "little")
-        digest = (digest + value * _PRIME32_3) & _MASK32
+        digest = (digest + unpack("<I", data, offset)[0] * _PRIME32_3) & _MASK32
         digest = (_rotl32(digest, 17) * _PRIME32_4) & _MASK32
         offset += 4
     while offset < length:
@@ -83,7 +87,7 @@ def compute_line_hash(line: str) -> str:
 
     if line.endswith("\r"):
         line = line[:-1]
-    normalized = re.sub(r"\s+", "", line)
+    normalized = "".join(line.split())
     value = xxhash32(normalized.encode("utf-8")) & 0xFF
     return _ALPHABET[value >> 4] + _ALPHABET[value & 0x0F]
 
