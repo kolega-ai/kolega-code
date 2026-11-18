@@ -164,6 +164,84 @@ def test_chatgpt_credits_are_not_api_dollars_or_included_subscription_usage() ->
     assert PRICING["openai_chatgpt", "gpt-5.4"]["status"] == "subscription"
 
 
+@pytest.mark.parametrize(
+    ("model", "tier", "input_tokens", "read", "write", "output_tokens", "cache_ttl", "region", "stamp", "expected"),
+    [
+        ("gpt-6.2-sol", "standard", 100, 20, 10, 5, "30m", "global", "2026-11-17T12:00:00Z", "0.000217"),
+        ("gpt-6.2-sol", "standard", 272001, 0, 0, 10, "30m", "global", "2026-11-17T12:00:00Z", "1.088154"),
+        ("gpt-6.2-sol", "batch", 100, 0, 0, 10, "30m", "regional", "2026-11-17T12:00:00Z", "0.000165"),
+        ("gpt-6.2-sol", "fast", 100, 0, 0, 10, "30m", "global", "2026-11-17T12:00:00Z", "0.0006"),
+        ("gpt-6.2-sol", "ultrafast", 100, 0, 0, 10, "30m", "global", "2027-03-01T07:59:59Z", "0.0009"),
+        ("gpt-6.2-sol", "ultrafast", 100, 0, 0, 10, "30m", "global", "2027-03-01T08:00:00Z", "0.0018"),
+        ("gpt-6.2-astra", "standard", 100, 20, 10, 5, "30m", "global", "2026-11-17T12:00:00Z", "0.000868"),
+        ("gpt-6.2-astra", "standard", 272001, 0, 0, 10, "30m", "global", "2026-11-17T12:00:00Z", "4.352616"),
+        ("gpt-6.2-astra", "ultrafast", 100, 0, 0, 10, "30m", "global", "2027-03-01T07:59:59Z", "0.0036"),
+        ("gpt-6.2-astra", "ultrafast", 100, 0, 0, 10, "30m", "global", "2027-03-01T08:00:00Z", "0.0072"),
+    ],
+)
+def test_openai_gpt62_pricing_schedules_and_ultrafast_cutoff(
+    model: str,
+    tier: str,
+    input_tokens: int,
+    read: int,
+    write: int,
+    output_tokens: int,
+    cache_ttl: str,
+    region: str,
+    stamp: str,
+    expected: str,
+) -> None:
+    result = _estimate(
+        "openai",
+        model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        read=read,
+        write=write,
+        service_tier=tier,
+        cache_ttl=cache_ttl,
+        region=region,
+        requested_at=stamp,
+    )
+    assert result["complete"], result
+    assert result["amount"] == expected
+    assert not _estimate("openai", model, service_tier="flex")["complete"]
+
+
+@pytest.mark.parametrize(
+    ("model", "tier", "stamp", "expected"),
+    [
+        ("gpt-6.2-sol", "standard", "2026-11-17T12:00:00Z", "0.0075"),
+        ("gpt-6.2-sol", "fast", "2026-11-17T12:00:00Z", "0.015"),
+        ("gpt-6.2-sol", "ultrafast", "2027-03-01T07:59:59Z", "0.0225"),
+        ("gpt-6.2-sol", "ultrafast", "2027-03-01T08:00:00Z", "0.045"),
+        ("gpt-6.2-astra", "standard", "2026-11-17T12:00:00Z", "0.03"),
+        ("gpt-6.2-astra", "fast", "2026-11-17T12:00:00Z", "0.06"),
+        ("gpt-6.2-astra", "ultrafast", "2027-03-01T07:59:59Z", "0.09"),
+        ("gpt-6.2-astra", "ultrafast", "2027-03-01T08:00:00Z", "0.18"),
+    ],
+)
+def test_chatgpt_gpt62_credit_schedules_and_ultrafast_cutoff(
+    model: str,
+    tier: str,
+    stamp: str,
+    expected: str,
+) -> None:
+    result = _estimate(
+        "openai_chatgpt",
+        model,
+        input_tokens=100,
+        output_tokens=10,
+        read=0,
+        service_tier=tier,
+        requested_at=stamp,
+    )
+    assert result["complete"], result
+    assert result["denomination"] == "openai_codex_credits"
+    assert result["amount"] == expected
+    assert _estimate("openai_chatgpt", model, billing_surface="subscription")["source"] == "unavailable"
+
+
 def test_anthropic_cache_ttl_and_us_uplift_are_disjoint() -> None:
     result = _estimate(
         "anthropic",

@@ -6,6 +6,16 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- **New model support.** OpenAI **GPT-6.2 Sol** (`gpt-6.2-sol`) and
+  **GPT-6.2 Astra** (`gpt-6.2-astra`) on both the `openai` (API-key) and
+  `openai_chatgpt` (ChatGPT subscription) providers — 1.05M-token context window
+  / 128K output on `openai` (500K / 400K default windows with 872K maximum
+  override on `openai_chatgpt`), multimodal vision input, hosted web search,
+  `codex_apply_patch`, and `low`/`medium`/`high`/`xhigh`/`max` reasoning effort
+  (default `medium`), without altering existing provider defaults.
+
 ## 0.52.1 - 2026-11-17
 
 ### Changed

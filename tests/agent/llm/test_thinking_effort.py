@@ -23,6 +23,10 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert default_thinking_effort("anthropic", "claude-sonnet-5-5") == "high"
     assert thinking_effort_options("anthropic", "claude-fable-5-2") == ("low", "medium", "high", "xhigh", "max")
     assert default_thinking_effort("anthropic", "claude-fable-5-2") == "high"
+    for provider in ("openai", "openai_chatgpt"):
+        for model in ("gpt-6.2-sol", "gpt-6.2-astra"):
+            assert thinking_effort_options(provider, model) == ("low", "medium", "high", "xhigh", "max")
+            assert default_thinking_effort(provider, model) == "medium"
     assert thinking_effort_options("moonshot", "kimi-k3") == ("max",)
     assert default_thinking_effort("moonshot", "kimi-k3") == "max"
     assert thinking_effort_options("moonshot", "kimi-k3.1-pro") == ("low", "high", "max")

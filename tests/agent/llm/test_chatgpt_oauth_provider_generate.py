@@ -73,7 +73,12 @@ class _FakeResponses:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "model,effort",
-    [("gpt-5.5", "high"), *[("gpt-6-astra", effort) for effort in ("low", "medium", "high", "xhigh", "max")]],
+    [
+        ("gpt-5.5", "high"),
+        *[("gpt-6-astra", effort) for effort in ("low", "medium", "high", "xhigh", "max")],
+        *[("gpt-6.2-sol", effort) for effort in ("low", "medium", "high", "xhigh", "max")],
+        *[("gpt-6.2-astra", effort) for effort in ("low", "medium", "high", "xhigh", "max")],
+    ],
 )
 async def test_provider_generate_builds_codex_shaped_request(
     monkeypatch: pytest.MonkeyPatch, model: str, effort: str
