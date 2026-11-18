@@ -13,6 +13,7 @@ from kolega_code.agent.tool_backend.hashline_v2 import (
     format_line_tag,
     parse_edits,
     parse_tag,
+    xxhash32,
 )
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider
@@ -50,10 +51,37 @@ def nested_edit_tool(tmp_path: Path, template: EditTool) -> EditTool:
         ("  return 42;", "KZ"),
         ("αβγ", "ZT"),
         ("a b\t c", "HH"),
+        # Multi-block lines exercise the 16-byte-per-iteration lane path.
+        ("def long_function_name(argument, other):", "HR"),
+        ("the quick brown fox jumps over the lazy dog", "VR"),
+        ("日本語のテキスト", "QW"),
+        ("x" * 64, "ZM"),
     ],
 )
 def test_hash_vectors_match_bun_xxhash32(content: str, expected: str) -> None:
     assert compute_line_hash(content) == expected
+
+
+@pytest.mark.parametrize(
+    ("data", "seed", "expected"),
+    [
+        (b"", 0, 0x02CC5D05),
+        (b"a", 0, 0x550D7456),
+        (b"abc", 0, 0x32D153FF),
+        (b"four", 0, 0x34399ADD),
+        (b"fifteen bytes!!", 0, 0xA0B5FC38),
+        (b"sixteen bytes!!!", 0, 0xEDF66B2B),
+        (b"sixteen bytes!!!x", 0, 0x7B0ADEEE),
+        (b"the quick brown fox jumps over the lazy dog", 0, 0x66716377),
+        ("日本語のテキスト".encode(), 0, 0x7393FA36),
+        (b"the quick brown fox jumps over the lazy dog", 1, 0xCE670F2C),
+        (b"sixteen bytes!!!", 0x9E3779B1, 0xDAE57B57),
+        (b"x" * 64, 0, 0xF6216102),
+    ],
+)
+def test_xxhash32_matches_reference_vectors(data: bytes, seed: int, expected: int) -> None:
+    """Vectors from the reference xxhash library (``xxhash.xxh32(...).intdigest()``)."""
+    assert xxhash32(data, seed) == expected
 
 
 def test_hash_ignores_whitespace_and_line_number() -> None:
