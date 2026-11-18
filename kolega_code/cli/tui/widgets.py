@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Optional
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Optional, cast
 
 from rich.cells import cell_len
 from rich.markdown import Markdown as RichMarkdown
@@ -17,10 +17,14 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.content import Content
-from textual.geometry import Offset
+from textual.geometry import Offset, Size, clamp
+from textual.layout import DockArrangeResult
 from textual.message import Message as TextualMessage
+from textual.reactive import Reactive
+from textual.scrollbar import ScrollBar
 from textual.selection import Selection
 from textual.strip import Strip
+from textual.widget import Widget
 from textual.widgets import Collapsible, OptionList, RichLog, Static, TextArea
 from textual.widgets._collapsible import CollapsibleTitle
 from textual.widgets.option_list import Option
@@ -577,6 +581,8 @@ class ScrollbackWindow:
         """Re-mount only the trailing window of ``entries`` (restore, reset, structural edits)."""
         if not self._can_render:
             return
+        if isinstance(self._view, ConversationView):
+            self._view._prepend_anchor = None
         self._view.remove_children()
         self.widgets = {}
         self.mounted_start = max(0, len(entries) - self.max_mounted)
@@ -605,13 +611,14 @@ class ScrollbackWindow:
     def expand_up(self, entries: list[ConversationEntry]) -> bool:
         """Mount the previous ``expand_chunk`` entries above the window, keeping position.
 
-        Records the content height before mounting, then compensates ``scroll_y``
-        by the measured delta after layout so the viewport shows the same entries.
+        Chat compensates during layout so it never paints an unanchored frame.
+        The inspector retains its deferred height compensation.
         Returns False when already fully expanded or an expansion is in flight.
         """
         if self._expand_pending or self.mounted_start <= 0 or not self.widgets:
             return False
-        if not self._can_render:
+        view = self._view
+        if not self._can_render or (isinstance(view, ConversationView) and view._prepend_anchor is not None):
             return False
         new_start = max(0, self.mounted_start - self.expand_chunk)
         chunk = entries[new_start : self.mounted_start]
@@ -621,7 +628,6 @@ class ScrollbackWindow:
         new_widgets: dict[str, ConversationEntryWidget | ToolEntryWidget] = {}
         for entry in chunk:
             new_widgets[entry.entry_id] = self._make_widget(entry)
-        view = self._view
         old_virtual_height = view.virtual_size.height
         old_widgets = self.widgets
         old_start = self.mounted_start
@@ -630,6 +636,10 @@ class ScrollbackWindow:
         self.widgets = {**new_widgets, **old_widgets}
         try:
             with view.app.batch_update():
+                if isinstance(view, ConversationView):
+                    view._prepend_anchor = _PrependAnchor(
+                        first_widget, first_widget.virtual_region.y, tuple(new_widgets.values())
+                    )
                 view.mount(*new_widgets.values(), before=first_widget)
         except Exception:
             # Mount failed (e.g. view mid-teardown): roll back to the pre-expand
@@ -637,8 +647,13 @@ class ScrollbackWindow:
             self.widgets = old_widgets
             self.mounted_start = old_start
             self._expand_pending = False
+            if isinstance(view, ConversationView):
+                view._prepend_anchor = None
             return False
-        self._schedule_expand_compensation(old_virtual_height)
+        if isinstance(view, ConversationView):
+            self._expand_pending = False
+        else:
+            self._schedule_expand_compensation(old_virtual_height)
         return True
 
     def _schedule_expand_compensation(self, old_virtual_height: int) -> None:
@@ -703,6 +718,14 @@ class ScrollbackWindow:
         self._view.remove_children(oldest_widgets)
 
 
+@dataclass
+class _PrependAnchor:
+    widget: Widget
+    virtual_y: int
+    new_widgets: tuple[Widget, ...]
+    wheel_deltas: list[float] = field(default_factory=list)
+
+
 class ConversationView(VerticalScroll):
     """Scrollable list of per-entry widgets, anchored to the bottom while streaming."""
 
@@ -711,6 +734,7 @@ class ConversationView(VerticalScroll):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.auto_follow_bottom = True
+        self._prepend_anchor: _PrependAnchor | None = None
 
     def is_at_bottom(self) -> bool:
         """Return whether the current scroll position is effectively at the end."""
@@ -719,6 +743,51 @@ class ConversationView(VerticalScroll):
     def set_auto_follow(self, enabled: bool) -> None:
         """Record whether transcript updates should keep the view pinned to the end."""
         self.auto_follow_bottom = enabled
+        if enabled:
+            self._prepend_anchor = None
+
+    def arrange(self, size: Size, optimal: bool = False) -> DockArrangeResult:
+        arrangement = super().arrange(size, optimal)
+        anchor = self._prepend_anchor
+        if anchor is None or optimal or size.height <= 0:
+            return arrangement
+        if self._pruning or anchor.widget not in arrangement.widgets:
+            self._prepend_anchor = None
+            return arrangement
+
+        placement = next(p for p in arrangement.placements if p.widget is anchor.widget)
+        virtual_y = placement.region.y
+        maximum = max(0, arrangement.total_region.bottom - size.height)
+        scroll_y = clamp(self.scroll_y + virtual_y - anchor.virtual_y, 0, maximum)
+        for delta in anchor.wheel_deltas:
+            scroll_y = clamp(scroll_y + delta, 0, maximum)
+        anchor.virtual_y = virtual_y
+        anchor.wheel_deltas.clear()
+        if all(widget.is_mounted for widget in anchor.new_widgets):
+            self._prepend_anchor = None
+
+        # Textual reads the scroll offset just after arrange(), before updating
+        # virtual_size. Like its bottom anchor, bypass the stale scroll bounds
+        # and watchers: placement and paint are already in progress.
+        self.set_reactive(Widget.scroll_y, scroll_y)
+        self.set_reactive(cast("Reactive[float]", Widget.scroll_target_y), scroll_y)
+        if self.show_vertical_scrollbar:
+            self.vertical_scrollbar.set_reactive(ScrollBar.position, scroll_y)
+        return arrangement
+
+    def _queue_prepend_wheel(self, event: events.MouseEvent, direction: int) -> None:
+        anchor = self._prepend_anchor
+        if anchor is not None and not (event.ctrl or event.shift) and self.allow_vertical_scroll:
+            # Apply input against the expanded range, not the old top boundary.
+            anchor.wheel_deltas.append(direction * self.app.scroll_sensitivity_y)
+            event.stop()
+            event.prevent_default()
+
+    def _on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        self._queue_prepend_wheel(event, -1)
+
+    def _on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        self._queue_prepend_wheel(event, 1)
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         super().watch_scroll_y(old_value, new_value)
