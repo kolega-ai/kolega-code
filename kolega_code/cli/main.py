@@ -172,7 +172,7 @@ from .skills import (
     activated_skill_names,
     discover_skills,
 )
-from .updater import check_for_update, run_self_update, update_status_message
+from .updater import check_for_update, current_version, run_self_update, update_status_message
 
 SUBCOMMANDS = {
     "ask",
@@ -1036,11 +1036,7 @@ def _resolve_tui_permission_mode(
 
 
 def _run_version() -> int:
-    result = check_for_update()
-    print(f"kolega-code {result.current_version}")
-    message = update_status_message(result)
-    if message:
-        print(message)
+    print(f"kolega-code {current_version()}")
     return 0
 
 
