@@ -203,7 +203,9 @@ def _record_turn(recorder: Any, user_text: str) -> None:
 async def _completion_widget(app: Any, pilot: Any, entry: ConversationEntry) -> ToolEntryWidget:
     await _wait_for(
         pilot,
-        lambda: entry.entry_id in app._entry_widgets and bool(app._entry_widgets[entry.entry_id].query(".tool-body")),
+        lambda: (
+            entry.entry_id in app._entry_widgets and bool(app._entry_widgets[entry.entry_id].query(CollapsibleTitle))
+        ),
         description="collapsed background report to mount",
     )
     widget = app._entry_widgets[entry.entry_id]
@@ -256,6 +258,7 @@ async def test_background_reports_start_collapsed_and_expand_on_demand(
         disclosure = widget.query_one(Collapsible)
         title = widget.query_one(CollapsibleTitle)
         assert disclosure.collapsed is True
+        assert not widget.query(".tool-body")
         assert f"Background investigation {status}" in Text.from_markup(disclosure.title).plain
         assert "job-report" not in disclosure.title
         assert "Report detail" not in disclosure.title
@@ -264,7 +267,11 @@ async def test_background_reports_start_collapsed_and_expand_on_demand(
 
         title.focus()
         await pilot.press("enter")
-        await _wait_for(pilot, lambda: not disclosure.collapsed, description="explicit report expansion")
+        await _wait_for(
+            pilot,
+            lambda: not disclosure.collapsed and bool(widget.query(".tool-body")),
+            description="explicit report expansion",
+        )
         assert widget._body is not None
         assert str(widget._body.render()) == entry.content
         await _wait_for(pilot, lambda: widget.region.height > 10, description="full report layout")

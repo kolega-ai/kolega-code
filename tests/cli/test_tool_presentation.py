@@ -255,7 +255,7 @@ async def test_multifile_previews_keep_each_file_once_and_single_edits_have_no_d
         )
         single_widget = next(widget for widget in app.query(ToolEntryWidget) if widget.entry.tool_call_id == "single")
         single_widget.query_one(Collapsible).collapsed = False
-        await _wait_for_layout(pilot, lambda: single_widget.query_one(".tool-body", Static).is_on_screen)
+        await _wait_for_layout(pilot, lambda: any(body.is_on_screen for body in single_widget.query(".tool-body")))
         assert not single_widget.query_one(".tool-details", Static).display
 
 
