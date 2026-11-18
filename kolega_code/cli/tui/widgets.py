@@ -12,12 +12,14 @@ from rich.cells import cell_len
 from rich.markdown import Markdown as RichMarkdown
 from rich.segment import Segment
 from rich.style import Style
+from rich.table import Table
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.content import Content
+from textual.css.styles import RulesMap
 from textual.geometry import Offset, Size, clamp
 from textual.layout import DockArrangeResult
 from textual.message import Message as TextualMessage
@@ -25,6 +27,8 @@ from textual.reactive import Reactive
 from textual.scrollbar import ScrollBar
 from textual.selection import Selection
 from textual.strip import Strip
+from textual.style import Style as VisualStyle
+from textual.visual import RenderOptions, RichVisual
 from textual.widget import Widget
 from textual.widgets import Collapsible, OptionList, RichLog, Static, TextArea
 from textual.widgets._collapsible import CollapsibleTitle
@@ -38,6 +42,31 @@ from .app_base import KolegaAppBase
 from .state import ConversationEntry
 from .task_list import TaskListMarkdown
 from .tool_presentation import command_preview, entry_command, entry_paths, tool_title
+
+
+class _CompletedReplyVisual(RichVisual):
+    """Share the styled Markdown grid between layout and paint."""
+
+    def __init__(self, widget: Widget, grid: Table) -> None:
+        super().__init__(widget, grid)
+        self._reply_widget = widget
+        # One width/style per mounted reply; eviction drops the widget and its visual.
+        self._layout: tuple[tuple[int, VisualStyle, Style | None], list[Strip]] | None = None
+
+    def _lines(self, width: int, style: VisualStyle, options: RenderOptions) -> list[Strip]:
+        widget = self._reply_widget
+        key = (width, style, widget.link_style if widget.auto_links else None)
+        if self._layout is None or self._layout[0] != key:
+            self._layout = (key, super().render_strips(width, None, style, options))
+        return self._layout[1]
+
+    def get_height(self, rules: RulesMap, width: int) -> int:
+        widget = self._reply_widget
+        return len(self._lines(width, widget.visual_style, RenderOptions(widget._get_style, rules)))
+
+    def render_strips(self, width: int, height: int | None, style: VisualStyle, options: RenderOptions) -> list[Strip]:
+        lines = self._lines(width, style, options)
+        return lines if height is None or height >= len(lines) else lines[:height]
 
 
 class ConversationEntryWidget(Static):
@@ -71,7 +100,10 @@ class ConversationEntryWidget(Static):
             return
         self._content_snapshot = snapshot
         self._formatted = self._format_entry(self.entry)
-        self.update(self._formatted)
+        if self.entry.kind == "assistant" and self.entry.complete and isinstance(self._formatted, Table):
+            self.update(_CompletedReplyVisual(self, self._formatted))
+        else:
+            self.update(self._formatted)
 
     def _entry_snapshot(self) -> tuple[object, ...]:
         # Use content lengths, not the full strings: streaming only appends, so length
