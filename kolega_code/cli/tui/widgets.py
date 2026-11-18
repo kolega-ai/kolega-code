@@ -403,7 +403,7 @@ class ToolEntryWidget(Vertical):
         self._command_key: tuple[str, int, bool] | None = None
         self._title_width: int | None = None
         self._title = ""
-        self._body_content: object = None
+        self._body_content: str | None = None
         self._body_len = 0
         self._preview_key = ""
         self._preview_visible = False
@@ -423,10 +423,12 @@ class ToolEntryWidget(Vertical):
         self._command_preview.display = False
         self._details = Static("", markup=False, classes="tool-details")
         self._details.display = False
-        self._body = Static("", markup=False, classes="tool-body")
+        contents = [self._details]
+        if self.start_expanded:
+            self.entry.materialize()
+            contents.append(self._make_body(self.entry.full_content or self.entry.content))
         self._collapsible = SelectableCollapsible(
-            self._details,
-            self._body,
+            *contents,
             title=self._title_factory(self.entry),
             collapsed=not self.start_expanded,
             persistent_children=(self._command_preview, self._preview),
@@ -463,11 +465,18 @@ class ToolEntryWidget(Vertical):
             self._title = title
 
     def on_collapsible_expanded(self, event: Collapsible.Expanded) -> None:
-        # Thinking bodies are not updated while collapsed; sync on open.
         self.refresh_content()
 
+    def _make_body(self, content: str) -> Static:
+        body = self._body = Static(content, markup=False, classes="tool-body")
+        if self.entry.kind == "thinking":
+            self._body_len = len(content)
+        else:
+            self._body_content = content
+        return body
+
     def refresh_content(self) -> None:
-        if self._collapsible is None or self._body is None or self._pruning or self._collapsible._pruning:
+        if self._collapsible is None or self._pruning or self._collapsible._pruning:
             return
 
         # Thinking entries stream through stream_parts; fold pending deltas into
@@ -477,19 +486,19 @@ class ToolEntryWidget(Vertical):
         self._refresh_title()
         self._refresh_details()
 
-        body_content = self.entry.full_content or self.entry.content
-        if self.entry.kind == "thinking":
-            # Streaming thinking appends on every flush: skip updating the
-            # hidden body entirely while collapsed (the title carries the
-            # progress), and compare by length when visible — growth is
-            # append-only, so length is the change signal and an exact string
-            # compare would be O(n) per flush, O(n^2) over the stream.
-            if not self._collapsible.collapsed and len(body_content) != self._body_len:
+        if not self._collapsible.collapsed:
+            body_content = self.entry.full_content or self.entry.content
+            if self._body is None:
+                contents = self._collapsible.query_one(SelectableCollapsible.Contents)
+                contents.mount(self._make_body(body_content))
+            elif self.entry.kind == "thinking":
+                # Thinking only appends, so length catches changes without comparing the whole stream.
+                if len(body_content) != self._body_len:
+                    self._body.update(body_content)
+                    self._body_len = len(body_content)
+            elif body_content != self._body_content:
                 self._body.update(body_content)
-                self._body_len = len(body_content)
-        elif body_content != self._body_content:
-            self._body.update(body_content)
-            self._body_content = body_content
+                self._body_content = body_content
 
         if self._preview is not None:
             width = max(0, self.content_size.width - (4 if self.has_class("agent-activity") else 2))

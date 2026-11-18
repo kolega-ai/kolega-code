@@ -510,6 +510,7 @@ async def test_expanded_tool_body_line_start_selection_copies(tmp_path: Path, mo
         )
         await pilot.click(title, offset=(1, 0))
 
+        await _wait_for_layout(pilot, lambda: bool(widget.query(".tool-body")))
         body = widget.query_one(".tool-body", Static)
         await _wait_for_layout(
             pilot,
