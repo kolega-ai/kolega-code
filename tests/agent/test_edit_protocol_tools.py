@@ -68,6 +68,62 @@ async def test_claude_write_accepts_path_alias_at_dispatch(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_claude_excerpt_reads_once_and_authorizes_unchanged_full_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tools = collection(tmp_path, EditProtocol.CLAUDE_CODE)
+    target = tmp_path / "sample.txt"
+    target.write_bytes("\ufeffshown\r\nhidden\r\n".encode())
+    read_text = Mock(wraps=tools.filesystem.read_text)
+    monkeypatch.setattr(tools.filesystem, "read_text", read_text)
+
+    excerpt = await tools.call("read", file_path="sample.txt", limit=1)
+
+    assert "shown" in excerpt and "hidden" not in excerpt
+    read_text.assert_called_once_with("sample.txt")
+    await tools.call("edit", file_path="sample.txt", old_string="hidden", new_string="edited")
+    assert target.read_bytes() == "\ufeffshown\r\nedited\r\n".encode()
+
+
+@pytest.mark.asyncio
+async def test_claude_excerpt_rejects_change_after_loading_undisplayed_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tools = collection(tmp_path, EditProtocol.CLAUDE_CODE)
+    target = tmp_path / "sample.txt"
+    target.write_text("shown\nhidden\n")
+    read_text = tools.filesystem.read_text
+
+    def change_after_read(path: str) -> str:
+        content = read_text(path)
+        target.write_text("shown\nchanged externally\n")
+        return content
+
+    with monkeypatch.context() as patch:
+        patch.setattr(tools.filesystem, "read_text", change_after_read)
+        excerpt = await tools.call("read", file_path="sample.txt", limit=1)
+
+    assert "shown" in excerpt and "changed externally" not in excerpt
+    with pytest.raises(ValueError, match="has changed since it was read"):
+        await tools.call("edit", file_path="sample.txt", old_string="shown", new_string="edited")
+    assert target.read_text() == "shown\nchanged externally\n"
+
+
+@pytest.mark.asyncio
+async def test_claude_failed_excerpt_does_not_authorize_edit(tmp_path: Path) -> None:
+    tools = collection(tmp_path, EditProtocol.CLAUDE_CODE)
+    target = tmp_path / "sample.txt"
+    target.write_text("one line\n")
+
+    with pytest.raises(ValueError, match="exceeds file length"):
+        await tools.call("read", file_path="sample.txt", offset=2)
+
+    with pytest.raises(ValueError, match="has not been read"):
+        await tools.call("edit", file_path="sample.txt", old_string="one line", new_string="edited")
+    assert target.read_text() == "one line\n"
+
+
+@pytest.mark.asyncio
 async def test_search_replace_write_keeps_path_canonical_at_dispatch(tmp_path: Path) -> None:
     tools = collection(tmp_path, EditProtocol.SEARCH_REPLACE)
     result = await tools.call("write", path="direct.txt", content="hello\n")
