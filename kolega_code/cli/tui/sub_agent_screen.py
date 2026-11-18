@@ -81,6 +81,7 @@ class SubAgentInspectorScreen(ModalScreen):
         self._empty_shown = False
         self._spinner_frame = 0
         self._flush_pending = False
+        self._updated_agent_keys: set[str] = set()
 
     @property
     def _step_widgets(self) -> dict[str, ConversationEntryWidget | ToolEntryWidget]:
@@ -116,6 +117,7 @@ class SubAgentInspectorScreen(ModalScreen):
 
     def note_activity_updated(self, activity: SubAgentActivity) -> None:
         """Called by the owner when any sub-agent emits an event (coalesced)."""
+        self._updated_agent_keys.add(activity.agent_id)
         self._schedule_flush()
 
     def _schedule_flush(self) -> None:
@@ -132,9 +134,18 @@ class SubAgentInspectorScreen(ModalScreen):
 
     def _flush(self) -> None:
         self._flush_pending = False
+        selected_updated = self._selected_key in self._updated_agent_keys
+        self._updated_agent_keys.clear()
         self._sync_roster()
         self._refresh_header()
-        self._sync_trajectory()
+        if (
+            selected_updated
+            or self._rendered_key != self._selected_key
+            or self._selected_key not in self._owner._sub_agent_activities
+        ):
+            self._sync_trajectory()
+        else:
+            self._schedule_failure_acknowledgment()
 
     def _on_tick(self) -> None:
         self._spinner_frame += 1

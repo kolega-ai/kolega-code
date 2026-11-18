@@ -42,6 +42,7 @@ from ._app_test_utils import (
     first_text_styles,
     question_payload,
     renderable_text,
+    wait_for_layout,
 )
 
 
@@ -693,6 +694,97 @@ async def test_sub_agent_inspector_switches_agents(tmp_path: Path, monkeypatch: 
             ),
         )
         assert screen._selected_key == "a2"
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_inspector_refreshes_only_the_changed_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        for index in range(8):
+            for kind in ("tool_call", "tool_result"):
+                app._render_event(
+                    _sub_agent_event(
+                        agent_id="a",
+                        message_type=kind,
+                        tool_call_id=f"a-tool-{index}",
+                        tool_description="read_file",
+                        text="done",
+                    )
+                )
+        app._render_event(_sub_agent_event(agent_id="b", uuid="b-start", text="starting"))
+        app.action_open_sub_agent("a")
+        screen = app._sub_agent_inspector
+        assert screen is not None
+        await wait_for_layout(
+            pilot,
+            lambda: (
+                len(screen._step_widgets) == 9
+                and all(widget.is_attached for widget in screen._step_widgets.values())
+                and "b" in screen._rows
+            ),
+        )
+        window = screen._trajectory_window
+        assert window is not None
+        a_ids = set(window.widgets)
+        refresh_all = window.refresh_all
+        a_rows_refreshed = 0
+
+        def count_refreshes() -> None:
+            nonlocal a_rows_refreshed
+            a_rows_refreshed += len(a_ids.intersection(window.widgets))
+            refresh_all()
+
+        monkeypatch.setattr(window, "refresh_all", count_refreshes)
+
+        def b_update(index: int) -> None:
+            app._render_event(
+                _sub_agent_event(
+                    agent_id="b",
+                    message_type="tool_call",
+                    tool_call_id=f"b-tool-{index}",
+                    tool_description=f"b update {index}",
+                    text="working",
+                )
+            )
+
+        for index in range(3):
+            b_update(index)
+            assert screen._flush_pending
+            await wait_for_layout(
+                pilot,
+                lambda: not screen._flush_pending and f"b update {index}" in str(screen._rows["b"].render()),
+            )
+        assert a_rows_refreshed == 0
+
+        app._render_event(_sub_agent_event(agent_id="a", uuid="a-mixed", text="selected update"))
+        b_update(3)
+        await wait_for_layout(
+            pilot,
+            lambda: (
+                any(widget.entry.content == "selected update" for widget in screen._step_widgets.values())
+                and "b update 3" in str(screen._rows["b"].render())
+            ),
+        )
+        assert a_rows_refreshed == 9
+
+        b_update(4)
+        assert screen._flush_pending
+        screen.action_next_agent()
+        assert screen._selected_key == "b"
+        b_steps = app._sub_agent_activities["b"].steps
+        await wait_for_layout(
+            pilot,
+            lambda: (
+                not screen._flush_pending
+                and set(screen._step_widgets) == {step.entry_id for step in b_steps}
+                and all(widget.is_attached for widget in screen._step_widgets.values())
+            ),
+        )
+        assert "b update 4" in str(screen._rows["b"].render())
+        assert a_rows_refreshed == 9
 
 
 @pytest.mark.asyncio
