@@ -707,16 +707,15 @@ class KolegaCodeApp(
             notify=self._render_peer_notice,
         )
 
-    async def on_mount(self) -> None:
-        # Arrival/release callbacks handle the usual case. This level-triggered
-        # fallback also rearms after any modal/startup blocker is dismissed.
-        self.set_interval(0.25, self._maybe_start_background_completion, name="session-input-drain")
+    def on_load(self) -> None:
+        # ``on_load`` runs before the first screen composes. Setting the theme
+        # changes the CSS variables, and Textual re-tokenizes every registered
+        # source when that happens; doing it at mount instead re-parsed the
+        # whole 24 KB stylesheet after all widgets had registered their CSS.
         self.settings = self.settings_store.load()
         self._usage_ledger.pricing_resolver = PricingResolver(
             self.config.usage_pricing if self.config else self.settings.usage_pricing
         )
-        # Mount is batched by Textual: awaiting agent/tool setup here prevents
-        # even a loading screen from painting. Theme the first frame, then return.
         truecolor = theme.supports_truecolor(self.console)
         for textual_theme in theme.build_textual_themes(truecolor=truecolor):
             self.register_theme(textual_theme)
@@ -725,6 +724,13 @@ class KolegaCodeApp(
             self.theme = theme.textual_theme_name(self.settings.active_theme)
         except Exception:
             pass
+
+    async def on_mount(self) -> None:
+        # Arrival/release callbacks handle the usual case. This level-triggered
+        # fallback also rearms after any modal/startup blocker is dismissed.
+        self.set_interval(0.25, self._maybe_start_background_completion, name="session-input-drain")
+        # Mount is batched by Textual: awaiting agent/tool setup here prevents
+        # even a loading screen from painting.
         self._set_chat_enabled(False)
         self._boot_splash.start_animation()
         self.call_after_refresh(self._launch_startup)
