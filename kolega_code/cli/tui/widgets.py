@@ -17,6 +17,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.content import Content
+from textual.geometry import Offset
 from textual.message import Message as TextualMessage
 from textual.selection import Selection
 from textual.strip import Strip
@@ -844,6 +845,17 @@ class StickyRichLog(RichLog):
         # so rstrip each line to keep copied text clean.
         if not self.lines:
             return None
+        start, end = selection
+        if start is not None and end is not None and 0 <= start.y <= end.y < len(self.lines):
+            text = "\n".join(strip.text.rstrip() for strip in self.lines[start.y : end.y + 1])
+            if text.strip():
+                # Keep an interior blank end row visible to Selection.extract's splitlines().
+                if end.y < len(self.lines) - 1:
+                    text += "\n"
+                local_selection = Selection(Offset(start.x, 0), Offset(end.x, end.y - start.y))
+                return local_selection.extract(text), "\n"
+
+        # A blank range alone can't tell us whether the whole buffer is blank.
         text = "\n".join(strip.text.rstrip() for strip in self.lines)
         if not text.strip():
             return None
