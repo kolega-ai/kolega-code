@@ -1,7 +1,9 @@
 import asyncio
 import subprocess
 import time
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from textual.widgets import TextArea
@@ -14,6 +16,7 @@ from ._app_test_utils import (
     _sub_agent_event,
     renderable_text,
     settle_changes_inspector,
+    wait_for_layout,
     wait_for_session_diff_baseline,
 )
 
@@ -202,6 +205,56 @@ async def test_changes_inspector_opens_and_renders_git_shell_changes(
         }
         assert screen._selected_path in {"src/a.py", "src/b.py"}
         assert "net" in screen._preview_widgets
+
+
+@pytest.mark.asyncio
+async def test_changes_selection_updates_only_old_and_new_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from textual.widgets import Static
+
+    from kolega_code.cli.tui.changes_screen import ChangeFileRosterRow, ChangesInspectorScreen
+    from kolega_code.cli.tui.session_diff import SessionDiffFile
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    paths = [f"src/file-{i:03}.py" for i in range(512)]
+    diffs = [SessionDiffFile(path, "modified", None, adds=1, dels=1) for path in paths]
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        app._session_diff_files = diffs
+        screen = app._changes_inspector = ChangesInspectorScreen(app, paths[-1])
+        await app.push_screen(screen)
+        clicked = screen._rows[paths[1]]
+        await wait_for_layout(pilot, lambda: clicked.region.width > 0 and clicked.region.height > 0)
+
+        with patch.object(
+            ChangeFileRosterRow, "update", autospec=True, side_effect=ChangeFileRosterRow.update
+        ) as update:
+            await pilot.press("down")  # Wrap from the last file to the first.
+            wrapped = [call.args[0].path for call in update.call_args_list]
+            update.reset_mock()
+
+            assert await pilot.click(clicked, offset=(1, 0))
+            click_updates = [call.args[0].path for call in update.call_args_list]
+            update.reset_mock()
+
+            for _ in range(19):
+                screen.action_next_file()
+            moved = [call.args[0].path for call in update.call_args_list]
+
+        assert len(wrapped) + len(moved) == 40
+        assert set(wrapped) == {paths[-1], paths[0]}
+        assert len(click_updates) == 2 and set(click_updates) == {paths[0], paths[1]}
+        assert moved == [path for old, new in zip(paths[1:20], paths[2:21]) for path in (old, new)]
+        assert [path for path, row in screen._rows.items() if str(row.content).startswith("> ")] == [paths[20]]
+        assert paths[20] in str(screen.query_one("#changes_header", Static).content)
+        assert "net" in screen._preview_widgets
+
+        screen.action_toggle_follow()
+        unselected = screen._rows[paths[-2]]
+        app._session_diff_files = [*diffs[:-2], replace(diffs[-2], adds=7), diffs[-1]]
+        app._invalidate_changes_detail()
+        await wait_for_layout(pilot, lambda: "+7 -1" in str(unselected.content))
+        assert not str(unselected.content).startswith("> ")
+        assert screen._rows[paths[-2]] is unselected
 
 
 @pytest.mark.asyncio
