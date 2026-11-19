@@ -91,6 +91,9 @@ def test_google_xhigh_compatibility_does_not_hide_unrelated_warnings(
         ("gemini-4-argon", "low", None),
         ("gemini-4-argon", "medium", None),
         ("gemini-4-argon", "high", None),
+        ("gemini-4-carbon", "medium", None),
+        ("gemini-4-neon", "high", None),
+        ("gemini-4-neon", "xhigh", None),
         ("gemini-3.8-flash", "medium", None),
         ("gemini-3.7-flash", "medium", None),
         ("gemini-3.6-flash", "medium", None),
@@ -165,6 +168,8 @@ async def test_google_request_config_respects_model_temperature_support(
         ("gemini-4-hydrogen", "medium"),
         ("gemini-4-hydrogen", "high"),
         ("gemini-4-hydrogen", "xhigh"),
+        ("gemini-4-carbon", "medium"),
+        ("gemini-4-neon", "xhigh"),
     ],
 )
 async def test_google_mldev_serializes_function_response_as_user_turn(

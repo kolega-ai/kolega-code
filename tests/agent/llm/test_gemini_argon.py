@@ -58,7 +58,13 @@ def test_argon_rejects_unsupported_thinking(effort: str) -> None:
 
 @pytest.mark.parametrize(
     "model,expected_input_budget",
-    [("gemini-4-argon", 983040), ("gemini-3.8-flash", 1048576), ("gemini-3.1-pro-preview", 1048576)],
+    [
+        ("gemini-4-argon", 983040),
+        ("gemini-4-carbon", 983040),
+        ("gemini-4-neon", 983040),
+        ("gemini-3.8-flash", 1048576),
+        ("gemini-3.1-pro-preview", 1048576),
+    ],
 )
 def test_argon_reserves_thinking_and_output_without_changing_gemini3(model: str, expected_input_budget: int) -> None:
     assert resolve_max_input_tokens(get_model_specs("google", model)) == expected_input_budget
