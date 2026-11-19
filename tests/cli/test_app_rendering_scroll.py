@@ -259,6 +259,10 @@ async def test_mounted_reply_defers_updates_below_viewport(
     pytest.importorskip("textual")
 
     from textual import events
+    from textual._compositor import ReflowResult
+    from textual.geometry import Size
+    from textual.widget import Widget
+
     from kolega_code.cli.tui.state import ConversationEntry
     from kolega_code.cli.tui.widgets import ConversationEntryWidget, JumpToBottomBar
 
@@ -299,9 +303,18 @@ async def test_mounted_reply_defers_updates_below_viewport(
         )
         reader_offset = reader.region.y - view.content_region.y
         refresh = Mock(wraps=reply.refresh_content)
-        reflow = Mock(wraps=compositor.reflow)
+        reply_reflows = 0
+        reflow = compositor.reflow
+
+        def count_reply_reflow(parent: Widget, size: Size) -> ReflowResult:
+            nonlocal reply_reflows
+            # Jump-bar and startup layout can still be queued independently.
+            if reply in view.screen._layout_widgets.get(view, ()):
+                reply_reflows += 1
+            return reflow(parent, size)
+
         monkeypatch.setattr(reply, "refresh_content", refresh)
-        monkeypatch.setattr(compositor, "reflow", reflow)
+        monkeypatch.setattr(compositor, "reflow", count_reply_reflow)
         deltas = [f"\n\n- batch {index}\n- more\n- end" for index in range(10)]
         for delta in deltas:
             chunk(delta)
@@ -312,7 +325,7 @@ async def test_mounted_reply_defers_updates_below_viewport(
             await pilot.pause()
         assert entry.complete is completed
         assert entry.content + "".join(entry.stream_parts) == start + "".join(deltas)
-        assert refresh.call_count == reflow.call_count == 0
+        assert refresh.call_count == reply_reflows == 0
         assert view.scroll_y == scroll_y
         assert reader.region.y - view.content_region.y == reader_offset
 
