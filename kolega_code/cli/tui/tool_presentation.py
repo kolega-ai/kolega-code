@@ -172,6 +172,12 @@ def command_preview(command: str, width: int) -> Text:
         return Text()
     if width <= 2:
         return Text("…")
+    first_break = command.find("\n")
+    if first_break != -1:
+        second_break = command.find("\n", first_break + 1)
+        if second_break != -1:
+            # Keep the newline so Rich counts a third row for the ellipsis.
+            command = command[: second_break + 1]
     lines = Text(command.expandtabs(4)).wrap(Console(), width - 2, overflow="fold")
     shown = list(lines[:2])
     if len(lines) > 2 and shown:

@@ -9,7 +9,8 @@ from typing import Any
 import pytest
 from rich.cells import cell_len
 from rich.console import Console
-from rich.text import Text
+from rich.containers import Lines
+from rich.text import Span, Text
 from textual import events
 from textual.selection import Selection
 from textual.widgets import Collapsible, Static
@@ -119,6 +120,53 @@ def test_command_preview_has_at_most_two_cell_bounded_lines(command: str, width:
         assert preview.plain.endswith("…")
 
 
+@pytest.mark.parametrize("width", [3, 4, 8, 16, 80])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo single long line " * 4,
+        "first\nsecond",
+        "first\nsecond\n",
+        "first\nsecond\nthird",
+        "\n\nthird",
+        "first\n\nthird",
+        "\techo x\t  \n \techo y\t\nthird",
+        "echo 文件 👩‍💻 e\u0301 \n宽 wide word wraps here\nthird",
+    ],
+)
+def test_command_preview_matches_full_wrap(command: str, width: int) -> None:
+    wrapped = Text(command.expandtabs(4)).wrap(Console(), width - 2, overflow="fold")
+    rows = [line.plain for line in wrapped[:2]]
+    if len(wrapped) > 2:
+        second = Text(rows[1])
+        second.truncate(width - 3, overflow="crop")
+        rows[1] = second.plain + "…"
+    expected = "\n".join(prefix + row for prefix, row in zip(("$ ", "  ")[: len(rows)], rows, strict=True))
+    spans = [Span(0, 2, "dim")]
+    if len(rows) == 2:
+        start = len(rows[0]) + 3
+        spans.append(Span(start, start + 2, "dim"))
+    preview = command_preview(command, width)
+    assert preview.plain == expected
+    assert preview.spans == spans
+
+
+def test_command_preview_does_not_wrap_the_unused_multiline_suffix(monkeypatch: pytest.MonkeyPatch) -> None:
+    command = "\techo first\n\t echo second\n" + "echo a sufficiently long line\n" * 500
+    wrapped: list[str] = []
+    wrap = Text.wrap
+
+    def record_wrap(text: Text, *args: Any, **kwargs: Any) -> Lines:
+        wrapped.append(text.plain)
+        return wrap(text, *args, **kwargs)
+
+    monkeypatch.setattr(Text, "wrap", record_wrap)
+    assert command_preview(command, 80).plain.endswith("…")
+    prefix = "    echo first\n     echo second\n"
+    assert list(map(len, wrapped)) == [len(prefix)]
+    assert wrapped == [prefix]
+
+
 def test_short_commands_stay_inline_long_and_multiline_commands_do_not() -> None:
     for command, separate in [
         ("git status --short", False),
@@ -144,7 +192,7 @@ async def test_details_remain_complete_and_selectable_across_resize(
     value = (
         "src/" + "directory/" * 40 + "target.py"
         if kind == "path"
-        else "uv run pytest " + "tests/cli/test_rendering.py " * 16 + "\necho finished"
+        else "uv run pytest " + "tests/cli/test_rendering.py " * 16 + "\necho next\necho finished"
     )
     name = "read" if kind == "path" else "exec_command"
     args = {"file_path" if kind == "path" else "command": value}
