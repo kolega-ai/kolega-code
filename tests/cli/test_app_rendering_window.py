@@ -191,7 +191,10 @@ async def test_transcript_prepend_never_displays_an_unanchored_frame(
         await wait_for_layout(pilot, lambda: view.is_at_bottom() and not app._conversation_anchor_pending)
         old_start = window.mounted_start
         step = int(app.scroll_sensitivity_y)
-        start_y = 1 if start_near_zero else view.outer_size.height + 2 * step - 1
+        view.scroll_to(y=view.max_scroll_y // 2, animate=False, immediate=True)
+        bar = app.query_one("#jump_to_bottom", JumpToBottomBar)
+        await wait_for_layout(pilot, lambda: bar.display and bar.region.height and view.region.bottom <= bar.region.y)
+        start_y = 1 if start_near_zero else 2 * view.outer_size.height + 2 * step - 1
 
         def anchor_at_start() -> str | None:
             visible = view.screen._compositor.visible_widgets
@@ -249,7 +252,7 @@ async def test_transcript_prepend_never_displays_an_unanchored_frame(
         after_crossing = before + min(step, start_y)
         if wheel_during_prepend:
             await wheel_up()
-        intended = after_crossing + (step if wheel_during_prepend else 0)
+        intended = before + step + (step if wheel_during_prepend else 0)
         await wait_for_layout(
             pilot, lambda: view.scroll_y > view.outer_size.height and bool(frames) and row() == frames[-1]
         )
@@ -293,7 +296,7 @@ async def test_transcript_prepend_bounds_each_batch_and_services_queued_input(
         monkeypatch.setattr(view, "mount", record_mount)
         expected = [entry.entry_id for entry in app.conversation_entries]
         step = app.scroll_sensitivity_y
-        view.scroll_to(y=view.outer_size.height + 1, animate=False, immediate=True)
+        view.scroll_to(y=2 * view.outer_size.height + 1, animate=False, immediate=True)
 
         while window.mounted_start:
             old_start = window.mounted_start
@@ -425,12 +428,12 @@ async def test_transcript_wheel_to_latest_hides_jump_bar(tmp_path: Path, monkeyp
 
         # Enter the last page on a wheel tick, then deliver the rest of the
         # burst before layout publishes that page's scroll range.
-        view.scroll_to(y=view.max_scroll_y - view.outer_size.height - 1, animate=False, immediate=True)
+        view.scroll_to(y=view.max_scroll_y - 2 * view.outer_size.height - 1, animate=False, immediate=True)
         assert view.has_newer_entries and bar.display
         await view._on_message(events.MouseScrollDown(view, 0, 0, 0, 0, 0, False, False, False))
         assert view._scrollback_anchor is not None
         assert newest.entry_id in window.widgets
-        for _ in range(2 * EXPAND_CHUNK):
+        for _ in range(2 * view.outer_size.height + 2 * EXPAND_CHUNK):
             await view._on_message(events.MouseScrollDown(view, 0, 0, 0, 0, 0, False, False, False))
 
         def latest_is_visible() -> bool:

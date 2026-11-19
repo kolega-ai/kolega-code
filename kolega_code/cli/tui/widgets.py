@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Optional, cast
 
@@ -19,6 +20,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.content import Content
+from textual.css.query import NoMatches
 from textual.css.styles import RulesMap
 from textual.geometry import Offset, Size, clamp
 from textual.layout import DockArrangeResult
@@ -42,6 +44,7 @@ from .app_base import KolegaAppBase
 from .state import ConversationEntry
 from .task_list import TaskListMarkdown
 from .tool_presentation import command_preview, entry_command, entry_paths, tool_title
+from .transcript_scrollbar import TranscriptScrollBar
 
 
 class _CompletedReplyVisual(RichVisual):
@@ -615,6 +618,8 @@ class ScrollbackWindow:
             return
         if isinstance(self._view, ConversationView) and not follow_bottom:
             self._view.has_newer_entries = unmounted_tail > 0
+            if unmounted_tail and self._view.show_vertical_scrollbar:
+                self._view.vertical_scrollbar.refresh()
             self.refresh_dirty(dirty_ids)
             return
         if unmounted_tail > self.max_mounted:
@@ -631,10 +636,15 @@ class ScrollbackWindow:
 
     def rebuild(self, entries: list[ConversationEntry]) -> None:
         """Re-mount only the trailing window of ``entries`` (restore, reset, structural edits)."""
+        if isinstance(self._view, ConversationView):
+            self._view.invalidate_transcript_layout()
+        self._mount_tail(entries)
+
+    def _mount_tail(self, entries: list[ConversationEntry]) -> None:
         if not self._can_render:
             return
         if isinstance(self._view, ConversationView):
-            self._view._scrollback_anchor = None
+            self._view.cancel_navigation()
             self._view.has_newer_entries = False
             self._remember_disclosures(self.widgets.values())
             if self._expanded_ids:
@@ -647,8 +657,10 @@ class ScrollbackWindow:
     def show_tail(self, entries: list[ConversationEntry]) -> None:
         if not self._can_render:
             return
-        if self.mounted_end != len(entries) or not self._mounted_span_matches(entries):
+        if not self._mounted_span_matches(entries):
             self.rebuild(entries)
+        elif self.mounted_end != len(entries):
+            self._mount_tail(entries)
         else:
             self._trim_above(force=True)
 
@@ -711,14 +723,18 @@ class ScrollbackWindow:
         if not self.widgets or not self._can_render or view._scrollback_anchor is not None:
             return False
         start, end = self.mounted_start, self.mounted_end
+        cap = max(cli_theme.TRANSCRIPT_WINDOW_BROWSE_MAX, 2 * view.content_region.height + self.expand_chunk)
+        # A fling may already span several pages. Size the refill from the
+        # outstanding destination, but only consume lines actually measured.
+        mean_height = max(1, view.virtual_size.height / len(self.widgets))
+        count = max(self.expand_chunk, min(cap // 2, int(abs(view.wheel_offset) / mean_height)))
         if older:
-            chunk = entries[max(0, start - self.expand_chunk) : start]
+            chunk = entries[max(0, start - count) : start]
         else:
-            chunk = entries[end : end + self.expand_chunk]
+            chunk = entries[end : end + count]
         if not chunk or not self._mounted_span_matches(entries):
             return False
 
-        cap = max(cli_theme.TRANSCRIPT_WINDOW_BROWSE_MAX, 2 * view.content_region.height + self.expand_chunk)
         excess = max(0, len(self.widgets) + len(chunk) - cap)
         ids = list(self.widgets)
         dropped = ids[len(ids) - excess :] if older else ids[:excess]
@@ -746,6 +762,45 @@ class ScrollbackWindow:
             view.set_auto_follow(False)
             view.anchor(False)
         return True
+
+    def seek(self, view: ConversationView, entries: list[ConversationEntry], fraction: float) -> None:
+        if not entries or not self._can_render:
+            return
+        point = fraction * len(entries)
+        index = min(int(point), len(entries) - 1)
+        height = max(1, view.content_region.height)
+        needs_older = self.mounted_start > 0 and index - self.mounted_start < height
+        needs_newer = self.mounted_end < len(entries) and self.mounted_end - index <= height
+        if needs_older or needs_newer:
+            count = max(2 * height + self.expand_chunk, min(self.max_mounted, 4 * height))
+            start = max(0, min(len(entries) - count, index - count // 2))
+            wanted = entries[start : start + count]
+            old = self.widgets
+            keep_ids = {entry.entry_id for entry in wanted}
+            removed = tuple(widget for key, widget in old.items() if key not in keep_ids)
+            self._remember_disclosures(removed)
+            new = {entry.entry_id: old.get(entry.entry_id) or self._build_widget(entry) for entry in wanted}
+            retained = next((widget for key, widget in new.items() if key in old), None)
+            before = []
+            after = []
+            for i, entry in enumerate(wanted, start):
+                if entry.entry_id not in old:
+                    (before if i < self.mounted_start else after).append(new[entry.entry_id])
+            with view.app.batch_update():
+                if before:
+                    view.mount(*before, before=retained)
+                if after:
+                    view.mount(*after)
+                if removed:
+                    view.remove_children(removed)
+                self.widgets = new
+                self.mounted_start = start
+                view.has_newer_entries = self.mounted_end < len(entries)
+        widget = self.widgets[entries[index].entry_id]
+        view.set_auto_follow(False)
+        view.anchor(False)
+        view._scrollback_anchor = _ScrollbackAnchor(widget, 0, (widget,), (), (point - index, fraction))
+        view.refresh(layout=True)
 
     def _schedule_expand_compensation(self, old_virtual_height: int) -> None:
         view = self._view
@@ -787,6 +842,10 @@ class ScrollbackWindow:
         return all(
             entry.entry_id == widget_id for entry, widget_id in zip(entries[self.mounted_start : end], self.widgets)
         )
+
+    def matches_layout(self, arrangement: DockArrangeResult) -> bool:
+        rows = arrangement.placements
+        return len(rows) == len(self.widgets) and all(p.widget is w for p, w in zip(rows, self.widgets.values()))
 
     def _build_widget(self, entry: ConversationEntry) -> ConversationEntryWidget | ToolEntryWidget:
         widget = self._make_widget(entry)
@@ -831,7 +890,14 @@ class _ScrollbackAnchor:
     virtual_y: int
     new_widgets: tuple[Widget, ...]
     removed_widgets: tuple[Widget, ...]
-    wheel_deltas: list[float] = field(default_factory=list)
+    seek_alignment: tuple[float, float] | None = None
+
+
+@dataclass(slots=True)
+class _TranscriptLayout:
+    start: int
+    size: Size
+    arrangement: DockArrangeResult
 
 
 class ConversationView(VerticalScroll):
@@ -844,6 +910,108 @@ class ConversationView(VerticalScroll):
         self.auto_follow_bottom = True
         self.has_newer_entries = False
         self._scrollback_anchor: _ScrollbackAnchor | None = None
+        self.wheel_offset: float = 0
+        self._pending_seek: float | None = None
+        self._laid_out_span: _TranscriptLayout | None = None
+        self._thumb_estimate: tuple[tuple[int, int, Size, Size], int] | None = None
+
+    @property
+    def vertical_scrollbar(self) -> ScrollBar:
+        if self._vertical_scrollbar is None:
+            bar = TranscriptScrollBar(vertical=True, name="vertical", thickness=self.scrollbar_size_vertical)
+            self._vertical_scrollbar = bar
+            bar.display = False
+            self.app._start_widget(self, bar)
+        return self._vertical_scrollbar
+
+    def transcript_scroll_metrics(self) -> tuple[float, float, float]:
+        app = cast(KolegaAppBase, self.app)
+        span = self._laid_out_span
+        height = self.scrollable_content_region.height
+        if span is None or not span.arrangement.placements:
+            return self.scroll_y, self.virtual_size.height, height
+        start = span.start
+        rows = span.arrangement.placements
+        total = len(app.conversation_entries)
+        if start == 0 and len(rows) == total:
+            return self.scroll_y, self.virtual_size.height, height
+
+        def entry_at(y: float) -> float:
+            i = max(0, bisect_right(rows, y, key=lambda p: p.region.y) - 1)
+            region = rows[i].region
+            return start + i + clamp((y - region.y) / max(1, region.height), 0, 1)
+
+        top = entry_at(self.scroll_y)
+        return top, total, entry_at(self.scroll_y + height) - top
+
+    def invalidate_transcript_layout(self) -> None:
+        self._laid_out_span = None
+        self._thumb_estimate = None
+
+    def transcript_thumb_rows(self, track_rows: int) -> int:
+        app = cast(KolegaAppBase, self.app)
+        entries = app.conversation_entries
+        viewport = self.scrollable_content_region.size
+        # The Jump bar borrows a row from the transcript; together they don't resize.
+        parent = self.parent
+        try:
+            jump_height = parent.get_child_by_id("jump_to_bottom").region.height if isinstance(parent, Widget) else 0
+        except NoMatches:
+            jump_height = 0
+        key = (id(entries), len(entries), app.size, Size(viewport.width, viewport.height + jump_height))
+        cached = self._thumb_estimate
+        if track_rows < 2:
+            return 0
+        if cached is not None and cached[0] == key:
+            return min(track_rows - 1, cached[1])
+
+        span = self._laid_out_span
+        window = app._transcript_window
+        if (
+            span is None
+            or window is None
+            or not window.widgets
+            or span.size != viewport
+            or span.start != window.mounted_start
+            or track_rows != viewport.height
+            or not window.matches_layout(span.arrangement)
+            or not window._mounted_span_matches(entries)
+        ):
+            return 0
+        measured = span.arrangement.total_region.bottom
+        if measured <= 0:
+            return 0
+        document_height = measured * len(entries) / len(window.widgets)
+        thumb = max(1, min(track_rows - 1, round(track_rows * viewport.height / document_height)))
+        self._thumb_estimate = key, thumb
+        return thumb
+
+    def seek_transcript(self, fraction: float) -> None:
+        if self._pending_seek is None:
+            self.call_after_refresh(self._apply_seek)
+        self._pending_seek = clamp(fraction, 0, 1)
+        self.wheel_offset = 0
+
+    def _apply_seek(self) -> None:
+        fraction, self._pending_seek = self._pending_seek, None
+        if fraction is None or self._pruning or not self.is_attached:
+            return
+        app = cast(KolegaAppBase, self.app)
+        window = app._transcript_window
+        if window is None or app._modal_cover_active:
+            return
+        if fraction == 1:
+            app._restore_transcript_tail()
+        elif self._scrollback_anchor is None and len(window.widgets) == len(app.conversation_entries):
+            self.scroll_to(y=round(fraction * self.max_scroll_y), animate=False, immediate=True)
+        else:
+            window.seek(self, app.conversation_entries, fraction)
+            app._update_jump_button()
+
+    def cancel_navigation(self) -> None:
+        self._scrollback_anchor = None
+        self._pending_seek = None
+        self.wheel_offset = 0
 
     def is_at_bottom(self) -> bool:
         """Return whether the current scroll position is effectively at the end."""
@@ -857,12 +1025,33 @@ class ConversationView(VerticalScroll):
         """Record whether transcript updates should keep the view pinned to the end."""
         self.auto_follow_bottom = enabled
         if enabled:
-            self._scrollback_anchor = None
+            self.cancel_navigation()
+
+    def _record_transcript_layout(self, window: ScrollbackWindow, size: Size, arrangement: DockArrangeResult) -> None:
+        previous = self._laid_out_span
+        if previous is not None and previous.arrangement is arrangement and previous.start == window.mounted_start:
+            return
+        if not window.matches_layout(arrangement):
+            return
+        # A different slice is navigation; a height change in the same slice is reflow.
+        if (
+            previous is not None
+            and previous.start == window.mounted_start
+            and previous.arrangement.total_region.bottom != arrangement.total_region.bottom
+            and previous.arrangement.widgets == arrangement.widgets
+        ):
+            self._thumb_estimate = None
+        self._laid_out_span = _TranscriptLayout(window.mounted_start, size, arrangement)
 
     def arrange(self, size: Size, optimal: bool = False) -> DockArrangeResult:
         arrangement = super().arrange(size, optimal)
         anchor = self._scrollback_anchor
-        if anchor is None or optimal or size.height <= 0:
+        if optimal or size.height <= 0:
+            return arrangement
+        window = getattr(self.app, "_transcript_window", None)
+        if window is not None:
+            self._record_transcript_layout(window, size, arrangement)
+        if anchor is None:
             return arrangement
         if self._pruning or anchor.widget not in arrangement.widgets:
             self._scrollback_anchor = None
@@ -871,16 +1060,21 @@ class ConversationView(VerticalScroll):
         placement = next(p for p in arrangement.placements if p.widget is anchor.widget)
         virtual_y = placement.region.y
         maximum = max(0, arrangement.total_region.bottom - size.height)
-        scroll_y = clamp(self.scroll_y + virtual_y - anchor.virtual_y, 0, maximum)
-        for delta in anchor.wheel_deltas:
-            scroll_y = clamp(scroll_y + delta, 0, maximum)
+        base = self.scroll_y + virtual_y - anchor.virtual_y
+        if anchor.seek_alignment is not None:
+            inside, screen_fraction = anchor.seek_alignment
+            base = round(virtual_y + inside * placement.region.height - screen_fraction * size.height)
+        target = base + self.wheel_offset
+        scroll_y = clamp(target, 0, maximum)
+        self.wheel_offset = target - scroll_y if anchor.seek_alignment is None else 0
         anchor.virtual_y = virtual_y
-        anchor.wheel_deltas.clear()
         if all(widget.is_mounted for widget in anchor.new_widgets) and all(
             widget not in arrangement.widgets for widget in anchor.removed_widgets
         ):
             self._scrollback_anchor = None
-            if not self.has_newer_entries:
+            if self.wheel_offset:
+                self.call_after_refresh(self._continue_wheel)
+            elif not self.has_newer_entries:
                 self.call_after_refresh(self._resume_follow_after_paging)
 
         # Textual reads the scroll offset just after arrange(), before updating
@@ -890,7 +1084,20 @@ class ConversationView(VerticalScroll):
         self.set_reactive(cast("Reactive[float]", Widget.scroll_target_y), scroll_y)
         if self.show_vertical_scrollbar:
             self.vertical_scrollbar.set_reactive(ScrollBar.position, scroll_y)
+            self.vertical_scrollbar.refresh()
         return arrangement
+
+    def _continue_wheel(self) -> None:
+        if not self.wheel_offset or self._scrollback_anchor is not None or not self.is_attached or self._pruning:
+            return
+        app = cast(KolegaAppBase, self.app)
+        if self.wheel_offset < 0:
+            app._maybe_expand_transcript_window()
+        else:
+            app._maybe_expand_transcript_window_down()
+        if self._scrollback_anchor is None:
+            self.wheel_offset = 0
+            self._resume_follow_after_paging()
 
     def _resume_follow_after_paging(self) -> None:
         # The layout write skipped watch_scroll_y; check the published bounds
@@ -905,6 +1112,10 @@ class ConversationView(VerticalScroll):
     def _queue_scrollback_wheel(self, event: events.MouseEvent, direction: int) -> None:
         if event.ctrl or event.shift:
             return
+        self._pending_seek = None
+        delta = direction * self.app.scroll_sensitivity_y
+        if delta * self.wheel_offset < 0:
+            self.wheel_offset = 0
         if self._scrollback_anchor is None:
             # A wheel at a clamped edge can't trigger the scroll watcher.
             if direction < 0 and self.scroll_y <= 0:
@@ -917,10 +1128,16 @@ class ConversationView(VerticalScroll):
                     expand()
         anchor = self._scrollback_anchor
         if anchor is not None:
-            # Apply input against the new range, not the old boundary.
-            anchor.wheel_deltas.append(direction * self.app.scroll_sensitivity_y)
+            self.wheel_offset += delta
             event.stop()
             event.prevent_default()
+        else:
+            target = self.scroll_y + delta
+            window = getattr(self.app, "_transcript_window", None)
+            if target < 0 and window is not None and window.mounted_start:
+                self.wheel_offset = target
+            elif target > self.max_scroll_y and self.has_newer_entries:
+                self.wheel_offset = target - self.max_scroll_y
 
     def _on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
         self._queue_scrollback_wheel(event, -1)
@@ -941,7 +1158,7 @@ class ConversationView(VerticalScroll):
             return
         if update is not None:
             update()
-        threshold = max(1, self.outer_size.height)
+        threshold = max(1, 2 * self.outer_size.height)
         if new_value < old_value and new_value <= threshold and expand is not None:
             expand()
         elif new_value > old_value and self.max_scroll_y - new_value <= threshold:

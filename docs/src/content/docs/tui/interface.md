@@ -41,6 +41,11 @@ The screen is split into two columns:
 - **Conversation panel** (left, larger) — your chat with the agent. Responses
   stream in live, tool calls and sub-agent activity appear inline, and detailed
   tool results are collapsed by default so you can expand only what you need.
+  The scrollbar tracks the whole conversation. Its handle keeps the same height
+  as you scroll, even when the Jump bar appears or disappears. Drag it to the
+  top for the first entry, to the bottom to follow live output, or to the
+  middle to browse roughly halfway through the entries. Long replies and
+  expanded tools can occupy more screen space than their share of the track.
 - **Side panel** (right) — a set of tabs for status, the terminal, planning,
   and settings. Toggle it with `Ctrl+O` or `/sidebar`. The diagnostic Logs tab is
   opt-in; launch with `--show-logs` when you want it.
