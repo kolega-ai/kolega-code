@@ -10,6 +10,7 @@ import pytest
 from rich.console import Console
 from rich.text import Text
 from textual import events
+from textual.geometry import Size
 from textual.pilot import Pilot
 from textual.selection import Selection
 from textual.widgets import Collapsible
@@ -259,3 +260,24 @@ async def test_configuration_is_literal_and_same_length_edits_refresh(tmp_path, 
         output = Console(width=80, record=True)
         output.print(app._startup_summary(card.entry, 80))
         assert "build · ask permissions" in output.export_text()
+
+
+@pytest.mark.asyncio
+async def test_startup_refresh_tolerates_a_disclosure_before_its_title_mounts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    async with app.run_test():
+        entry = ConversationEntry(kind="startup", content="Kolega Code\n\nProject: /tmp")
+        card = StartupEntryWidget(
+            entry,
+            lambda item, width: "startup",
+            lambda item, width: Text("summary"),
+            lambda item: Text("details"),
+        )
+        list(card.compose())
+        disclosure = card._collapsible
+        assert disclosure is not None and not disclosure.is_mounted
+        monkeypatch.setattr(StartupEntryWidget, "content_size", property(lambda self: Size(80, 24)))
+
+        card._refresh_title()

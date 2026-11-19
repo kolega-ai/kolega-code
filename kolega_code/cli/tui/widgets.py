@@ -445,7 +445,11 @@ class ToolEntryWidget(Vertical):
         if self._collapsible is None or self._pruning or self._collapsible._pruning:
             return
         if self._title_for_width is not None and self.content_size.width:
-            title_widget = self._collapsible.query_one(CollapsibleTitle)
+            titles = self._collapsible.query(CollapsibleTitle)
+            if not titles:
+                # compose() builds the disclosure before Textual mounts its title.
+                return
+            title_widget = titles.first()
             # Use the parent's available width, not the auto-sized title's current
             # width: the latter would prevent a shortened title growing on resize.
             symbols = max(cell_len(title_widget.collapsed_symbol), cell_len(title_widget.expanded_symbol)) + 1
