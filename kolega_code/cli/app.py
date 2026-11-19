@@ -371,6 +371,7 @@ class KolegaCodeApp(
         self._conversation_anchor_pending = False
         self._transcript_window: Optional[tui_widgets.ScrollbackWindow] = None
         self._transcript_sync_pending = False
+        self._transcript_rebuild_pending = False
         self._rendered_entry_count = 0
         self._dirty_entry_ids: set[str] = set()
         self._turn_active = False
@@ -1846,17 +1847,9 @@ class KolegaCodeApp(
         self.push_screen(screen, callback=self._on_fullscreen_modal_dismissed)
 
     def _on_fullscreen_modal_dismissed(self, _result: object = None) -> None:
-        # Promote an unflushed invalidation to a deferred full sync before
-        # neutralizing its timer; the rebuild below subsumes that flush.
-        if self._render_pending:
-            self._transcript_sync_pending = True
-        self._render_pending = False
-
         def resync() -> None:
-            if self._modal_cover_active or not self._transcript_sync_pending:
-                return
-            self._transcript_sync_pending = False
-            self._render_conversation()
+            if not self._modal_cover_active:
+                self._flush_conversation_render()
 
         try:
             # Re-check after the stack pop has fully settled (nested modals keep
