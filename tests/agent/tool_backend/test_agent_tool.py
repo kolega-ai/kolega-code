@@ -8,6 +8,7 @@ import uuid
 import builtins
 import asyncio
 import json
+import time
 
 from kolega_code.agent.tool_backend.agent_tool import AgentTool
 from kolega_code.agent.orchestration.accounting import WorkflowRunAccounting
@@ -443,6 +444,44 @@ class TestAgentTool:
         ]
         assert statuses == ["GENERATING", "STOPPED"]
         MockAgent.configure_streaming([])
+
+    async def test_large_mirrored_stream_dispatch_stays_linear(
+        self, agent_tool, mock_connection_manager, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Per-chunk work must not grow with the text already streamed.
+
+        The dispatch loop once kept every mirrored chunk in an unused
+        uuid-keyed dict with ``content += chunk``, re-copying the whole reply
+        per delta. A multi-megabyte child report then blocked the parent event
+        loop for seconds; nothing read that dict.
+        """
+
+        class StreamingChild(MockAgent):
+            agent_name = "general-agent"
+
+            async def process_message_stream(self, task: str):
+                self._message_history.append({"role": "user", "content": [{"type": "text", "text": task}]})
+                body = "x" * 50
+                for _ in range(80_000):  # ~4 MB of mirrored prose
+                    yield {"type": "response", "content": body, "complete": False, "uuid": "stream"}
+                self._message_history.append({"role": "assistant", "content": [{"type": "text", "text": body}]})
+                yield {"type": "response", "content": "done", "complete": True, "uuid": "stream"}
+
+        monkeypatch.setattr("kolega_code.agent.generalagent.GeneralAgent", StreamingChild)
+
+        started = time.perf_counter()
+        result = await agent_tool.dispatch_general_agent("stream task")
+        elapsed = time.perf_counter() - started
+
+        assert result == "Mock agent completed"
+        chat_messages = [
+            call.args[0]
+            for call in mock_connection_manager.broadcast_event.call_args_list
+            if call.args[0].event_type == "chat_message" and "text" in call.args[0].content
+        ]
+        assert chat_messages == [], "mirrored chunks must not be rebroadcast"
+        # Generous bound: re-copying the stream per chunk took over 30s here.
+        assert elapsed < 3.0, f"streamed dispatch took {elapsed:.2f}s — the loop is copying the stream per chunk"
 
     async def test_all_agents_get_consistent_status_messages(self, agent_tool):
         """Test that all agent types get consistent start/end/error messages."""

@@ -609,7 +609,6 @@ class AgentTool(BaseTool):
             with usage_scope_cm:
                 # Track messages and their sequence
                 last_saved_index = -1
-                streamed_messages = {}  # Track messages by UUID for assembly
 
                 # Process the task and stream messages
                 async for msg in agent.process_message_stream(task):
@@ -617,8 +616,6 @@ class AgentTool(BaseTool):
                     message_type = msg.get("type", "agent")
                     content = msg.get("content", "")
                     complete = msg.get("complete", False)
-                    msg_uuid = msg.get("uuid", str(uuid.uuid4()))
-                    timestamp = datetime.now().isoformat()
 
                     if message_type not in _MIRRORED_CHUNK_TYPES:
                         content_payload = {"text": content, "message_type": message_type}
@@ -626,24 +623,12 @@ class AgentTool(BaseTool):
                             event_type="chat_message",
                             content=content_payload,
                             sender=agent_name,
-                            timestamp=timestamp,
+                            timestamp=datetime.now().isoformat(),
                             is_streaming=False,
-                            uuid=msg_uuid,
+                            uuid=msg.get("uuid", str(uuid.uuid4())),
                             sub_agent_info=sub_agent_info,
                         )
                         await self.connection_manager.broadcast_event(evt, self.workspace_id, self.thread_id)
-
-                    # Track streaming messages
-                    if msg_uuid not in streamed_messages:
-                        streamed_messages[msg_uuid] = {
-                            "content": "",
-                            "type": message_type,
-                            "uuid": msg_uuid,
-                            "complete": False,
-                        }
-
-                    streamed_messages[msg_uuid]["content"] += content
-                    streamed_messages[msg_uuid]["complete"] = complete
 
                     # Save new messages when a message completes
                     if conversation_id and complete:
@@ -665,9 +650,6 @@ class AgentTool(BaseTool):
 
                         # Update last saved index
                         last_saved_index = len(current_history) - 1
-
-                        # Mark streamed message as saved
-                        streamed_messages[msg_uuid]["saved"] = True
 
                 # Get final history and save any remaining messages
                 final_history = agent.dump_message_history()
