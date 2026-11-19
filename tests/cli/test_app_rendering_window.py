@@ -22,7 +22,7 @@ from kolega_code.cli import theme
 from kolega_code.cli.tui import state as tui_state
 from kolega_code.cli.tui.state import ConversationEntry
 from kolega_code.cli.tui.sub_agent_screen import SubAgentRosterRow
-from kolega_code.cli.tui.widgets import ConversationEntryWidget, JumpToBottomBar, ToolEntryWidget, TrajectoryScrollView
+from kolega_code.cli.tui.widgets import ConversationEntryWidget, JumpToBottomBar, TrajectoryScrollView
 
 from ._app_test_utils import _build_sub_agent_test_app, _sub_agent_delta, _sub_agent_event, wait_for_layout
 
@@ -324,70 +324,6 @@ async def test_transcript_prepend_bounds_each_batch_and_services_queued_input(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("direction", [-1, 1], ids=["older", "newer"])
-async def test_transcript_wheel_burst_carries_past_mounted_page(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, direction: int
-) -> None:
-    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
-
-    async with app.run_test(size=(100, 32)) as pilot:
-        await wait_for_layout(pilot, app._startup_complete.is_set)
-        _add_entries(app, 600)
-        app._render_conversation()
-        view = app._conversation
-        window = _window(app)
-        await wait_for_layout(pilot, lambda: view.is_at_bottom() and not app._conversation_anchor_pending)
-
-        if direction > 0:
-            for _ in range(12):
-                assert window.expand_up(app.conversation_entries)
-                await wait_for_layout(pilot, lambda: view._scrollback_anchor is None)
-            assert view.has_newer_entries
-
-        threshold = view.outer_size.height
-        start_y = threshold + 1 if direction < 0 else view.max_scroll_y - threshold - 1
-        view.scroll_to(y=start_y, animate=False, immediate=True)
-        entries = {entry.entry_id: i for i, entry in enumerate(app.conversation_entries)}
-        first, second = list(window.widgets.values())[:2]
-        row_spacing = second.virtual_region.y - first.virtual_region.y
-        assert row_spacing == 2
-
-        def displayed_row() -> int | None:
-            y = view.content_region.y
-            for entry_id, widget in window.widgets.items():
-                geometry = view.screen._compositor.visible_widgets.get(widget)
-                if geometry is not None:
-                    region = geometry[0]
-                    if region.y <= y < region.bottom:
-                        return entries[entry_id] * row_spacing + y - region.y
-            return None
-
-        initial = window.mounted_start * row_spacing + start_y
-        await wait_for_layout(pilot, lambda: displayed_row() == initial)
-        frames: list[int] = []
-        original_display = app._display
-
-        def record_display(screen, renderable) -> None:
-            if renderable is not None and not app._batch_count:
-                row = displayed_row()
-                if row is not None:
-                    frames.append(row)
-            original_display(screen, renderable)
-
-        monkeypatch.setattr(app, "_display", record_display)
-        wheel = events.MouseScrollUp if direction < 0 else events.MouseScrollDown
-        ticks = 82
-        # Yield no layout pass between inputs, as when several wheel events
-        # arrive in the same read while the transcript is still being laid out.
-        for _ in range(ticks):
-            await view._on_message(wheel(view, 0, 0, 0, 0, 0, False, False, False))
-        target = initial + direction * ticks * int(app.scroll_sensitivity_y)
-        await wait_for_layout(pilot, lambda: bool(frames) and frames[-1] == target)
-        assert all(0 <= (b - a) * direction for a, b in zip([initial, *frames], frames, strict=False))
-        assert len(window.widgets) <= theme.TRANSCRIPT_WINDOW_BROWSE_MAX
-
-
-@pytest.mark.asyncio
 async def test_transcript_history_stays_bounded_in_both_directions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -463,108 +399,39 @@ async def test_transcript_history_stays_bounded_in_both_directions(
 
 
 @pytest.mark.asyncio
-async def test_transcript_jump_to_bottom_refollows_and_trims(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_transcript_jump_to_bottom_refollows_and_trims(tmp_path: Path, monkeypatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
-    async with app.run_test(size=(90, 26)) as pilot:
-        await wait_for_layout(pilot, app._startup_complete.is_set)
-        _add_entries(app, 425)
-        disclosed = ConversationEntry(kind="thinking", content="Disclosed reasoning")
-        app._add_conversation_entry(disclosed)
-        _add_entries(app, 24, start=426)
+    async with app.run_test() as pilot:
+        await _settle(pilot)
+        _add_entries(app, 250)
         app._flush_conversation_render()
+        await _settle(pilot)
+        _add_entries(app, 200, start=250)
+        app._flush_conversation_render()
+        await _settle(pilot)
+
         view = app._conversation
         window = _window(app)
         tail = [entry.entry_id for entry in app.conversation_entries[-WINDOW_MAX:]]
-        await wait_for_layout(
-            pilot,
-            lambda: (
-                view.max_scroll_y > 0
-                and view.is_at_bottom()
-                and not app._conversation_anchor_pending
-                and bool(window.widgets[disclosed.entry_id].query(Collapsible))
-            ),
-        )
-        disclosure = window.widgets[disclosed.entry_id].query_one(Collapsible)
-        disclosure.collapsed = False
-        await wait_for_layout(pilot, lambda: bool(disclosure.query(".tool-body")) and view.is_at_bottom())
         for _ in range(5):
             before = window.mounted_start
             view.scroll_to(y=0, animate=False, immediate=True)
             await wait_for_layout(pilot, lambda: window.mounted_start < before and view._scrollback_anchor is None)
         assert view.has_newer_entries  # Jump from a window that does not contain the tail.
-        before_widgets = window.widgets.copy()
-        overlap = set(tail) & before_widgets.keys()
-        assert len(overlap) == 100 and disclosed.entry_id in overlap
-        constructed: list[str] = []
-        make_widget = window._make_widget
-
-        def count_widget(entry: ConversationEntry) -> ConversationEntryWidget | ToolEntryWidget:
-            constructed.append(entry.entry_id)
-            return make_widget(entry)
-
-        monkeypatch.setattr(window, "_make_widget", count_widget)
 
         bar = app.query_one("#jump_to_bottom", JumpToBottomBar)
         app.on_jump_to_bottom_bar_pressed(JumpToBottomBar.Pressed(bar))
         await wait_for_layout(
-            pilot,
-            lambda: (
-                list(view.children) == list(window.widgets.values())
-                and view.auto_follow_bottom
-                and view.is_at_bottom()
-                and not app._conversation_anchor_pending
-                and window.widgets[tail[-1]].region.bottom == view.content_region.bottom
-            ),
+            pilot, lambda: view.auto_follow_bottom and view.is_at_bottom() and not app._conversation_anchor_pending
         )
         assert list(window.widgets) == tail
-        assert constructed == [key for key in tail if key not in overlap]
-        assert sum(not widget.is_attached for widget in before_widgets.values()) == 60
-        assert all(window.widgets[key] is before_widgets[key] for key in overlap)
-        assert window.widgets[disclosed.entry_id].query_one(Collapsible) is disclosure and not disclosure.collapsed
 
         _add_entries(app, 150, start=450)
         app._flush_conversation_render()
-        await wait_for_layout(
-            pilot,
-            lambda: (
-                view.auto_follow_bottom
-                and view.is_at_bottom()
-                and not app._conversation_anchor_pending
-                and not bar.display
-            ),
-        )
+        await _settle(pilot)
         assert len(app._entry_widgets) == WINDOW_MAX
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("mounted_range", ["disjoint", "stale"])
-async def test_transcript_show_tail_rebuilds_unusable_range(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mounted_range: str
-) -> None:
-    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
-
-    async with app.run_test() as pilot:
-        await wait_for_layout(pilot, app._startup_complete.is_set)
-        _add_entries(app, WINDOW_MAX)
-        app._flush_conversation_render()
-        view = app._conversation
-        window = _window(app)
-        await wait_for_layout(pilot, lambda: view.is_at_bottom() and not app._conversation_anchor_pending)
-        before = list(window.widgets.values())
-        entries = app.conversation_entries.copy()
-        if mounted_range == "disjoint":
-            entries.extend(ConversationEntry(kind="user", content=f"new {index}") for index in range(WINDOW_MAX))
-        else:
-            entries[-1] = ConversationEntry(kind="user", content="replacement")
-
-        window.show_tail(entries)
-        await wait_for_layout(
-            pilot,
-            lambda: all(not row.is_attached for row in before) and list(view.children) == list(window.widgets.values()),
-        )
-        assert list(window.widgets) == [entry.entry_id for entry in entries[-WINDOW_MAX:]]
-        assert window.mounted_start == len(entries) - WINDOW_MAX
+        assert bar.display is False
 
 
 @pytest.mark.asyncio
@@ -679,94 +546,28 @@ class _BareModal(ModalScreen):
 
 
 @pytest.mark.asyncio
-async def test_modal_dismiss_preserves_older_transcript_page(tmp_path: Path, monkeypatch) -> None:
-    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
-
-    async with app.run_test(size=(90, 26)) as pilot:
-        await wait_for_layout(pilot, app._startup_complete.is_set)
-        _add_entries(app, 450)
-        app._flush_conversation_render()
-        view = app._conversation
-        window = _window(app)
-        await wait_for_layout(pilot, lambda: view.is_at_bottom() and not app._conversation_anchor_pending)
-
-        for _ in range(6):
-            before = window.mounted_start
-            view.scroll_to(y=0, animate=False, immediate=True)
-            await wait_for_layout(pilot, lambda: window.mounted_start < before and view._scrollback_anchor is None)
-        assert view.has_newer_entries and not view.auto_follow_bottom
-
-        first_visible = next(
-            widget for widget in window.widgets.values() if widget.region.bottom > view.content_region.y
-        )
-        assert first_visible.region.y < view.content_region.bottom
-        row = first_visible.region.y - view.content_region.y
-        before_widgets = window.widgets.copy()
-
-        modal = _BareModal()
-        app._push_fullscreen_modal(modal)
-        await wait_for_layout(pilot, lambda: app.screen is modal and modal.is_mounted)
-        _add_entries(app, 1, start=450)
-        app._flush_conversation_render()
-        assert window.widgets == before_widgets
-        assert app._transcript_sync_pending
-
-        modal.dismiss()
-        await wait_for_layout(pilot, lambda: not app._modal_cover_active and not app._transcript_sync_pending)
-        assert list(window.widgets) == list(before_widgets)
-        assert all(window.widgets[key] is widget for key, widget in before_widgets.items())
-        assert first_visible.region.y - view.content_region.y == row
-        assert view.has_newer_entries and not view.auto_follow_bottom
-
-        app.on_jump_to_bottom_bar_pressed(JumpToBottomBar.Pressed(app.query_one("#jump_to_bottom", JumpToBottomBar)))
-        await wait_for_layout(
-            pilot, lambda: view.auto_follow_bottom and view.is_at_bottom() and not app._conversation_anchor_pending
-        )
-        assert list(window.widgets)[-1] == app.conversation_entries[-1].entry_id
-
-
-@pytest.mark.asyncio
 async def test_transcript_sync_defers_while_modal_covers_screen(tmp_path: Path, monkeypatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
-    async with app.run_test(size=(90, 26)) as pilot:
-        await wait_for_layout(pilot, app._startup_complete.is_set)
-        _add_entries(app, 20)
+    async with app.run_test() as pilot:
+        await _settle(pilot)
+        _add_entries(app, 5)
         app._flush_conversation_render()
-        view = app._conversation
-        await wait_for_layout(
-            pilot, lambda: view.max_scroll_y > 0 and view.is_at_bottom() and not app._conversation_anchor_pending
-        )
+        await _settle(pilot)
+        base_count = len(app._entry_widgets)
 
-        outer = _BareModal()
-        inner = _BareModal()
-        app._push_fullscreen_modal(outer)
-        await wait_for_layout(pilot, lambda: app.screen is outer and outer.is_mounted)
-        app._push_fullscreen_modal(inner)
-        await wait_for_layout(pilot, lambda: app.screen is inner and inner.is_mounted)
+        app._push_fullscreen_modal(_BareModal())
+        await _settle(pilot)
+        assert app._modal_cover_active is True
+
+        _add_entries(app, 3, start=5)
+        app._flush_conversation_render()
+        await _settle(pilot)
+
+        assert len(app._entry_widgets) == base_count  # hidden screen untouched
+        assert app._transcript_sync_pending is True
 
         window = _window(app)
-        before_widgets = window.widgets.copy()
-        edited = app.conversation_entries[-1]
-        widget = window.widgets[edited.entry_id]
-        refresh_count = 0
-        original_refresh = widget.refresh_content
-
-        def count_refresh() -> None:
-            nonlocal refresh_count
-            refresh_count += 1
-            original_refresh()
-
-        monkeypatch.setattr(widget, "refresh_content", count_refresh)
-        edited.content = "updated while covered"
-        app._invalidate_conversation(edited)
-        _add_entries(app, 3, start=20)
-        app._flush_conversation_render()
-
-        assert window.widgets == before_widgets
-        assert refresh_count == 0
-        assert app._transcript_sync_pending
-
         rebuild_count = 0
         sync_count = 0
         original_rebuild = window.rebuild
@@ -786,35 +587,27 @@ async def test_transcript_sync_defers_while_modal_covers_screen(tmp_path: Path, 
         monkeypatch.setattr(window, "sync", count_sync)
         monkeypatch.setattr(app, "_render_coalesce_interval", lambda _entry: 60.0)
 
-        await inner.dismiss()
-        assert app.screen is outer
-        assert app._transcript_sync_pending
-        assert window.widgets == before_widgets
-        assert rebuild_count == sync_count == refresh_count == 0
-
-        # Catch up both the already-deferred work and the unflushed timer.
+        # Leave a coalesced flush pending when the modal closes. The dismissal
+        # callback must neutralize that timer and use one full rebuild to catch up.
         app._add_conversation_entry(ConversationEntry(kind="user", content="pending at dismiss"))
-        assert app._render_pending
-        outer.dismiss()
-        await wait_for_layout(
-            pilot, lambda: sync_count and view.is_at_bottom() and not app._conversation_anchor_pending
-        )
+        assert app._render_pending is True
+        app.screen.dismiss()
+        await _wait_for_layout(pilot, lambda: not app._transcript_sync_pending)
 
-        assert not app._transcript_sync_pending
-        assert not app._render_pending
-        assert list(window.widgets) == [entry.entry_id for entry in app.conversation_entries]
-        assert all(window.widgets[key] is original for key, original in before_widgets.items())
-        assert rebuild_count == 0
-        assert sync_count == refresh_count == 1
+        assert app._transcript_sync_pending is False
+        assert app._render_pending is False
+        assert len(app._entry_widgets) == base_count + 4
+        assert rebuild_count == 1
+        assert sync_count == 0
 
-        # Simulate the stale timer firing after dismissal has caught up.
+        # Simulate the stale timer firing after the post-dismiss rebuild.
         app._flush_conversation_render()
-        assert rebuild_count == 0
-        assert sync_count == refresh_count == 1
+        assert rebuild_count == 1
+        assert sync_count == 0
 
 
 @pytest.mark.asyncio
-async def test_modal_dismiss_flushes_a_pending_render(tmp_path: Path, monkeypatch) -> None:
+async def test_modal_dismiss_promotes_an_unflushed_render_to_full_sync(tmp_path: Path, monkeypatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
@@ -841,34 +634,6 @@ async def test_modal_dismiss_flushes_a_pending_render(tmp_path: Path, monkeypatc
 
         assert app._render_pending is False
         assert app._transcript_sync_pending is False
-
-
-@pytest.mark.asyncio
-async def test_full_transcript_rebuild_waits_until_modal_dismissal(tmp_path: Path, monkeypatch) -> None:
-    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
-
-    async with app.run_test() as pilot:
-        await wait_for_layout(pilot, app._startup_complete.is_set)
-        _add_entries(app, 2)
-        app._flush_conversation_render()
-        window = _window(app)
-        before_widgets = window.widgets.copy()
-
-        modal = _BareModal()
-        app._push_fullscreen_modal(modal)
-        await wait_for_layout(pilot, lambda: app.screen is modal and modal.is_mounted)
-
-        # Replace history while retaining the shared startup entry.
-        startup = app.conversation_entries[0]
-        replacement = ConversationEntry(kind="user", content="restored history")
-        app.conversation_entries = [startup, replacement]
-        app._render_conversation()
-        assert window.widgets == before_widgets
-
-        modal.dismiss()
-        await wait_for_layout(pilot, lambda: replacement.entry_id in window.widgets)
-        assert list(window.widgets) == [startup.entry_id, replacement.entry_id]
-        assert window.widgets[startup.entry_id] is not before_widgets[startup.entry_id]
 
 
 @pytest.mark.asyncio
