@@ -724,7 +724,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             )
         else:
             step.edit_preview = merge_edit_preview(step.edit_preview, content)
-        self._invalidate_sub_agent_detail(activity)
+        self._invalidate_sub_agent_detail(activity, step)
 
     def _attach_pending_sub_agent_edit_preview(self, activity: SubAgentActivity, step: ConversationEntry) -> None:
         tool_call_id = step.tool_call_id or ""
@@ -824,6 +824,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 activity.tokens = tokens
                 break
         task_full = info.get("task_full") or info.get("task")
+        task_step = None
         if (
             isinstance(task_full, str)
             and task_full
@@ -860,7 +861,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             self._refresh_sub_agent_entry(activity)
             self._note_workflow_sub_agent(activity)
         if created or before != after:
-            self._invalidate_sub_agent_detail(activity)
+            self._invalidate_sub_agent_detail(activity, task_step)
         return activity
 
     def _render_sub_agent_terminal(self, event: AgentEvent) -> None:
@@ -875,6 +876,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 step.complete = True
                 step.normalizer.flush()
                 step.materialize()
+                self._invalidate_sub_agent_detail(activity, step)
             step = SubAgentTerminalEntry(
                 kind="tool_call",
                 content="",
@@ -900,7 +902,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             step.complete = True
             step.kind = "tool_error" if activity.status == "failed" else "tool_result"
         self._refresh_sub_agent_entry(activity)
-        self._invalidate_sub_agent_detail(activity)
+        self._invalidate_sub_agent_detail(activity, step)
 
     def _finish_sub_agent_terminal_steps(self, activity: SubAgentActivity) -> None:
         for step in activity.terminal_steps.values():
@@ -908,6 +910,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 step.complete = True
                 step.kind = "tool_error" if activity.status == "failed" else "tool_result"
                 step.materialize()
+                self._invalidate_sub_agent_detail(activity, step)
 
     def _render_sub_agent_event(self, event: AgentEvent) -> None:
         activity = self._ensure_sub_agent_activity(event)
@@ -936,24 +939,25 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             tool = str(content.get("tool_description") or content.get("tool_name") or "tool")
             activity.last_activity = tool
             activity.current_action = tool
-            self._record_sub_agent_tool_step(activity, "tool_call", content)
+            step = self._record_sub_agent_tool_step(activity, "tool_call", content)
         elif message_type in {"tool_result", "tool_error"}:
             suffix = "failed" if message_type == "tool_error" else "done"
             tool = str(content.get("tool_description") or content.get("tool_name") or "tool")
             activity.last_activity = f"{tool} {suffix}"
             activity.current_action = f"{tool} {suffix}"
-            self._record_sub_agent_tool_step(activity, message_type, content)
+            step = self._record_sub_agent_tool_step(activity, message_type, content)
             terminal = activity.terminal_steps.get(str(content.get("tool_call_id") or ""))
             if terminal is not None:
                 terminal.kind = message_type
                 terminal.complete = True
                 terminal.materialize()
+                self._invalidate_sub_agent_detail(activity, terminal)
         elif message_type == "thinking":
-            self._apply_sub_agent_thinking(activity, event, text)
+            step = self._apply_sub_agent_thinking(activity, event, text)
         else:  # streamed response text - accumulate by chunk uuid
-            self._apply_sub_agent_response(activity, event, text)
+            step = self._apply_sub_agent_response(activity, event, text)
         self._refresh_sub_agent_entry(activity)
-        self._invalidate_sub_agent_detail(activity)
+        self._invalidate_sub_agent_detail(activity, step)
 
     def _render_sub_agent_delta(self, event: AgentEvent) -> None:
         """Render a sub-agent's reasoning or prose from the event stream.
@@ -966,18 +970,22 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         activity = self._ensure_sub_agent_activity(event)
         text = str(event.content.get("text") or "")
         if event.event_type == KnownEventType.THINKING_DELTA:
-            self._apply_sub_agent_thinking(activity, event, text)
+            step = self._apply_sub_agent_thinking(activity, event, text)
         else:
-            self._apply_sub_agent_response(activity, event, text)
+            step = self._apply_sub_agent_response(activity, event, text)
         self._refresh_sub_agent_entry(activity)
-        self._invalidate_sub_agent_detail(activity)
+        self._invalidate_sub_agent_detail(activity, step)
 
-    def _apply_sub_agent_thinking(self, activity: SubAgentActivity, event: AgentEvent, text: str) -> None:
+    def _apply_sub_agent_thinking(
+        self, activity: SubAgentActivity, event: AgentEvent, text: str
+    ) -> ConversationEntry | None:
         activity.last_activity = "thinking"
         activity.current_action = "thinking"
-        self._accumulate_sub_agent_stream(activity, "thinking", event, text)
+        return self._accumulate_sub_agent_stream(activity, "thinking", event, text)
 
-    def _apply_sub_agent_response(self, activity: SubAgentActivity, event: AgentEvent, text: str) -> None:
+    def _apply_sub_agent_response(
+        self, activity: SubAgentActivity, event: AgentEvent, text: str
+    ) -> ConversationEntry | None:
         activity.current_action = "responding"
         if event.uuid and text:
             # Keep only a bounded tail. The card shows just the last
@@ -989,9 +997,11 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             buffer = (activity.stream_buffers.get(event.uuid, "") + text)[-tail_cap:]
             activity.stream_buffers[event.uuid] = buffer
             activity.active_stream_uuid = event.uuid
-        self._accumulate_sub_agent_stream(activity, "assistant", event, text)
+        return self._accumulate_sub_agent_stream(activity, "assistant", event, text)
 
-    def _record_sub_agent_tool_step(self, activity: SubAgentActivity, message_type: str, content: dict) -> None:
+    def _record_sub_agent_tool_step(
+        self, activity: SubAgentActivity, message_type: str, content: dict
+    ) -> ConversationEntry:
         """Capture a sub-agent tool_call/result/error as a ConversationEntry step,
         pairing call->result by tool_call_id exactly like _add_tool_message.
 
@@ -1040,7 +1050,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             if tool_call_id:
                 activity.tool_steps[tool_call_id] = step
             self._attach_pending_sub_agent_edit_preview(activity, step)
-            return
+            return step
         step.kind = message_type
         step.content = entry_content
         step.complete = complete
@@ -1050,6 +1060,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         step.tool_error_kind = tool_error_kind
         step.full_content = full_content or step.full_content
         self._attach_pending_sub_agent_edit_preview(activity, step)
+        return step
 
     def _last_unpaired_sub_agent_tool_step(
         self, activity: SubAgentActivity, tool_name: str
@@ -1060,8 +1071,10 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 return step
         return None
 
-    def _accumulate_sub_agent_stream(self, activity: SubAgentActivity, kind: str, event: AgentEvent, text: str) -> None:
-        self._accumulate_stream_entry(
+    def _accumulate_sub_agent_stream(
+        self, activity: SubAgentActivity, kind: str, event: AgentEvent, text: str
+    ) -> ConversationEntry | None:
+        return self._accumulate_stream_entry(
             activity.steps,
             activity.stream_steps,
             kind=kind,
@@ -1212,11 +1225,10 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             return f"{tokens / 1000:.1f}k".replace(".0k", "k")
         return f"{tokens / 1_000_000:.1f}M".replace(".0M", "M")
 
-    def _invalidate_sub_agent_detail(self, activity: SubAgentActivity) -> None:
-        """Refresh the open inspector if it is showing this agent (no-op when closed)."""
+    def _invalidate_sub_agent_detail(self, activity: SubAgentActivity, step: ConversationEntry | None = None) -> None:
         screen = self._sub_agent_inspector
         if screen is not None:
-            screen.note_activity_updated(activity)
+            screen.note_activity_updated(activity, step)
 
     def _sub_agent_activity_for_entry(self, entry: ConversationEntry) -> Optional[SubAgentActivity]:
         for activity in self._sub_agent_activities.values():
