@@ -324,6 +324,70 @@ async def test_transcript_prepend_bounds_each_batch_and_services_queued_input(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("direction", [-1, 1], ids=["older", "newer"])
+async def test_transcript_wheel_burst_carries_past_mounted_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, direction: int
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await wait_for_layout(pilot, app._startup_complete.is_set)
+        _add_entries(app, 600)
+        app._render_conversation()
+        view = app._conversation
+        window = _window(app)
+        await wait_for_layout(pilot, lambda: view.is_at_bottom() and not app._conversation_anchor_pending)
+
+        if direction > 0:
+            for _ in range(12):
+                assert window.expand_up(app.conversation_entries)
+                await wait_for_layout(pilot, lambda: view._scrollback_anchor is None)
+            assert view.has_newer_entries
+
+        threshold = view.outer_size.height
+        start_y = threshold + 1 if direction < 0 else view.max_scroll_y - threshold - 1
+        view.scroll_to(y=start_y, animate=False, immediate=True)
+        entries = {entry.entry_id: i for i, entry in enumerate(app.conversation_entries)}
+        first, second = list(window.widgets.values())[:2]
+        row_spacing = second.virtual_region.y - first.virtual_region.y
+        assert row_spacing == 2
+
+        def displayed_row() -> int | None:
+            y = view.content_region.y
+            for entry_id, widget in window.widgets.items():
+                geometry = view.screen._compositor.visible_widgets.get(widget)
+                if geometry is not None:
+                    region = geometry[0]
+                    if region.y <= y < region.bottom:
+                        return entries[entry_id] * row_spacing + y - region.y
+            return None
+
+        initial = window.mounted_start * row_spacing + start_y
+        await wait_for_layout(pilot, lambda: displayed_row() == initial)
+        frames: list[int] = []
+        original_display = app._display
+
+        def record_display(screen, renderable) -> None:
+            if renderable is not None and not app._batch_count:
+                row = displayed_row()
+                if row is not None:
+                    frames.append(row)
+            original_display(screen, renderable)
+
+        monkeypatch.setattr(app, "_display", record_display)
+        wheel = events.MouseScrollUp if direction < 0 else events.MouseScrollDown
+        ticks = 82
+        # Yield no layout pass between inputs, as when several wheel events
+        # arrive in the same read while the transcript is still being laid out.
+        for _ in range(ticks):
+            await view._on_message(wheel(view, 0, 0, 0, 0, 0, False, False, False))
+        target = initial + direction * ticks * int(app.scroll_sensitivity_y)
+        await wait_for_layout(pilot, lambda: bool(frames) and frames[-1] == target)
+        assert all(0 <= (b - a) * direction for a, b in zip([initial, *frames], frames, strict=False))
+        assert len(window.widgets) <= theme.TRANSCRIPT_WINDOW_BROWSE_MAX
+
+
+@pytest.mark.asyncio
 async def test_transcript_history_stays_bounded_in_both_directions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

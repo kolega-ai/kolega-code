@@ -744,8 +744,11 @@ class ScrollbackWindow:
         )
         added = {entry.entry_id: self._build_widget(entry) for entry in chunk}
         removed = tuple(self.widgets[key] for key in dropped)
+        new_start = start - len(chunk) if older else start + excess
         with view.app.batch_update():
-            view._scrollback_anchor = _ScrollbackAnchor(anchor, anchor.virtual_region.y, tuple(added.values()), removed)
+            view._scrollback_anchor = _ScrollbackAnchor(
+                anchor, anchor.virtual_region.y, tuple(added.values()), removed, has_older_entries=new_start > 0
+            )
             try:
                 view.mount(*added.values(), before=self.widgets[ids[0]] if older else None)
             except Exception:
@@ -756,7 +759,7 @@ class ScrollbackWindow:
                 view.remove_children(removed)
             retained = {key: self.widgets[key] for key in kept}
             self.widgets = {**added, **retained} if older else {**retained, **added}
-            self.mounted_start = start - len(chunk) if older else start + excess
+            self.mounted_start = new_start
             view.has_newer_entries = self.mounted_end < len(entries)
             view.set_auto_follow(False)
             view.anchor(False)
@@ -846,7 +849,9 @@ class _ScrollbackAnchor:
     virtual_y: int
     new_widgets: tuple[Widget, ...]
     removed_widgets: tuple[Widget, ...]
+    has_older_entries: bool
     wheel_deltas: list[float] = field(default_factory=list)
+    continuation_scheduled: bool = False
 
 
 class ConversationView(VerticalScroll):
@@ -889,13 +894,32 @@ class ConversationView(VerticalScroll):
 
     def _scrollback_position(
         self, arrangement: DockArrangeResult, height: int, anchor: _ScrollbackAnchor
-    ) -> tuple[int, float]:
+    ) -> tuple[int, float, list[float]]:
         virtual_y = next(p.region.y for p in arrangement.placements if p.widget is anchor.widget)
         maximum = max(0, arrangement.total_region.bottom - height)
         scroll_y = clamp(self.scroll_y + virtual_y - anchor.virtual_y, 0, maximum)
-        for delta in anchor.wheel_deltas:
-            scroll_y = clamp(scroll_y + delta, 0, maximum)
-        return virtual_y, scroll_y
+        for index, delta in enumerate(anchor.wheel_deltas):
+            target = scroll_y + delta
+            scroll_y = clamp(target, 0, maximum)
+            if (target < 0 and anchor.has_older_entries) or (target > maximum and self.has_newer_entries):
+                return virtual_y, scroll_y, [target - scroll_y, *anchor.wheel_deltas[index + 1 :]]
+        return virtual_y, scroll_y, []
+
+    def _expand_scrollback(self, direction: float) -> None:
+        name = "_maybe_expand_transcript_window" if direction < 0 else "_maybe_expand_transcript_window_down"
+        expand = getattr(self.app, name, None)
+        if expand is not None:
+            expand()
+
+    def _continue_scrollback(self, anchor: _ScrollbackAnchor) -> None:
+        if self._scrollback_anchor is not anchor:
+            return
+        self._scrollback_anchor = None
+        if self._pruning or not self.is_attached or not anchor.wheel_deltas:
+            return
+        self._expand_scrollback(anchor.wheel_deltas[0])
+        if self._scrollback_anchor is not None:
+            self._scrollback_anchor.wheel_deltas.extend(anchor.wheel_deltas)
 
     def arrange(self, size: Size, optimal: bool = False) -> DockArrangeResult:
         arrangement = super().arrange(size, optimal)
@@ -927,13 +951,18 @@ class ConversationView(VerticalScroll):
                 position = self._scrollback_position(arrangement, size.height, anchor)
         if anchor is None or position is None:
             return arrangement
-        virtual_y, scroll_y = position
+        virtual_y, scroll_y, remaining = position
         anchor.virtual_y = virtual_y
-        anchor.wheel_deltas.clear()
+        anchor.wheel_deltas = remaining
         if all(widget.is_mounted for widget in anchor.new_widgets) and all(
             widget not in arrangement.widgets for widget in anchor.removed_widgets
         ):
-            self._scrollback_anchor = None
+            # Continue only after this page has laid out, so the next page can
+            # anchor to its actual rows without mounting several pages at once.
+            if remaining and not anchor.continuation_scheduled:
+                anchor.continuation_scheduled = self.call_after_refresh(self._continue_scrollback, anchor)
+            if not remaining or not anchor.continuation_scheduled:
+                self._scrollback_anchor = None
 
         # Textual reads the scroll offset just after arrange(), before updating
         # virtual_size. Like its bottom anchor, bypass the stale scroll bounds
@@ -950,13 +979,9 @@ class ConversationView(VerticalScroll):
         if self._scrollback_anchor is None:
             # A wheel at a clamped edge can't trigger the scroll watcher.
             if direction < 0 and self.scroll_y <= 0:
-                expand = getattr(self.app, "_maybe_expand_transcript_window", None)
-                if expand is not None:
-                    expand()
+                self._expand_scrollback(direction)
             if direction > 0 and self.has_newer_entries and self.scroll_y >= self.max_scroll_y:
-                expand = getattr(self.app, "_maybe_expand_transcript_window_down", None)
-                if expand is not None:
-                    expand()
+                self._expand_scrollback(direction)
         anchor = self._scrollback_anchor
         if anchor is not None:
             # Apply input against the new range, not the old boundary.
