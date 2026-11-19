@@ -18,7 +18,7 @@ from ._app_test_utils import _build_sub_agent_test_app
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "operation", ["flush-dirty", "flush-append", "render", "sync", "dirty", "all", "rebuild", "expand", "compensate"]
+    "operation", ["flush-dirty", "flush-append", "render", "sync", "dirty", "rebuild", "expand", "compensate"]
 )
 async def test_late_render_skips_attached_view_with_pruned_children(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
@@ -74,8 +74,6 @@ async def test_late_render_skips_attached_view_with_pruned_children(
                 elif operation == "dirty":
                     window.refresh_dirty(dirty)
                     assert not dirty
-                elif operation == "all":
-                    window.refresh_all()
                 elif operation == "expand":
                     window.mounted_start = 1
                     entries = [ConversationEntry(kind="user", content="older"), *app.conversation_entries]

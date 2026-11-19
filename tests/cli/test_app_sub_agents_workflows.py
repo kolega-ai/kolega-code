@@ -726,18 +726,14 @@ async def test_sub_agent_inspector_refreshes_only_the_changed_selection(
                 and "b" in screen._rows
             ),
         )
-        window = screen._trajectory_window
-        assert window is not None
-        a_ids = set(window.widgets)
-        refresh_all = window.refresh_all
-        a_rows_refreshed = 0
+        sync_trajectory = screen._sync_trajectory
+        trajectory_syncs: list[str] = []
 
-        def count_refreshes() -> None:
-            nonlocal a_rows_refreshed
-            a_rows_refreshed += len(a_ids.intersection(window.widgets))
-            refresh_all()
+        def count_sync() -> None:
+            trajectory_syncs.append(screen._selected_key)
+            sync_trajectory()
 
-        monkeypatch.setattr(window, "refresh_all", count_refreshes)
+        monkeypatch.setattr(screen, "_sync_trajectory", count_sync)
 
         def b_update(index: int) -> None:
             app._render_event(
@@ -757,7 +753,7 @@ async def test_sub_agent_inspector_refreshes_only_the_changed_selection(
                 pilot,
                 lambda: not screen._flush_pending and f"b update {index}" in str(screen._rows["b"].render()),
             )
-        assert a_rows_refreshed == 0
+        assert trajectory_syncs == []
 
         app._render_event(_sub_agent_event(agent_id="a", uuid="a-mixed", text="selected update"))
         b_update(3)
@@ -768,7 +764,7 @@ async def test_sub_agent_inspector_refreshes_only_the_changed_selection(
                 and "b update 3" in str(screen._rows["b"].render())
             ),
         )
-        assert a_rows_refreshed == 9
+        assert trajectory_syncs == ["a"]
 
         b_update(4)
         assert screen._flush_pending
@@ -784,7 +780,8 @@ async def test_sub_agent_inspector_refreshes_only_the_changed_selection(
             ),
         )
         assert "b update 4" in str(screen._rows["b"].render())
-        assert a_rows_refreshed == 9
+        assert trajectory_syncs[0] == "a"
+        assert set(trajectory_syncs[1:]) == {"b"}
 
 
 @pytest.mark.asyncio

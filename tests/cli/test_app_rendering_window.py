@@ -24,7 +24,7 @@ from kolega_code.cli.tui.state import ConversationEntry
 from kolega_code.cli.tui.sub_agent_screen import SubAgentRosterRow
 from kolega_code.cli.tui.widgets import ConversationEntryWidget, JumpToBottomBar, ToolEntryWidget, TrajectoryScrollView
 
-from ._app_test_utils import _build_sub_agent_test_app, _sub_agent_event, wait_for_layout
+from ._app_test_utils import _build_sub_agent_test_app, _sub_agent_delta, _sub_agent_event, wait_for_layout
 
 WINDOW_MAX = theme.TRANSCRIPT_WINDOW_MAX
 
@@ -897,6 +897,118 @@ async def test_inspector_switching_agents_rebuilds_windowed(tmp_path: Path, monk
         activity_a2 = app._sub_agent_activities["a2"]
         assert len(screen._step_widgets) == INSPECTOR_MAX
         assert list(screen._step_widgets) == [step.entry_id for step in activity_a2.steps[-INSPECTOR_MAX:]]
+
+
+@pytest.mark.asyncio
+async def test_inspector_refreshes_only_dirty_steps_in_a_paged_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 35)) as pilot:
+        app._render_event(_sub_agent_event(status="GENERATING"))
+        activity = app._sub_agent_activities["agent-1"]
+        for index in range(400):
+            if index in (200, 201):
+                app._render_event(_sub_agent_delta("start", uuid=f"reply-{index}", complete=False))
+            else:
+                activity.steps.append(ConversationEntry(kind="user", content=f"step {index}"))
+        app.action_open_sub_agent()
+        screen = app._sub_agent_inspector
+        assert screen is not None
+        await wait_for_layout(pilot, lambda: bool(screen.query(TrajectoryScrollView)))
+        view = screen.query_one(TrajectoryScrollView)
+        await wait_for_layout(
+            pilot,
+            lambda: (
+                len(screen._step_widgets) == INSPECTOR_MAX and view.max_scroll_y > 0 and view.is_vertical_scroll_end
+            ),
+        )
+        window = screen._trajectory_window
+        assert window is not None
+        view.scroll_to(y=0, animate=False, immediate=True)
+        await wait_for_layout(
+            pilot,
+            lambda: (
+                len(screen._step_widgets) == INSPECTOR_MAX + theme.INSPECTOR_WINDOW_EXPAND_CHUNK
+                and not window._expand_pending
+                and 0 < view.scroll_y < view.max_scroll_y
+            ),
+        )
+        first = activity.stream_steps["reply-200"]
+        second = activity.stream_steps["reply-201"]
+        rows = dict(window.widgets)
+        reader = next(
+            row
+            for row in rows.values()
+            if row.region.y >= view.content_region.y and row.region.overlaps(view.content_region)
+        )
+        old_offset = reader.region.y - view.content_region.y
+        refreshes: list[str] = []
+        syncing = False
+        sync_trajectory = screen._sync_trajectory
+        refresh_content = ConversationEntryWidget.refresh_content
+
+        def count_sync() -> None:
+            nonlocal syncing
+            syncing = True
+            try:
+                sync_trajectory()
+            finally:
+                syncing = False
+
+        def count_refresh(row: ConversationEntryWidget) -> None:
+            if syncing and row.entry.entry_id in rows:
+                refreshes.append(row.entry.entry_id)
+            refresh_content(row)
+
+        monkeypatch.setattr(screen, "_sync_trajectory", count_sync)
+        monkeypatch.setattr(ConversationEntryWidget, "refresh_content", count_refresh)
+        app._render_event(_sub_agent_delta(" one", uuid="reply-200", complete=False))
+        assert screen._flush_pending
+        await wait_for_layout(pilot, lambda: not screen._flush_pending)
+        assert len(refreshes) == 1
+        assert refreshes == [first.entry_id]
+        assert rows[first.entry_id] is window.widgets[first.entry_id]
+        assert first.content == "start one"
+
+        refreshes.clear()
+        app._render_event(_sub_agent_event(status="GENERATING", total_tokens=100))
+        assert screen._flush_pending
+        await wait_for_layout(pilot, lambda: not screen._flush_pending)
+        assert refreshes == []
+
+        app._render_event(_sub_agent_delta(" two", uuid="reply-200"))
+        app._render_event(_sub_agent_delta(" more", uuid="reply-201", complete=False))
+        app._render_event(_sub_agent_delta(" done", uuid="reply-201"))
+        app._render_event(_sub_agent_delta("new tail", uuid="new"))
+        appended = activity.stream_steps["new"]
+        await wait_for_layout(
+            pilot,
+            lambda: (
+                not screen._flush_pending
+                and appended.entry_id in window.widgets
+                and window.widgets[appended.entry_id].size.height > 0
+            ),
+        )
+        assert sorted(refreshes) == sorted([first.entry_id, second.entry_id])
+        assert first.content == "start one two"
+        assert second.content == "start more done"
+        assert window.widgets[reader.entry.entry_id] is reader
+        assert reader.region.y - view.content_region.y == old_offset
+
+        view.scroll_end(animate=False, immediate=True)
+        await wait_for_layout(pilot, lambda: view.is_vertical_scroll_end)
+        app._render_event(_sub_agent_delta("followed tail", uuid="followed"))
+        followed = activity.stream_steps["followed"]
+        await wait_for_layout(
+            pilot,
+            lambda: (
+                followed.entry_id in window.widgets
+                and window.widgets[followed.entry_id].region.overlaps(view.content_region)
+                and view.is_vertical_scroll_end
+            ),
+        )
 
 
 @pytest.mark.asyncio

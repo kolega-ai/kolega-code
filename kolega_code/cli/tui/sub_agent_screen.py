@@ -82,6 +82,7 @@ class SubAgentInspectorScreen(ModalScreen):
         self._spinner_frame = 0
         self._flush_pending = False
         self._updated_agent_keys: set[str] = set()
+        self._dirty_step_ids: set[str] = set()
 
     @property
     def _step_widgets(self) -> dict[str, ConversationEntryWidget | ToolEntryWidget]:
@@ -115,9 +116,11 @@ class SubAgentInspectorScreen(ModalScreen):
 
     # ---- live updates ---------------------------------------------------------
 
-    def note_activity_updated(self, activity: SubAgentActivity) -> None:
+    def note_activity_updated(self, activity: SubAgentActivity, step: ConversationEntry | None = None) -> None:
         """Called by the owner when any sub-agent emits an event (coalesced)."""
         self._updated_agent_keys.add(activity.agent_id)
+        if step is not None and activity.agent_id == self._rendered_key:
+            self._dirty_step_ids.add(step.entry_id)
         self._schedule_flush()
 
     def _schedule_flush(self) -> None:
@@ -330,6 +333,7 @@ class SubAgentInspectorScreen(ModalScreen):
         if not view.is_attached:
             return
         window = self._get_trajectory_window(view)
+        dirty_ids, self._dirty_step_ids = self._dirty_step_ids, set()
         activity = self._owner._sub_agent_activities.get(self._selected_key)
         if activity is None:
             window.rebuild([])
@@ -366,8 +370,7 @@ class SubAgentInspectorScreen(ModalScreen):
         # window), mount newly appended steps, and trim the oldest — but only while
         # pinned to the newest step, never under a user reading older history.
         pinned_to_end = view.max_scroll_y <= 0 or view.scroll_y >= view.max_scroll_y - 1
-        window.refresh_all()
-        window.sync(activity.steps, set(), follow_bottom=self._follow and pinned_to_end)
+        window.sync(activity.steps, dirty_ids, follow_bottom=self._follow and pinned_to_end)
 
     def _schedule_failure_acknowledgment(self) -> None:
         activity = self._owner._sub_agent_activities.get(self._selected_key)

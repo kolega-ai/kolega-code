@@ -678,13 +678,6 @@ class ScrollbackWindow:
                 widget.refresh_content()
         dirty_ids.clear()
 
-    def refresh_all(self) -> None:
-        """Re-render every mounted widget (cheap: unchanged widgets early-return on a snapshot)."""
-        if not self._can_render:
-            return
-        for widget in self.widgets.values():
-            widget.refresh_content()
-
     # ---- history expansion ---------------------------------------------------
 
     def expand_up(self, entries: list[ConversationEntry]) -> bool:
