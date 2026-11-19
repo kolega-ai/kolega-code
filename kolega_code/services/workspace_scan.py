@@ -35,8 +35,6 @@ class ScanLimits:
 class ScannedPath:
     path: str
     is_dir: bool
-    size: int = 0
-    modified_time: int = 0
 
 
 @dataclass
@@ -79,7 +77,6 @@ def scan_workspace_sync(
     skip_hidden_directories: bool = False,
     binary_extensions: frozenset[str] = frozenset(),
     max_file_size: Optional[int] = None,
-    collect_metadata: bool = True,
     ignore_spec: Optional[pathspec.PathSpec] = None,
     limits: ScanLimits = ScanLimits(),
     cancel_event: Optional[threading.Event] = None,
@@ -182,21 +179,14 @@ def scan_workspace_sync(
                     continue
                 if Path(entry.name).suffix.lower() in binary_extensions:
                     continue
-                if collect_metadata or max_file_size is not None:
+                if max_file_size is not None:
                     try:
                         stat_result = entry.stat(follow_symlinks=False)
                     except OSError:
                         continue
-                    if max_file_size is not None and stat_result.st_size > max_file_size:
+                    if stat_result.st_size > max_file_size:
                         continue
-                    scanned = ScannedPath(
-                        path=relative_text,
-                        is_dir=False,
-                        size=int(stat_result.st_size) if collect_metadata else 0,
-                        modified_time=int(stat_result.st_mtime) if collect_metadata else 0,
-                    )
-                else:
-                    scanned = ScannedPath(path=relative_text, is_dir=False)
+                scanned = ScannedPath(path=relative_text, is_dir=False)
             else:
                 continue
 

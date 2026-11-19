@@ -124,7 +124,6 @@ async def detect_languages(project_path: str | Path, registry: LspRegistry) -> D
         include_directories=False,
         exclude_directories=frozenset(_SKIP_DIRS),
         skip_hidden_directories=True,
-        collect_metadata=False,
         limits=ScanLimits(timeout_seconds=5.0, max_entries=50_000),
     )
     scanned_paths = [scanned.path for scanned in scan.paths]
