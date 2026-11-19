@@ -647,10 +647,17 @@ class ScrollbackWindow:
     def show_tail(self, entries: list[ConversationEntry]) -> None:
         if not self._can_render:
             return
-        if self.mounted_end != len(entries) or not self._mounted_span_matches(entries):
+        end = self.mounted_end
+        tail_start = max(0, len(entries) - self.max_mounted)
+        if end <= tail_start or not self._mounted_span_matches(entries):
             self.rebuild(entries)
-        else:
+            return
+        view = self._view
+        with view.app.batch_update():
+            self._mount_entries(entries[end:])
             self._trim_above(force=True)
+            if isinstance(view, ConversationView):
+                view.has_newer_entries = False
 
     def refresh_dirty(self, dirty_ids: set[str]) -> None:
         """Re-render mounted widgets for ``dirty_ids`` (skipping unmounted) and consume the set."""
