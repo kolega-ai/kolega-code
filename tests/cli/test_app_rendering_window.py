@@ -121,10 +121,12 @@ async def test_transcript_keeps_visible_history_when_output_arrives(tmp_path: Pa
 
         # Arrive at the mounted edge without paging on the preceding scroll,
         # as can happen when a swap or a coverage modal suppresses its watcher.
+        bar = app.query_one("#jump_to_bottom", JumpToBottomBar)
         with monkeypatch.context() as setup:
             setup.setattr(app, "_maybe_expand_transcript_window_down", lambda: None)
             view.scroll_to(y=view.max_scroll_y, animate=False, immediate=True)
-            await wait_for_layout(pilot, lambda: view.scroll_y == view.max_scroll_y)
+            await wait_for_layout(pilot, lambda: view.scroll_y == view.max_scroll_y and bar.display)
+            assert view.has_newer_entries and not view.is_at_bottom()
         old_end = window.mounted_end
         await view._on_message(events.MouseScrollDown(view, 0, 0, 0, 0, 0, False, False, False))
         await wait_for_layout(
@@ -396,6 +398,55 @@ async def test_transcript_history_stays_bounded_in_both_directions(
         view.scroll_to(y=view.max_scroll_y, animate=False, immediate=True)
         await wait_for_layout(pilot, lambda: view.auto_follow_bottom and list(window.widgets) == expected[-WINDOW_MAX:])
         assert view.is_at_bottom()
+
+
+@pytest.mark.asyncio
+async def test_transcript_wheel_to_latest_hides_jump_bar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(90, 26)) as pilot:
+        await wait_for_layout(pilot, app._startup_complete.is_set)
+        _add_entries(app, 250)
+        app._render_conversation()
+        view = app._conversation
+        window = _window(app)
+        bar = app.query_one("#jump_to_bottom", JumpToBottomBar)
+        newest = app.conversation_entries[-1]
+        await wait_for_layout(
+            pilot, lambda: view.max_scroll_y > 0 and view.is_at_bottom() and not app._conversation_anchor_pending
+        )
+
+        while not view.has_newer_entries:
+            start = window.mounted_start
+            view.scroll_to(y=0, animate=False, immediate=True)
+            await wait_for_layout(pilot, lambda: window.mounted_start < start and view._scrollback_anchor is None)
+        assert bar.display and not view.auto_follow_bottom
+        assert newest.entry_id not in window.widgets
+
+        # Enter the last page on a wheel tick, then deliver the rest of the
+        # burst before layout publishes that page's scroll range.
+        view.scroll_to(y=view.max_scroll_y - view.outer_size.height - 1, animate=False, immediate=True)
+        assert view.has_newer_entries and bar.display
+        await view._on_message(events.MouseScrollDown(view, 0, 0, 0, 0, 0, False, False, False))
+        assert view._scrollback_anchor is not None
+        assert newest.entry_id in window.widgets
+        for _ in range(2 * EXPAND_CHUNK):
+            await view._on_message(events.MouseScrollDown(view, 0, 0, 0, 0, 0, False, False, False))
+
+        def latest_is_visible() -> bool:
+            row = window.widgets.get(app.conversation_entries[-1].entry_id)
+            return row is not None and row.region.overlaps(view.content_region)
+
+        def at_latest() -> bool:
+            return view.is_at_bottom() and view.scroll_y == view.max_scroll_y and latest_is_visible()
+
+        await wait_for_layout(pilot, at_latest)
+        await wait_for_layout(pilot, lambda: not bar.display and view.auto_follow_bottom)
+
+        _add_entries(app, 1, start=250)
+        app._flush_conversation_render()
+        await wait_for_layout(pilot, at_latest)
+        assert view.auto_follow_bottom and not bar.display
 
 
 @pytest.mark.asyncio
