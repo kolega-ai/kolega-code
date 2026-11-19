@@ -10,6 +10,8 @@ import pytest
 
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
+from ._app_test_utils import wait_for_layout
+
 if TYPE_CHECKING:
     from textual.pilot import Pilot
 
@@ -318,7 +320,7 @@ async def test_tip_dismissal_restores_focus_and_reset_never_reopens_it(
         composer.load_text("inspect the workspace")
         composer.focus()
         await pilot.press("enter")
-        await _wait_for_layout(pilot, lambda: app.agent_worker is None and bool(app.session.history))
+        await wait_for_layout(pilot, lambda: app.agent_worker is None and bool(app.session.history))
         card = app.query_one(StartupEntryWidget)
         card.query_one(Collapsible).collapsed = False
         app._ensure_startup_entry()
@@ -355,7 +357,7 @@ async def test_clear_command_does_not_resurrect_dismissed_tip(
         composer.focus()
         composer.load_text("inspect the workspace")
         await pilot.press("enter")
-        await _wait_for_layout(pilot, lambda: app.agent_worker is None and bool(app.session.history))
+        await wait_for_layout(pilot, lambda: app.agent_worker is None and bool(app.session.history))
 
         # The real user path: typing /clear in the composer must not re-offer the tip.
         composer.load_text("/clear")
