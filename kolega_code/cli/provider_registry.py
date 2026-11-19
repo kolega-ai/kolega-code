@@ -134,6 +134,8 @@ MODEL_LABELS: dict[str, str] = {
     "gemini-3.5-flash": "Gemini 3.5 Flash",
     "gemini-4-argon": "Gemini 4 Argon",
     "gemini-4-hydrogen": "Gemini 4 Hydrogen",
+    "gemini-4-carbon": "Gemini 4 Carbon",
+    "gemini-4-neon": "Gemini 4 Neon",
     # Mistral (native API)
     "mistral-medium-3-5": "Mistral Medium 3.5",
     "mistral-medium-latest": "Mistral Medium (latest alias)",

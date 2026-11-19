@@ -129,6 +129,30 @@ def test_google_promotional_expiry_has_documented_regular_rate(stamp: str, rate:
 
 
 @pytest.mark.parametrize(
+    ("model", "tier", "before", "after"),
+    [
+        ("gemini-4-carbon", "standard", "0.000324", "0.000648"),
+        ("gemini-4-carbon", "batch", "0.000162", "0.000324"),
+        ("gemini-4-carbon", "flex", "0.000162", "0.000324"),
+        ("gemini-4-carbon", "priority", "0.0005832", "0.0011664"),
+        ("gemini-4-neon", "standard", "0.000486", "0.000486"),
+        ("gemini-4-neon", "batch", "0.000243", "0.000243"),
+        ("gemini-4-neon", "flex", "0.000243", "0.000243"),
+        ("gemini-4-neon", "priority", "0.0008748", "0.0008748"),
+    ],
+)
+def test_google_carbon_and_neon_paid_rates_at_carbon_promotion_cutoff(
+    model: str, tier: str, before: str, after: str
+) -> None:
+    for stamp, amount in [("2026-11-30T23:59:59Z", before), ("2026-12-01T00:00:00Z", after)]:
+        result = _estimate(
+            "google", model, input_tokens=100, output_tokens=20, read=40, service_tier=tier, requested_at=stamp
+        )
+        assert result["complete"], result
+        assert result["amount"] == amount
+
+
+@pytest.mark.parametrize(
     ("tier", "amount"),
     [("standard", "0.000243"), ("batch", "0.0001215"), ("flex", "0.0001215"), ("priority", "0.0004374")],
 )

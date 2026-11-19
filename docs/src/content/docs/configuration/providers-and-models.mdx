@@ -203,6 +203,29 @@ tokens, including thinking in output charges. Rates are flat across the full
 context window, with no announced promotional expiry. Caching is implicit only;
 explicit context caches are not supported. Google also offers a limited free tier.
 
+**[Gemini 4 Carbon](https://aistudio.google.com/docs/whats-new-gemini-4-carbon)**
+(`gemini-4-carbon`) and
+**[Gemini 4 Neon](https://aistudio.google.com/docs/whats-new-gemini-4-neon)**
+(`gemini-4-neon`) are available on the `google` provider. The
+[Gemini API release notes](https://aistudio.google.com/docs/changelog) date
+Carbon to November 10, 2026, and Neon to November 18, 2026. Both support image
+input and function calling on the paid Gemini API. Carbon supports `low`,
+`medium`, and `high` (default `medium`); Neon adds `xhigh` and defaults to
+`high`. Kolega omits temperature for both.
+Each shares a **1,048,576-token** window across input, thinking, and output.
+Kolega reserves **65,536 tokens** for thinking and output, leaving **983,040
+input tokens**. Carbon's **32,768-token** limit for
+[direct non-streaming REST calls](https://aistudio.google.com/docs/long-decode?generate-content=true#default-output-limits)
+does not apply to the SDK path used by Kolega. Long-decode continuation is not
+enabled for either model.
+
+At [Standard paid API rates](https://aistudio.google.com/docs/pricing#gemini-4-carbon),
+Carbon costs **$2.00 input / $0.10 cached input / $10.00 output** per million
+tokens through November 30, 2026, and **$4.00 / $0.20 / $20.00** starting
+December 1, 2026. [Neon](https://aistudio.google.com/docs/pricing#gemini-4-neon)
+costs **$3.00 / $0.15 / $15.00** across the full window. Both use implicit
+caching, and output pricing includes thinking tokens.
+
 **Grok 4.7** (`grok-4.7`) is available on the `xai` provider, with image input,
 function calling, and `low`, `medium`, `high`, and `xhigh` reasoning efforts.
 [xAI released it on September 21, 2026](https://docs.x.ai/developers/release-notes).
@@ -213,12 +236,14 @@ includes input and output. Kolega reserves **32,768 output tokens**, leaving
 ceiling published by xAI. Grok 4.7 Fast is not available on the public xAI API;
 it is exclusive to Cursor and Grok Build and is not added to this catalog.
 
-All three are available in the main, Fast, per-agent, and vision model selectors.
+These models are available in the main, Fast, per-agent, and vision model selectors.
 Adding them does not change existing provider defaults. To select one:
 
 ```bash
 kolega-code . --provider google --model gemini-4-argon
 kolega-code . --provider google --model gemini-4-hydrogen
+kolega-code . --provider google --model gemini-4-carbon
+kolega-code . --provider google --model gemini-4-neon
 kolega-code . --provider xai --model grok-4.7
 ```
 
@@ -772,6 +797,8 @@ models in the TUI.
 | Google `gemini-3.1-pro-preview` | `low`, `medium`, `high` | `high` |
 | Google `gemini-4-argon` | `low`, `medium`, `high` | `medium` |
 | Google `gemini-4-hydrogen` | `low`, `medium`, `high`, `xhigh` | `high` |
+| Google `gemini-4-carbon` | `low`, `medium`, `high` | `medium` |
+| Google `gemini-4-neon` | `low`, `medium`, `high`, `xhigh` | `high` |
 | OpenAI / ChatGPT `gpt-6-astra` | `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | OpenAI / ChatGPT `gpt-6-sol`, `gpt-6-luna` | `none`, `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | OpenAI / ChatGPT `gpt-6.1-sol` | `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
