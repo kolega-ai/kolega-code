@@ -6,6 +6,49 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.54.0 - 2026-11-19
+
+### Added
+
+- **New model support.** Google **Gemini 4 Carbon** (`gemini-4-carbon`) and
+  **Gemini 4 Neon** (`gemini-4-neon`) on the native `google` provider — 1M-token
+  unified context window, 64K output, multimodal vision input, and
+  `low`/`medium`/`high` (Carbon, default `medium`) or
+  `low`/`medium`/`high`/`xhigh` (Neon, default `high`) thinking effort, without
+  altering existing provider defaults.
+- **"Don't show again" on startup discovery tips.** The startup discovery tips
+  modal now includes a **Don't show again** action that closes the modal and
+  disables **Discovery tips** in **Settings → Appearance** (where they can be
+  re-enabled later).
+
+### Changed
+
+- **Refreshed provider catalogs.** Updated the Ollama Cloud catalog with
+  `inkling-2-small` (1M context, vision, thinking ladder) and refreshed the
+  Tinker catalog to drop three retired models while keeping defaults unchanged.
+- **TUI performance.** Applied the saved theme before the first screen composes;
+  bounded the bidirectional chat history window and per-prepend work; deferred
+  tool result bodies until disclosed; cached completed Markdown reply layouts
+  for repaint; bounded multiline command preview wrapping; and cut redundant
+  refreshes across sub-agent trajectories, sidebar logs/usage, `@` mention
+  completions, Memory controls, Changes views, and peer-name lookups.
+- **CLI, streaming, tools, and replay performance.** `kolega-code --version`
+  now prints immediately without an HTTP check; assistant responses stream the
+  first nonempty delta immediately; sub-agent stream chunks accumulate in parts;
+  `@file` attachment reads, `multi_edit`, file reads, and hashline processing
+  avoid unnecessary work; and shared web replays resolve without rebuilding full
+  history while retaining live turn controls.
+
+### Fixed
+
+- Kept TUI transcript navigation and scrollbar movement continuous across
+  history windows, hid the **Jump to latest** prompt once scrolled back to the
+  tail, honored manual scrolling over pending live anchors, and preserved
+  scroll position when expanding older history.
+- Skipped disclosure title refreshes before widget mount to prevent startup
+  race errors.
+- Reaped killed language-server child processes before closing their transport.
+
 ## 0.53.0 - 2026-11-18
 
 ### Added
