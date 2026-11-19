@@ -880,6 +880,8 @@ class ConversationView(VerticalScroll):
             widget not in arrangement.widgets for widget in anchor.removed_widgets
         ):
             self._scrollback_anchor = None
+            if not self.has_newer_entries:
+                self.call_after_refresh(self._resume_follow_after_paging)
 
         # Textual reads the scroll offset just after arrange(), before updating
         # virtual_size. Like its bottom anchor, bypass the stale scroll bounds
@@ -889,6 +891,16 @@ class ConversationView(VerticalScroll):
         if self.show_vertical_scrollbar:
             self.vertical_scrollbar.set_reactive(ScrollBar.position, scroll_y)
         return arrangement
+
+    def _resume_follow_after_paging(self) -> None:
+        # The layout write skipped watch_scroll_y; check the published bounds
+        # without replaying its directional paging logic.
+        if not self.is_attached or self._pruning or self.auto_follow_bottom or not self.is_at_bottom():
+            return
+        self.auto_follow_bottom = True
+        restore_tail = getattr(self.app, "_restore_transcript_tail", None)
+        if restore_tail is not None:
+            restore_tail()
 
     def _queue_scrollback_wheel(self, event: events.MouseEvent, direction: int) -> None:
         if event.ctrl or event.shift:
