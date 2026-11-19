@@ -209,7 +209,6 @@ class KolegaAppBase(App):
         _conversation_anchor_pending: bool
         _transcript_window: tui_widgets.ScrollbackWindow | None
         _transcript_sync_pending: bool
-        _transcript_rebuild_pending: bool
         _rendered_entry_count: int
         _dirty_entry_ids: set[str]
         _turn_active: bool

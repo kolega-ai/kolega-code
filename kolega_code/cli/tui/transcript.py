@@ -1632,17 +1632,15 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         self._schedule_conversation_bottom_anchor()
 
     def _flush_conversation_render(self) -> None:
-        if not (self._render_pending or self._transcript_sync_pending):
+        if not self._render_pending:
             return
         self._render_pending = False
         if self._modal_cover_active:
             # A full-screen modal (sub-agent inspector, settings, ...) covers the
-            # transcript: keep its dirty entries but do no hidden widget work.
+            # transcript: skip all widget work — reflowing the hidden screen is
+            # pure burn. One windowed rebuild catches up when the modal closes.
             self._transcript_sync_pending = True
-            return
-        self._transcript_sync_pending = False
-        if self._transcript_rebuild_pending:
-            self._render_conversation()
+            self._dirty_entry_ids.clear()
             return
         try:
             view = self._conversation
@@ -1686,10 +1684,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         self._dirty_entry_ids.clear()
         if self._modal_cover_active:
             self._transcript_sync_pending = True
-            self._transcript_rebuild_pending = True
             return
-        self._transcript_sync_pending = False
-        self._transcript_rebuild_pending = False
         try:
             view = self._conversation
         except Exception:
