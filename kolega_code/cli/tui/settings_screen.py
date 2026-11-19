@@ -710,7 +710,8 @@ class SettingsScreen(ModalScreen[None]):
                 )
                 yield Static(
                     "Show a quick-tip modal once per fresh thread. Off by default; use Next to cycle, "
-                    "Got it or Esc to close. No tracking or automatic rotation. Saved when you Apply.",
+                    "Got it or Esc to close, or Don't show again to turn it off. "
+                    "No tracking or automatic rotation. Saved when you Apply.",
                     classes="settings-hint",
                     markup=False,
                 )

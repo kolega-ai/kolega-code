@@ -268,6 +268,8 @@ HANDOFF_OLD_SESSION_NOTICE = "Handed off to new session {title}."
 
 # Settings tab
 SETTINGS_SAVED = "Settings saved."
+DISCOVERY_TIPS_DISABLED = "Discovery tips disabled. Re-enable them in Settings → Appearance."
+DISCOVERY_TIPS_SAVE_FAILED = "Could not save discovery tips preference: {error}"
 SETTINGS_INCOMPLETE = "Configuration incomplete: {error}"
 SETTINGS_ACTIVE_MODEL = "Active model: {provider}/{model}"
 SETTINGS_ACTIVE_MODEL_UNCONFIGURED = "Active model: not configured"

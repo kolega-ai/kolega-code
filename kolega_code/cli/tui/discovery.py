@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from textual import on
+from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Container, Horizontal, VerticalScroll
 from textual.content import Content
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
+
+_COMPACT_WIDTH = 54
 
 DISCOVERY_TIPS: tuple[str, ...] = (
     "Try /plan to explore a change before editing files.",
@@ -26,7 +28,7 @@ DISCOVERY_TIPS: tuple[str, ...] = (
 )
 
 
-class DiscoveryTip(ModalScreen[None]):
+class DiscoveryTip(ModalScreen[bool]):
     """One dismissible tip modal; cycling stays local and never auto-rotates."""
 
     BINDINGS = [Binding("escape", "close", "Close tip", show=False, priority=True)]
@@ -72,12 +74,26 @@ class DiscoveryTip(ModalScreen[None]):
         color: $text;
     }
     DiscoveryTip .discovery-tip-actions {
+        layout: horizontal;
+        width: 1fr;
+        height: 1;
+    }
+    DiscoveryTip .discovery-tip-primary {
+        width: 1fr;
         height: 1;
     }
     DiscoveryTip .discovery-tip-hint {
         width: 1fr;
         height: 1;
+        text-align: right;
         color: $text-muted;
+    }
+    DiscoveryTip.-compact .discovery-tip-actions {
+        layout: vertical;
+        height: auto;
+    }
+    DiscoveryTip.-compact .discovery-tip-hint {
+        text-align: left;
     }
     DiscoveryTip .discovery-tip-dialog Button {
         width: auto;
@@ -91,8 +107,14 @@ class DiscoveryTip(ModalScreen[None]):
         color: $accent;
         text-style: none;
     }
+    DiscoveryTip .discovery-tip-dialog .discovery-tip-disable {
+        margin: 0;
+        color: $text-muted;
+    }
     DiscoveryTip .discovery-tip-dialog Button:hover,
-    DiscoveryTip .discovery-tip-dialog Button:focus {
+    DiscoveryTip .discovery-tip-dialog Button:focus,
+    DiscoveryTip .discovery-tip-dialog .discovery-tip-disable:hover,
+    DiscoveryTip .discovery-tip-dialog .discovery-tip-disable:focus {
         background: $accent;
         color: auto 100%;
         text-style: bold underline;
@@ -103,6 +125,15 @@ class DiscoveryTip(ModalScreen[None]):
     def __init__(self, *, index: int = 0, id: str | None = None, classes: str | None = None) -> None:
         super().__init__(id=id, classes=classes)
         self._tip_index: int = index % len(DISCOVERY_TIPS)
+
+    def _sync_compact_layout(self, width: int) -> None:
+        self.set_class(width < _COMPACT_WIDTH, "-compact")
+
+    def on_mount(self) -> None:
+        self._sync_compact_layout(self.size.width)
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._sync_compact_layout(event.size.width)
 
     @property
     def current_tip(self) -> str:
@@ -118,19 +149,39 @@ class DiscoveryTip(ModalScreen[None]):
         return f"{self._tip_index + 1} / {len(DISCOVERY_TIPS)}"
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(classes="discovery-tip-dialog"):
+        with VerticalScroll(classes="discovery-tip-dialog", can_focus=False):
             with Horizontal(classes="discovery-tip-header"):
                 yield Static("QUICK TIP", markup=False, classes="discovery-tip-badge")
                 yield Static(self._position_label(), markup=False, classes="discovery-tip-position")
             yield Static(self._tip_content(), markup=False, classes="discovery-tip-text")
-            with Horizontal(classes="discovery-tip-actions"):
-                yield Static("Esc", classes="discovery-tip-hint")
-                next_button = Button("Next →", classes="discovery-tip-next", compact=True, tooltip="Next discovery tip")
-                next_button.active_effect_duration = 0
-                yield next_button
-                close_button = Button("Got it", id="discovery-tip-close", compact=True, tooltip="Close tip (Esc)")
-                close_button.active_effect_duration = 0
-                yield close_button
+            with Container(classes="discovery-tip-actions"):
+                disable_button = Button(
+                    "Don't show again",
+                    id="discovery-tip-disable",
+                    classes="discovery-tip-disable",
+                    compact=True,
+                    tooltip="Turn off startup discovery tips",
+                )
+                disable_button.active_effect_duration = 0
+                yield disable_button
+                with Horizontal(classes="discovery-tip-primary"):
+                    yield Static("Esc", classes="discovery-tip-hint")
+                    next_button = Button(
+                        "Next →",
+                        classes="discovery-tip-next",
+                        compact=True,
+                        tooltip="Next discovery tip",
+                    )
+                    next_button.active_effect_duration = 0
+                    yield next_button
+                    close_button = Button(
+                        "Got it",
+                        id="discovery-tip-close",
+                        compact=True,
+                        tooltip="Close tip (Esc)",
+                    )
+                    close_button.active_effect_duration = 0
+                    yield close_button
 
     def action_next_tip(self) -> None:
         """Advance once, wrapping through the fixed list."""
@@ -144,10 +195,18 @@ class DiscoveryTip(ModalScreen[None]):
         event.stop()
         self.action_next_tip()
 
+    @on(Button.Pressed, "#discovery-tip-disable")
+    def _disable_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_disable_tips()
+
     @on(Button.Pressed, "#discovery-tip-close")
     def _close_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.action_close()
 
+    def action_disable_tips(self) -> None:
+        self.dismiss(True)
+
     def action_close(self) -> None:
-        self.dismiss()
+        self.dismiss(False)
