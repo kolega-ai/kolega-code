@@ -1924,10 +1924,26 @@ class KolegaCodeApp(
         self._discovery_tip_screen = DiscoveryTip()
         await self.push_screen(self._discovery_tip_screen, callback=self._on_discovery_tip_dismissed)
 
-    def _on_discovery_tip_dismissed(self, _result: object = None) -> None:
+    def _on_discovery_tip_dismissed(self, disable_tips: bool | None = None) -> None:
         self._discovery_tip_screen = None
+        if disable_tips is True:
+            self._disable_discovery_tips()
         self._on_fullscreen_modal_dismissed()
         self._schedule_primary_focus_restore()
+
+    def _disable_discovery_tips(self) -> None:
+        previous = self.settings.discovery_tips
+        self.settings.discovery_tips = False
+        try:
+            self.settings_store.save(self.settings)
+        except Exception as exc:
+            self.settings.discovery_tips = previous
+            self._notify_user(
+                messages.DISCOVERY_TIPS_SAVE_FAILED.format(error=exc),
+                severity="warning",
+            )
+            return
+        self._notify_user(messages.DISCOVERY_TIPS_DISABLED)
 
     def action_open_memory(self, *, inspect_disabled: bool = False) -> None:
         """Open the backend-neutral project-memory browser and editor."""

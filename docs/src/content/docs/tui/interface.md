@@ -112,7 +112,9 @@ choice; the full editor remains available for every advanced setting.
   once per launch, at startup, after setup or Settings closes. Shortcuts are
   highlighted and a counter shows your place in the tip list. Click **Next →**
   (or focus it and press `Enter`) to cycle; tips never rotate automatically.
-  **Got it** or `Esc` closes the modal and returns focus to the conversation.
+  **Got it** or `Esc` closes the modal and returns focus to the conversation;
+  **Don't show again** closes the modal and turns **Discovery tips** off in
+  **Settings → Appearance** (where you can re-enable them later).
   Dismissed tips stay dismissed for the rest of the run; clearing the thread with
   `/clear` or `/reset` does not bring them back, and they do not appear on
   resumed conversations. The preference is saved, but cycling and dismissal are

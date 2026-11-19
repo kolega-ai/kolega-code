@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from kolega_code.cli.settings import CliSettings, SettingsStore
+from kolega_code.cli.settings import CliSettings, SettingsStore, SettingsStoreError
 
 if TYPE_CHECKING:
     from textual.pilot import Pilot
@@ -137,10 +137,12 @@ async def test_discovery_tip_cycles_by_click_and_keyboard_and_is_selectable(widt
         assert isinstance(tip, DiscoveryTip)
         dialog = tip.query_one(".discovery-tip-dialog")
         copy = tip.query_one(".discovery-tip-text", Static)
+        disable = tip.query_one("#discovery-tip-disable", Button)
         button = tip.query_one(".discovery-tip-next", Button)
         close = tip.query_one("#discovery-tip-close", Button)
         badge = tip.query_one(".discovery-tip-badge", Static)
         position = tip.query_one(".discovery-tip-position", Static)
+        max_dialog_height = 13 if width < 54 else 12
 
         async def assert_tip_presentation(index: int) -> None:
             expected_tip = DISCOVERY_TIPS[index]
@@ -149,14 +151,18 @@ async def test_discovery_tip_cycles_by_click_and_keyboard_and_is_selectable(widt
                 lambda: (
                     tip.current_tip == expected_tip
                     and str(position.render()) == f"{index + 1} / {len(DISCOVERY_TIPS)}"
-                    and dialog.region.height <= 12
+                    and dialog.region.height <= max_dialog_height
                     and dialog.region.width <= width - 2
                     and all(
                         widget.region.width > 0 and dialog.region.contains_region(widget.region)
-                        for widget in (badge, position, copy, button, close)
+                        for widget in (badge, position, copy, disable, button, close)
                     )
                     and badge.region.y < copy.region.y < button.region.y
+                    and copy.region.bottom <= disable.region.y
                     and copy.region.bottom <= button.region.y
+                    and not disable.region.overlaps(button.region)
+                    and not disable.region.overlaps(close.region)
+                    and not button.region.overlaps(close.region)
                     and "".join("".join(copy.render_line(y).text.split()) for y in range(copy.content_size.height))
                     == "".join(expected_tip.split())
                 ),
@@ -190,6 +196,10 @@ async def test_discovery_tip_cycles_by_click_and_keyboard_and_is_selectable(widt
         assert badge.styles.background.a > 0
         assert badge.styles.color != badge.styles.background
         assert str(badge.render()) == "QUICK TIP"
+        assert disable.can_focus
+        assert str(disable.label) == "Don't show again"
+        assert disable.tooltip == "Turn off startup discovery tips"
+        assert disable.active_effect_duration == 0
         assert button.can_focus
         assert button.tooltip == "Next discovery tip"
         assert button.active_effect_duration == 0
@@ -314,6 +324,8 @@ async def test_tip_dismissal_restores_focus_and_reset_never_reopens_it(
         else:
             await pilot.press(dismiss)
         await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1 and app.screen.focused is composer)
+        assert app.settings.discovery_tips is True
+        assert app.settings_store.load().discovery_tips is True
         assert not app.session.history
         composer.load_text("inspect the workspace")
         composer.focus()
@@ -554,3 +566,198 @@ async def test_discovery_settings_switch_roundtrip_and_discard(
         await pilot.pause()
         assert app.settings.discovery_tips is not enabled
         assert app.settings_store.load().discovery_tips is not enabled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("trigger", "expected_disable"),
+    [
+        ("escape", False),
+        ("close_click", False),
+        ("close_enter", False),
+        ("disable_click", True),
+        ("disable_keyboard", True),
+    ],
+)
+async def test_discovery_tip_dismiss_results(trigger: str, expected_disable: bool) -> None:
+    pytest.importorskip("textual")
+    from textual.app import App
+    from textual.widgets import Button
+
+    from kolega_code.cli.tui.discovery import DiscoveryTip
+
+    results: list[bool | None] = []
+
+    class TipApp(App[None]):
+        async def on_mount(self) -> None:
+            await self.push_screen(DiscoveryTip(id="tip"), callback=results.append)
+
+    app = TipApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        tip = app.screen
+        assert isinstance(tip, DiscoveryTip)
+        close = tip.query_one("#discovery-tip-close", Button)
+        disable = tip.query_one("#discovery-tip-disable", Button)
+        await _wait_for_layout(pilot, lambda: tip.focused is close and disable.region.width > 0)
+        if trigger == "escape":
+            await pilot.press("escape")
+        elif trigger == "close_click":
+            assert await pilot.click(close)
+        elif trigger == "close_enter":
+            await pilot.press("enter")
+        elif trigger == "disable_click":
+            assert await pilot.click(disable)
+        else:
+            await pilot.press("tab")
+            await _wait_for_layout(pilot, lambda: tip.focused is disable)
+            await pilot.press("enter")
+        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1 and results == [expected_disable])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trigger", ["click", "keyboard"])
+async def test_dont_show_again_persists_disabled_setting_and_suppresses_next_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None, trigger: str
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Button, Switch
+
+    from kolega_code.cli import messages
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.config import build_agent_config, config_summary
+    from kolega_code.cli.session_store import SessionStore
+    from kolega_code.cli.tui.discovery import DiscoveryTip
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _configured_app(tmp_path, monkeypatch, True)
+    notices: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        app,
+        "_notify_user",
+        lambda message, **kwargs: notices.append((message, kwargs.get("severity", "information"))),
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
+        tip = app.screen
+        assert isinstance(tip, DiscoveryTip)
+        composer = app.query_one(ChatComposer)
+        close = tip.query_one("#discovery-tip-close", Button)
+        disable = tip.query_one("#discovery-tip-disable", Button)
+        await _wait_for_layout(pilot, lambda: tip.focused is close and disable.region.width > 0)
+
+        # Simulate a concurrent writer updating an unrelated setting on disk.
+        other_store = SettingsStore(app.settings_store.root)
+        other_settings = other_store.load()
+        other_settings.active_theme = "light"
+        other_store.save(other_settings)
+
+        if trigger == "click":
+            assert await pilot.click(disable)
+        else:
+            await pilot.press("tab")
+            await _wait_for_layout(pilot, lambda: tip.focused is disable)
+            await pilot.press("enter")
+
+        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1 and app.screen.focused is composer)
+        assert app.settings.discovery_tips is False
+        reloaded = SettingsStore(app.settings_store.root).load()
+        assert reloaded.discovery_tips is False
+        assert reloaded.active_theme == "light"
+        assert json.loads(app.settings_store.path.read_text(encoding="utf-8"))["discovery_tips"] is False
+        assert notices == [(messages.DISCOVERY_TIPS_DISABLED, "information")]
+        assert not app.session.history
+
+        # Settings reflects the disabled state cleanly without marking the form dirty.
+        app.action_open_settings(category="appearance")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        await _wait_for_layout(pilot, lambda: not screen._initializing)
+        switch = screen.query_one("#discovery_tips_switch", Switch)
+        assert switch.value is False
+        assert not screen.dirty
+        screen.action_close()
+        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
+
+    # A fresh launch against the same state directory no longer shows startup tips.
+    fresh_store = SettingsStore(app.settings_store.root)
+    fresh_settings = fresh_store.load()
+    assert fresh_settings.discovery_tips is False
+    fresh_config = build_agent_config(app.project_path, env={}, settings=fresh_settings, settings_store=fresh_store)
+    session_store = SessionStore(fresh_store.root)
+    fresh_session = session_store.create(app.project_path, "code", config_summary(fresh_config))
+    fresh_app = KolegaCodeApp(
+        project_path=app.project_path,
+        config=fresh_config,
+        mode="code",
+        store=session_store,
+        settings_store=fresh_store,
+        session=fresh_session,
+    )
+    async with fresh_app.run_test(size=(120, 40)) as fresh_pilot:
+        for _ in range(3):
+            await fresh_pilot.pause()
+        assert len(fresh_app.screen_stack) == 1
+        assert not isinstance(fresh_app.screen, DiscoveryTip)
+
+        # Re-enabling in Settings persists discovery_tips=True again.
+        fresh_app.action_open_settings(category="appearance")
+        await fresh_pilot.pause()
+        re_screen = fresh_app.screen
+        assert isinstance(re_screen, SettingsScreen)
+        await _wait_for_layout(fresh_pilot, lambda: not re_screen._initializing)
+        re_switch = re_screen.query_one("#discovery_tips_switch", Switch)
+        re_switch.value = True
+        await _wait_for_layout(fresh_pilot, lambda: re_screen.dirty)
+        await fresh_app._save_settings_from_ui()
+        await _wait_for_layout(fresh_pilot, lambda: not re_screen.dirty)
+        assert fresh_app.settings.discovery_tips is True
+        assert SettingsStore(fresh_store.root).load().discovery_tips is True
+
+
+@pytest.mark.asyncio
+async def test_dont_show_again_rolls_back_and_warns_when_save_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Button
+
+    from kolega_code.cli.tui.discovery import DiscoveryTip
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _configured_app(tmp_path, monkeypatch, True)
+    notices: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        app,
+        "_notify_user",
+        lambda message, **kwargs: notices.append((message, kwargs.get("severity", "information"))),
+    )
+
+    def fail_save(_settings: CliSettings) -> None:
+        raise SettingsStoreError("disk full")
+
+    monkeypatch.setattr(app.settings_store, "save", fail_save)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
+        tip = app.screen
+        assert isinstance(tip, DiscoveryTip)
+        composer = app.query_one(ChatComposer)
+        disable = tip.query_one("#discovery-tip-disable", Button)
+        await _wait_for_layout(pilot, lambda: disable.region.width > 0)
+        assert await pilot.click(disable)
+        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1 and app.screen.focused is composer)
+
+        assert app.settings.discovery_tips is True
+        assert SettingsStore(app.settings_store.root).load().discovery_tips is True
+        assert len(notices) == 1
+        assert notices[0][1] == "warning"
+        assert "disk full" in notices[0][0]
+
+        # Even when saving failed, the launch's tip stays consumed for this run.
+        app._ensure_startup_entry()
+        await pilot.pause()
+        assert len(app.screen_stack) == 1
+        assert not isinstance(app.screen, DiscoveryTip)
