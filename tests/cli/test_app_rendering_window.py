@@ -22,7 +22,7 @@ from kolega_code.cli import theme
 from kolega_code.cli.tui import state as tui_state
 from kolega_code.cli.tui.state import ConversationEntry
 from kolega_code.cli.tui.sub_agent_screen import SubAgentRosterRow
-from kolega_code.cli.tui.widgets import JumpToBottomBar, TrajectoryScrollView
+from kolega_code.cli.tui.widgets import ConversationEntryWidget, JumpToBottomBar, ToolEntryWidget, TrajectoryScrollView
 
 from ._app_test_utils import _build_sub_agent_test_app, _sub_agent_event, wait_for_layout
 
@@ -399,39 +399,108 @@ async def test_transcript_history_stays_bounded_in_both_directions(
 
 
 @pytest.mark.asyncio
-async def test_transcript_jump_to_bottom_refollows_and_trims(tmp_path: Path, monkeypatch) -> None:
+async def test_transcript_jump_to_bottom_refollows_and_trims(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
-    async with app.run_test() as pilot:
-        await _settle(pilot)
-        _add_entries(app, 250)
+    async with app.run_test(size=(90, 26)) as pilot:
+        await wait_for_layout(pilot, app._startup_complete.is_set)
+        _add_entries(app, 425)
+        disclosed = ConversationEntry(kind="thinking", content="Disclosed reasoning")
+        app._add_conversation_entry(disclosed)
+        _add_entries(app, 24, start=426)
         app._flush_conversation_render()
-        await _settle(pilot)
-        _add_entries(app, 200, start=250)
-        app._flush_conversation_render()
-        await _settle(pilot)
-
         view = app._conversation
         window = _window(app)
         tail = [entry.entry_id for entry in app.conversation_entries[-WINDOW_MAX:]]
+        await wait_for_layout(
+            pilot,
+            lambda: (
+                view.max_scroll_y > 0
+                and view.is_at_bottom()
+                and not app._conversation_anchor_pending
+                and bool(window.widgets[disclosed.entry_id].query(Collapsible))
+            ),
+        )
+        disclosure = window.widgets[disclosed.entry_id].query_one(Collapsible)
+        disclosure.collapsed = False
+        await wait_for_layout(pilot, lambda: bool(disclosure.query(".tool-body")) and view.is_at_bottom())
         for _ in range(5):
             before = window.mounted_start
             view.scroll_to(y=0, animate=False, immediate=True)
             await wait_for_layout(pilot, lambda: window.mounted_start < before and view._scrollback_anchor is None)
         assert view.has_newer_entries  # Jump from a window that does not contain the tail.
+        before_widgets = window.widgets.copy()
+        overlap = set(tail) & before_widgets.keys()
+        assert len(overlap) == 100 and disclosed.entry_id in overlap
+        constructed: list[str] = []
+        make_widget = window._make_widget
+
+        def count_widget(entry: ConversationEntry) -> ConversationEntryWidget | ToolEntryWidget:
+            constructed.append(entry.entry_id)
+            return make_widget(entry)
+
+        monkeypatch.setattr(window, "_make_widget", count_widget)
 
         bar = app.query_one("#jump_to_bottom", JumpToBottomBar)
         app.on_jump_to_bottom_bar_pressed(JumpToBottomBar.Pressed(bar))
         await wait_for_layout(
-            pilot, lambda: view.auto_follow_bottom and view.is_at_bottom() and not app._conversation_anchor_pending
+            pilot,
+            lambda: (
+                list(view.children) == list(window.widgets.values())
+                and view.auto_follow_bottom
+                and view.is_at_bottom()
+                and not app._conversation_anchor_pending
+                and window.widgets[tail[-1]].region.bottom == view.content_region.bottom
+            ),
         )
         assert list(window.widgets) == tail
+        assert constructed == [key for key in tail if key not in overlap]
+        assert sum(not widget.is_attached for widget in before_widgets.values()) == 60
+        assert all(window.widgets[key] is before_widgets[key] for key in overlap)
+        assert window.widgets[disclosed.entry_id].query_one(Collapsible) is disclosure and not disclosure.collapsed
 
         _add_entries(app, 150, start=450)
         app._flush_conversation_render()
-        await _settle(pilot)
+        await wait_for_layout(
+            pilot,
+            lambda: (
+                view.auto_follow_bottom
+                and view.is_at_bottom()
+                and not app._conversation_anchor_pending
+                and not bar.display
+            ),
+        )
         assert len(app._entry_widgets) == WINDOW_MAX
-        assert bar.display is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mounted_range", ["disjoint", "stale"])
+async def test_transcript_show_tail_rebuilds_unusable_range(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mounted_range: str
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await wait_for_layout(pilot, app._startup_complete.is_set)
+        _add_entries(app, WINDOW_MAX)
+        app._flush_conversation_render()
+        view = app._conversation
+        window = _window(app)
+        await wait_for_layout(pilot, lambda: view.is_at_bottom() and not app._conversation_anchor_pending)
+        before = list(window.widgets.values())
+        entries = app.conversation_entries.copy()
+        if mounted_range == "disjoint":
+            entries.extend(ConversationEntry(kind="user", content=f"new {index}") for index in range(WINDOW_MAX))
+        else:
+            entries[-1] = ConversationEntry(kind="user", content="replacement")
+
+        window.show_tail(entries)
+        await wait_for_layout(
+            pilot,
+            lambda: all(not row.is_attached for row in before) and list(view.children) == list(window.widgets.values()),
+        )
+        assert list(window.widgets) == [entry.entry_id for entry in entries[-WINDOW_MAX:]]
+        assert window.mounted_start == len(entries) - WINDOW_MAX
 
 
 @pytest.mark.asyncio
