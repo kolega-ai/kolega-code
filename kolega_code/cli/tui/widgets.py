@@ -664,9 +664,17 @@ class ScrollbackWindow:
         if not self._can_render:
             dirty_ids.clear()
             return
+        view = self._view
         for entry_id in dirty_ids:
             widget = self.widgets.get(entry_id)
             if widget is not None:
+                if (
+                    isinstance(view, ConversationView)
+                    and isinstance(widget, ConversationEntryWidget)
+                    and widget.entry.kind == "assistant"
+                    and view.defer_reply_refresh(widget)
+                ):
+                    continue
                 widget.refresh_content()
         dirty_ids.clear()
 
@@ -858,6 +866,7 @@ class ConversationView(VerticalScroll):
         self.auto_follow_bottom = True
         self.has_newer_entries = False
         self._scrollback_anchor: _ScrollbackAnchor | None = None
+        self._deferred_replies: dict[ConversationEntryWidget, int] = {}
 
     def is_at_bottom(self) -> bool:
         """Return whether the current scroll position is effectively at the end."""
@@ -873,21 +882,59 @@ class ConversationView(VerticalScroll):
         if enabled:
             self._scrollback_anchor = None
 
-    def arrange(self, size: Size, optimal: bool = False) -> DockArrangeResult:
-        arrangement = super().arrange(size, optimal)
-        anchor = self._scrollback_anchor
-        if anchor is None or optimal or size.height <= 0:
-            return arrangement
-        if self._pruning or anchor.widget not in arrangement.widgets:
-            self._scrollback_anchor = None
-            return arrangement
+    def defer_reply_refresh(self, reply: ConversationEntryWidget) -> bool:
+        height = self.content_region.height
+        if not self.auto_follow_bottom and not self.is_at_bottom() and height > 0:
+            y = self._deferred_replies.get(reply)
+            if y is None:
+                y = reply.virtual_region.y
+            if y >= self.scroll_offset.y + height:
+                self._deferred_replies[reply] = y
+                return True
+        self._deferred_replies.pop(reply, None)
+        return False
 
-        placement = next(p for p in arrangement.placements if p.widget is anchor.widget)
-        virtual_y = placement.region.y
-        maximum = max(0, arrangement.total_region.bottom - size.height)
+    def _scrollback_position(
+        self, arrangement: DockArrangeResult, height: int, anchor: _ScrollbackAnchor
+    ) -> tuple[int, float]:
+        virtual_y = next(p.region.y for p in arrangement.placements if p.widget is anchor.widget)
+        maximum = max(0, arrangement.total_region.bottom - height)
         scroll_y = clamp(self.scroll_y + virtual_y - anchor.virtual_y, 0, maximum)
         for delta in anchor.wheel_deltas:
             scroll_y = clamp(scroll_y + delta, 0, maximum)
+        return virtual_y, scroll_y
+
+    def arrange(self, size: Size, optimal: bool = False) -> DockArrangeResult:
+        arrangement = super().arrange(size, optimal)
+        if optimal or size.height <= 0 or self._pruning:
+            return arrangement
+        anchor = self._scrollback_anchor
+        if anchor is not None and anchor.widget not in arrangement.widgets:
+            self._scrollback_anchor = anchor = None
+        position = self._scrollback_position(arrangement, size.height, anchor) if anchor is not None else None
+        while self._deferred_replies:
+            bottom = (round(position[1]) if position is not None else self.scroll_offset.y) + size.height
+            following = self.auto_follow_bottom or (self._anchored and not self._anchor_released)
+            self._deferred_replies = {
+                p.widget: p.region.y
+                for p in arrangement.placements
+                if isinstance(p.widget, ConversationEntryWidget) and p.widget in self._deferred_replies
+            }
+            exposed = [reply for reply, y in self._deferred_replies.items() if following or y < bottom]
+            if not exposed:
+                break
+            # Scroll and resize both arrange before paint. A completed reply can
+            # shrink, so use the new positions to check again for exposed replies.
+            for reply in exposed:
+                del self._deferred_replies[reply]
+                reply.refresh_content()
+            self._clear_arrangement_cache()
+            arrangement = super().arrange(size, optimal)
+            if anchor is not None:
+                position = self._scrollback_position(arrangement, size.height, anchor)
+        if anchor is None or position is None:
+            return arrangement
+        virtual_y, scroll_y = position
         anchor.virtual_y = virtual_y
         anchor.wheel_deltas.clear()
         if all(widget.is_mounted for widget in anchor.new_widgets) and all(
@@ -932,6 +979,12 @@ class ConversationView(VerticalScroll):
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         super().watch_scroll_y(old_value, new_value)
+        if self._deferred_replies and any(
+            y < round(new_value) + self.content_region.height for y in self._deferred_replies.values()
+        ):
+            # A scroll-only reflow may keep stale widget dimensions. Require
+            # full layout before the frame that crosses a deferred reply.
+            self.screen._layout_widgets.setdefault(self, set()).update(self._deferred_replies)
         was_following = self.auto_follow_bottom
         self.auto_follow_bottom = self.is_at_bottom()
         try:
