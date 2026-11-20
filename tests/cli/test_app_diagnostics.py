@@ -250,6 +250,16 @@ async def test_bug_export_session_switch_does_not_change_successor_transcript_or
         _submit(app, "/bug")
         try:
             await gate.wait_entered()
+            # The startup recent-sessions worker lists sessions off-thread. If it
+            # lands after the swap below, it sees the previous session as recent and
+            # prepends a startup card to the successor transcript.
+            await wait_for_layout(
+                pilot,
+                lambda: (
+                    app._discovery_tips_ready
+                    and all(worker.is_finished for worker in app.workers if worker.group == "recent-sessions")
+                ),
+            )
             successor = ConversationEntry(kind="system", content="Successor session")
             app.session = replace(original_session, session_id="successor-session", name="Successor")
             app.conversation_entries = [successor]
