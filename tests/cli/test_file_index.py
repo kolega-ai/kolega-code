@@ -171,6 +171,23 @@ def test_fuzzy_score_no_match_returns_none() -> None:
     assert fuzzy_score("zzz", "src/main.py") is None
 
 
+def test_fuzzy_score_matches_when_only_the_directory_has_the_letters() -> None:
+    # "abf" is a subsequence of the path but not of the basename "file.txt", so the
+    # basename-anchored rescan finds nothing; the path match must still be scored.
+    assert fuzzy_score("abf", "alpha/beta/file.txt") is not None
+
+
+def test_fuzzy_score_is_stable_across_repeated_calls() -> None:
+    # Folding is memoized per path: a warm lookup must score the same path the same
+    # way, and must not reuse another path's basename offset or depth penalty.
+    nested = fuzzy_score("main", "src/main.py")
+    shallow = fuzzy_score("main", "main.py")
+    assert shallow is not None and nested is not None and shallow > nested
+    assert fuzzy_score("main", "src/main.py") == nested
+    assert fuzzy_score("main", "main.py") == shallow
+    assert fuzzy_score("ΑΣΒ", "ασβ/Σ.txt") is not None
+
+
 def test_fuzzy_score_subsequence_matches() -> None:
     assert fuzzy_score("smain", "src/main.py") is not None
     assert fuzzy_score("apppy", "kolega_code/cli/app.py") is not None

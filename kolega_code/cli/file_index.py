@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from typing import Iterable, List, Optional
 
@@ -213,9 +214,7 @@ def fuzzy_score(query: str, path: str) -> Optional[float]:
         return -float(path.count("/"))
 
     q = query.lower()
-    p = path.lower()
-    basename_start = p.rstrip("/").rfind("/") + 1
-    penalty = path.count("/") * 0.5 + len(path) * 0.01
+    p, basename_start, penalty = _folded_path(path)
 
     # Substring matches outrank scattered subsequences.
     idx = p.find(q)
@@ -229,12 +228,28 @@ def fuzzy_score(query: str, path: str) -> Optional[float]:
 
     # Subsequence match: try a basename-anchored scan too, so dense matches in
     # the filename beat scattered matches that start in the directory part.
+    # A query with no subsequence anywhere has none in the basename either, so
+    # the anchored rescan is only needed once the full scan found a match.
     full = _subsequence_score(q, p, 0, basename_start)
-    anchored = _subsequence_score(q, p, basename_start, basename_start)
-    candidates = [score for score in (full, anchored) if score is not None]
-    if not candidates:
+    if full is None:
         return None
-    return max(candidates) - penalty
+    anchored = _subsequence_score(q, p, basename_start, basename_start)
+    if anchored is None:
+        return full - penalty
+    return max(full, anchored) - penalty
+
+
+@lru_cache(maxsize=8192)
+def _folded_path(path: str) -> tuple[str, int, float]:
+    """Case-folded path, basename offset, and depth penalty, memoized per path.
+
+    ``fuzzy_score`` runs for every indexed path on every keystroke, and the index
+    is bounded (``MAX_FILES``), so folding each path once keeps a keystroke from
+    re-lowercasing the same snapshot. The bound must exceed ``MAX_FILES`` for one
+    full scan to stay warm.
+    """
+    lowered = path.lower()
+    return lowered, lowered.rstrip("/").rfind("/") + 1, path.count("/") * 0.5 + len(path) * 0.01
 
 
 def _subsequence_score(q: str, p: str, start: int, basename_start: int) -> Optional[float]:
