@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -10,9 +9,9 @@ import pytest
 
 from kolega_code.cli.settings import CliSettings, SettingsStore, SettingsStoreError
 
-if TYPE_CHECKING:
-    from textual.pilot import Pilot
+from ._app_test_utils import wait_for_layout
 
+if TYPE_CHECKING:
     from kolega_code.cli.app import KolegaCodeApp
 
 
@@ -106,14 +105,6 @@ def test_unrelated_stale_settings_save_preserves_discovery_opt_in(tmp_path: Path
     assert store.load().discovery_tips is True
 
 
-async def _wait_for_layout(pilot: Pilot, predicate: Callable[[], bool]) -> None:
-    for _ in range(50):
-        await pilot.pause()
-        if predicate():
-            return
-    assert predicate()
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("width", [32, 40, 80])
 @pytest.mark.parametrize("theme_name", ["textual-dark", "textual-light"])
@@ -146,7 +137,7 @@ async def test_discovery_tip_cycles_by_click_and_keyboard_and_is_selectable(widt
 
         async def assert_tip_presentation(index: int) -> None:
             expected_tip = DISCOVERY_TIPS[index]
-            await _wait_for_layout(
+            await wait_for_layout(
                 pilot,
                 lambda: (
                     tip.current_tip == expected_tip
@@ -184,7 +175,7 @@ async def test_discovery_tip_cycles_by_click_and_keyboard_and_is_selectable(widt
                 for segment in copy.render_line(y)
             )
             # Check native mouse-selection offsets after each wrapped layout.
-            await _wait_for_layout(
+            await wait_for_layout(
                 pilot,
                 lambda: app.screen.get_widget_and_offset_at(copy.region.x + 1, copy.region.y)[1] is not None,
             )
@@ -214,7 +205,7 @@ async def test_discovery_tip_cycles_by_click_and_keyboard_and_is_selectable(widt
         tip.action_next_tip()
         assert DiscoveryTip().current_tip == DISCOVERY_TIPS[0]
         await pilot.press("escape")
-        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
+        await wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
 
 
 def _configured_app(
@@ -274,13 +265,13 @@ async def test_startup_tip_modal_is_opt_in_and_stays_dismissed_across_refresh_an
         assert not isinstance(app.screen, DiscoveryTip)
         app.settings.discovery_tips = True
         app._ensure_startup_entry()
-        await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
+        await wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
         tip = app.screen
         assert isinstance(tip, DiscoveryTip)
-        await _wait_for_layout(pilot, lambda: tip.region.height > 0)
+        await wait_for_layout(pilot, lambda: tip.region.height > 0)
         card = app.query_one(StartupEntryWidget)
         tip.action_next_tip()
-        await _wait_for_layout(pilot, lambda: tip.current_tip == DISCOVERY_TIPS[1])
+        await wait_for_layout(pilot, lambda: tip.current_tip == DISCOVERY_TIPS[1])
         for _ in range(3):
             app._ensure_startup_entry()
             await pilot.pause()
@@ -288,10 +279,10 @@ async def test_startup_tip_modal_is_opt_in_and_stays_dismissed_across_refresh_an
         assert tip.current_tip == DISCOVERY_TIPS[1]
         assert not card.query(DiscoveryTip)
         await pilot.press("escape")
-        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
+        await wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
         app._ensure_startup_entry()
         app._render_conversation()
-        await _wait_for_layout(pilot, lambda: app.query_one(StartupEntryWidget) is not card)
+        await wait_for_layout(pilot, lambda: app.query_one(StartupEntryWidget) is not card)
         assert not isinstance(app.screen, DiscoveryTip)
         # Discovery stays presentation-only: no model message or persisted tip index.
         assert not app.session.history
@@ -304,6 +295,7 @@ async def test_startup_tip_modal_is_opt_in_and_stays_dismissed_across_refresh_an
 async def test_tip_dismissal_restores_focus_and_reset_never_reopens_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None, dismiss: str
 ) -> None:
+    from textual.errors import NoWidget
     from textual.widgets import Button, Collapsible
 
     from kolega_code.cli.tui.discovery import DiscoveryTip
@@ -312,25 +304,39 @@ async def test_tip_dismissal_restores_focus_and_reset_never_reopens_it(
 
     app = _configured_app(tmp_path, monkeypatch, True)
     async with app.run_test(size=(120, 40)) as pilot:
-        await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
+        await wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
         tip = app.screen
         assert isinstance(tip, DiscoveryTip)
         tip.action_next_tip()
+        # Cycling the tip relayouts the dialog; flush that pass before locating
+        # the close button so the click below targets its settled position.
+        await pilot.pause()
         composer = app.query_one(ChatComposer)
         close = tip.query_one("#discovery-tip-close", Button)
-        await _wait_for_layout(pilot, lambda: tip.focused is close)
+        click_offset = (close.region.width // 2, 0)
+
+        def close_is_hittable() -> bool:
+            if tip.focused is not close or close.region.width == 0:
+                return False
+            try:
+                hit, _ = app.get_widget_at(close.region.x + click_offset[0], close.region.y)
+            except NoWidget:
+                return False
+            return hit is close
+
+        await wait_for_layout(pilot, close_is_hittable)
         if dismiss == "click":
-            assert await pilot.click(close)
+            assert await pilot.click(close, offset=click_offset)
         else:
             await pilot.press(dismiss)
-        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1 and app.screen.focused is composer)
+        await wait_for_layout(pilot, lambda: len(app.screen_stack) == 1 and app.screen.focused is composer)
         assert app.settings.discovery_tips is True
         assert app.settings_store.load().discovery_tips is True
         assert not app.session.history
         composer.load_text("inspect the workspace")
         composer.focus()
         await pilot.press("enter")
-        await _wait_for_layout(pilot, lambda: app.agent_worker is None and bool(app.session.history))
+        await wait_for_layout(pilot, lambda: app.agent_worker is None and bool(app.session.history))
         card = app.query_one(StartupEntryWidget)
         card.query_one(Collapsible).collapsed = False
         app._ensure_startup_entry()
@@ -338,7 +344,7 @@ async def test_tip_dismissal_restores_focus_and_reset_never_reopens_it(
         assert not isinstance(app.screen, DiscoveryTip)
         assert app.config is not None
         await app._build_agent(app.config, rebuild=True)
-        await _wait_for_layout(pilot, lambda: app.query_one(StartupEntryWidget) is not card)
+        await wait_for_layout(pilot, lambda: app.query_one(StartupEntryWidget) is not card)
         assert not isinstance(app.screen, DiscoveryTip)
         await app._reset_current_thread()
         # A thread reset is not startup: the dismissed tip must stay gone even
@@ -359,20 +365,20 @@ async def test_clear_command_does_not_resurrect_dismissed_tip(
 
     app = _configured_app(tmp_path, monkeypatch, True)
     async with app.run_test(size=(120, 40)) as pilot:
-        await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
+        await wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
         await pilot.press("escape")
-        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
+        await wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
 
         composer = app.query_one(ChatComposer)
         composer.focus()
         composer.load_text("inspect the workspace")
         await pilot.press("enter")
-        await _wait_for_layout(pilot, lambda: app.agent_worker is None and bool(app.session.history))
+        await wait_for_layout(pilot, lambda: app.agent_worker is None and bool(app.session.history))
 
         # The real user path: typing /clear in the composer must not re-offer the tip.
         composer.load_text("/clear")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
-        await _wait_for_layout(
+        await wait_for_layout(
             pilot,
             lambda: any(
                 entry.kind == "progress" and entry.content == THREAD_RESET_MESSAGE for entry in app.conversation_entries
@@ -438,10 +444,10 @@ async def test_tip_waits_for_other_modals_and_rechecks_thread_freshness(
             app._add_conversation_entry(ConversationEntry(kind="user", content="a new request"))
         await pilot.press("escape")
         if submit_before_close:
-            await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
+            await wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
             assert not isinstance(app.screen, DiscoveryTip)
         else:
-            await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
+            await wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
             assert len(app.screen_stack) == 2
 
 
@@ -456,7 +462,7 @@ async def test_disabling_tips_closes_the_open_modal_without_reopening_it(
         assert isinstance(app.screen, DiscoveryTip)
         app.settings.discovery_tips = False
         app._ensure_startup_entry()
-        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
+        await wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
         app.settings.discovery_tips = True
         app._ensure_startup_entry()
         await pilot.pause()
@@ -490,10 +496,10 @@ async def test_tip_does_not_cover_active_prompts_or_let_them_steal_modal_focus(
         app._pending_question = question
         app._show_question_options(question.question, question.options)
         app._heal_prompt_focus()
-        await _wait_for_layout(pilot, lambda: tip.focused is close)
+        await wait_for_layout(pilot, lambda: tip.focused is close)
         await pilot.press("escape")
         actions = app.query_one("#question_actions", ActionList)
-        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1 and app.screen.focused is actions)
+        await wait_for_layout(pilot, lambda: len(app.screen_stack) == 1 and app.screen.focused is actions)
         assert app._pending_question is question
         app._pending_question = None
         app._set_question_actions_visible(False)
@@ -514,12 +520,12 @@ async def test_discovery_settings_switch_roundtrip_and_discard(
     async with app.run_test(size=(100, 40)) as pilot:
         if enabled:
             await pilot.press("escape")
-            await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
+            await wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
         app.action_open_settings(category="appearance")
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
-        await _wait_for_layout(pilot, lambda: not screen._initializing)
+        await wait_for_layout(pilot, lambda: not screen._initializing)
         switch = screen.query_one("#discovery_tips_switch", Switch)
         apply_button = screen.query_one("#save_settings", Button)
         assert switch.value is enabled
@@ -528,7 +534,7 @@ async def test_discovery_settings_switch_roundtrip_and_discard(
 
         switch.focus()
         await pilot.press("space")
-        await _wait_for_layout(pilot, lambda: screen.dirty and not apply_button.disabled)
+        await wait_for_layout(pilot, lambda: screen.dirty and not apply_button.disabled)
         assert switch.value is not enabled
         assert app.settings.discovery_tips is enabled
         assert app.settings_store.load().discovery_tips is enabled
@@ -537,28 +543,28 @@ async def test_discovery_settings_switch_roundtrip_and_discard(
         assert app.settings.discovery_tips is enabled
 
         switch.value = enabled
-        await _wait_for_layout(pilot, lambda: not screen.dirty and apply_button.disabled)
+        await wait_for_layout(pilot, lambda: not screen.dirty and apply_button.disabled)
         switch.value = not enabled
-        await _wait_for_layout(pilot, lambda: screen.dirty and not apply_button.disabled)
+        await wait_for_layout(pilot, lambda: screen.dirty and not apply_button.disabled)
         await app._save_settings_from_ui()
-        await _wait_for_layout(pilot, lambda: not screen.dirty and apply_button.disabled)
+        await wait_for_layout(pilot, lambda: not screen.dirty and apply_button.disabled)
         assert app.settings.discovery_tips is not enabled
         assert app.settings_store.load().discovery_tips is not enabled
 
         screen.action_close()
         await pilot.pause()
         if not enabled:
-            await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
+            await wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
             await pilot.press("escape")
-            await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
+            await wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
         app.action_open_settings(category="appearance")
         await pilot.pause()
         reopened = app.screen
         assert isinstance(reopened, SettingsScreen)
-        await _wait_for_layout(pilot, lambda: not reopened._initializing)
+        await wait_for_layout(pilot, lambda: not reopened._initializing)
         assert reopened.query_one("#discovery_tips_switch", Switch).value is not enabled
         reopened.query_one("#discovery_tips_switch", Switch).value = enabled
-        await _wait_for_layout(pilot, lambda: reopened.dirty)
+        await wait_for_layout(pilot, lambda: reopened.dirty)
         reopened.action_close()
         await pilot.pause()
         assert isinstance(app.screen, ConfirmDiscardSettingsScreen)
@@ -598,7 +604,7 @@ async def test_discovery_tip_dismiss_results(trigger: str, expected_disable: boo
         assert isinstance(tip, DiscoveryTip)
         close = tip.query_one("#discovery-tip-close", Button)
         disable = tip.query_one("#discovery-tip-disable", Button)
-        await _wait_for_layout(pilot, lambda: tip.focused is close and disable.region.width > 0)
+        await wait_for_layout(pilot, lambda: tip.focused is close and disable.region.width > 0)
         if trigger == "escape":
             await pilot.press("escape")
         elif trigger == "close_click":
@@ -609,9 +615,9 @@ async def test_discovery_tip_dismiss_results(trigger: str, expected_disable: boo
             assert await pilot.click(disable)
         else:
             await pilot.press("tab")
-            await _wait_for_layout(pilot, lambda: tip.focused is disable)
+            await wait_for_layout(pilot, lambda: tip.focused is disable)
             await pilot.press("enter")
-        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1 and results == [expected_disable])
+        await wait_for_layout(pilot, lambda: len(app.screen_stack) == 1 and results == [expected_disable])
 
 
 @pytest.mark.asyncio
@@ -639,13 +645,13 @@ async def test_dont_show_again_persists_disabled_setting_and_suppresses_next_lau
     )
 
     async with app.run_test(size=(120, 40)) as pilot:
-        await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
+        await wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
         tip = app.screen
         assert isinstance(tip, DiscoveryTip)
         composer = app.query_one(ChatComposer)
         close = tip.query_one("#discovery-tip-close", Button)
         disable = tip.query_one("#discovery-tip-disable", Button)
-        await _wait_for_layout(pilot, lambda: tip.focused is close and disable.region.width > 0)
+        await wait_for_layout(pilot, lambda: tip.focused is close and disable.region.width > 0)
 
         # Simulate a concurrent writer updating an unrelated setting on disk.
         other_store = SettingsStore(app.settings_store.root)
@@ -657,10 +663,10 @@ async def test_dont_show_again_persists_disabled_setting_and_suppresses_next_lau
             assert await pilot.click(disable)
         else:
             await pilot.press("tab")
-            await _wait_for_layout(pilot, lambda: tip.focused is disable)
+            await wait_for_layout(pilot, lambda: tip.focused is disable)
             await pilot.press("enter")
 
-        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1 and app.screen.focused is composer)
+        await wait_for_layout(pilot, lambda: len(app.screen_stack) == 1 and app.screen.focused is composer)
         assert app.settings.discovery_tips is False
         reloaded = SettingsStore(app.settings_store.root).load()
         assert reloaded.discovery_tips is False
@@ -674,12 +680,12 @@ async def test_dont_show_again_persists_disabled_setting_and_suppresses_next_lau
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
-        await _wait_for_layout(pilot, lambda: not screen._initializing)
+        await wait_for_layout(pilot, lambda: not screen._initializing)
         switch = screen.query_one("#discovery_tips_switch", Switch)
         assert switch.value is False
         assert not screen.dirty
         screen.action_close()
-        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
+        await wait_for_layout(pilot, lambda: len(app.screen_stack) == 1)
 
     # A fresh launch against the same state directory no longer shows startup tips.
     fresh_store = SettingsStore(app.settings_store.root)
@@ -707,12 +713,12 @@ async def test_dont_show_again_persists_disabled_setting_and_suppresses_next_lau
         await fresh_pilot.pause()
         re_screen = fresh_app.screen
         assert isinstance(re_screen, SettingsScreen)
-        await _wait_for_layout(fresh_pilot, lambda: not re_screen._initializing)
+        await wait_for_layout(fresh_pilot, lambda: not re_screen._initializing)
         re_switch = re_screen.query_one("#discovery_tips_switch", Switch)
         re_switch.value = True
-        await _wait_for_layout(fresh_pilot, lambda: re_screen.dirty)
+        await wait_for_layout(fresh_pilot, lambda: re_screen.dirty)
         await fresh_app._save_settings_from_ui()
-        await _wait_for_layout(fresh_pilot, lambda: not re_screen.dirty)
+        await wait_for_layout(fresh_pilot, lambda: not re_screen.dirty)
         assert fresh_app.settings.discovery_tips is True
         assert SettingsStore(fresh_store.root).load().discovery_tips is True
 
@@ -741,14 +747,14 @@ async def test_dont_show_again_rolls_back_and_warns_when_save_fails(
     monkeypatch.setattr(app.settings_store, "save", fail_save)
 
     async with app.run_test(size=(120, 40)) as pilot:
-        await _wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
+        await wait_for_layout(pilot, lambda: isinstance(app.screen, DiscoveryTip))
         tip = app.screen
         assert isinstance(tip, DiscoveryTip)
         composer = app.query_one(ChatComposer)
         disable = tip.query_one("#discovery-tip-disable", Button)
-        await _wait_for_layout(pilot, lambda: disable.region.width > 0)
+        await wait_for_layout(pilot, lambda: disable.region.width > 0)
         assert await pilot.click(disable)
-        await _wait_for_layout(pilot, lambda: len(app.screen_stack) == 1 and app.screen.focused is composer)
+        await wait_for_layout(pilot, lambda: len(app.screen_stack) == 1 and app.screen.focused is composer)
 
         assert app.settings.discovery_tips is True
         assert SettingsStore(app.settings_store.root).load().discovery_tips is True
