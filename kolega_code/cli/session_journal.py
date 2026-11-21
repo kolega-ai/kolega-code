@@ -375,6 +375,24 @@ def _rebuild_root_turn_recovery(events: list[SessionEvent], epoch_id: str) -> Op
     return recovery
 
 
+@dataclass(frozen=True)
+class _ParsedEventPrefix:
+    """Parsed journal prefix reused by later non-repairing reads.
+
+    Appends only add bytes at the end (``_write_event_locked`` uses ``O_APPEND``
+    and sequence repair replaces the file), so a later read parses just the bytes
+    after ``offset``. A different inode, a smaller file, or a file whose size is
+    not exactly ``offset`` forces a full read.
+    """
+
+    device: int
+    inode: int
+    offset: int
+    mtime_ns: int
+    partial_tail: bool
+    events: list[SessionEvent]
+
+
 class SessionJournal:
     """Single-session JSONL writer and artifact store.
 
@@ -417,6 +435,7 @@ class SessionJournal:
             depth=0,
         )
         self._listeners: list[Callable[[SessionEvent], None]] = []
+        self._parsed_prefix: Optional[_ParsedEventPrefix] = None
 
     @property
     def root_stamp(self) -> AgentStamp:
@@ -928,8 +947,70 @@ class SessionJournal:
     def _read_events_locked(self, *, repair_tail: bool, strict_seq: bool = True) -> list[SessionEvent]:
         self._loaded = False
         self._recovery_valid = False
+        if not repair_tail and strict_seq:
+            cached = self._read_appended_events_locked()
+            if cached is not None:
+                return cached
         raw = self._read_event_bytes_locked(repair_tail=repair_tail)
-        return self._parse_event_bytes_locked(raw, strict_seq=strict_seq)
+        events = self._parse_event_bytes_locked(raw, strict_seq=strict_seq)
+        if strict_seq:
+            self._remember_parsed_events_locked(len(raw), events, partial_tail=self._tail_requires_recovery)
+        return events
+
+    def _read_appended_events_locked(self) -> Optional[list[SessionEvent]]:
+        """Reuse the cached parse for the unchanged prefix and parse only the appended bytes."""
+        cached = self._parsed_prefix
+        if cached is None:
+            return None
+        try:
+            fd = os.open(self.events_path, os.O_RDONLY)
+        except OSError:
+            return None
+        try:
+            stat = os.fstat(fd)
+            if (stat.st_dev, stat.st_ino) != (cached.device, cached.inode):
+                return None
+            if stat.st_size == cached.offset and stat.st_mtime_ns == cached.mtime_ns:
+                self._tail_requires_recovery = cached.partial_tail
+                return list(cached.events)
+            if stat.st_size <= cached.offset:
+                return None
+            os.lseek(fd, cached.offset, os.SEEK_SET)
+            appended = bytearray()
+            while chunk := os.read(fd, 1 << 20):
+                appended.extend(chunk)
+            if appended.endswith(b"\n"):
+                self._tail_requires_recovery = False
+                raw = bytes(appended)
+            else:
+                # The writer is mid-append; never expose or parse the incomplete line.
+                self._tail_requires_recovery = True
+                raw = bytes(appended[: appended.rfind(b"\n") + 1])
+            events = list(cached.events)
+            self._parse_event_bytes_into_locked(raw, events, expected_seq=events[-1].seq + 1 if events else 1)
+            self._remember_parsed_events_locked(
+                cached.offset + len(raw), events, partial_tail=self._tail_requires_recovery
+            )
+            return events
+        finally:
+            os.close(fd)
+
+    def _remember_parsed_events_locked(self, offset: int, events: list[SessionEvent], *, partial_tail: bool) -> None:
+        """Record a parse as reusable; the next read revalidates the file against ``offset``."""
+        try:
+            stat = os.stat(self.events_path)
+        except OSError:
+            return
+        if stat.st_size < offset:
+            return
+        self._parsed_prefix = _ParsedEventPrefix(
+            device=stat.st_dev,
+            inode=stat.st_ino,
+            offset=offset,
+            mtime_ns=stat.st_mtime_ns,
+            partial_tail=partial_tail,
+            events=events,
+        )
 
     def _read_event_bytes_locked(self, *, repair_tail: bool) -> bytes:
         if not self.events_path.exists():
@@ -959,8 +1040,19 @@ class SessionJournal:
 
     def _parse_event_bytes_locked(self, raw: bytes, *, strict_seq: bool = True) -> list[SessionEvent]:
         events: list[SessionEvent] = []
-        expected_seq = 1
-        for line_number, line in enumerate(io.BytesIO(raw), start=1):
+        self._parse_event_bytes_into_locked(raw, events, expected_seq=1, strict_seq=strict_seq)
+        return events
+
+    def _parse_event_bytes_into_locked(
+        self,
+        raw: bytes,
+        events: list[SessionEvent],
+        *,
+        expected_seq: int,
+        strict_seq: bool = True,
+    ) -> None:
+        first_line = len(events) + 1
+        for line_number, line in enumerate(io.BytesIO(raw), start=first_line):
             if not line.strip():
                 raise SessionJournalError(f"Blank line in session event log at line {line_number}")
             try:
@@ -982,7 +1074,6 @@ class SessionJournal:
                 )
             events.append(event)
             expected_seq += 1
-        return events
 
 
 @dataclass
