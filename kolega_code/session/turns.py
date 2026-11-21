@@ -116,7 +116,9 @@ class TurnController(Generic[InputT]):
             task.add_done_callback(self._execution_finished)
 
     def release_task(self, task: asyncio.Task[Any]) -> bool:
-        if not task.cancelled():
+        # An inline turn releases the caller that ran it while that caller is
+        # still running, so only a finished task can report an exception.
+        if task.done() and not task.cancelled():
             task.exception()
         owns_stop = self.owner is task or (
             self.execution_task is task and (self.owner is None or self.owner is self._execution_owner)

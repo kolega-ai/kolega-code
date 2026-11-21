@@ -15,8 +15,30 @@ from kolega_code.cli.tui.widgets import ChatComposer
 from kolega_code.events import AgentEvent, KnownEventType
 from kolega_code.llm.models import Message, TextBlock
 
-from ._app_test_utils import FakeCoderAgent, _build_sub_agent_test_app, install_fake_agents, wait_for_turn_idle
+from ._app_test_utils import (
+    FakeCoderAgent,
+    _build_sub_agent_test_app,
+    install_fake_agents,
+    wait_for_layout,
+    wait_for_turn_idle,
+)
 from .test_app_cancel_escalation import _UnstoppableStreamAgent, _start_stuck_turn, _wait_for
+
+
+@pytest.mark.asyncio
+async def test_quit_after_an_inline_turn_does_not_wait_for_its_caller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await wait_for_layout(pilot, app._startup_complete.is_set)
+        assert app.agent is not None
+        # An inline turn makes the test task the execution task; once the turn
+        # returns there is nothing left for shutdown to wait on.
+        await app._process_message("hello")
+        assert app._turn_controller.execution_task is None
+        await app.action_quit()
+        assert app._agent_cleanup_failed is False
 
 
 class _RecordedFinalizationAgent(FakeCoderAgent):
