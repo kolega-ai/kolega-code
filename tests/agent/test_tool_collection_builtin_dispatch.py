@@ -6,7 +6,7 @@ import uuid
 import pytest
 
 from kolega_code.agent.baseagent import BaseAgent
-from kolega_code.config import AgentConfig, EditProtocol, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.config import AgentConfig, EditProtocol, LspConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentConnectionManager
 from kolega_code.agent.tool_backend.memory_tool import MemoryTool
 from kolega_code.agent.tools import ToolCollection, ToolDefinition, ToolCollectionConfig
@@ -32,6 +32,9 @@ def agent_config() -> AgentConfig:
         ),
         fast_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()),
         edit_protocol=EditProtocol.SEARCH_REPLACE,
+        # Dispatch tests do not exercise post-edit diagnostics; an enabled LSP
+        # waits out the server startup timeout on every real write/edit call.
+        lsp=LspConfig(enabled=False),
     )
 
 
