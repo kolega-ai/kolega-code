@@ -124,9 +124,9 @@ async def test_extension_bundle_injected_and_bound_per_generation(tmp_path, monk
         assert second_agent.kwargs["llm_trace_sink"] is _sink
 
         # App-exit path releases the final bundle exactly once, idempotently.
-        await app._cleanup_extension_bundle()
+        await app._cleanup_agent_generation()
         assert recorder.cleanups == 2
-        await app._cleanup_extension_bundle()
+        await app._cleanup_agent_generation()
         assert recorder.cleanups == 2
 
 

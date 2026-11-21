@@ -563,7 +563,8 @@ async def test_apply_pending_switch_rebuilds_workspace_and_returns_continuation(
         assert app._session_file_changes == []
         assert app._pending_workspace_switch is None
 
-        meta = app._meta_content()
+        app._refresh_metadata()
+        meta = app._metadata_strip.content_for_width().plain
         assert str(linked) in meta
         assert str(main) not in meta
 

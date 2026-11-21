@@ -2320,17 +2320,6 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                     self._agent_cleanup_failed = True
                     self._log_status(f"extension cleanup failed: {exc}", level="warn")
 
-    async def _cleanup_extension_bundle(self) -> None:
-        """Release the current extension bundle exactly once (rebuild or app exit)."""
-        bundle = self._extension_bundle
-        self._extension_bundle = None
-        if bundle is None:
-            return
-        try:
-            await cleanup_extension_bundle(bundle)
-        except Exception as exc:  # noqa: BLE001 — reported, never masks the primary failure
-            self._log_status(f"extension cleanup failed: {exc}", level="warn")
-
     def _format_lsp_status(self) -> str:
         """Build a human-readable LSP status message for the conversation or /lsp command."""
         agent = self.agent
