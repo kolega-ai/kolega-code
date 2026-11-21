@@ -3678,10 +3678,6 @@ class KolegaCodeApp(
         except Exception:
             return
 
-    def _meta_content(self) -> str:
-        self._refresh_metadata()
-        return self._metadata_strip.content_for_width().plain
-
     def _refresh_metadata(self) -> None:
         self._metadata_strip.update_context(
             project_path=self.active_project_path,

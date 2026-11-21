@@ -46,7 +46,7 @@ async def test_scope_probe_refreshes_metadata_off_thread_and_rejects_stale_resul
         await app._scope_probe_worker(tracker, generation - 1)
         assert strip.branch == "feat/readable"
         tracker.scope.reset_mock()
-        app._meta_content()
+        app._refresh_metadata()
         strip.render()
         tracker.scope.assert_not_called()
         # Restore teardown's tracker contract.
