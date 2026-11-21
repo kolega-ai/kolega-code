@@ -443,7 +443,9 @@ async def test_post_adoption_error_retains_approved_plan_until_cleanup_finishes(
 async def test_cancelled_approval_request_does_not_resume_after_cleanup(
     configured_factory: AgentFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, option: str
 ) -> None:
-    monkeypatch.setattr(agent_factory, "CLEANUP_TIMEOUT", 0.02)
+    # The cleanup deadline must not fire before the test cancels: a loaded runner
+    # that descheduled this coroutine for 20 ms let the approval finish first.
+    monkeypatch.setattr(agent_factory, "CLEANUP_TIMEOUT", 10)
     server, session, conn = await _open(configured_factory, tmp_path, monkeypatch)
     session.record.interaction_mode = "plan"
     session.record.plan_pending = True
@@ -471,12 +473,13 @@ async def test_cancelled_approval_request_does_not_resume_after_cleanup(
         await asyncio.wait_for(started.wait(), 5)
         approving.cancel()
         await asyncio.sleep(0)
-        approving.cancel()
+        # The approval is now parked on the still-blocked cleanup, which keeps
+        # ownership of the retired agent until the cancellation is re-raised.
+        assert session.cleanup_tasks
+        release.set()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(approving, 5)
-        assert session.cleanup_tasks
         assert session.approved_plan is None and session.record.plan_pending
-        release.set()
         await asyncio.wait_for(asyncio.gather(*session.cleanup_tasks.values()), 5)
         async with session.execution_lock:
             pass
