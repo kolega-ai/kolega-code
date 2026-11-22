@@ -8,8 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, Sequence
 
-import yaml
-
 from kolega_code.agent import PromptExtension, ToolExtension
 from kolega_code.agent.prompts import build_skill_catalog_prompt
 from kolega_code.agent.tool_definitions import tool_description_asset
@@ -546,6 +544,10 @@ def _load_skill(skill_file: Path, scope: str) -> tuple[Optional[SkillRecord], li
 
 
 def _parse_skill_file(skill_file: Path) -> tuple[dict, str]:
+    # PyYAML is only needed to parse frontmatter; importing it here keeps its
+    # ~20 ms of parser setup off CLI starts that never discover a skill.
+    import yaml
+
     text = skill_file.read_text(encoding="utf-8")
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":

@@ -22,8 +22,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
-from PIL import Image, ImageOps
-
 # Supported image extensions -> MIME types. These are the common web image
 # formats accepted by all four provider backends (Anthropic, OpenAI, Google,
 # ChatGPT/Responses).
@@ -126,6 +124,11 @@ def resize_base64_image_to_limit(
     # image header before the same unchanged decision can be made.
     if encoded_size <= max_base64_bytes and max_dimension is None:
         return ImageResizeResult(data, media_type, resized=False)
+
+    # Pillow is only needed to decode or resize; importing it here keeps its
+    # ~20 ms of parser and codec setup off every CLI start that never touches
+    # an image.
+    from PIL import Image, ImageOps
 
     try:
         raw = base64.b64decode(data, validate=True)
@@ -400,6 +403,8 @@ def ascii_thumbnail_from_base64(data: str, media_type: str, *, width: int = 40, 
     (corrupt data, unsupported format, etc.), returns a short placeholder
     string instead of raising — a malformed image must never crash the TUI.
     """
+    from PIL import Image
+
     try:
         raw = base64.b64decode(data)
         img = Image.open(io.BytesIO(raw))

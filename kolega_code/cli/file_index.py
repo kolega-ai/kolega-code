@@ -7,9 +7,10 @@ import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
-from typing import Iterable, List, Optional
+from typing import TYPE_CHECKING, Iterable, List, Optional
 
-import pathspec
+if TYPE_CHECKING:
+    import pathspec
 
 from kolega_code.utils.images import image_media_type
 
@@ -185,6 +186,8 @@ class WorkspaceFileIndex:
         return scored
 
     def _load_gitignore_spec(self) -> Optional[pathspec.PathSpec]:
+        import pathspec
+
         gitignore_path = self.project_path / ".gitignore"
         try:
             if not gitignore_path.is_file():
