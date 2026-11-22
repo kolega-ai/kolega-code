@@ -40,27 +40,11 @@ def render_prompt_template(template_name: str, **variables: Any) -> str:
 COMPRESSION_SUMMARY_SYSTEM_PROMPT = render_prompt_template("auxiliary/compression/summary.system.md")
 HANDOFF_SYSTEM_PROMPT = render_prompt_template("auxiliary/handoff/document.system.md")
 SHELL_SAFETY_SYSTEM_PROMPT = render_prompt_template("auxiliary/terminal/safety.system.md")
-SHELL_COMPRESSION_SYSTEM_PROMPT = render_prompt_template("auxiliary/terminal/output_summary.system.md")
 SHARED_TASK_LIST_PROMPT = render_prompt_template("extensions/cli/shared_task_list.md")
 SHARED_TASK_LIST_READONLY_PROMPT = render_prompt_template("extensions/cli/shared_task_list_readonly.md")
 PLANNING_QUESTION_PROMPT = render_prompt_template("extensions/cli/planning_questions.md")
 BUILD_QUESTION_PROMPT = render_prompt_template("extensions/cli/build_questions.md")
 SILENT_TURN_EXHAUSTED_NOTICE = render_prompt_template("auxiliary/agent_loop/silent_turn_exhausted.user.md")
-
-# Compatibility templates for callers/tests that still use ``str.format`` or
-# ``replace`` style placeholders.
-COMPRESSION_SUMMARY_USER_PROMPT_TEMPLATE = prompt_template_source("auxiliary/compression/summary.user.md.j2").replace(
-    "{{ history }}", "{HISTORY}"
-)
-IMPLEMENT_PLAN_PROMPT_TEMPLATE = prompt_template_source("user_tasks/cli/implement_plan.md.j2").replace(
-    "{{ plan }}", "{plan}"
-)
-CURRENT_PLAN_ARTIFACT_PROMPT_TEMPLATE = prompt_template_source("extensions/cli/current_plan_artifact.md.j2").replace(
-    "{{ plan_artifact_path }}", "{plan_artifact_path}"
-)
-SKILL_CATALOG_PROMPT_TEMPLATE = prompt_template_source("extensions/skills/catalog.md.j2").replace(
-    "{{ catalog }}", "{catalog}"
-)
 
 
 def build_compression_summary_user_prompt(history: str, previous_summary: Optional[str] = None) -> str:
@@ -162,25 +146,3 @@ def build_init_agents_prompt(arguments: str) -> str:
 
 def build_skill_catalog_prompt(catalog: str) -> str:
     return render_prompt_template("extensions/skills/catalog.md.j2", catalog=catalog)
-
-
-def build_planning_agent_system_prompt(
-    *,
-    system_name: str,
-    project_path: str,
-    is_git_repo: bool,
-    platform: str,
-    date_today: str,
-    model_name: str,
-    model_supports_vision: bool = False,
-) -> str:
-    return render_prompt_template(
-        "system/agents/planning.md.j2",
-        system_name=system_name,
-        project_path=project_path,
-        is_git_repo=is_git_repo,
-        platform=platform,
-        date_today=date_today,
-        model_name=model_name,
-        model_supports_vision=model_supports_vision,
-    )

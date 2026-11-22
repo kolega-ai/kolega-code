@@ -9,12 +9,10 @@ from kolega_code.cli.goal import build_goal_control_prompt_extension_markdown
 def test_static_prompt_templates_load() -> None:
     assert "continuity briefing" in prompts.COMPRESSION_SUMMARY_SYSTEM_PROMPT
     assert "evaluating shell commands for safety" in prompts.SHELL_SAFETY_SYSTEM_PROMPT
-    assert "analyzing shell command output" in prompts.SHELL_COMPRESSION_SYSTEM_PROMPT
     assert "get_task_list" in prompts.SHARED_TASK_LIST_PROMPT
     assert "get_task_list" in prompts.SHARED_TASK_LIST_READONLY_PROMPT
     assert "ask_user_choice" in prompts.PLANNING_QUESTION_PROMPT
     assert "ask_user_choice" in prompts.BUILD_QUESTION_PROMPT
-    assert "read-only" in prompts.CURRENT_PLAN_ARTIFACT_PROMPT_TEMPLATE
 
 
 def test_readonly_task_list_prompt_never_names_the_write_tool() -> None:
@@ -34,7 +32,6 @@ def test_compression_summary_user_prompt_renders_history() -> None:
 
     assert "User: hello" in rendered
     assert "{{ history }}" not in rendered
-    assert "{HISTORY}" in prompts.COMPRESSION_SUMMARY_USER_PROMPT_TEMPLATE
 
 
 def test_implement_plan_prompt_renders_plan() -> None:
@@ -42,7 +39,6 @@ def test_implement_plan_prompt_renders_plan() -> None:
 
     assert "Implement the approved plan below." in rendered
     assert "- [ ] update docs" in rendered
-    assert "{plan}" in prompts.IMPLEMENT_PLAN_PROMPT_TEMPLATE
 
 
 def test_implement_plan_prompt_renders_plan_artifact_path_when_provided() -> None:
@@ -303,19 +299,27 @@ def test_skill_catalog_prompt_renders_catalog() -> None:
     assert "Activate with the `skill` tool before applying a skill's workflow" in rendered
     assert "`/skill-name`" in rendered
     assert "- `demo-skill`: Use demo workflow" in rendered
-    assert "{catalog}" in prompts.SKILL_CATALOG_PROMPT_TEMPLATE
+
+
+def _render_planning_prompt() -> str:
+    from kolega_code.agent.prompt_provider import AgentType, PromptContext, PromptProvider
+
+    return PromptProvider().get_system_prompt(
+        AgentType.PLANNING,
+        context=PromptContext(
+            system_name="Kolega Code",
+            project_path="/repo",
+            is_git_repo=True,
+            platform="darwin",
+            date_today="2026-06-17",
+            model_name="test-model",
+            model_supports_vision=True,
+        ),
+    )
 
 
 def test_planning_agent_prompt_omits_session_environment() -> None:
-    rendered = prompts.build_planning_agent_system_prompt(
-        system_name="Kolega Code",
-        project_path="/repo",
-        is_git_repo=True,
-        platform="darwin",
-        date_today="2026-06-17",
-        model_name="test-model",
-        model_supports_vision=True,
-    )
+    rendered = _render_planning_prompt()
 
     assert "Kolega Code's planning agent" in rendered
     assert "/repo" not in rendered
@@ -331,15 +335,7 @@ def test_planning_agent_prompt_omits_host_specific_task_list_guidance() -> None:
     Naming CLI-only tools here is what caused plan-mode agents to call a tool that
     was not registered; CLI task-list guidance now ships as a prompt extension.
     """
-    rendered = prompts.build_planning_agent_system_prompt(
-        system_name="Kolega Code",
-        project_path="/repo",
-        is_git_repo=True,
-        platform="darwin",
-        date_today="2026-06-17",
-        model_name="test-model",
-        model_supports_vision=True,
-    )
+    rendered = _render_planning_prompt()
 
     assert "task-list" not in rendered
     assert "task list" not in rendered
