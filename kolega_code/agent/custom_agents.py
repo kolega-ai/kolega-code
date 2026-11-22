@@ -7,8 +7,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
-import yaml
-
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentConnectionManager
 from kolega_code.llm.specs import get_model_specs, normalize_thinking_effort
@@ -229,6 +227,9 @@ def _load_definition(
     definition_file: Path,
     scope: str,
 ) -> tuple[Optional[CustomAgentDefinition], list[CustomAgentDiagnostic]]:
+    # Imported for the ``yaml.YAMLError`` handler; the module stays off startup.
+    import yaml
+
     diagnostics: list[CustomAgentDiagnostic] = []
     try:
         if definition_file.stat().st_size > MAX_CUSTOM_AGENT_FILE_BYTES:
@@ -250,6 +251,8 @@ def _load_definition(
 
 
 def _parse_definition_file(definition_file: Path) -> tuple[dict[str, Any], str]:
+    import yaml
+
     text = definition_file.read_text(encoding="utf-8")
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":

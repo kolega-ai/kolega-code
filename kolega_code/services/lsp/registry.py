@@ -9,8 +9,6 @@ import shutil
 from pathlib import Path
 from typing import Any, Optional
 
-import yaml
-
 from .config import LanguageServerSpec, LanguageSpec, LspConfig, platform_key
 
 logger = logging.getLogger(__name__)
@@ -70,6 +68,8 @@ class LspRegistry:
 
     def _load_presets(self) -> None:
         """Load the bundled ``registry.yaml``."""
+        import yaml
+
         try:
             raw = _PRESETS_PATH.read_text(encoding="utf-8")
             data = yaml.safe_load(raw)

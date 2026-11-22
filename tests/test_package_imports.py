@@ -85,9 +85,45 @@ assert "firecrawl" not in sys.modules, "import kolega_code.cli.main eagerly load
 """
 
 
+#: Pillow, PyYAML and pathspec parse files only when a session shows an image,
+#: discovers a skill/custom agent or builds a gitignore matcher. Importing them
+#: costs ~18-22 ms each (pathspec probes optional backends, Pillow loads codec
+#: tables), so the three trees were ~60 ms of every CLI start, including
+#: ``--help`` and one-shot commands.
+_FILE_PARSER_CHECK = """
+import sys
+import kolega_code.cli.main
+from kolega_code.cli import file_index, skills
+from kolega_code.services import workspace_scan
+from kolega_code.utils import images
+
+heavy = [name for name in ("PIL", "yaml", "pathspec") if name in sys.modules]
+assert not heavy, f"import kolega_code.cli.main eagerly loaded: {heavy}"
+assert images.resize_base64_image_to_limit is not None
+assert file_index.WorkspaceFileIndex and skills.discover_skills and workspace_scan.scan_workspace
+"""
+
+
 def test_importing_the_package_does_not_load_the_native_tinker_stack() -> None:
     result = subprocess.run(
         [sys.executable, "-c", _CHECK],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_cli_start_does_not_load_file_parser_backends() -> None:
+    """Pillow, PyYAML and pathspec load on first use, not on start.
+
+    Their module trees cost ~60 ms of import work and every CLI invocation paid
+    it even when it never rendered an image, loaded a skill or scanned a
+    workspace. The module-level helpers stay importable, so the lazy import
+    lives inside the function that parses the file.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", _FILE_PARSER_CHECK],
         capture_output=True,
         text=True,
         timeout=120,

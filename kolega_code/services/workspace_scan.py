@@ -14,9 +14,10 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-import pathspec
+if TYPE_CHECKING:
+    import pathspec
 
 
 DEFAULT_SCAN_TIMEOUT_SECONDS = 5.0
@@ -47,6 +48,11 @@ class ScanOutcome:
 
 
 def compile_workspace_glob(pattern: str) -> pathspec.GitIgnoreSpec:
+    # pathspec is only needed to build a matcher; importing it here keeps its
+    # ~18 ms of gitignore parsing and backend probing off CLI starts that never
+    # scan a workspace.
+    import pathspec
+
     normalized = pattern.replace("\\", "/").lstrip("/") or "*"
     # Leading slash anchors patterns without ``**`` to the workspace root,
     # matching Path.glob rather than gitignore's basename-at-any-depth behavior.

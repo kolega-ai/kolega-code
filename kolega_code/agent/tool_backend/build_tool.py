@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-import yaml
-
 from .base_tool import BaseTool
 
 
@@ -21,6 +19,8 @@ class BuildTool(BaseTool):
 
         Returns an empty dict when the file is missing or invalid.
         """
+        import yaml
+
         manifest_path = ".kolega-manifest.yaml"
         try:
             if not self.filesystem.exists(manifest_path):
