@@ -11,7 +11,6 @@ from kolega_code.services.terminal_buffer import (
     HeadTailBuffer,
     TerminalOutputAccumulator,
     TerminalSpillStore,
-    cap_tokens,
     clamp_output_tokens,
     clamp_yield,
 )
@@ -53,25 +52,8 @@ def test_headtail_reset():
     assert len(buffer) == 0
 
 
-def test_cap_tokens_under_budget():
-    out = cap_tokens("short text", 1000)
-    assert out.truncated is False
-    assert out.text == "short text"
-
-
-def test_cap_tokens_over_budget_truncates_middle():
-    text = "word " * 5000
-    out = cap_tokens(text, 50)
-    assert out.truncated is True
-    assert out.original_token_count > 50
-    assert "truncated to fit" in out.text
-    assert len(out.text) < len(text)
-
-
 def test_output_token_request_is_globally_clamped():
     assert clamp_output_tokens(1_000_000) == GLOBAL_MAX_TOOL_OUTPUT_TOKENS
-    out = cap_tokens("x" * 100_000, 1_000_000)
-    assert len(out.text) <= GLOBAL_MAX_TOOL_OUTPUT_TOKENS * 4
 
 
 def test_accumulator_spills_complete_stream_before_preview_truncation(tmp_path):

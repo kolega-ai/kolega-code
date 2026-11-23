@@ -203,47 +203,6 @@ def cap_chars(
     return CappedOutput(capped, True, original)
 
 
-def cap_tokens(
-    text: str,
-    max_tokens: int,
-    *,
-    protected_suffix: str = "",
-    original_token_count: Optional[int] = None,
-    hard_limit: bool = True,
-) -> CappedOutput:
-    """Hard-cap terminal text while preserving a recovery suffix when possible.
-
-    The four-characters-per-token estimate is intentionally deterministic and
-    dependency-free. Unlike the previous implementation, the truncation marker
-    itself is included in the character budget, so the returned ``text`` never
-    exceeds ``effective_max_tokens * 4`` characters.
-    """
-    effective_max_tokens = clamp_output_tokens(max_tokens) if hard_limit else max(1, int(max_tokens))
-    original = original_token_count if original_token_count is not None else _estimated_tokens(len(text))
-    full = text + protected_suffix
-    budget_chars = effective_max_tokens * 4
-    if len(full) <= budget_chars:
-        return CappedOutput(full, original > effective_max_tokens, original)
-
-    marker = _truncation_marker(effective_max_tokens)
-    suffix = protected_suffix if len(protected_suffix) <= budget_chars else ""
-    available = max(0, budget_chars - len(marker) - len(suffix))
-    if available == 0:
-        # ``spill_path`` is also a structured result field, so an exceptionally
-        # small caller-requested budget may omit the prose footer without losing
-        # the recovery path.
-        capped = suffix[-budget_chars:] if suffix else ""
-    else:
-        content = cap_chars(
-            text,
-            available + len(marker),
-            marker=marker,
-            original_token_count=original,
-        ).text
-        capped = content + suffix
-    return CappedOutput(capped[:budget_chars], True, original)
-
-
 def _write_all(fd: int, data: bytes) -> None:
     view = memoryview(data)
     while view:
