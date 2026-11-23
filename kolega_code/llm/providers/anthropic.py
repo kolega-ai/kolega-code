@@ -28,10 +28,8 @@ class AnthropicStreamWrapper:
         self._usage_metadata: dict[str, Any] = {}
         self._usage_complete = False
 
-        # Track tool calls being streamed
+        # Response-scoped provider-tool-id -> app execution-id map, shared with the final message.
         self.tool_execution_ids = ToolExecutionIdRegistry()
-        self.current_tool_calls = {}  # Maps tool_call_id to accumulated data
-        self.tool_call_order = []
 
     async def __aenter__(self):
         self.generator = await self.anthropic_stream.__aenter__()
@@ -62,36 +60,11 @@ class AnthropicStreamWrapper:
             elif chunk.type == "message_stop":
                 self._usage_complete = True
 
-            # Handle content_block_start events for tool use
-            if chunk.type == "content_block_start" and hasattr(chunk, "content_block"):
-                if chunk.content_block.type == "tool_use":
-                    # Track this new tool call
-                    tool_id = chunk.content_block.id
-                    self.current_tool_calls[tool_id] = {
-                        "id": tool_id,
-                        "name": chunk.content_block.name,
-                        "input_json": "",
-                        "block_index": chunk.index if hasattr(chunk, "index") else len(self.tool_call_order),
-                        "execution_id": self.tool_execution_ids.get_or_create(tool_id),
-                    }
-                    self.tool_call_order.append(tool_id)
-
-            # Handle content_block_delta events for tool use input
-            elif chunk.type == "content_block_delta" and hasattr(chunk, "delta"):
-                if chunk.delta.type == "input_json_delta" and hasattr(chunk, "index"):
-                    # Find the tool call by block index
-                    for tool_id, tool_data in self.current_tool_calls.items():
-                        if tool_data["block_index"] == chunk.index:
-                            # Accumulate the JSON input
-                            tool_data["input_json"] += chunk.delta.partial_json
-                            break
-
             message_chunk = MessageChunk.from_anthropic(chunk)
             if message_chunk.type == "tool_use_start" and message_chunk.tool_call_delta:
                 tool_id = message_chunk.tool_call_delta.get("id")
-                tool_data = self.current_tool_calls.get(tool_id)
-                if tool_data and tool_data.get("execution_id"):
-                    message_chunk.tool_call_delta["execution_id"] = tool_data["execution_id"]
+                if isinstance(tool_id, str):
+                    message_chunk.tool_call_delta["execution_id"] = self.tool_execution_ids.get_or_create(tool_id)
 
             return message_chunk
 
