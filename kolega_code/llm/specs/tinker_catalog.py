@@ -24,6 +24,7 @@ so no chat renderer can produce a meaningful conversation for them.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -59,6 +60,9 @@ INKLING_EFFORT_SPEC = ThinkingEffortSpec(
     mode="tinker_native_effort",
 )
 
+# Cookbook 0.6.0 renders Mini text with the Inkling 2 tokenizer but miscounts image tokens.
+_TEXT_ONLY_RENDERERS = frozenset({"thinkingmachines/Inkling-2-Mini"})
+
 # Thinking on/off spec for cookbook-rendered families with documented
 # thinking and disable-thinking renderer variants.
 _TOGGLE_EFFORT_SPEC = ThinkingEffortSpec(
@@ -84,6 +88,7 @@ _CONTEXT_TOKENS = {
     "64K": 65536,
     "128K": 131072,
     "256K": 262144,
+    "1M": 1048576,
 }
 
 
@@ -123,8 +128,10 @@ def catalog_entries(payload: Any) -> list[tuple[str, dict[str, Any]]]:
         model_type = str(item.get("type") or "")
         if model_type == "Base":
             continue
+        sampling_context = re.search(r"\b(\d+[KM]) sample\)$", str(item.get("name", "")))
+        context = sampling_context[1] if sampling_context else item.get("context")
         spec: dict[str, Any] = {
-            "context_length": _context_tokens(item.get("context")),
+            "context_length": _context_tokens(context),
             "max_completion_tokens": MAX_COMPLETION_TOKENS,
             # One shared pool: Tinker serves input and output from the same
             # window, so reserve max_completion_tokens as output headroom
@@ -132,7 +139,7 @@ def catalog_entries(payload: Any) -> list[tuple[str, dict[str, Any]]]:
             # almost nothing (verified on live Qwen3.6 fine-tunes).
             "input_budget": "window_minus_output",
             "default_temperature": DEFAULT_TEMPERATURE,
-            "supports_vision": "Vision" in model_type,
+            "supports_vision": "Vision" in model_type and identifier.partition(":")[0] not in _TEXT_ONLY_RENDERERS,
             "preferred_edit_protocol": PREFERRED_EDIT_PROTOCOL,
         }
         spec.update(_family_spec(str(identifier)))

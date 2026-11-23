@@ -570,7 +570,10 @@ def test_subscription_self_hosted_and_coding_credits_do_not_become_api_dollars()
         elif provider == "zai":
             assert card["currency"] is None
             assert card["denomination"] == "zai_coding_plan_credit"
-            assert card["alternative_billing_surface"]["currency"] == "USD"
+            if card["status"] == "priced":
+                assert card["alternative_billing_surface"]["currency"] == "USD"
+            else:
+                assert card["status"] == "unverified" and not card["rates"]
     assert PRICING[("zai", "glm-5.2")]["documented_alias"]["billing_model"] == "GLM-5.3"
 
 

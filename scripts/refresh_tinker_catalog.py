@@ -27,6 +27,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from kolega_code.llm.specs import tinker_catalog as tinker  # noqa: E402
+from kolega_code.llm.specs.catalog.tinker import TINKER_SPECS  # noqa: E402
 from kolega_code.llm.specs.pricing_feeds import reviewed_pricing, sanitize_spec_pricing  # noqa: E402
 
 OUTPUT_PATH = REPO_ROOT / "kolega_code" / "llm" / "specs" / "catalog" / "tinker.py"
@@ -96,6 +97,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"Fetching {tinker.MODELS_URL} ...")
     payload = tinker.fetch_models()
     entries = tinker.catalog_entries(payload)
+    existing_order = {key: i for i, (_, key) in enumerate(TINKER_SPECS)}
+    entries.sort(key=lambda entry: existing_order.get(entry[0], len(existing_order)))
 
     spec_lines = "\n".join(_format_spec(identifier, spec) for identifier, spec in entries)
     OUTPUT_PATH.write_text(

@@ -355,6 +355,52 @@ def test_refresh_rejects_providers_without_a_refreshable_catalog(tmp_path: Path)
 # --- tinker overlay (same machinery, second provider) ---------------------
 
 
+@pytest.mark.parametrize("training_context", ["64K", "256K"])
+def test_tinker_catalog_uses_sampling_context_when_feed_lists_both(training_context: str) -> None:
+    entries = tinker.catalog_entries(
+        [
+            {
+                "tinker_id": "test/model",
+                "name": f"Example ({training_context} train / 1M sample)",
+                "context": training_context,
+                "type": "Hybrid + Vision",
+            }
+        ]
+    )
+
+    assert dict(entries)["test/model"]["context_length"] == 1048576
+
+
+@pytest.mark.parametrize("suffix", ["", ":peft:262144"])
+def test_tinker_does_not_advertise_vision_for_mini_with_the_pinned_renderer(suffix: str) -> None:
+    model = "thinkingmachines/Inkling-2-Mini" + suffix
+    entries = tinker.catalog_entries([{"tinker_id": model, "context": "64K", "type": "Hybrid + Vision"}])
+
+    assert dict(entries)[model]["supports_vision"] is False
+
+
+def test_tinker_snapshot_refresh_keeps_existing_picker_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import runpy
+
+    from scripts import refresh_tinker_catalog
+
+    existing = ["vendor/first", "vendor/second"]
+    incoming = ["vendor/new-b", existing[1], "vendor/new-a", existing[0]]
+    output = tmp_path / "tinker.py"
+    monkeypatch.setattr(refresh_tinker_catalog, "OUTPUT_PATH", output)
+    monkeypatch.setattr(refresh_tinker_catalog, "TINKER_SPECS", {("tinker", model): {} for model in existing})
+    monkeypatch.setattr(
+        tinker,
+        "fetch_models",
+        lambda: [{"tinker_id": model, "context": "64K", "type": "Chat"} for model in incoming],
+    )
+
+    assert refresh_tinker_catalog.main(["--skip-format"]) == 0
+    assert list(runpy.run_path(str(output))["TINKER_SPECS"]) == [
+        ("tinker", model) for model in [*existing, "vendor/new-b", "vendor/new-a"]
+    ]
+
+
 def test_tinker_overlay_adds_new_models_without_featuring_them(tmp_path: Path, restore_catalog) -> None:
     from kolega_code.llm.specs import tinker_catalog as tinker
 

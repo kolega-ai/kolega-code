@@ -3,7 +3,6 @@ from kolega_code.llm.specs.types import ThinkingEffortSpec
 # Thinking Machines Lab models — reached through Tinker's Anthropic-compatible
 # endpoint (base https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api,
 # the Anthropic SDK appends /v1/messages). Model IDs are case-sensitive.
-# The published serverless routes use a 256K context window.
 #
 # Effort mirrors Tinker's documented set for the Messages endpoint: "low",
 # "medium", "high", "xhigh", "max" ("max" behaves the same as "xhigh"); "none"
@@ -137,6 +136,41 @@ THINKING_MACHINES_SPECS = {
                 "not a provider-reported charge.",
                 "Cache creation uses the published input rate; only cache reads have a separately published rate.",
             ],
+        },
+    },
+    ("thinking_machines", "thinkingmachines/Inkling-2-Mini"): {
+        "context_length": 1048576,
+        "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+        "supports_vision": True,
+        "preferred_edit_protocol": "claude_code",
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "xhigh", "max"),
+            default="high",
+            mode="tinker_effort",
+        ),
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "thinking_machines:thinkingmachines/Inkling-2-Mini:2026-11-23",
+            "provider": "thinking_machines",
+            "model": "thinkingmachines/Inkling-2-Mini",
+            "status": "unverified",
+            "billing_mode": "serverless_inference",
+            "currency": "USD",
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-23",
+            "sources": [
+                {
+                    "url": "https://tinker-docs.thinkingmachines.ai/tinker/serverless.json",
+                    "model_id": "thinkingmachines/Inkling-2-Mini",
+                    "checked_at": "2026-11-23",
+                }
+            ],
+            "conditions": {},
+            "schedules": [],
+            "reason": "The serverless rate card does not yet list Inkling 2 Mini.",
         },
     },
 }

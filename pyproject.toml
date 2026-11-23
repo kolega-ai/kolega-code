@@ -137,10 +137,9 @@ cli = []
 # tml-renderers >=2.10) and transformers; the base install stays torch-free.
 # tml-renderers ships abi3 wheels for Linux x86_64/aarch64 and macOS arm64 only.
 tinker = [
-    # 0.5.9 hard-requires tinker>=0.35.0; 0.36.0 is still inside the quarantine.
-    "tinker==0.35.0",
-    "tinker-cookbook==0.5.9",
-    "tml-renderers==0.1.0",
+    "tinker==0.38.0",
+    "tinker-cookbook==0.6.0",
+    "tml-renderers==0.4.0",
     # tinker-cookbook leaves transformers unbounded above from 0.5.9 on, so this
     # pin is ours: the audit needs a release fixed for CVE-2026-9856 (5.10.0)
     # and CVE-2026-80047 (5.17.0).
@@ -206,9 +205,6 @@ exclude-newer = "1 week"
 # h2 4.4.1 (released 2026-08-03) is the only release fixing GHSA-6hr6-w5qg-qmwg
 # (CVE-2026-71554, duplicate Host header request smuggling) and sits inside the
 # same quarantine; admit it the same way.
-# tinker-cookbook 0.5.9 (released 2026-10-27) is the first release that drops the
-# transformers <=5.5.4 cap, which is what kept the two transformers advisories
-# unfixable; it sits inside the quarantine, so admit that cookbook alone.
 # pillow 13.0.0 (released 2026-10-16) is the only release fixing the eight
 # CVE-2026-112395..112899 advisories and sits inside the same quarantine; admit
 # it rather than widen the global window.
@@ -228,7 +224,6 @@ exclude-newer = "1 week"
 [tool.uv.exclude-newer-package]
 cryptography = "2026-08-01T00:00:00Z"
 h2 = "2026-08-04T00:00:00Z"
-tinker-cookbook = "2026-10-28T00:00:00Z"
 pillow = "2026-10-17T00:00:00Z"
 certifi = "2026-10-21T00:00:00Z"
 brotli = "2026-10-23T00:00:00Z"
