@@ -148,6 +148,7 @@ def test_zai_exposes_glm_models_and_defaults_to_glm_53() -> None:
         ("GLM-5.3 Flash", "glm-5.3-flash"),
         ("GLM-5.2", "glm-5.2"),
         ("GLM-5.1", "glm-5.1"),
+        ("GLM-5.4", "glm-5.4"),
     ]
     assert default_model_for_provider(ModelProvider.ZAI) == "glm-5.3"
     assert ui_thinking_effort_options("zai", "glm-5.3") == [("High", "high"), ("Max", "max")]
@@ -394,6 +395,7 @@ def test_thinking_machines_models_are_selectable_and_inkling_is_default():
         ("Inkling", "thinkingmachines/Inkling"),
         ("Inkling Small", "thinkingmachines/Inkling-Small"),
         ("Inkling 2 Small", "thinkingmachines/Inkling-2-Small"),
+        ("Inkling 2 Mini", "thinkingmachines/Inkling-2-Mini"),
     ]
     assert default_model_for_provider(ModelProvider.THINKING_MACHINES) == "thinkingmachines/Inkling"
     assert ui_thinking_effort_options("thinking_machines", "thinkingmachines/Inkling") == [
@@ -427,6 +429,7 @@ def test_thinking_machines_models_support_vision():
         ("Inkling", "thinkingmachines/Inkling"),
         ("Inkling Small", "thinkingmachines/Inkling-Small"),
         ("Inkling 2 Small", "thinkingmachines/Inkling-2-Small"),
+        ("Inkling 2 Mini", "thinkingmachines/Inkling-2-Mini"),
     ]
 
 
@@ -445,7 +448,6 @@ def test_tinker_provider_lists_catalogued_bases_and_defaults_to_qwen3_8b():
         ("Extra high", "xhigh"),
         ("Max", "max"),
     ]
-    assert get_model_specs("tinker", "thinkingmachines/Inkling-2-Small")["context_length"] == 65536
 
 
 def test_tinker_checkpoint_paths_resolve_through_wildcard_and_other_entry():

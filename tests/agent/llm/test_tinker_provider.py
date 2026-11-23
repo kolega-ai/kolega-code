@@ -76,12 +76,10 @@ class FakeSamplingClient:
         self.response = response
         self.calls: List[Dict[str, Any]] = []
 
-    async def get_base_model_async(self) -> str:
+    def get_base_model(self) -> str:
         return self.base_model
 
-    async def sample_async(
-        self, prompt: Any, num_samples: int, sampling_params: Any, **kwargs: Any
-    ) -> FakeSampleResponse:
+    async def sample(self, prompt: Any, num_samples: int, sampling_params: Any, **kwargs: Any) -> FakeSampleResponse:
         self.calls.append({"prompt": prompt, "num_samples": num_samples, "sampling_params": sampling_params})
         return self.response
 
@@ -101,7 +99,7 @@ class FakeService:
     def __call__(self, **kwargs: Any) -> "FakeService":
         return self
 
-    async def create_sampling_client_async(self, **kwargs: Any) -> FakeSamplingClient:
+    async def create_sampling_client(self, **kwargs: Any) -> FakeSamplingClient:
         self.created.append(kwargs)
         return self.client
 
@@ -160,7 +158,7 @@ def _fake_build_prompt(
     The real bridge is exercised by the skipif-guarded cookbook test and by the
     implementation-time live verification.
     """
-    if effort and effort != "none" and getattr(renderer, "_accepts_effort", False):
+    if effort and getattr(renderer, "_accepts_effort", False):
         return renderer.build_generation_prompt(openai_messages, effort=tinker_provider._effort_float(effort))
     return renderer.build_generation_prompt(openai_messages)
 
@@ -306,10 +304,10 @@ async def test_checkpoint_requests_remain_unpriced_even_with_identified_native_b
     _patch_provider(monkeypatch, sampling, FakeRenderer({"role": "assistant", "content": "ok"}))
     if base_model is None:
 
-        async def unavailable() -> str:
+        def unavailable() -> str:
             raise RuntimeError("checkpoint metadata unavailable")
 
-        monkeypatch.setattr(sampling, "get_base_model_async", unavailable)
+        monkeypatch.setattr(sampling, "get_base_model", unavailable)
 
     ledger = UsageLedger()
     begun: list[Any] = []
@@ -537,14 +535,14 @@ async def test_effort_float_passed_only_to_effort_aware_renderers(monkeypatch: p
 
 
 @pytest.mark.asyncio
-async def test_effort_none_sends_no_effort_kwarg(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_effort_none_sends_zero_to_effort_aware_renderers(monkeypatch: pytest.MonkeyPatch) -> None:
     client = FakeSamplingClient(MODEL, FakeSampleResponse([FakeSequence([1], [0.1])]))
     renderer = FakeRenderer({"role": "assistant", "content": "ok"}, accepts_effort=True)
     _patch_provider(monkeypatch, client, renderer)
 
     await _make_provider().generate(MESSAGES, SYSTEM, GenerationParams(thinking="none"), model=MODEL)
 
-    assert renderer.prompt_calls[0]["kwargs"] == {}
+    assert renderer.prompt_calls[0]["kwargs"] == {"effort": 0.0}
 
 
 # ---------------------------------------------------------------------------
@@ -555,6 +553,27 @@ needs_native_stack = pytest.mark.skipif(
     not tinker_provider._NATIVE_STACK_AVAILABLE,
     reason="optional [tinker] extra not installed",
 )
+
+
+@needs_native_stack
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suffix", ["", ":peft:262144"])
+async def test_inkling_2_mini_renders_loop_prompt_on_exact_sampling_route(
+    monkeypatch: pytest.MonkeyPatch, suffix: str
+) -> None:
+    model = f"thinkingmachines/Inkling-2-Mini{suffix}"
+    service = FakeService(FakeSamplingClient(model, FakeSampleResponse([])))
+    monkeypatch.setattr(tinker_provider, "_tinker", SimpleNamespace(ServiceClient=service))
+    provider = TinkerProvider(api_key="test-key", model=model)
+
+    await provider.count_tokens(MESSAGES, SYSTEM, thinking="none")
+    renderer = await provider._get_renderer(model, "none")
+    prompt = tinker_provider._build_prompt(
+        renderer, [{"role": "user", "content": "Hello"}], system_text="", tools=[], effort="none"
+    )
+
+    assert service.created == [{"base_model": model}]
+    assert "<|message_user|><|content_text|>Hello<|end_message|>" in renderer.tokenizer.decode(prompt.to_ints())
 
 
 @needs_native_stack

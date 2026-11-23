@@ -138,6 +138,19 @@ def test_zai_glm53_thinking_effort_serialization() -> None:
     assert high_params["output_config"] == {"effort": "high"}
 
 
+def test_zai_glm54_sends_low_effort_in_the_messages_request() -> None:
+    provider = AnthropicProvider(api_key="test-key", provider_name="zai")
+    params = {"model": "glm-5.4"}
+
+    provider._apply_thinking_params(params, GenerationParams(thinking="low"))
+
+    assert params == {
+        "model": "glm-5.4",
+        "thinking": {"type": "enabled"},
+        "output_config": {"effort": "low"},
+    }
+
+
 def test_zai_glm52_thinking_effort_serialization() -> None:
     provider = AnthropicProvider(api_key="test-key", provider_name="zai")
 

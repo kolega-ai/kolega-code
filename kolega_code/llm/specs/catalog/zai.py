@@ -240,4 +240,34 @@ ZAI_SPECS = {
             },
         },
     },
+    ("zai", "glm-5.4"): {
+        "context_length": 1048576,
+        "max_completion_tokens": 131072,
+        "input_budget": "window_minus_output",
+        "supports_vision": True,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("low", "high", "max"),
+            default="max",
+            mode="zai_effort",
+        ),
+        "pricing": {
+            "schema_version": 1,
+            "pricing_id": "zai:glm-5.4:2026-11-23",
+            "provider": "zai",
+            "model": "glm-5.4",
+            "status": "unverified",
+            "billing_mode": "coding_plan",
+            "currency": None,
+            "unit": "per_million_tokens",
+            "rates": {},
+            "checked_at": "2026-11-23",
+            "sources": [
+                {"url": "https://docs.z.ai/devpack/overview", "model_id": "GLM-5.4", "checked_at": "2026-11-23"}
+            ],
+            "conditions": {},
+            "schedules": [],
+            "denomination": "zai_coding_plan_credit",
+            "reason": "The Coding Plan rate card does not yet list GLM-5.4.",
+        },
+    },
 }

@@ -78,11 +78,10 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
 
     if spec.mode == "zai_effort":
         # Z.AI GLM toggles thinking via {"thinking": {"type": "enabled"|"disabled"}}.
-        # GLM-5.2 adds two named effort levels (High/Max) carried in output_config.effort.
         if normalized == "none":
             return {"thinking": {"type": "disabled"}}
         params: Dict[str, Any] = {"thinking": {"type": "enabled"}}
-        if normalized in ("high", "max"):
+        if normalized != "auto":
             params["output_config"] = {"effort": normalized}
         return params
 

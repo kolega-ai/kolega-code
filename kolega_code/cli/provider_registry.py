@@ -93,6 +93,7 @@ MODEL_LABELS: dict[str, str] = {
     # Z.AI (GLM Coding Plan)
     "glm-5.3": "GLM-5.3",
     "glm-5.3-flash": "GLM-5.3 Flash",
+    "glm-5.4": "GLM-5.4",
     "glm-5.2": "GLM-5.2",
     "glm-5.1": "GLM-5.1",
     # Anthropic
@@ -228,6 +229,7 @@ MODEL_LABELS: dict[str, str] = {
     "thinkingmachines/Inkling": "Inkling",
     "thinkingmachines/Inkling-Small": "Inkling Small",
     "thinkingmachines/Inkling-2-Small": "Inkling 2 Small",
+    "thinkingmachines/Inkling-2-Mini": "Inkling 2 Mini",
     "glm-5.3-abliterated": "GLM-5.3 Abliterated",
     "glm-5.3-flash-abliterated": "GLM-5.3 Flash Abliterated",
     "deepseek-v4.1-flash-abliterated": "DeepSeek V4.1 Flash Abliterated",

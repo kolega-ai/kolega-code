@@ -68,6 +68,7 @@ _MISSING_STACK_MESSAGE = (
 # Named effort -> tml-renderers effort float, matching Tinker's documented
 # mapping for its compatible endpoints (max aliases xhigh server-side).
 _EFFORT_FLOATS = {
+    "none": 0.0,
     "low": 0.2,
     "medium": 0.7,
     "high": 0.9,
@@ -101,14 +102,20 @@ def _renderer_for_base_model(base_model: str, effort: Optional[str]) -> Any:
     to its recommended renderer, preferring the ``*_disable_thinking`` variant
     when ``effort == "none"`` and one is offered.
     """
-    tokenizer = _cookbook_get_tokenizer(base_model)
-    attributes = _get_model_attributes(base_model)
+    # Cookbook 0.6.0 only registers Inkling 2's H200k/loop template under Small.
+    renderer_model = (
+        "thinkingmachines/Inkling-2-Small"
+        if base_model.partition(":")[0] == "thinkingmachines/Inkling-2-Mini"
+        else base_model
+    )
+    tokenizer = _cookbook_get_tokenizer(renderer_model)
+    attributes = _get_model_attributes(renderer_model)
     renderers = list(attributes.recommended_renderers)
     if effort == "none":
         renderer_name = next((name for name in renderers if "disable_thinking" in name), renderers[0])
     else:
         renderer_name = renderers[0]
-    renderer = _cookbook_get_renderer(renderer_name, tokenizer, model_name=base_model)
+    renderer = _cookbook_get_renderer(renderer_name, tokenizer, model_name=renderer_model)
     # tml-renderers (Inkling) accepts an ``effort`` float per call; record that
     # so ``_build_prompt`` can pass it through.
     import inspect
@@ -142,7 +149,7 @@ def _build_prompt(
     else:
         prompt_messages = messages
 
-    if effort and effort != "none" and getattr(renderer, "_accepts_effort", False):
+    if effort and getattr(renderer, "_accepts_effort", False):
         return renderer.build_generation_prompt(prompt_messages, effort=_effort_float(effort))
     return renderer.build_generation_prompt(prompt_messages)
 
@@ -295,12 +302,12 @@ class TinkerProvider(BaseLLMProvider):
             return
         service = _tinker.ServiceClient(api_key=self.api_key)
         if model.startswith("tinker://"):
-            self._sampling_client = await service.create_sampling_client_async(model_path=model)
+            self._sampling_client = await service.create_sampling_client(model_path=model)
         else:
-            self._sampling_client = await service.create_sampling_client_async(base_model=model)
+            self._sampling_client = await service.create_sampling_client(base_model=model)
         self._client_model = model
         try:
-            self._base_model = await self._sampling_client.get_base_model_async()
+            self._base_model = self._sampling_client.get_base_model()
         except Exception:  # noqa: BLE001 - base models are known directly
             self._base_model = None
         if not self._base_model and not model.startswith("tinker://"):
@@ -351,7 +358,7 @@ class TinkerProvider(BaseLLMProvider):
             temperature=temperature,
             stop=stop,
         )
-        response = await self._sampling_client.sample_async(
+        response = await self._sampling_client.sample(
             prompt=prompt,
             num_samples=1,
             sampling_params=sampling_params,

@@ -318,8 +318,10 @@ function-tool loop; Mistral-hosted server tools are not enabled. A native
 <Aside type="tip">
 **Z.AI GLM Coding Plan.** The `zai` provider targets Z.AI's Anthropic-compatible
 endpoint (`https://api.z.ai/api/anthropic`) and exposes **GLM-5.3** (default),
-**GLM-5.2** and **GLM-5.1**. Set `ZAI_API_KEY` to your GLM Coding Plan key (the key
-Z.AI also documents as `ANTHROPIC_AUTH_TOKEN`).
+**GLM-5.3 Flash**, **GLM-5.2**, **GLM-5.1**, and **GLM-5.4** (`glm-5.4`).
+GLM-5.4 supports image input and function tools, with a 1,048,576-token context
+window and up to 131,072 output tokens. Set `ZAI_API_KEY` to your GLM Coding Plan
+key (the key Z.AI also documents as `ANTHROPIC_AUTH_TOKEN`).
 </Aside>
 
 <Aside type="tip">
@@ -496,9 +498,11 @@ upstreams may serve a request. Opt in with
 **Thinking Machines.** The `thinking_machines` provider targets Thinking Machines
 Lab's Tinker API through its Anthropic-compatible endpoint
 (`https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api`) with
-`TINKER_API_KEY`, exposing **Inkling** (default), **Inkling Small**, and
-**Inkling 2 Small**. These serverless routes are natively multimodal (text +
-image) with 256K-token context, and reasoning is on by default: thinking
+`TINKER_API_KEY`, exposing **Inkling** (default), **Inkling Small**,
+**Inkling 2 Small**, and **Inkling 2 Mini** (`thinkingmachines/Inkling-2-Mini`).
+These routes support image input. Kolega uses a 1,048,576-token context window
+for Mini and 262,144 tokens for the older entries, reserving 32,768 tokens for
+output. Reasoning is on by default: thinking
 blocks stream into the transcript, and the thinking effort picker offers `none`, `low`, `medium`,
 `high`, `xhigh`, and `max` (effort rides in Tinker's `output_config.effort`
 field; `none` disables reasoning). Tool use, streaming, and
@@ -523,11 +527,17 @@ default), and fine-tuned checkpoints work by sampler weights path:
 The provider resolves a checkpoint's base model at runtime and uses that base's
 specs (context window, vision, thinking effort). Effort is renderer-level: the
 Inkling family accepts `none`/`low`/`medium`/`high`/`xhigh`/`max` (mapped to
-tml-renderers effort floats); other bases offer thinking on/off.
+tml-renderers effort floats, with `none` requesting minimum effort rather than
+guaranteeing no reasoning); other bases offer thinking on/off.
 
 The catalog is generated from Tinker's published `models.json` and can be
 refreshed without waiting for a release: `kolega-code models refresh
---provider tinker`.
+--provider tinker`. For rows that publish separate training and sampling limits,
+Kolega budgets against the sampling limit.
+
+Both native Inkling 2 Mini variants support text and tool calls. The pinned
+renderer stack does not count Mini image tokens correctly; use
+`thinking_machines` or `openrouter` for Mini image input.
 
 An optional structured trace sink (`LLMClient(trace_sink=...)`) records the
 native model input, sampled tokens, logprobs, stop reason, cache usage,
@@ -775,6 +785,7 @@ models in the TUI.
 | Kimi Coding Plan `k3.1-pro`, `k3.1-pro-highspeed` | `low`, `high`, `max` | `max` |
 | Kimi Coding Plan `kimi-for-coding`, `kimi-for-coding-highspeed` | `auto`, `none` | `auto` |
 | Z.AI `glm-5.3` | `high`, `max` | `max` |
+| Z.AI `glm-5.4` | `low`, `high`, `max` | `max` |
 | Z.AI `glm-5.3-flash` | `high`, `max` | `max` |
 | Z.AI `glm-5.2` | `high`, `max` | `max` |
 | Z.AI `glm-5.1` | `auto`, `none` | `auto` |
