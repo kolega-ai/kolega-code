@@ -6,6 +6,51 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.55.0 - 2026-11-23
+
+### Added
+
+- **New model support.** Z.AI **GLM-5.4** (`glm-5.4`) on the native `zai`
+  provider — 1,048,576-token context window, 131,072 output tokens, image
+  input, function tools, and `low`/`high`/`max` thinking effort (default
+  `max`). Thinking Machines **Inkling 2 Mini** on `thinking_machines`
+  (`thinkingmachines/Inkling-2-Mini`), `openrouter`
+  (`thinkingmachines/inkling-2-mini`), and the native `tinker` provider
+  (including its `:peft:262144` variant) — a 1,048,576-token context window on
+  every route, with image input on `thinking_machines` and `openrouter` and
+  text with tool calls on `tinker`. Existing provider defaults are unchanged.
+- Ollama Cloud **`hy4`** — 1,048,576-token context window, image input, and
+  `low`/`medium`/`high` thinking effort (default `medium`).
+
+### Changed
+
+- **Refreshed OpenRouter and Tinker catalogs.** OpenRouter added the GPT-6.2
+  Sol, Sol Pro, Astra and Astra Pro routes, Gemini 4 Neon, Inkling 2 Mini and
+  DaisyRose 27B, and dropped five routes OpenRouter no longer lists; Tinker
+  added its two native Inkling 2 Mini variants. Provider defaults and
+  first-choice picker fallbacks are unchanged.
+- **Optional `[tinker]` extra.** Upgraded to `tinker` 0.38.0,
+  `tinker-cookbook` 0.6.0 and `tml-renderers` 0.4.0. Native Tinker context
+  windows are now budgeted from the model's sampling limit rather than its
+  training window, and the `none` thinking-effort option passes the minimum
+  effort to native Tinker renderers that accept an effort setting instead of
+  leaving it unset.
+- **CLI startup.** `kolega-code --version`, `--help` and other one-shot
+  commands no longer import Pillow, PyYAML or pathspec until a file is
+  actually parsed, saving roughly 50–60 ms per launch.
+- **TUI performance.** Usage refreshes parse only the bytes appended to the
+  session journal since the last read instead of re-reading and decoding the
+  whole log, about 5× faster on long sessions, and `@` mention completions
+  reuse per-path ranking work across keystrokes.
+
+### Fixed
+
+- ACP sessions no longer fail at shutdown with
+  `RuntimeError: mssage queue already closed` when a late session update, such
+  as a background sub-agent's final status, arrives while the connection is
+  closing. `agent-client-protocol` is upgraded to 0.12.1, which removes the
+  close race.
+
 ## 0.54.0 - 2026-11-19
 
 ### Added
