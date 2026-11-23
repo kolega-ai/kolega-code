@@ -9,6 +9,7 @@ import pytest
 from dotenv import load_dotenv
 
 from kolega_code.cli.config import API_KEY_ENV
+from tests._sharding import owns_nodeid, parse_shard
 
 
 # A TUI test mounts and drops a whole Textual app, so the default thresholds trip
@@ -52,6 +53,35 @@ CLI_CONFIG_ENV_KEYS = {
 def pytest_configure() -> None:
     """Load local test environment variables before test modules import."""
     load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--shard",
+        default=None,
+        metavar="INDEX/TOTAL",
+        help="run only this deterministic slice of the collected tests, e.g. --shard=1/2",
+    )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Keep only this process's slice when a shard was requested.
+
+    Hashing the node id spreads whole modules, slow cases included, across
+    shards without a durations file to refresh. Each test still runs exactly
+    once across the shard set; this only decides which CI job runs it.
+    """
+    shard = config.getoption("--shard")
+    if not shard:
+        return
+    index, total = parse_shard(shard)
+    kept: list[pytest.Item] = []
+    dropped: list[pytest.Item] = []
+    for item in items:
+        target = kept if owns_nodeid(item.nodeid, index, total) else dropped
+        target.append(item)
+    config.hook.pytest_deselected(items=dropped)
+    items[:] = kept
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:

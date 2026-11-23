@@ -50,13 +50,16 @@ jobs:
           fi
 
   tests:
-    name: Python ${{ matrix.python-version }}
+    name: Python ${{ matrix.python-version }} (shard ${{ matrix.shard }}/4)
     needs: changes
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+        # Every collected test runs in exactly one shard (see --shard in
+        # tests/conftest.py). The gate jobs below keep the required check names.
+        shard: ["1", "2", "3", "4"]
 
     steps:
       - name: Skip coverage-badge-only change
@@ -110,34 +113,120 @@ jobs:
         run: uv run playwright install --with-deps chromium
 
       # Coverage runs on 3.12 only: its sysmon core avoids most instrumentation
-      # overhead, and the badge job consumes this job's coverage.xml artifact.
+      # overhead. Each shard writes its own data file; the `Python 3.12` gate
+      # job combines them so the 45% floor still applies to the whole suite.
       - name: Run fast tests
         if: needs.changes.outputs.coverage-badge-only != 'true'
         timeout-minutes: 30
         run: |
           if [ "${{ matrix.python-version }}" = "3.12" ]; then
-            ./run_tests.sh --coverage
+            ./run_tests.sh --coverage --coverage-fail-under=0 --shard=${{ matrix.shard }}/4
+            mv .coverage .coverage.shard-${{ matrix.shard }}
           else
-            ./run_tests.sh
+            ./run_tests.sh --shard=${{ matrix.shard }}/4
           fi
 
       - name: Build and verify bundled skill package data
-        if: needs.changes.outputs.coverage-badge-only != 'true' && matrix.python-version == '3.11'
+        if: needs.changes.outputs.coverage-badge-only != 'true' && matrix.python-version == '3.11' && matrix.shard == '1'
         run: |
           uv build --out-dir /tmp/kolega-code-dist
           uv run python scripts/verify_bundled_skill_artifacts.py /tmp/kolega-code-dist/*
 
-      - name: Upload coverage report
+      - name: Upload coverage data
         if: needs.changes.outputs.coverage-badge-only != 'true' && matrix.python-version == '3.12'
         uses: actions/upload-artifact@v6
         with:
-          name: coverage-xml-python-${{ matrix.python-version }}
+          name: coverage-data-3.12-shard-${{ matrix.shard }}
+          path: .coverage.shard-${{ matrix.shard }}
+          if-no-files-found: error
+          # coverage data files are dotfiles; upload-artifact skips them by default.
+          include-hidden-files: true
+          overwrite: true
+
+  test-gates:
+    # A matrix job's `needs.<id>.result` aggregates every leg, so these gates
+    # fail the pre-shard required checks when any shard of any version fails.
+    name: Python ${{ matrix.python-version }}
+    needs: [changes, tests]
+    if: always()
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13", "3.14"]
+    steps:
+      - name: Require every test shard
+        run: |
+          if [ "${{ needs.tests.result }}" != "success" ]; then
+            echo "::error::Test shards did not all succeed (tests: ${{ needs.tests.result }})."
+            exit 1
+          fi
+
+  coverage:
+    name: Python 3.12
+    needs: [changes, tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every test shard
+        run: |
+          if [ "${{ needs.tests.result }}" != "success" ]; then
+            echo "::error::Test shards did not all succeed (tests: ${{ needs.tests.result }})."
+            exit 1
+          fi
+
+      - name: Skip coverage-badge-only change
+        if: needs.changes.outputs.coverage-badge-only == 'true'
+        run: echo "Skipping coverage for coverage badge-only change."
+
+      - name: Checkout
+        if: needs.changes.outputs.coverage-badge-only != 'true'
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        if: needs.changes.outputs.coverage-badge-only != 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        if: needs.changes.outputs.coverage-badge-only != 'true'
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies
+        if: needs.changes.outputs.coverage-badge-only != 'true'
+        run: uv sync --extra dev --frozen
+
+      - name: Download shard coverage data
+        if: needs.changes.outputs.coverage-badge-only != 'true'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: coverage-data-3.12-shard-*
+          path: coverage-data
+          merge-multiple: true
+
+      - name: Combine and enforce coverage
+        if: needs.changes.outputs.coverage-badge-only != 'true'
+        run: |
+          uv run coverage combine coverage-data
+          uv run coverage report --fail-under=45
+          uv run coverage xml -o coverage.xml
+
+      - name: Upload coverage report
+        if: needs.changes.outputs.coverage-badge-only != 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-xml-python-3.12
           path: coverage.xml
           if-no-files-found: error
+          overwrite: true
 
   coverage-badge:
     name: Update coverage badge
-    needs: [changes, tests]
+    needs: [changes, coverage]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.coverage-badge-only != 'true'
     runs-on: ubuntu-latest
     permissions:

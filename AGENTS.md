@@ -21,11 +21,12 @@ Multi-agent terminal coding agent: Python 3.11+ package `kolega_code/` (hatchlin
 - Fast tests (default, excludes `slow`): `./run_tests.sh`. All tests incl. `slow`: `./run_tests.sh --all`.
 - Focused run (args pass through to pytest): `./run_tests.sh tests/agent/llm/test_client.py -ra`, or append `::test_name` for one test.
 - Coverage: `./run_tests.sh --coverage` (fails under 45%).
+- One deterministic slice (CI uses this to split each leg): `./run_tests.sh --shard=1/2`. Every collected test falls in exactly one shard of a set; `--shard` only decides which job runs it.
 - Lint/format/typecheck: `uv run ruff check .`, `uv run ruff format .`, `uv run pyright`.
 - CI parity check: `uv run pre-commit run --all-files --show-diff-on-failure` (same command as CI and the tracked git hook). CI runs it once, in the required `Dependency audit` job: the hooks are interpreter-independent, and repeating them in every test leg only delayed those legs' tests.
 - Avoid separate CI steps that merely rerun cases already covered by `./run_tests.sh`; keep targeted steps when they add distinct environment, runtime-mode, or isolation coverage.
 - Browser-dependent tests need Chromium: `uv run playwright install --with-deps chromium`.
-- CI matrix: Python 3.11–3.14, coverage enforced on 3.12 only so coverage.py can use its faster sysmon core. Jobs that install Playwright are pinned to `ubuntu-24.04`: `ubuntu-latest` moved to 26.04 ahead of Playwright, which failed the release build and would fail any CI job that misses the browser cache (#763), so keep that pin instead of "modernizing" it.
+- CI matrix: Python 3.11–3.14, each version running four `--shard` legs; the `Python 3.11`/`3.12`/`3.13`/`3.14` gate jobs keep the required check names and fail when any shard fails. Coverage is enforced on 3.12 only so coverage.py can use its faster sysmon core; the four 3.12 shards upload data files that the `Python 3.12` gate combines before applying the 45% floor. Jobs that install Playwright are pinned to `ubuntu-24.04`: `ubuntu-latest` moved to 26.04 ahead of Playwright, which failed the release build and would fail any CI job that misses the browser cache (#763), so keep that pin instead of "modernizing" it.
 
 ## Coding Style & Naming Conventions
 
