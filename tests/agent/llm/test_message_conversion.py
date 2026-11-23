@@ -259,3 +259,82 @@ async def test_anthropic_stream_tool_use_start_execution_id_matches_final_tool_c
     final_first_block = final_content[0]
     assert isinstance(final_first_block, ToolCall)
     assert final_first_block.execution_id == execution_id
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_forwards_tool_input_fragments_without_retaining_them():
+    partial_jsons = ['{"path": "story.txt", ', '"content": "', "once upon a time", '"}']
+    expected_arguments = {"path": "story.txt", "content": "once upon a time"}
+
+    class ContentBlock:
+        type = "tool_use"
+        id = "toolu_write"
+        name = "write"
+        input = expected_arguments
+
+    class StartChunk:
+        type = "content_block_start"
+        index = 0
+        content_block = ContentBlock()
+
+    class Delta:
+        type = "input_json_delta"
+
+        def __init__(self, partial_json):
+            self.partial_json = partial_json
+
+    class DeltaChunk:
+        type = "content_block_delta"
+        index = 0
+
+        def __init__(self, partial_json):
+            self.delta = Delta(partial_json)
+
+    class FinalMessage:
+        role = "assistant"
+        stop_reason = "tool_use"
+        content = [ContentBlock()]
+
+    class FakeGenerator:
+        def __init__(self):
+            self.chunks = iter([StartChunk(), *(DeltaChunk(text) for text in partial_jsons)])
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self.chunks)
+            except StopIteration:
+                raise StopAsyncIteration
+
+        async def get_final_message(self):
+            return FinalMessage()
+
+    class FakeAnthropicStream:
+        async def __aenter__(self):
+            return FakeGenerator()
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+    wrapper = AnthropicStreamWrapper(FakeAnthropicStream())
+    async with wrapper as stream:
+        chunks = [chunk async for chunk in stream]
+        final_message = await stream.get_final_message()
+
+    assert [chunk.type for chunk in chunks] == ["tool_use_start", *(["tool_use_delta"] * len(partial_jsons))]
+    forwarded = ""
+    for chunk in chunks[1:]:
+        delta = chunk.tool_call_delta
+        assert delta is not None
+        forwarded += delta["input_delta"]
+    assert forwarded == "".join(partial_jsons)
+    start_delta = chunks[0].tool_call_delta
+    assert start_delta is not None
+    start_execution_id = start_delta["execution_id"]
+    assert final_message.tool_calls[0].execution_id == start_execution_id
+    assert final_message.tool_calls[0].input == expected_arguments
+    # The deltas are forwarded as-is; retaining a second copy of the argument JSON
+    # on the wrapper made a long tool call quadratic in the provider read loop.
+    assert not hasattr(wrapper, "current_tool_calls")
