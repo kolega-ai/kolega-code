@@ -21,7 +21,7 @@ Multi-agent terminal coding agent: Python 3.11+ package `kolega_code/` (hatchlin
 - Fast tests (default, excludes `slow`): `./run_tests.sh`. All tests incl. `slow`: `./run_tests.sh --all`.
 - Focused run (args pass through to pytest): `./run_tests.sh tests/agent/llm/test_client.py -ra`, or append `::test_name` for one test.
 - Coverage: `./run_tests.sh --coverage` (fails under 45%).
-- One deterministic slice (CI uses this to split each leg): `./run_tests.sh --shard=1/2`. Every collected test falls in exactly one shard of a set; `--shard` only decides which job runs it.
+- One deterministic slice (CI uses this to split each leg): `./run_tests.sh --shard=1/4`. Every collected test falls in exactly one shard of a set; `--shard` only decides which job runs it.
 - Lint/format/typecheck: `uv run ruff check .`, `uv run ruff format .`, `uv run pyright`.
 - CI parity check: `uv run pre-commit run --all-files --show-diff-on-failure` (same command as CI and the tracked git hook). CI runs it once, in the required `Dependency audit` job: the hooks are interpreter-independent, and repeating them in every test leg only delayed those legs' tests.
 - Avoid separate CI steps that merely rerun cases already covered by `./run_tests.sh`; keep targeted steps when they add distinct environment, runtime-mode, or isolation coverage.
