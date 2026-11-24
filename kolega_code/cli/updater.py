@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from functools import cache
 from importlib import metadata
 from pathlib import Path
 from typing import Callable, Literal, Optional
@@ -296,7 +297,13 @@ def other_live_sessions_note(count: int) -> Optional[str]:
     return f"{count} other running Kolega Code sessions detected. Run /restart in each to use the updated version."
 
 
+@cache
 def current_version() -> str:
+    """The installed version; memoized because the CLI reads it per rendered title.
+
+    ``importlib.metadata.version`` rescans ``sys.path`` for distribution metadata on
+    every call (~0.9 ms here), and the answer cannot change while the process runs.
+    """
     try:
         return metadata.version(PACKAGE_NAME)
     except metadata.PackageNotFoundError:

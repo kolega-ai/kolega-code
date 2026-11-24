@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -36,6 +37,37 @@ def resolve_project_identity(project_path: Path | str) -> ProjectIdentity:
         canonical = common_dir.resolve()
         return ProjectIdentity("git-common-dir", f"git:{canonical}", str(project))
     return ProjectIdentity("path", f"path:{project}", str(project))
+
+
+def _could_discover_git_repository(path: Path) -> bool:
+    """Whether Git's discovery walk could find a repository at or above ``path``.
+
+    Git walks up to the first ``.git`` entry, stopping at a filesystem boundary
+    unless ``GIT_DISCOVERY_ACROSS_FILESYSTEM`` allows crossing. Repeating that walk
+    with ``stat`` calls lets a negative answer skip a process spawn; a positive
+    one still asks Git, because only Git resolves worktrees, ``.git`` files and bare
+    repositories.
+    """
+    try:
+        anchor = path if path.is_dir() else path.parent
+        device = anchor.stat().st_dev
+    except OSError:
+        return False
+    across_filesystems = bool(os.environ.get("GIT_DISCOVERY_ACROSS_FILESYSTEM", "").strip())
+    for candidate in (anchor, *anchor.parents):
+        try:
+            if (candidate / ".git").exists():
+                return True
+            # A bare repository has no `.git` entry, so only Git can answer for it.
+            if candidate is anchor and (candidate / "HEAD").is_file() and (candidate / "objects").is_dir():
+                return True
+            candidate_device = candidate.stat().st_dev
+        except OSError:
+            return False
+        if not across_filesystems and candidate_device != device:
+            return False
+        device = candidate_device
+    return False
 
 
 def _run_rev_parse(directory: Path, flag: str) -> str | None:
@@ -72,6 +104,8 @@ def resolve_git_worktree_root(path: Path | str) -> Path | None:
         candidate = candidate.parent
     if candidate.is_file():
         candidate = candidate.parent
+    if not _could_discover_git_repository(candidate):
+        return None
     value = _run_rev_parse(candidate, "--show-toplevel")
     if value is None or value == "--show-toplevel":
         return None
@@ -85,6 +119,8 @@ def resolve_git_common_dir(path: Path | str) -> Path | None:
     checkout. The returned path is absolute but is not required to exist.
     """
     project = Path(path).expanduser().resolve()
+    if not project.is_dir() or not _could_discover_git_repository(project):
+        return None
     value = _run_rev_parse(project, "--git-common-dir")
     if value == "--git-common-dir":
         # Older Git echoes unknown rev-parse flags verbatim with exit code 0.
