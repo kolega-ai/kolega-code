@@ -210,11 +210,15 @@ def test_mcp_list_message_column_notes_adjusted_tool_names(tmp_path: Path, capsy
     exit_code = main([*argv, "list", "--json"])
     captured = capsys.readouterr()
     assert exit_code == 0
-    server = json.loads(captured.out)["servers"][0]
+    listed = json.loads(captured.out)
+    server = listed["servers"][0]
+    # Flags are real booleans, whatever type the status row happens to hold.
+    assert listed["trusted"] is False
     assert server["id"] == "docs"
     assert server["scope"] == "user"
     assert server["health"] == "connected"
     assert server["tool_count"] == 1
+    assert server["oauth"] is False
     assert server["file"] == str(global_mcp_config_path(state))
     assert server["verified_at"]
 
@@ -339,6 +343,46 @@ def test_mcp_add_with_pre_registered_oauth(tmp_path: Path, capsys) -> None:
     assert oauth["redirect_uri"] == "http://127.0.0.1:33418/callback"
     assert oauth["token_endpoint_auth_method"] == "client_secret_post"
     assert oauth["scope"] == "crm.objects.contacts.read"
+
+    assert main(_mcp(project, state, "get", "hubspot")) == 0
+    assert "OAuth:       on, pre-registered client (secret from an environment variable)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("flags", "label", "secret_env"),
+    [
+        (["--oauth"], "on, dynamic client registration", None),
+        (["--oauth", "--client-id", "cid"], "on, pre-registered client (public client)", None),
+        (
+            ["--oauth", "--client-id", "cid", "--client-secret=visible-value"],
+            "on, pre-registered client (secret stored in the definition)",
+            None,
+        ),
+        (
+            ["--oauth", "--client-id", "cid", "--oauth-client-secret-env", "MY_CLIENT_SECRET"],
+            "on, pre-registered client (secret from an environment variable)",
+            "MY_CLIENT_SECRET",
+        ),
+    ],
+)
+def test_mcp_get_describes_the_sign_in_without_printing_the_secret(
+    tmp_path: Path, capsys, flags: list[str], label: str, secret_env: str | None
+) -> None:
+    project, state = _project(tmp_path)
+    assert main(_mcp(project, state, "add", "hub", "https://hub.example/mcp", *flags)) == 0
+    capsys.readouterr()
+
+    assert main(_mcp(project, state, "get", "hub")) == 0
+    shown = capsys.readouterr().out
+    assert f"OAuth:       {label}" in shown
+    assert "visible-value" not in shown
+
+    assert main(_mcp(project, state, "get", "hub", "--json")) == 0
+    shown = capsys.readouterr().out
+    assert "visible-value" not in shown
+    oauth = json.loads(shown)["detail"]["oauth"]
+    assert "client_secret" not in oauth
+    assert oauth["client_secret_env"] == secret_env
 
 
 def test_mcp_add_rejects_incomplete_oauth_without_exposing_secret(tmp_path: Path, capsys) -> None:

@@ -301,7 +301,7 @@ def _server_json(row: dict[str, Any]) -> dict[str, Any]:
         "transport": row["transport"],
         "enabled": row["enabled"],
         "enabled_override": row["enabled_override"],
-        "oauth": row["oauth"],
+        "oauth": bool(row["oauth"]),
         "health": health.health,
         "status": row["status"],
         "message": health.message,
@@ -335,7 +335,7 @@ async def _cmd_list(ctx: McpContext) -> int:
     if getattr(args, "json", False):
         payload = {
             "project": str(ctx.project_path),
-            "trusted": config.project_trusted,
+            "trusted": bool(config.project_trusted),
             "servers": [_server_json(row) for row in rows],
         }
         print(json.dumps(payload, indent=2))
@@ -447,7 +447,7 @@ async def _cmd_get(ctx: McpContext) -> int:
     print(f"  Transport:   {_transport_label(server.transport)}")
     for label, value in _endpoint_lines(server):
         print(f"  {label:<13}{value}")
-    print(f"  OAuth:       {_oauth_label(server)}")
+    print(f"  OAuth:       {_sign_in_label(server)}")
     print(f"  Timeout:     {server.timeout_seconds:g}s")
     if row["missing_env"]:
         print(f"  Environment: missing {_clean(', '.join(row['missing_env']))}")
@@ -507,19 +507,17 @@ def _masked_mapping(values: dict[str, str]) -> str:
     return _clean(", ".join(f"{key}={MASKED_VALUE}" for key in values))
 
 
-def _oauth_label(server: MCPServerConfig) -> str:
+def _sign_in_label(server: MCPServerConfig) -> str:
     oauth = server.oauth
     if not oauth.enabled:
         return "off"
     if not oauth.client_id:
         return "on, dynamic client registration"
     if oauth.client_secret_env:
-        secret = f"secret from env {oauth.client_secret_env}"
-    elif oauth.client_secret:
-        secret = "secret set"
-    else:
-        secret = "public client"
-    return f"on, pre-registered client ({secret})"
+        return "on, pre-registered client (secret from an environment variable)"
+    if oauth.client_secret:
+        return "on, pre-registered client (secret stored in the definition)"
+    return "on, pre-registered client (public client)"
 
 
 def _transport_argument(value: str) -> str:
