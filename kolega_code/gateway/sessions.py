@@ -1389,7 +1389,7 @@ class AgentTurnHandler:
             additional_prompts=list,
             history=lambda: agent_holder["agent"].history if "agent" in agent_holder else [],
             set_catalogs=lambda _skills, _agents: None,
-            mcp_trusted=lambda: False,
+            mcp_loader=lambda _path: LoadedMCPConfig(),
             mcp_diagnostic=lambda _diagnostic: None,
             mcp_names=lambda _config: None,
             mcp_builder=_disabled_mcp_builder,

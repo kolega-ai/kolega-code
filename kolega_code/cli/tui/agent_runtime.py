@@ -35,7 +35,7 @@ from kolega_code.agent.prompts import (
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config, project_hooks_present
 from kolega_code.scratchpad import SCRATCHPAD_PROMPT_EXTENSION_ID, ensure_scratchpad_dir, scratchpad_dir_for
 from kolega_code.llm.exceptions import LLMError, llm_error_message
-from kolega_code.mcp.config import LoadedMCPConfig, server_fingerprint
+from kolega_code.mcp.config import LoadedMCPConfig, load_mcp_config_for, server_fingerprint
 from kolega_code.mcp.service import MCPService, mcp_tool_name_adjustment_note
 from kolega_code.mcp.tools import build_mcp_tool_extension
 from kolega_code.permissions import PermissionDecision
@@ -1474,8 +1474,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._schedule_maybe_start_queued_message()
 
     def _maybe_start_queued_message(self) -> bool:
-        settings_screen = getattr(self, "_settings_screen", None)
-        if settings_screen is not None and settings_screen.mcp_busy:
+        if self._mcp_operation_in_flight():
             return False
         if (
             self._startup_pending
@@ -1971,13 +1970,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         self.session.config = config_summary(config)
         await self._save_session_async()
         try:
-            settings_screen = getattr(self, "_settings_screen", None)
             await self._build_agent(
                 config,
                 rebuild=rebuild,
                 # Peer messages may arrive while an MCP operation awaits OAuth
                 # or a remote server. Resume them against the rebuilt agent.
-                preserve_queued=settings_screen is not None and settings_screen.mcp_busy,
+                preserve_queued=self._mcp_operation_in_flight(),
             )
         except KolegaExtensionLoadError as exc:
             # The failed generation was already reclaimed by _build_agent; there
@@ -2137,6 +2135,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
     ) -> None:
         if self._draining_agent_tasks and asyncio.current_task() is not self._workspace_switch_task:
             raise RuntimeError("The previous turn is still finishing cleanup; wait before rebuilding the agent.")
+        self._announce_untrusted_project_mcp(getattr(config, "mcp_config", None))
         previous = self._background_rebuilding
         self._background_rebuilding = True
         try:
@@ -2208,7 +2207,14 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             additional_prompts=self._composition_additional_prompts,
             history=lambda: self.agent.history if self.agent is not None else [],
             set_catalogs=self._set_composition_catalogs,
-            mcp_trusted=lambda: self.settings.is_mcp_project_trusted(self.project_path),
+            # Trust is the launch project's decision even when the agent runs in a
+            # linked workspace, so project servers never load on another checkout's say-so.
+            mcp_loader=lambda path: load_mcp_config_for(
+                path,
+                self.settings_store.root,
+                self.settings,
+                trusted=self.settings.is_mcp_project_trusted(self.project_path),
+            ),
             mcp_diagnostic=lambda diagnostic: self._log_status(f"mcp: {diagnostic}", level="warn"),
             mcp_names=self._log_mcp_tool_name_warnings,
             own_bundle=self._own_composition_bundle,
@@ -2418,6 +2424,20 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 severity="warning",
                 title="Untrusted project hooks",
             )
+
+    def _announce_untrusted_project_mcp(self, mcp_config: LoadedMCPConfig | None) -> None:
+        """Once per session, point at /mcp when a project's MCP servers wait for trust."""
+        pending = getattr(mcp_config, "untrusted_project_servers", None) if mcp_config is not None else None
+        if self._mcp_notice_shown or not pending:
+            return
+        self._mcp_notice_shown = True
+        servers = "server" if len(pending) == 1 else "servers"
+        self._notify_user(
+            f"This project defines {len(pending)} MCP {servers}, but they are not trusted, so none are loaded. "
+            "Run /mcp to review and trust them.",
+            severity="warning",
+            title="Untrusted project MCP servers",
+        )
 
     async def _fire_session_start_once(self) -> None:
         if self._session_started or self.agent is None:

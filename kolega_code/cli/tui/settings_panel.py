@@ -45,16 +45,14 @@ from kolega_code.llm.specs.custom_endpoints import (
 from kolega_code.mcp.config import (
     MCPConfigError,
     MCPOAuthConfig,
+    MCPScope,
     MCPServerConfig,
-    global_mcp_config_path,
-    load_mcp_config,
-    remove_server_config,
-    upsert_server_config,
+    load_mcp_config_for,
 )
-from kolega_code.mcp.service import MCPService, MCPVerificationResult, mcp_tool_name_adjustment_note
-from kolega_code.mcp.state import MCPStatusStore, MCPOAuthTokenStore
+from kolega_code.mcp.service import MCPService, mcp_tool_name_adjustment_note
 
 from .. import messages, theme
+from . import mcp_ops
 from ..config import (
     COMPRESSION_THRESHOLD_ENV,
     SKILLS_MODE_ENV,
@@ -108,6 +106,15 @@ MCP_TRANSPORT_OPTIONS = [
     ("stdio command", "stdio"),
 ]
 MCP_ENABLED_OPTIONS = [("Enabled", "true"), ("Disabled", "false")]
+MCP_LOCAL_SCOPE_VALUE = "local"
+MCP_SCOPE_OPTIONS = [("User (all your projects)", "user"), ("Local (this project only)", MCP_LOCAL_SCOPE_VALUE)]
+MCP_SCOPE_HINTS = {
+    "user": "This server is stored in your user MCP config and available in every project.",
+    "local": "This server is stored in settings.json for this project only (local scope).",
+}
+MCP_PROJECT_READ_ONLY_HINT = (
+    "Project MCP servers are read-only here; edit .mcp.json (or .kolega/mcp_servers.json) in the repository."
+)
 MCP_OAUTH_AUTH_METHOD_OPTIONS = [
     ("Auto (POST if secret, none if public)", "auto"),
     ("client_secret_post", "client_secret_post"),
@@ -119,7 +126,7 @@ MCP_STATUS_NAME_MAX = 34
 # Compression threshold select: "default" maps to None (the agent's built-in 95%).
 COMPRESSION_THRESHOLD_DEFAULT_VALUE = "default"
 COMPRESSION_THRESHOLD_PRESET_PERCENTS = (50, 60, 70, 80, 90, 95, 100)
-MCP_ATTENTION_STATUSES = {"failed", "stale", "unverified"}
+MCP_ATTENTION_STATUSES = {"failed", "stale", "unverified", "pending_trust"}
 MCP_TRANSPORT_LABELS = {
     "streamable_http": "HTTP",
     "sse": "SSE",
@@ -235,6 +242,8 @@ def _mcp_status_label(row: dict[str, object]) -> tuple[str, str]:
         return "disabled", Color.MUTED
 
     status = str(row.get("status") or "unverified")
+    if status == "pending_trust":
+        return "pending approval", Color.WARNING
     if status == "verified":
         return "verified", Color.SUCCESS
     if status == "stale":
@@ -254,6 +263,8 @@ def _mcp_status_attention_message(row: dict[str, object]) -> str:
         return ""
     if status == "stale":
         return "Config changed; verify again."
+    if status == "pending_trust":
+        return "Trust the project to load this server."
 
     message = " ".join(str(row.get("message") or "").split())
     if status == "unverified" and message.rstrip(".") == "Not verified":
@@ -271,7 +282,7 @@ def _mcp_status_metadata(row: dict[str, object]) -> list[str]:
         except (TypeError, ValueError):
             tool_count = 0
         metadata.append(_mcp_plural(tool_count, "tool"))
-    metadata.append(str(row.get("source") or "unknown"))
+    metadata.append(str(row.get("scope") or row.get("source") or "unknown"))
     metadata.append(_mcp_transport_label(row.get("transport") or "unknown"))
     if bool(row.get("oauth")):
         metadata.append("oauth")
@@ -339,7 +350,8 @@ def _mcp_server_select_label(server: MCPServerConfig) -> str:
     state = "enabled" if server.enabled else "disabled"
     separator = _mcp_separator()
     return (
-        f"{server.display_name} — {server.source}{separator}{_mcp_transport_label(server.transport)}{separator}{state}"
+        f"{server.display_name} — {server.scope or server.source}{separator}"
+        f"{_mcp_transport_label(server.transport)}{separator}{state}"
     )
 
 
@@ -1485,8 +1497,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
 
     def _load_mcp_config_for_ui(self):
         """Load MCP config for the settings panel and attach it to the active AgentConfig."""
-        trusted = bool(self.settings.is_mcp_project_trusted(self.project_path))
-        config = load_mcp_config(self.project_path, self.settings_store.root, project_trusted=trusted)
+        config = load_mcp_config_for(self.project_path, self.settings_store.root, self.settings)
         if self.config is not None:
             self.config.mcp_config = config
         return config
@@ -1502,7 +1513,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._set_mcp_status(f"MCP config could not be loaded: {exc}", tone="error")
             return
 
-        options = [("New user server", MCP_NEW_SERVER_VALUE)]
+        options = [("New server", MCP_NEW_SERVER_VALUE)]
         options.extend((self._mcp_server_option_label(server), server.id) for server in config.servers.values())
         selected = getattr(self, "_mcp_selected_server_id", MCP_NEW_SERVER_VALUE)
         if selected not in {value for _, value in options}:
@@ -1555,7 +1566,11 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             set_input("mcp_args_input", "")
             set_input("mcp_env_input", "")
             set_input("mcp_cwd_input", "")
-            self._set_mcp_source_hint("Create or update a user MCP server in the global state config.")
+            set_select("mcp_scope_select", "user")
+            self._set_mcp_scope_visible(True)
+            self._set_mcp_source_hint(
+                "Create a server in your user config (every project) or in the local scope (this project only)."
+            )
             self._update_mcp_transport_fields("streamable_http")
             screen = getattr(self, "_settings_screen", None)
             if screen is not None:
@@ -1578,16 +1593,30 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         set_input("mcp_args_input", " ".join(shlex.quote(arg) for arg in server.args))
         set_input("mcp_env_input", json.dumps(server.env, sort_keys=True) if server.env else "")
         set_input("mcp_cwd_input", server.cwd or "")
-        if server.source == "project":
-            self._set_mcp_source_hint(
-                "This server comes from the trusted project config and is read-only here; edit .kolega/mcp_servers.json."
-            )
+        self._set_mcp_scope_visible(False)
+        if server.scope == "project":
+            self._set_mcp_source_hint("This server comes from the shared project file. " + MCP_PROJECT_READ_ONLY_HINT)
         else:
-            self._set_mcp_source_hint("This server is stored in your global MCP config.")
+            self._set_mcp_source_hint(MCP_SCOPE_HINTS[server.scope or "user"])
         self._update_mcp_transport_fields(server.transport)
         screen = getattr(self, "_settings_screen", None)
         if screen is not None:
             screen.mark_mcp_clean(server_id, read_only=server.source == "project")
+
+    def _set_mcp_scope_visible(self, visible: bool) -> None:
+        for widget_id in ("mcp_scope_label", "mcp_scope_select"):
+            try:
+                self._settings_query_one(f"#{widget_id}", Widget).display = visible
+            except NoMatches:
+                pass
+
+    def _selected_mcp_scope(self) -> MCPScope:
+        """Where a new server is stored; an existing server keeps the scope it was defined in."""
+        try:
+            value = self._settings_query_one("#mcp_scope_select", Select).value
+        except NoMatches:
+            return "user"
+        return "local" if str(value) == MCP_LOCAL_SCOPE_VALUE else "user"
 
     def _update_mcp_oauth_fields(self, visible: bool) -> None:
         for widget_id in (
@@ -1847,38 +1876,27 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         return {str(key): str(item) for key, item in parsed.items() if item is not None}
 
     async def _handle_mcp_settings_button(self, button_id: str) -> bool:
-        if button_id != "mcp_refresh" and (
-            self._turn_active or self.agent_worker is not None or self._agent_execution_draining()
-        ):
-            self._set_mcp_status("Stop the active turn before changing MCP servers.", "warning")
+        if button_id != "mcp_refresh" and mcp_ops.change_blocked(self):
+            self._set_mcp_status(mcp_ops.BLOCKED_MESSAGE, "warning")
             return True
         if button_id == "mcp_refresh":
             self._populate_mcp_controls()
-            return True
         if button_id == "mcp_trust_project":
-            self.settings.trust_mcp_project(self.project_path)
-            self.settings_store.save(self.settings)
-            self._populate_mcp_controls()
-            await self._ensure_agent_from_settings(rebuild=True)
-            self._notify_user("Trusted project MCP config for this project.")
-            return True
+            if await mcp_ops.trust_project(self):
+                self._populate_mcp_controls()
+                self._notify_user("Trusted project MCP config for this project.")
         if button_id == "mcp_save_server":
             await self._save_mcp_server_from_ui()
-            return True
         if button_id == "mcp_save_verify_server":
             if await self._save_mcp_server_from_ui(rebuild=False):
                 await self._verify_mcp_server_from_ui(just_saved=True)
-            return True
         if button_id == "mcp_delete_server":
             await self._delete_mcp_server_from_ui()
-            return True
         if button_id == "mcp_verify_server":
             await self._verify_mcp_server_from_ui()
-            return True
         if button_id == "mcp_clear_tokens":
-            self._clear_mcp_tokens_from_ui()
-            return True
-        return False
+            await self._clear_mcp_tokens_from_ui()
+        return True
 
     def _selected_mcp_server_id(self) -> str:
         screen = getattr(self, "_settings_screen", None)
@@ -1891,8 +1909,8 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         return MCP_NEW_SERVER_VALUE if value is Select.NULL else str(value)
 
     async def _save_mcp_server_from_ui(self, *, rebuild: bool = True) -> bool:
-        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
-            self._set_mcp_status("Stop the active turn before changing MCP servers.", "warning")
+        if mcp_ops.change_blocked(self):
+            self._set_mcp_status(mcp_ops.BLOCKED_MESSAGE, "warning")
             return False
         selected = self._selected_mcp_server_id()
         try:
@@ -1900,17 +1918,13 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             config = self._load_mcp_config_for_ui()
             existing = config.servers.get(selected) if selected != MCP_NEW_SERVER_VALUE else None
             target_existing = config.servers.get(server.id)
-            if (existing is not None and existing.source == "project") or (
-                target_existing is not None and target_existing.source == "project"
-            ):
-                self._set_mcp_status(
-                    "Project MCP servers are read-only in the TUI; edit .kolega/mcp_servers.json.", "warning"
-                )
+            if any(candidate is not None and candidate.scope == "project" for candidate in (existing, target_existing)):
+                self._set_mcp_status(MCP_PROJECT_READ_ONLY_HINT, "warning")
                 return False
-            path = global_mcp_config_path(self.settings_store.root)
-            if selected != MCP_NEW_SERVER_VALUE and selected != server.id:
-                remove_server_config(path, selected, source="global")
-            upsert_server_config(path, server, source="global")
+            scope = (existing.scope or "user") if existing is not None else self._selected_mcp_scope()
+            if existing is not None and selected != server.id:
+                mcp_ops.remove_definition(self, selected, scope=existing.scope or "user")
+            mcp_ops.save_server(self, server, scope=scope)
         except (MCPConfigError, ValueError) as exc:
             self._set_mcp_status(str(exc), "error")
             return False
@@ -1922,45 +1936,44 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         if screen is not None:
             screen.mark_mcp_clean(server.id, message="Saved. Verification has not been run by this action.")
         self._populate_mcp_controls(preserve_form=True)
-        self._set_mcp_source_hint("This server is stored in your global MCP config.")
+        # The saved server now exists, so its scope is fixed like any other definition's.
+        self._set_mcp_scope_visible(False)
+        self._set_mcp_source_hint(MCP_SCOPE_HINTS[scope])
         if rebuild:
-            await self._ensure_agent_from_settings(rebuild=True)
+            await mcp_ops.rebuild_agent(self)
         self._notify_user(f"Saved MCP server '{server.id}'.")
         return True
 
     async def _delete_mcp_server_from_ui(self) -> None:
-        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
-            self._set_mcp_status("Stop the active turn before changing MCP servers.", "warning")
+        if mcp_ops.change_blocked(self):
+            self._set_mcp_status(mcp_ops.BLOCKED_MESSAGE, "warning")
             return
         selected = self._selected_mcp_server_id()
         if selected == MCP_NEW_SERVER_VALUE:
-            self._set_mcp_status("Select a user MCP server to delete.", "warning")
+            self._set_mcp_status("Select an MCP server to delete.", "warning")
             return
         try:
-            config = self._load_mcp_config_for_ui()
-            existing = config.servers.get(selected)
-            if existing is not None and existing.source == "project":
-                self._set_mcp_status(
-                    "Project MCP servers are read-only in the TUI; edit .kolega/mcp_servers.json.", "warning"
-                )
+            existing = self._load_mcp_config_for_ui().servers.get(selected)
+            if existing is not None and existing.scope == "project":
+                self._set_mcp_status(MCP_PROJECT_READ_ONLY_HINT, "warning")
                 return
-            removed = remove_server_config(global_mcp_config_path(self.settings_store.root), selected, source="global")
-            MCPStatusStore(self.settings_store.root).clear(selected)
-            MCPOAuthTokenStore(self.settings_store.root).clear(selected)
+            removed = mcp_ops.remove_definition(
+                self, selected, scope=(existing.scope or "user") if existing else "user"
+            )
         except MCPConfigError as exc:
             self._set_mcp_status(str(exc), "error")
             return
         if not removed:
-            self._set_mcp_status(f"No user MCP server named '{selected}' was found.", "warning")
+            self._set_mcp_status(f"No MCP server named '{selected}' was found.", "warning")
             return
         self._mcp_selected_server_id = MCP_NEW_SERVER_VALUE
         self._populate_mcp_controls()
-        await self._ensure_agent_from_settings(rebuild=True)
+        await mcp_ops.rebuild_agent(self)
         self._notify_user(f"Deleted MCP server '{selected}'.")
 
     async def _verify_mcp_server_from_ui(self, *, just_saved: bool = False) -> None:
-        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
-            self._set_mcp_status("Stop the active turn before changing MCP servers.", "warning")
+        if mcp_ops.change_blocked(self):
+            self._set_mcp_status(mcp_ops.BLOCKED_MESSAGE, "warning")
             return
         screen = getattr(self, "_settings_screen", None)
         if screen is not None and screen.mcp_dirty:
@@ -1976,25 +1989,15 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             f"Verifying MCP server '{selected}'... stdio servers execute their configured command.", "warning"
         )
         self._set_mcp_feedback("Saved. Verifying…" if just_saved else "Verifying saved configuration…")
-        config = self._load_mcp_config_for_ui()
         try:
-            result = await MCPService(config, self.settings_store.root, self.project_path).verify_server(
-                selected,
-                interactive_oauth=True,
-                open_browser=True,
-                output=self.console,
-            )
+            result = await mcp_ops.verify(self, selected)
         except asyncio.CancelledError:
             self._set_mcp_feedback("Configuration remains saved. Verification was cancelled.")
             raise
-        except Exception:
-            # Do not echo arbitrary transport exceptions: they may contain credentials.
-            result = MCPVerificationResult(selected, False, "Verification could not complete. Try again.")
         self._update_mcp_status_text()
-        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
-            self._set_mcp_status("Stop the active turn before changing MCP servers.", "warning")
+        if result is None:
+            self._set_mcp_status(mcp_ops.BLOCKED_MESSAGE, "warning")
             return
-        await self._ensure_agent_from_settings(rebuild=True)
         if result.ok:
             self._set_mcp_feedback("Saved and verified." if just_saved else "Saved configuration verified.")
             message = f"Verified MCP server '{selected}' ({result.tool_count} tool(s))."
@@ -2007,15 +2010,16 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._set_mcp_feedback(f"Saved, but verification failed. {result.message}")
             self._notify_user(f"MCP verification failed for '{selected}': {result.message}", severity="warning")
 
-    def _clear_mcp_tokens_from_ui(self) -> None:
-        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
-            self._set_mcp_status("Stop the active turn before changing MCP servers.", "warning")
+    async def _clear_mcp_tokens_from_ui(self) -> None:
+        if mcp_ops.change_blocked(self):
+            self._set_mcp_status(mcp_ops.BLOCKED_MESSAGE, "warning")
             return
         selected = self._selected_mcp_server_id()
         if selected == MCP_NEW_SERVER_VALUE:
             self._set_mcp_status("Select an MCP server before clearing tokens.", "warning")
             return
-        MCPOAuthTokenStore(self.settings_store.root).clear(selected)
+        await mcp_ops.clear_authentication(self, selected)
+        self._update_mcp_status_text()
         self._set_mcp_status(f"Cleared stored MCP OAuth tokens for '{selected}'.", "ok")
         self._notify_user(f"Cleared MCP OAuth tokens for '{selected}'.")
 

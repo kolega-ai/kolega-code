@@ -1071,6 +1071,75 @@ ChangesInspectorScreen #changes_footer {
     color: $text-muted;
 }
 
+MCPScreen,
+MCPImportScreen {
+    align: center middle;
+    background: $background 92%;
+}
+
+MCPScreen #mcp_panel,
+MCPImportScreen #mcp_import_panel {
+    width: 100;
+    max-width: 96%;
+    height: auto;
+    max-height: 92%;
+    padding: 0 1;
+    background: $surface;
+    border: round $surface-lighten-2;
+}
+
+MCPScreen #mcp_panel_title,
+MCPImportScreen #mcp_import_title {
+    width: 100%;
+    height: 2;
+    content-align: left middle;
+}
+
+MCPScreen #mcp_panel_servers,
+MCPScreen #mcp_panel_tools {
+    height: auto;
+    max-height: 14;
+    border: round $surface-lighten-2;
+}
+
+MCPScreen #mcp_panel_tools {
+    display: none;
+}
+
+MCPScreen #mcp_panel_detail,
+MCPImportScreen #mcp_import_detail {
+    width: 100%;
+    height: auto;
+    max-height: 18;
+    margin: 1 0;
+}
+
+MCPScreen #mcp_panel_hint,
+MCPImportScreen #mcp_import_hint {
+    width: 100%;
+    height: auto;
+    color: $text-muted;
+    margin-bottom: 1;
+}
+
+MCPImportScreen #mcp_import_sources,
+MCPImportScreen #mcp_import_servers {
+    height: auto;
+    max-height: 16;
+    border: round $surface-lighten-2;
+}
+
+MCPImportScreen #mcp_import_servers,
+MCPImportScreen #mcp_import_scope {
+    display: none;
+}
+
+MCPImportScreen #mcp_import_actions {
+    height: auto;
+    align-horizontal: right;
+    margin-bottom: 1;
+}
+
 MemoryScreen {
     align: center middle;
     background: $background 92%;

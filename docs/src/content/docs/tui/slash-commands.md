@@ -41,6 +41,7 @@ These control the app and your session.
 | `/build` | Switch to [Build mode](../modes/) |
 | `/sidebar` | Show or hide the side panel |
 | `/settings` | Open the full-screen Settings editor |
+| `/mcp` | Manage [MCP servers](../../configuration/mcp/#the-mcp-panel): `/mcp` opens the panel; `/mcp reconnect (<server>|all)`, `/mcp enable|disable (<server>|all)` and `/mcp import` run directly |
 | `/memory` | Open [Project Memory](../project-memory/) or run a memory subcommand |
 | `/permissions` | Show or switch the shell/edit permission mode |
 | `/model` | Choose the active model |

@@ -126,7 +126,7 @@ def _make_host() -> CompositionHost:
         additional_prompts=Mock(return_value=[_prompt("additional-first"), _prompt("additional-last")]),
         history=Mock(return_value=[]),
         set_catalogs=Mock(),
-        mcp_trusted=Mock(return_value=False),
+        mcp_loader=Mock(return_value=LoadedMCPConfig()),
         mcp_diagnostic=Mock(),
         mcp_names=Mock(),
         own_bundle=Mock(),
@@ -150,7 +150,7 @@ def host(monkeypatch: pytest.MonkeyPatch) -> CompositionHost:
 @pytest.mark.parametrize("active_is_launch", [False, True], ids=["switched", "launch"])
 @pytest.mark.parametrize("trusted", [False, True], ids=["untrusted", "trusted"])
 @pytest.mark.parametrize("has_extension", [False, True], ids=["no-tools", "tools"])
-def test_prepare_forwards_active_mcp_path_launch_cache_and_host_trust(
+def test_prepare_uses_launch_cache_or_host_loader_for_the_active_workspace(
     composition_request: CompositionRequest,
     host: CompositionHost,
     active_is_launch: bool,
@@ -162,26 +162,36 @@ def test_prepare_forwards_active_mcp_path_launch_cache_and_host_trust(
         request.active_project_path = Path(str(request.project_path))
     cached = LoadedMCPConfig(diagnostics=["first diagnostic", "second diagnostic"], project_trusted=not trusted)
     request.config.mcp_config = cached
+    loaded = LoadedMCPConfig(project_trusted=trusted)
     mcp_extension = _tool("mcp") if has_extension else None
     host.mcp_builder = builder = Mock(return_value=mcp_extension)
-    host.mcp_trusted = trust = Mock(return_value=trusted)
+    host.mcp_loader = loader = Mock(return_value=loaded)
 
     prepared = prepare_composition(request, host)
 
+    active_config = cached if active_is_launch else loaded
     builder.assert_called_once_with(
         request.active_project_path,
         request.state_dir,
-        project_trusted=trusted,
-        loaded_config=cached if active_is_launch else None,
+        project_trusted=active_config.project_trusted,
+        loaded_config=active_config,
     )
-    trust.assert_called_once_with()
-    assert cast(Mock, host.mcp_diagnostic).call_args_list == [
-        (("first diagnostic",), {}),
-        (("second diagnostic",), {}),
-    ]
+    if active_is_launch:
+        loader.assert_not_called()
+    else:
+        loader.assert_called_once_with(request.active_project_path)
+    expected_diagnostics = (
+        [
+            (("first diagnostic",), {}),
+            (("second diagnostic",), {}),
+        ]
+        if active_is_launch
+        else []
+    )
+    assert cast(Mock, host.mcp_diagnostic).call_args_list == expected_diagnostics
     names = cast(Mock, host.mcp_names)
-    if active_is_launch and has_extension:
-        names.assert_called_once_with(cached)
+    if has_extension:
+        names.assert_called_once_with(active_config)
     else:
         names.assert_not_called()
     assert [tool.name for tool in prepared.tools] == ["host-first", "question"] + (["mcp"] if has_extension else [])
@@ -189,16 +199,19 @@ def test_prepare_forwards_active_mcp_path_launch_cache_and_host_trust(
         assert prepared.tools[-1] is mcp_extension
 
 
-def test_prepare_without_cached_mcp_config_still_calls_host_builder(
+def test_prepare_without_cached_mcp_config_loads_through_the_host(
     composition_request: CompositionRequest, host: CompositionHost
 ) -> None:
+    loader = cast(Mock, host.mcp_loader)
+
     prepared = prepare_composition(composition_request, host)
 
+    loader.assert_called_once_with(composition_request.active_project_path)
     cast(Mock, host.mcp_builder).assert_called_once_with(
         composition_request.active_project_path,
         composition_request.state_dir,
         project_trusted=False,
-        loaded_config=None,
+        loaded_config=loader.return_value,
     )
     cast(Mock, host.mcp_diagnostic).assert_not_called()
     cast(Mock, host.mcp_names).assert_not_called()

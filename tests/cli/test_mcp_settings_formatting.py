@@ -187,9 +187,9 @@ def test_mcp_server_selector_labels_are_readable() -> None:
 
     sep = settings_panel._mcp_separator()
 
-    assert settings_panel._mcp_server_select_label(http_server) == f"Context7 — global{sep}HTTP{sep}enabled"
+    assert settings_panel._mcp_server_select_label(http_server) == f"Context7 — user{sep}HTTP{sep}enabled"
     assert settings_panel._mcp_server_select_label(stdio_server) == f"Repo Tools — project{sep}stdio{sep}disabled"
     assert (
         settings_panel.SettingsPanelMixin._mcp_server_option_label(_FakeMCPStatusPanel(), http_server)
-        == f"Context7 — global{sep}HTTP{sep}enabled"
+        == f"Context7 — user{sep}HTTP{sep}enabled"
     )

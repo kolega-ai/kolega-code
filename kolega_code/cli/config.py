@@ -31,7 +31,7 @@ from kolega_code.llm.specs.custom_endpoints import (
     is_custom_provider,
     sync_custom_endpoint_specs,
 )
-from kolega_code.mcp.config import load_mcp_config
+from kolega_code.mcp.config import load_mcp_config_for
 from kolega_code.services.lsp.config import LspConfig
 
 from .provider_registry import default_model_for_provider, rebuild_ui_model_options, set_custom_provider_labels
@@ -973,11 +973,8 @@ def build_agent_config(
     compression_threshold = _compression_threshold(loaded_env, settings, overrides.compression_threshold)
     context_window_tokens, max_output_tokens = _strict_context_budget(overrides, long_provider, long_model)
     state_dir = settings_store.root if settings_store is not None else SettingsStore().root
-    mcp_config = load_mcp_config(
-        project_path,
-        state_dir,
-        project_trusted=bool(settings and settings.is_mcp_project_trusted(project_path)),
-    )
+    # Without settings there is no trust, local-scope server or project choice to apply.
+    mcp_config = load_mcp_config_for(project_path, state_dir, settings if settings is not None else CliSettings())
     lsp_project_trusted = bool(settings and settings.is_lsp_project_trusted(project_path))
 
     required_providers = {long_provider, fast_provider}

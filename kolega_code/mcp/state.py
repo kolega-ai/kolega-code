@@ -26,12 +26,15 @@ class MCPToolStatus(BaseModel):
 class MCPServerStatus(BaseModel):
     status: Literal["unverified", "verified", "failed"] = "unverified"
     fingerprint: Optional[str] = None
+    verified_at: Optional[str] = None
     message: str = ""
     transport: Optional[str] = None
     source: Optional[str] = None
     tool_count: int = 0
     tools: list[MCPToolStatus] = Field(default_factory=list)
     oauth: bool = False
+    # Environment variables a ``${NAME}`` reference needs that were unset at verification.
+    env_missing: list[str] = Field(default_factory=list)
 
     @classmethod
     def verified(
@@ -47,6 +50,7 @@ class MCPServerStatus(BaseModel):
         return cls(
             status="verified",
             fingerprint=fingerprint,
+            verified_at=_now_iso(),
             message=message or f"Verified {len(tools)} tool(s).",
             transport=transport,
             source=source,
@@ -64,16 +68,19 @@ class MCPServerStatus(BaseModel):
         source: str,
         message: str,
         oauth: bool = False,
+        env_missing: Optional[list[str]] = None,
     ) -> "MCPServerStatus":
         return cls(
             status="failed",
             fingerprint=fingerprint,
+            verified_at=_now_iso(),
             message=message,
             transport=transport,
             source=source,
             tool_count=0,
             tools=[],
             oauth=oauth,
+            env_missing=list(env_missing or []),
         )
 
 

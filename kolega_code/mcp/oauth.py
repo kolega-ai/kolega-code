@@ -30,6 +30,14 @@ class MCPOAuthError(RuntimeError):
     """Raised when MCP OAuth setup or callback handling fails."""
 
 
+class MCPOAuthCallbackTimeout(MCPOAuthError):
+    """The sign-in did not reach the local callback before its deadline.
+
+    Kept apart from ``TimeoutError`` so a sign-in that was never completed is not
+    reported as an unreachable server.
+    """
+
+
 class MCPFileTokenStorage:
     """Adapter from Kolega's token store to the MCP SDK TokenStorage protocol."""
 
@@ -289,7 +297,10 @@ class LocalOAuthCallbackServer:
     async def wait_for_callback(self) -> tuple[str, Optional[str]]:
         if self._future is None:
             raise MCPOAuthError("OAuth callback server is not running")
-        return await asyncio.wait_for(self._future, timeout=self.timeout_seconds)
+        try:
+            return await asyncio.wait_for(self._future, timeout=self.timeout_seconds)
+        except asyncio.TimeoutError as exc:
+            raise MCPOAuthCallbackTimeout("No sign-in callback arrived before the deadline.") from exc
 
 
 async def default_redirect_handler(url: str, *, open_browser: bool = True, output=None) -> None:

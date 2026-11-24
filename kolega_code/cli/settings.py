@@ -68,6 +68,12 @@ def _merge_settings_documents(
         if isinstance(base.get(key), dict) and isinstance(current[key], dict) and isinstance(on_disk.get(key), dict):
             merged[key] = _merge_settings_documents(base[key], current[key], on_disk[key])
             continue
+        if key not in base and isinstance(current[key], dict) and isinstance(on_disk.get(key), dict):
+            # Two writers added the same nested container, such as one project's local MCP
+            # servers. Keep both: entries only one of them wrote survive, and this writer
+            # wins an entry they both wrote.
+            merged[key] = _merge_settings_documents({}, current[key], on_disk[key])
+            continue
         merged[key] = current[key]
     return merged
 
@@ -118,6 +124,39 @@ def _coerce_permission_mode(raw: object) -> str:
         return PermissionMode(str(raw).lower()).value
     except ValueError:
         return PermissionMode.ASK.value
+
+
+def _coerce_local_mcp_servers(raw: object) -> dict[str, dict[str, dict[str, Any]]]:
+    """Normalize ``mcp_local_servers`` (project path -> server id -> server entry).
+
+    Structural only: an entry that is not an object is dropped so a malformed file
+    can never crash startup. Whether an entry is a valid server is checked when the
+    project's MCP configuration is loaded, and reported there as a diagnostic.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    projects: dict[str, dict[str, dict[str, Any]]] = {}
+    for project, servers in raw.items():
+        if not isinstance(servers, dict):
+            continue
+        entries = {str(server_id): dict(entry) for server_id, entry in servers.items() if isinstance(entry, dict)}
+        if entries:
+            projects[str(project)] = entries
+    return projects
+
+
+def _coerce_mcp_server_overrides(raw: object) -> dict[str, dict[str, bool]]:
+    """Normalize ``mcp_project_server_overrides`` (project path -> server id -> enabled)."""
+    if not isinstance(raw, dict):
+        return {}
+    projects: dict[str, dict[str, bool]] = {}
+    for project, overrides in raw.items():
+        if not isinstance(overrides, dict):
+            continue
+        entries = {str(server_id): enabled for server_id, enabled in overrides.items() if isinstance(enabled, bool)}
+        if entries:
+            projects[str(project)] = entries
+    return projects
 
 
 def _coerce_optional_bool(raw: object) -> Optional[bool]:
@@ -253,10 +292,18 @@ class CliSettings:
     model_slots: dict[str, dict] = field(default_factory=dict)
     # Resolved project paths whose .kolega/hooks.json the user has opted to trust.
     trusted_hook_projects: list[str] = field(default_factory=list)
-    # Resolved project paths whose .kolega/mcp_servers.json the user has opted to trust.
+    # Resolved project paths whose MCP servers (.mcp.json or .kolega/mcp_servers.json)
+    # the user has opted to trust.
     trusted_mcp_projects: list[str] = field(default_factory=list)
     # Resolved project paths whose .kolega/lsp.json the user has opted to trust.
     trusted_lsp_projects: list[str] = field(default_factory=list)
+    # `local` scope MCP servers, keyed by resolved project path and then server id.
+    # Additive optional field — absent in older files -> empty mapping, no schema bump.
+    mcp_local_servers: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    # Private per-project enable/disable choices for project-scope MCP servers, keyed
+    # like mcp_local_servers; the shared definition is never edited for these.
+    # Additive optional field — absent in older files -> empty mapping, no schema bump.
+    mcp_project_server_overrides: dict[str, dict[str, bool]] = field(default_factory=dict)
     # Web search backend selection. Additive optional fields (absent -> None -> the
     # "duckduckgo" default is applied downstream), so no schema bump is needed — same
     # convention as active_theme. Cloud backend API keys live in api_keys under the
@@ -349,6 +396,9 @@ class CliSettings:
             trusted_hook_projects=[str(path) for path in trusted if path],
             trusted_mcp_projects=[str(path) for path in trusted_mcp if path],
             trusted_lsp_projects=[str(path) for path in trusted_lsp if path],
+            # Additive optional fields; absent in older files -> empty mapping.
+            mcp_local_servers=_coerce_local_mcp_servers(data.get("mcp_local_servers")),
+            mcp_project_server_overrides=_coerce_mcp_server_overrides(data.get("mcp_project_server_overrides")),
             # Additive optional fields; absent in older files -> None -> default backend.
             web_search_backend=data.get("web_search_backend"),
             web_search_base_url=data.get("web_search_base_url"),
@@ -397,6 +447,8 @@ class CliSettings:
             "trusted_hook_projects": self.trusted_hook_projects,
             "trusted_mcp_projects": self.trusted_mcp_projects,
             "trusted_lsp_projects": self.trusted_lsp_projects,
+            "mcp_local_servers": self.mcp_local_servers,
+            "mcp_project_server_overrides": self.mcp_project_server_overrides,
             "web_search_backend": self.web_search_backend,
             "web_search_base_url": self.web_search_base_url,
             "web_search_mode": self.web_search_mode,
