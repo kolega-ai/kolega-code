@@ -8,6 +8,7 @@ make a session fail to load, sharing the log would be the wrong design.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -386,3 +387,144 @@ def test_concurrent_appends_keep_sequence_monotonic(tmp_path: Path) -> None:
     assert len(events) == 50
     assert [event.seq for event in events] == list(range(1, 51))
     assert len({event.event_id for event in events}) == 50
+
+
+def _journal_record(seq: int, event: object, *, record_type: str, session_id: str) -> str:
+    record = {
+        "version": 2,
+        "id": f"id-{seq}",
+        "session_id": session_id,
+        "seq": seq,
+        "epoch_id": "epoch",
+        "turn_id": "turn",
+        "timestamp": "2026-11-24T07:00:00+00:00",
+        "actor": "agent",
+        "type": record_type,
+        "payload": {"event": event},
+        "artifacts": [],
+    }
+    return json.dumps(record, separators=(",", ":"), ensure_ascii=False)
+
+
+def _expected_head(events: FileSessionEventStore, session_id: str):
+    """The summary produced by materializing every event, i.e. the old path."""
+    records, _ = events._scan(0)
+    if not records:
+        return None
+    open_turns = 0
+    for _, event in records:
+        if event.event_type == "turn_started":
+            open_turns += 1
+        elif event.event_type == "turn_ended":
+            open_turns = max(0, open_turns - 1)
+    last_seq, last_event = records[-1]
+    return {
+        "event_count": len(records),
+        "last_seq": last_seq,
+        "started_at": records[0][1].timestamp,
+        "updated_at": last_event.timestamp,
+        "duration_ms": last_event.elapsed_ms,
+        "status": "open" if open_turns else "idle",
+    }
+
+
+@pytest.mark.asyncio
+async def test_head_summary_matches_full_parse_for_unusual_records(tmp_path: Path) -> None:
+    """The metadata fast path must agree with validated parsing on every shape."""
+    from kolega_code.cli.session_journal import SessionJournal
+
+    session_id = "head-summary"
+    session_dir = tmp_path / session_id
+    session_dir.mkdir()
+    events_path = session_dir / "events.jsonl"
+
+    def event(event_type: str, *, elapsed_ms: int, timestamp: str, **extra) -> dict:
+        return AgentEvent(
+            sender="agent",
+            event_type=event_type,
+            content={"text": "chunk"},
+            elapsed_ms=elapsed_ms,
+            timestamp=timestamp,
+            **extra,
+        ).model_dump(mode="json")
+
+    coerced = event("assistant_delta", elapsed_ms=0, timestamp="2026-11-24T07:00:04+00:00")
+    coerced["elapsed_ms"] = "42"
+    extra_key = event("assistant_delta", elapsed_ms=0, timestamp="2026-11-24T07:00:05+00:00")
+    extra_key["future_field"] = {"host": "value"}
+    with_artifact = event(
+        "assistant_delta",
+        elapsed_ms=0,
+        timestamp="2026-11-24T07:00:06+00:00",
+        artifacts=[
+            {
+                "sha256": "0" * 64,
+                "bytes": 7,
+                "media_type": "text/plain",
+                "purpose": "tool_result",
+                "encoding": "utf-8",
+            }
+        ],
+    )
+    lines = [
+        _journal_record(
+            1,
+            event("turn_started", elapsed_ms=0, timestamp="2026-11-24T07:00:00+00:00"),
+            record_type=UI_EVENT_PREFIX + "turn_started",
+            session_id=session_id,
+        ),
+        # Provider-facing records share the log but never reach the summary.
+        _journal_record(2, {"message": None}, record_type="llm.message", session_id=session_id),
+        # A malformed record must be ignored exactly like the validated path.
+        '{"version":2,"type":"ui.assistant_delta"',
+        # A UI record whose payload is not an event object is ignored too.
+        _journal_record(3, "not-an-event", record_type=UI_EVENT_PREFIX + "assistant_delta", session_id=session_id),
+        _journal_record(4, coerced, record_type=UI_EVENT_PREFIX + "assistant_delta", session_id=session_id),
+        _journal_record(5, extra_key, record_type=UI_EVENT_PREFIX + "assistant_delta", session_id=session_id),
+        _journal_record(6, with_artifact, record_type=UI_EVENT_PREFIX + "assistant_delta", session_id=session_id),
+        _journal_record(
+            7,
+            event("turn_ended", elapsed_ms=0, timestamp="2026-11-24T07:00:07+00:00"),
+            record_type=UI_EVENT_PREFIX + "turn_ended",
+            session_id=session_id,
+        ),
+    ]
+    events_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    store_events = FileSessionEventStore(SessionJournal(session_id, session_dir))
+    meta = await store_events.head(session_id)
+    expected = _expected_head(store_events, session_id)
+    assert expected is not None
+    assert meta.event_count == expected["event_count"]
+    assert meta.last_seq == expected["last_seq"]
+    assert meta.started_at == expected["started_at"]
+    assert meta.updated_at == expected["updated_at"]
+    assert meta.duration_ms == expected["duration_ms"]
+    assert meta.status == expected["status"]
+
+
+@pytest.mark.asyncio
+async def test_head_summary_refreshes_when_the_journal_appends(tmp_path: Path) -> None:
+    """A cached summary must never hide bytes appended since the last call."""
+    from kolega_code.cli.session_journal import SessionJournal
+
+    session_id = "head-refresh"
+    session_dir = tmp_path / session_id
+    session_dir.mkdir()
+    journal = SessionJournal(session_id, session_dir)
+    journal.start_epoch("test")
+    events = FileSessionEventStore(journal)
+
+    await events.append(
+        AgentEvent(session_id=session_id, sender="agent", event_type="log_message", content={"text": "a"})
+    )
+    first = await events.head(session_id)
+    assert await events.head(session_id) == first
+
+    await events.append(
+        AgentEvent(session_id=session_id, sender="agent", event_type="log_message", content={"text": "b"})
+    )
+    refreshed = await events.head(session_id)
+    assert refreshed.event_count == first.event_count + 1
+    assert refreshed.last_seq > first.last_seq
+    assert refreshed.updated_at is not None

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 from contextvars import copy_context
+from functools import lru_cache
 import json
 import os
 import time
@@ -38,6 +39,30 @@ from .session_journal import SessionJournal, SessionJournalError
 
 #: Prefix marking a journal record as a presentation event.
 UI_EVENT_PREFIX = "ui."
+
+#: The complete key set ``AgentEvent.model_dump(mode="json")`` writes. ``head``
+#: reads canonical records directly instead of round-tripping each one through
+#: Pydantic; a record with any other shape takes the validated path.
+_HEAD_EVENT_KEYS = frozenset(
+    {
+        "schema_version",
+        "uuid",
+        "timestamp",
+        "event_type",
+        "sender",
+        "recipient",
+        "content",
+        "is_streaming",
+        "sub_agent_info",
+        "session_id",
+        "workspace_id",
+        "thread_id",
+        "seq",
+        "elapsed_ms",
+        "artifacts",
+    }
+)
+_HEAD_STR_FIELDS = ("uuid", "timestamp", "event_type", "sender", "session_id", "workspace_id", "thread_id")
 
 #: How often a follower checks for new records. Low enough to feel live, high
 #: enough that idle followers cost nothing measurable.
@@ -248,32 +273,37 @@ class FileSessionEventStore(SessionEventStore):
 
     async def head(self, session_id: str) -> SessionEventMeta:
         self._require_session(session_id)
-        records, _ = await asyncio.to_thread(self._scan, 0)
-        if not records:
-            return SessionEventMeta(
-                session_id=session_id,
-                last_seq=0,
-                event_count=0,
-                started_at=None,
-                updated_at=None,
-                duration_ms=0,
-                status="empty",
-            )
-        open_turns = 0
-        for _, event in records:
-            if event.event_type == "turn_started":
-                open_turns += 1
-            elif event.event_type == "turn_ended":
-                open_turns = max(0, open_turns - 1)
-        last_seq, last_event = records[-1]
-        return SessionEventMeta(
-            session_id=session_id,
-            last_seq=last_seq,
-            event_count=len(records),
-            started_at=records[0][1].timestamp,
-            updated_at=last_event.timestamp,
-            duration_ms=last_event.elapsed_ms,
-            status="open" if open_turns else "idle",
+        return await asyncio.to_thread(self._scan_head, session_id)
+
+    def _scan_head(self, session_id: str) -> SessionEventMeta:
+        """Summarize a journal without materializing every event.
+
+        ``_scan`` validates each record into an ``AgentEvent``, which a summary
+        never needs. Reading the handful of fields below directly keeps session
+        listings proportional to the log's JSON size instead of its Pydantic
+        cost; records that are not in the canonical shape ``AgentEvent`` writes
+        still take the validated path, so malformed input is reported exactly as
+        before.
+
+        A summary is reused while the file's identity and timestamps are
+        unchanged. Appends always move the size or mtime, so a live session
+        reports each new tail; unchanged sessions cost one ``stat`` instead of a
+        parse on every listing.
+        """
+        try:
+            stat = os.stat(self._events_path)
+        except OSError:
+            return _empty_head(session_id)
+        if stat.st_size <= 0:
+            return _empty_head(session_id)
+        return _cached_scan_head(
+            session_id,
+            str(self._events_path),
+            stat.st_dev,
+            stat.st_ino,
+            stat.st_size,
+            stat.st_mtime_ns,
+            stat.st_ctime_ns,
         )
 
     # -- Internals ---------------------------------------------------------
@@ -325,22 +355,162 @@ class FileSessionEventStore(SessionEventStore):
             # The journal validates its own log on load and repairs a torn tail.
             # A follower's job is to keep following, not to adjudicate integrity.
             return None
-        if not isinstance(record, dict):
-            return None
-        event_type = record.get("type")
-        if not isinstance(event_type, str) or not event_type.startswith(UI_EVENT_PREFIX):
-            return None
-        payload = record.get("payload")
-        if not isinstance(payload, dict) or not isinstance(payload.get("event"), dict):
-            return None
-        seq = record.get("seq")
-        if not isinstance(seq, int):
-            return None
-        try:
-            event = AgentEvent.model_validate(payload["event"])
-        except Exception:
-            return None
-        # The journal's sequence is authoritative; the embedded copy was written
-        # before a number was assigned.
-        event.seq = seq
-        return seq, event
+        return _decode_record(record)
+
+
+def _decode_record(record: Any) -> Optional[tuple[int, AgentEvent]]:
+    parsed = _ui_event_payload(record)
+    if parsed is None:
+        return None
+    seq, raw_event = parsed
+    try:
+        event = AgentEvent.model_validate(raw_event)
+    except Exception:
+        return None
+    # The journal's sequence is authoritative; the embedded copy was written
+    # before a number was assigned.
+    event.seq = seq
+    return seq, event
+
+
+def _ui_event_payload(record: Any) -> Optional[tuple[int, dict[str, Any]]]:
+    if not isinstance(record, dict):
+        return None
+    event_type = record.get("type")
+    if not isinstance(event_type, str) or not event_type.startswith(UI_EVENT_PREFIX):
+        return None
+    payload = record.get("payload")
+    if not isinstance(payload, dict) or not isinstance(payload.get("event"), dict):
+        return None
+    seq = record.get("seq")
+    if not isinstance(seq, int):
+        return None
+    return seq, payload["event"]
+
+
+def _head_fields(line: bytes) -> Optional[tuple[int, str, str, int]]:
+    """Return the fields ``head`` summarizes, validating only unusual records."""
+    try:
+        record: Any = json.loads(line)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    parsed = _ui_event_payload(record)
+    if parsed is None:
+        return None
+    seq, event = parsed
+    if _is_canonical_head_event(event):
+        return seq, event["event_type"], event["timestamp"], event["elapsed_ms"]
+    decoded = _decode_record(record)
+    if decoded is None:
+        return None
+    decoded_seq, decoded_event = decoded
+    return decoded_seq, decoded_event.event_type, decoded_event.timestamp, decoded_event.elapsed_ms
+
+
+@lru_cache(maxsize=512)
+def _cached_scan_head(
+    session_id: str,
+    path: str,
+    device: int,
+    inode: int,
+    size: int,
+    mtime_ns: int,
+    ctime_ns: int,
+) -> SessionEventMeta:
+    """Reuse a summary while the journal's identity and timestamps are unchanged.
+
+    The stat tuple is the key, not a token to validate later: appending moves
+    ``size``/``mtime_ns``, replacing the file moves ``inode``, and any in-place
+    rewrite moves ``ctime_ns``. Unchanged logs therefore skip the read entirely.
+    """
+    return _scan_head_file(session_id, path, size)
+
+
+def _scan_head_file(session_id: str, path: str, size: int) -> SessionEventMeta:
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read(size)
+    except OSError as exc:
+        raise SessionStoreError(f"Could not read session events: {path}") from exc
+
+    consumed = raw.rfind(b"\n") + 1
+    if consumed <= 0:
+        return _empty_head(session_id)
+
+    event_count = 0
+    open_turns = 0
+    last_seq = 0
+    started_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    duration_ms = 0
+    for line in raw[:consumed].splitlines():
+        if b"ui." not in line:
+            # Every UI record's ``type`` value contains the prefix. Parsing the
+            # provider-facing records interleaved in the log would only be
+            # discarded here.
+            continue
+        fields = _head_fields(line)
+        if fields is None:
+            continue
+        seq, event_type, timestamp, elapsed_ms = fields
+        if event_type == "turn_started":
+            open_turns += 1
+        elif event_type == "turn_ended":
+            open_turns = max(0, open_turns - 1)
+        event_count += 1
+        last_seq = seq
+        if started_at is None:
+            started_at = timestamp
+        updated_at = timestamp
+        duration_ms = elapsed_ms
+
+    if event_count == 0:
+        return _empty_head(session_id)
+    return SessionEventMeta(
+        session_id=session_id,
+        last_seq=last_seq,
+        event_count=event_count,
+        started_at=started_at,
+        updated_at=updated_at,
+        duration_ms=duration_ms,
+        status="open" if open_turns else "idle",
+    )
+
+
+def _is_canonical_head_event(event: dict[str, Any]) -> bool:
+    """Whether ``event`` is exactly the shape ``AgentEvent.model_dump`` writes.
+
+    This is deliberately narrower than Pydantic's acceptance: a record that is
+    merely *valid* (a coerced integer, a missing default, a non-empty artifact
+    list) returns ``False`` and is validated normally. Canonical journal records
+    — the only ones this fast path sees in practice — all qualify.
+    """
+    if event.keys() != _HEAD_EVENT_KEYS:
+        return False
+    if type(event["schema_version"]) is not int or type(event["elapsed_ms"]) is not int:
+        return False
+    if type(event["is_streaming"]) is not bool:
+        return False
+    if event.get("seq") is not None and type(event["seq"]) is not int:
+        return False
+    if event.get("artifacts") != []:
+        return False
+    if event.get("recipient") is not None and not isinstance(event["recipient"], str):
+        return False
+    if event.get("sub_agent_info") is not None and not isinstance(event["sub_agent_info"], dict):
+        return False
+    if not isinstance(event.get("content"), dict):
+        return False
+    return all(isinstance(event.get(field), str) for field in _HEAD_STR_FIELDS)
+
+
+def _empty_head(session_id: str) -> SessionEventMeta:
+    return SessionEventMeta(
+        session_id=session_id,
+        last_seq=0,
+        event_count=0,
+        started_at=None,
+        updated_at=None,
+        duration_ms=0,
+        status="empty",
+    )
