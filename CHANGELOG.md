@@ -6,6 +6,34 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.56.0 - 2026-11-25
+
+### Added
+
+- **Scoped MCP server management.** New `kolega-code mcp` commands and a
+  `/mcp` panel in the TUI manage MCP servers end to end: `add` from a URL,
+  a command line, or a pasted `mcpServers` JSON block (`add-json`); `list`,
+  `get` and `verify`; `enable`/`disable`; and `import` from other clients'
+  configuration. Servers live in three scopes — `user` (all your projects),
+  `local` (this project only) or `project` (a shared `.mcp.json` committed
+  with the repository). Project definitions wait for explicit trust before
+  they load, the highest-precedence scope wins when a name is defined in
+  more than one, and project enable/disable choices are recorded privately
+  instead of editing the shared file.
+
+### Changed
+
+- **Faster session listings.** Summarizing a session journal no longer
+  parses and validates every event. The session list and usage refreshes
+  reuse a cached summary while the journal is unchanged, making repeat
+  listings of long histories much faster.
+- **Faster Anthropic streaming.** Tool-call argument JSON is no longer
+  copied once per streamed fragment, removing quadratic work on large tool
+  calls.
+- **OpenRouter catalog refresh.** Dropped the retired `moonshotai/kimi-k2`,
+  `moonshotai/kimi-k2-thinking` and `xiaomi/mimo-v2.5-pro` routes; other
+  entries changed only with the routine metadata refresh.
+
 ## 0.55.0 - 2026-11-23
 
 ### Added
