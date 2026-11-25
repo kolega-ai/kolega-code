@@ -34,7 +34,7 @@ from ..provider_registry import (
     ui_provider_options,
     ui_thinking_effort_options,
 )
-from . import custom_model, settings_panel
+from . import custom_model, mcp_ops, settings_panel
 from .settings_widgets import SettingsSelect as Select
 
 if TYPE_CHECKING:
@@ -174,7 +174,7 @@ class SettingsScreen(ModalScreen[None]):
         Binding("escape", "close", "Close", show=True),
     ]
 
-    def __init__(self, owner: "KolegaCodeApp", category: str = "model") -> None:
+    def __init__(self, owner: "KolegaCodeApp", category: str = "model", *, mcp_server_id: str | None = None) -> None:
         super().__init__()
         self.owner = owner
         self.category = category if category in {value for _, value in SETTINGS_CATEGORIES} else "model"
@@ -182,6 +182,7 @@ class SettingsScreen(ModalScreen[None]):
         self._baseline: tuple[tuple[str, Any], ...] = ()
         self._mcp_baseline: tuple[tuple[str, Any], ...] = ()
         self.mcp_server_id = settings_panel.MCP_NEW_SERVER_VALUE
+        self._initial_mcp_server_id: str | None = mcp_server_id
         self._mcp_busy = False
         self._mcp_read_only = False
         self._mcp_navigation_pending = False
@@ -825,7 +826,7 @@ class SettingsScreen(ModalScreen[None]):
         self._cache_mcp_widgets()
         self._show_category(self.category)
         self._show_agent_role("planning")
-        self.owner._populate_settings_controls()
+        self.owner._populate_settings_controls(mcp_server_id=self._initial_mcp_server_id)
         self.run_worker(
             self._refresh_memory_controls(),
             name="settings-memory-status",
@@ -1003,12 +1004,17 @@ class SettingsScreen(ModalScreen[None]):
     def _start_mcp_action(self, action: Callable[[], Awaitable[object]]) -> None:
         if self.mcp_busy:
             return
+        if self.owner._mcp_operation_in_flight():
+            self.owner._notify_user(mcp_ops.BUSY_MESSAGE, severity="warning")
+            return
         self.mcp_busy = True
         self._refresh_apply_label()
 
         async def run() -> None:
             try:
                 await action()
+            except mcp_ops.OPERATION_ERRORS as exc:
+                self.owner._set_mcp_status(mcp_ops.operation_error(exc), "error")
             finally:
                 self.mcp_busy = False
                 if self.is_mounted:
@@ -1016,7 +1022,7 @@ class SettingsScreen(ModalScreen[None]):
                 self.owner._schedule_maybe_start_queued_message()
 
         # Keep network/OAuth waits off the app's message pump.
-        self.run_worker(run(), name="settings-mcp-action", group="settings-mcp-actions")
+        self.run_worker(run, name="settings-mcp-action", group="settings-mcp-actions", exit_on_error=False)
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
         self._queue_apply_label_refresh()

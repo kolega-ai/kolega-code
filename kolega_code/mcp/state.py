@@ -33,8 +33,6 @@ class MCPServerStatus(BaseModel):
     tool_count: int = 0
     tools: list[MCPToolStatus] = Field(default_factory=list)
     oauth: bool = False
-    # Environment variables a ``${NAME}`` reference needs that were unset at verification.
-    env_missing: list[str] = Field(default_factory=list)
 
     @classmethod
     def verified(
@@ -68,7 +66,6 @@ class MCPServerStatus(BaseModel):
         source: str,
         message: str,
         oauth: bool = False,
-        env_missing: Optional[list[str]] = None,
     ) -> "MCPServerStatus":
         return cls(
             status="failed",
@@ -80,7 +77,6 @@ class MCPServerStatus(BaseModel):
             tool_count=0,
             tools=[],
             oauth=oauth,
-            env_missing=list(env_missing or []),
         )
 
 

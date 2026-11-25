@@ -11,6 +11,7 @@ from .config import LoadedMCPConfig, MCPServerConfig, server_fingerprint
 from .entries import missing_env_references
 from .failure_messages import (
     MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_INCOMPLETE,
+    MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_REQUIRED,
     MCP_FAILURE_MESSAGE_OAUTH_UNAUTHORIZED,
     MCP_FAILURE_MESSAGE_UNAUTHORIZED,
     safe_failed_status_message,
@@ -19,14 +20,12 @@ from .state import MCPServerStatus
 
 MCPHealth = Literal["pending_trust", "disabled", "connected", "needs_auth", "stale", "failed", "unverified"]
 
-# The failures that mean "sign in again": ``service`` classifies transport errors and an
-# abandoned browser sign-in into them, and ``server_health`` reads them back as the
-# needs-auth state.
 NEEDS_AUTH_MESSAGES = frozenset(
     {
         MCP_FAILURE_MESSAGE_UNAUTHORIZED,
         MCP_FAILURE_MESSAGE_OAUTH_UNAUTHORIZED,
         MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_INCOMPLETE,
+        MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_REQUIRED,
     }
 )
 
@@ -166,9 +165,10 @@ def health_fields(
     environ: Optional[Mapping[str, str]] = None,
 ) -> dict[str, Any]:
     """The scope and health columns of a status row."""
-    override = config.project_overrides.get(server.id) if server.source == "project" else None
+    override = config.project_overrides.get(server.id) if trusted and server.source == "project" else None
     health = server_health(server, status, trusted=trusted, enabled_override=override, environ=environ)
-    path = config.server_files.get(server.id)
+    files = config.server_files if trusted else config.untrusted_project_server_files
+    path = files.get(server.id)
     return {
         "scope": server.scope,
         "file": str(path) if path is not None else None,

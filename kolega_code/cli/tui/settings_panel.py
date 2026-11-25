@@ -43,13 +43,14 @@ from kolega_code.llm.specs.custom_endpoints import (
     valid_custom_endpoint_id,
 )
 from kolega_code.mcp.config import (
+    LoadedMCPConfig,
     MCPConfigError,
     MCPOAuthConfig,
     MCPScope,
     MCPServerConfig,
-    load_mcp_config_for,
 )
-from kolega_code.mcp.service import MCPService, mcp_tool_name_adjustment_note
+from kolega_code.mcp.health import MCPServerHealth
+from kolega_code.mcp.service import mcp_tool_name_adjustment_note
 
 from .. import messages, theme
 from . import mcp_ops
@@ -126,7 +127,6 @@ MCP_STATUS_NAME_MAX = 34
 # Compression threshold select: "default" maps to None (the agent's built-in 95%).
 COMPRESSION_THRESHOLD_DEFAULT_VALUE = "default"
 COMPRESSION_THRESHOLD_PRESET_PERCENTS = (50, 60, 70, 80, 90, 95, 100)
-MCP_ATTENTION_STATUSES = {"failed", "stale", "unverified", "pending_trust"}
 MCP_TRANSPORT_LABELS = {
     "streamable_http": "HTTP",
     "sse": "SSE",
@@ -233,19 +233,26 @@ def _mcp_ellipsize(value: str, max_chars: int) -> str:
 
 def _mcp_server_display_label(row: dict[str, object]) -> str:
     server_id = str(row.get("id") or "").strip()
-    return str(row.get("name") or server_id).strip() or server_id
+    return mcp_ops.plain_text(str(row.get("name") or server_id).strip() or server_id)
+
+
+def _mcp_health(row: dict[str, object]) -> MCPServerHealth:
+    health = row["health"]
+    assert isinstance(health, MCPServerHealth)
+    return health
 
 
 def _mcp_status_label(row: dict[str, object]) -> tuple[str, str]:
     """Return the row-level status label and Rich style."""
-    if not bool(row.get("enabled")):
+    status = _mcp_health(row).health
+    if status == "disabled":
         return "disabled", Color.MUTED
-
-    status = str(row.get("status") or "unverified")
     if status == "pending_trust":
         return "pending approval", Color.WARNING
-    if status == "verified":
+    if status == "connected":
         return "verified", Color.SUCCESS
+    if status == "needs_auth":
+        return "needs auth", Color.WARNING
     if status == "stale":
         return "needs re-verify", Color.WARNING
     if status == "failed":
@@ -256,17 +263,18 @@ def _mcp_status_label(row: dict[str, object]) -> tuple[str, str]:
 
 
 def _mcp_status_attention_message(row: dict[str, object]) -> str:
-    if not bool(row.get("enabled")):
-        return ""
-    status = str(row.get("status") or "unverified")
-    if status not in MCP_ATTENTION_STATUSES:
+    health = _mcp_health(row)
+    status = health.health
+    if status in {"disabled", "connected"}:
         return ""
     if status == "stale":
         return "Config changed; verify again."
     if status == "pending_trust":
         return "Trust the project to load this server."
+    if status == "needs_auth":
+        return mcp_ops.plain_text(health.hint)
 
-    message = " ".join(str(row.get("message") or "").split())
+    message = " ".join(mcp_ops.plain_text(str(row.get("message") or "")).split())
     if status == "unverified" and message.rstrip(".") == "Not verified":
         return ""
     if not message and status == "failed":
@@ -276,7 +284,7 @@ def _mcp_status_attention_message(row: dict[str, object]) -> str:
 
 def _mcp_status_metadata(row: dict[str, object]) -> list[str]:
     metadata: list[str] = []
-    if bool(row.get("enabled")) and str(row.get("status") or "") == "verified":
+    if _mcp_health(row).health == "connected":
         try:
             tool_count = int(row.get("tool_count") or 0)  # pyright: ignore[reportArgumentType]
         except (TypeError, ValueError):
@@ -295,17 +303,20 @@ def _mcp_status_summary(rows: list[dict[str, object]]) -> tuple[str, str]:
         return "No MCP servers configured. Add one below, then Verify.", "info"
 
     separator = _mcp_separator()
-    enabled_rows = [row for row in rows if bool(row.get("enabled"))]
-    if not enabled_rows:
+    states = [_mcp_health(row).health for row in rows]
+    if all(state == "disabled" for state in states):
         return f"{_mcp_plural(server_count, 'MCP server')} configured{separator}all disabled", "info"
 
-    attention_count = sum(1 for row in enabled_rows if str(row.get("status") or "unverified") != "verified")
+    pending_count = states.count("pending_trust")
+    attention_count = sum(state not in {"connected", "disabled", "pending_trust"} for state in states)
+    attention = []
+    if pending_count:
+        attention.append(f"{pending_count} pending approval")
     if attention_count:
         verb = "needs" if attention_count == 1 else "need"
-        return (
-            f"{_mcp_plural(server_count, 'MCP server')} configured{separator}{attention_count} {verb} verification",
-            "warning",
-        )
+        attention.append(f"{attention_count} {verb} verification")
+    if attention:
+        return separator.join([f"{_mcp_plural(server_count, 'MCP server')} configured", *attention]), "warning"
 
     return f"{_mcp_plural(server_count, 'MCP server')} configured{separator}all enabled verified", "ok"
 
@@ -316,7 +327,7 @@ def _render_mcp_status_text(diagnostics: list[str], rows: list[dict[str, object]
     content = Text(summary)
 
     for diagnostic in diagnostics:
-        message = " ".join(str(diagnostic).split())
+        message = mcp_ops.plain_text(" ".join(diagnostic.split()))
         if not message:
             continue
         content.append("\n  ")
@@ -537,7 +548,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         else:
             self._update_row_hints(row)
 
-    def _populate_settings_controls(self) -> None:
+    def _populate_settings_controls(self, *, mcp_server_id: str | None = None) -> None:
         screen = getattr(self, "_settings_screen", None)
         if screen is None or not getattr(screen, "is_attached", False):
             # No settings editor mounted: only the sidebar summary needs refreshing.
@@ -597,7 +608,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         self._update_slot_model_hints()
         self._populate_web_search_controls()
         self._populate_stt_controls()
-        self._populate_mcp_controls()
+        self._populate_mcp_controls(server_id=mcp_server_id)
         self._populate_lsp_controls()
         self._populate_subagents_controls()
         self._populate_skills_controls()
@@ -1495,14 +1506,10 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         self.settings.gateway = gateway
         self._update_stt_provider_fields(provider)
 
-    def _load_mcp_config_for_ui(self):
-        """Load MCP config for the settings panel and attach it to the active AgentConfig."""
-        config = load_mcp_config_for(self.project_path, self.settings_store.root, self.settings)
-        if self.config is not None:
-            self.config.mcp_config = config
-        return config
+    def _load_mcp_config_for_ui(self) -> LoadedMCPConfig:
+        return mcp_ops.load_config(self)
 
-    def _populate_mcp_controls(self, *, preserve_form: bool = False) -> None:
+    def _populate_mcp_controls(self, *, preserve_form: bool = False, server_id: str | None = None) -> None:
         """Seed the MCP settings controls from global/trusted project config and status."""
         try:
             config = self._load_mcp_config_for_ui()
@@ -1515,7 +1522,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
 
         options = [("New server", MCP_NEW_SERVER_VALUE)]
         options.extend((self._mcp_server_option_label(server), server.id) for server in config.servers.values())
-        selected = getattr(self, "_mcp_selected_server_id", MCP_NEW_SERVER_VALUE)
+        selected = server_id or getattr(self, "_mcp_selected_server_id", MCP_NEW_SERVER_VALUE)
         if selected not in {value for _, value in options}:
             selected = MCP_NEW_SERVER_VALUE
         server_select.set_options(options)
@@ -1675,14 +1682,14 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         except NoMatches:
             pass
 
-    def _update_mcp_status_text(self, config=None) -> None:
+    def _update_mcp_status_text(self, config: LoadedMCPConfig | None = None) -> None:
         try:
             config = config or self._load_mcp_config_for_ui()
+            rows = mcp_ops.status_rows(self, config)
         except Exception as exc:
             self._set_mcp_status(f"MCP config could not be loaded: {exc}", tone="error")
             return
 
-        rows = MCPService(config, self.settings_store.root, self.project_path).list_status_rows()
         content, tone = _render_mcp_status_text(list(config.diagnostics), rows)
         self._set_mcp_status(content, tone=tone)
 
@@ -1697,7 +1704,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         if isinstance(text, Text):
             content.append_text(text)
         else:
-            content.append(text)
+            content.append(mcp_ops.plain_text(text))
         try:
             self._settings_query_one("#mcp_status", Static).update(content)
         except NoMatches:
@@ -1922,13 +1929,11 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                 self._set_mcp_status(MCP_PROJECT_READ_ONLY_HINT, "warning")
                 return False
             scope = (existing.scope or "user") if existing is not None else self._selected_mcp_scope()
-            if existing is not None and selected != server.id:
-                mcp_ops.remove_definition(self, selected, scope=existing.scope or "user")
-            mcp_ops.save_server(self, server, scope=scope)
+            mcp_ops.save_server(self, server, scope=scope, replace_id=selected if existing is not None else None)
         except (MCPConfigError, ValueError) as exc:
             self._set_mcp_status(str(exc), "error")
             return False
-        except OSError:
+        except mcp_ops.OPERATION_ERRORS:
             self._set_mcp_status("Could not save MCP configuration. Check file permissions and try again.", "error")
             return False
         self._mcp_selected_server_id = server.id
@@ -2838,7 +2843,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         theme_name = self.settings.active_theme or theme.DEFAULT_THEME_NAME
         try:
             mcp_config = self._load_mcp_config_for_ui()
-            rows = MCPService(mcp_config, self.settings_store.root, self.project_path).list_status_rows()
+            rows = mcp_ops.status_rows(self, mcp_config)
             enabled = sum(1 for row in rows if bool(row.get("enabled")))
             mcp_line = f"MCP: {enabled}/{len(rows)} enabled"
         except Exception:

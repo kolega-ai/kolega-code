@@ -90,7 +90,7 @@ class StandardEntry:
     warnings: list[str] = field(default_factory=list)
 
 
-def _label(server_id: object) -> str:
+def server_id_label(server_id: object) -> str:
     return str(server_id)[:64]
 
 
@@ -182,7 +182,7 @@ def _entry_transport(raw: Mapping[str, Any]) -> tuple[str, object]:
 
 
 def _entry_name(raw: Mapping[str, Any]) -> str:
-    return _label(raw.get("id", ""))
+    return server_id_label(raw.get("id", ""))
 
 
 def standard_entry_payload(server_id: str, raw: object) -> StandardEntry:
@@ -191,9 +191,9 @@ def standard_entry_payload(server_id: str, raw: object) -> StandardEntry:
     Raises :class:`MCPEntryError` for an entry that cannot be interpreted. Messages name
     the server and the field, never the field's value.
     """
-    server_id = _label(server_id)
+    label = server_id_label(server_id)
     if not isinstance(raw, dict):
-        raise MCPEntryError(f'MCP server "{server_id}" must be an object')
+        raise MCPEntryError(f'MCP server "{label}" must be an object')
     merged: dict[str, Any] = {"id": server_id, **raw}
     extension = raw.get(KOLEGA_EXTENSION_KEY)
     if isinstance(extension, dict):
@@ -209,14 +209,14 @@ def standard_entry_payload(server_id: str, raw: object) -> StandardEntry:
 
     if transport == "stdio":
         payload["command"] = merged.get("command") or ""
-        payload["args"] = _string_list(merged.get("args"), server_id, "args")
-        payload["env"] = _scalar_mapping(merged.get("env"), server_id, "env", warnings)
+        payload["args"] = _string_list(merged.get("args"), label, "args")
+        payload["env"] = _scalar_mapping(merged.get("env"), label, "env", warnings)
         cwd = merged.get("cwd")
         if isinstance(cwd, str) and cwd.strip():
             payload["cwd"] = cwd
     else:
         payload["url"] = str(url) if url is not None else None
-        payload["headers"] = _scalar_mapping(merged.get("headers"), server_id, "headers", warnings)
+        payload["headers"] = _scalar_mapping(merged.get("headers"), label, "headers", warnings)
 
     if merged.get("timeout_seconds") is not None:
         payload["timeout_seconds"] = merged["timeout_seconds"]
@@ -226,7 +226,7 @@ def standard_entry_payload(server_id: str, raw: object) -> StandardEntry:
             payload["timeout_seconds"] = timeout / 1000
     if merged.get("sse_read_timeout_seconds") is not None:
         payload["sse_read_timeout_seconds"] = merged["sse_read_timeout_seconds"]
-    oauth = _oauth_payload(merged.get("oauth"), server_id)
+    oauth = _oauth_payload(merged.get("oauth"), label)
     if oauth:
         payload["oauth"] = oauth
 
@@ -310,24 +310,10 @@ def env_references(text: str) -> list[str]:
     return seen
 
 
-def _env_fields(server: "MCPServerConfig") -> list[tuple[str, str]]:
-    """``(label, value)`` for every field whose value is expanded at connect time."""
+def _env_values(server: "MCPServerConfig") -> list[str]:
     if server.transport == "stdio":
-        return [
-            ("command", server.command or ""),
-            *(("args", arg) for arg in server.args),
-            *(("env", v) for v in server.env.values()),
-        ]
-    return [("url", server.url or ""), *(("headers", value) for value in server.headers.values())]
-
-
-def server_env_references(server: "MCPServerConfig") -> list[str]:
-    names: list[str] = []
-    for _, value in _env_fields(server):
-        for name in env_references(value):
-            if name not in names:
-                names.append(name)
-    return names
+        return [server.command or "", *server.args, *server.env.values()]
+    return [server.url or "", *server.headers.values()]
 
 
 def _expand_text(text: str, environ: Mapping[str, str], missing: list[str]) -> str:
@@ -349,7 +335,7 @@ def missing_env_references(server: "MCPServerConfig", environ: Mapping[str, str]
     """Variables the server needs that are unset and have no ``:-default``."""
     source = os.environ if environ is None else environ
     missing: list[str] = []
-    for _, value in _env_fields(server):
+    for value in _env_values(server):
         _expand_text(value, source, missing)
     return missing
 
@@ -362,7 +348,7 @@ def expand_env_references(server: "MCPServerConfig", environ: Mapping[str, str] 
     referenced variable is unset and has no default.
     """
     source = os.environ if environ is None else environ
-    if not any(_ENV_REFERENCE_RE.search(value) for _, value in _env_fields(server)):
+    if not any(_ENV_REFERENCE_RE.search(value) for value in _env_values(server)):
         return server
     missing: list[str] = []
     updates: dict[str, Any] = {}

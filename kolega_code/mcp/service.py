@@ -10,6 +10,7 @@ import re
 import secrets
 import threading
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -32,6 +33,7 @@ from .failure_messages import (
     MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION_NON_DCR,
     MCP_FAILURE_MESSAGE_OAUTH_SECRET_ENV,
     MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_INCOMPLETE,
+    MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_REQUIRED,
     MCP_FAILURE_MESSAGE_OAUTH_UNAUTHORIZED,
     MCP_FAILURE_MESSAGE_PERMISSION,
     MCP_FAILURE_MESSAGE_TIMEOUT,
@@ -41,12 +43,9 @@ from .failure_messages import (
     safe_failed_status_message,
 )
 from .health import health_fields
-from .oauth import MCPOAuthCallbackTimeout, interactive_oauth_interaction
+from .oauth import MCPOAuthCallbackTimeout, MCPOAuthInteractionRequired, interactive_oauth_interaction
 from .state import MCPServerStatus, MCPStatusStore, MCPToolStatus, MCPOAuthTokenStore
 from .transport import open_mcp_session
-
-# Matched by name: the SDK re-raises callback failures wrapped in exception groups.
-_SIGNIN_INCOMPLETE_TYPE = MCPOAuthCallbackTimeout.__name__
 
 MCP_TOOL_PREFIX = "mcp__"
 MCP_TOOL_SEPARATOR = "__"
@@ -295,8 +294,12 @@ def _suppress_mcp_sdk_terminal_logs():
 
 def _mcp_failure_message(server: MCPServerConfig, exc: BaseException) -> str:
     """Return a fixed, credential-safe status message for a caught MCP failure."""
-    if server.oauth.enabled and _SIGNIN_INCOMPLETE_TYPE in _leaf_exception_type_names(exc):
-        return MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_INCOMPLETE
+    if server.oauth.enabled:
+        exceptions = list(_leaf_exceptions(exc))
+        if any(isinstance(error, MCPOAuthCallbackTimeout) for error in exceptions):
+            return MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_INCOMPLETE
+        if any(isinstance(error, MCPOAuthInteractionRequired) for error in exceptions):
+            return MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_REQUIRED
     return _safe_mcp_failure_message(server, _exception_text_for_matching(exc))
 
 
@@ -308,14 +311,18 @@ def _mcp_tool_failure_message(server: MCPServerConfig, exc: BaseException) -> st
     if safe_message != MCP_FAILURE_MESSAGE_GENERIC:
         return safe_message
 
-    exception_types = _dedupe_messages(_leaf_exception_type_names(exc))[:3]
+    exception_types = _dedupe_messages(
+        "".join(character for character in type(error).__name__ if character.isalnum() or character in "._")[:64]
+        or "Exception"
+        for error in _leaf_exceptions(exc)
+    )[:3]
     if not exception_types:
         return MCP_TOOL_FAILURE_MESSAGE_GENERIC
     return f"{MCP_TOOL_FAILURE_MESSAGE_GENERIC[:-1]} ({', '.join(exception_types)})."
 
 
 def _exception_text_for_matching(exc: BaseException) -> str:
-    messages = _dedupe_messages(_leaf_exception_messages(exc))
+    messages = _dedupe_messages(_single_exception_message(error) for error in _leaf_exceptions(exc))
     if not messages:
         messages = [_single_exception_message(exc)]
     return " ".join(messages).lower()
@@ -362,45 +369,21 @@ def _is_github_copilot_api_url(url: Optional[str]) -> bool:
     return bool(hostname and hostname.rstrip(".").lower() == "api.githubcopilot.com")
 
 
-def _leaf_exception_messages(exc: BaseException, seen: Optional[set[int]] = None) -> list[str]:
+def _leaf_exceptions(exc: BaseException, seen: Optional[set[int]] = None) -> Iterable[BaseException]:
     seen = seen or set()
     if id(exc) in seen:
-        return []
+        return
     seen.add(id(exc))
 
     if isinstance(exc, BaseExceptionGroup):
-        messages: list[str] = []
         for child in exc.exceptions:
-            messages.extend(_leaf_exception_messages(child, seen))
-        if messages:
-            return messages
+            yield from _leaf_exceptions(child, seen)
+        return
 
-    messages = [_single_exception_message(exc)]
+    yield exc
     cause = exc.__cause__ or (None if exc.__suppress_context__ else exc.__context__)
     if cause is not None:
-        messages.extend(_leaf_exception_messages(cause, seen))
-    return messages
-
-
-def _leaf_exception_type_names(exc: BaseException, seen: Optional[set[int]] = None) -> list[str]:
-    seen = seen or set()
-    if id(exc) in seen:
-        return []
-    seen.add(id(exc))
-
-    if isinstance(exc, BaseExceptionGroup):
-        names: list[str] = []
-        for child in exc.exceptions:
-            names.extend(_leaf_exception_type_names(child, seen))
-        if names:
-            return names
-
-    name = "".join(character for character in exc.__class__.__name__ if character.isalnum() or character in "._")
-    names = [name[:64] or "Exception"]
-    cause = exc.__cause__ or (None if exc.__suppress_context__ else exc.__context__)
-    if cause is not None:
-        names.extend(_leaf_exception_type_names(cause, seen))
-    return names
+        yield from _leaf_exceptions(cause, seen)
 
 
 def _single_exception_message(exc: BaseException) -> str:
@@ -413,7 +396,7 @@ def _single_exception_message(exc: BaseException) -> str:
     return f"{name}: {text}"
 
 
-def _dedupe_messages(messages: list[str]) -> list[str]:
+def _dedupe_messages(messages: Iterable[str]) -> list[str]:
     seen: set[str] = set()
     unique: list[str] = []
     for message in messages:
@@ -426,7 +409,7 @@ def _dedupe_messages(messages: list[str]) -> list[str]:
 
 
 def _status_row_message(
-    server: MCPServerConfig, status: Optional[MCPServerStatus], *, verified: bool, stale: bool
+    server: MCPServerConfig, status: Optional[MCPServerStatus], *, verified: bool, stale: bool, tool_note: str
 ) -> str:
     if status is None:
         return "Sign-in required before this server can connect." if server.oauth.enabled else "Not verified."
@@ -434,8 +417,7 @@ def _status_row_message(
         return "Configuration changed since last verification. Verify again."
     if verified:
         message = f"Verified {status.tool_count} tool(s)."
-        note = mcp_tool_name_adjustment_note(server.id, status.tools)
-        return f"{message} {note}" if note else message
+        return f"{message} {tool_note}" if tool_note else message
     if status.status == "failed":
         return safe_failed_status_message(status.message)
     return "Not verified."
@@ -479,6 +461,7 @@ class MCPService:
             current_fingerprint = server_fingerprint(server)
             verified = bool(status and status.status == "verified" and status.fingerprint == current_fingerprint)
             stale = bool(status and status.fingerprint and status.fingerprint != current_fingerprint)
+            tool_note = mcp_tool_name_adjustment_note(server.id, status.tools) if verified and status else ""
             row: dict[str, Any] = {
                 "id": server.id,
                 "name": server.display_name,
@@ -490,7 +473,8 @@ class MCPService:
                 if verified
                 else ("stale" if stale else (status.status if status else "unverified")),
                 "tool_count": status.tool_count if verified and status else 0,
-                "message": _status_row_message(server, status, verified=verified, stale=stale),
+                "message": _status_row_message(server, status, verified=verified, stale=stale, tool_note=tool_note),
+                "tool_name_note": tool_note,
             }
             row.update(health_fields(server, status, config=self.config, trusted=trusted, environ=environ))
             rows.append(row)
@@ -506,7 +490,10 @@ class MCPService:
     ) -> MCPVerificationResult:
         server = self.config.servers.get(server_id)
         if server is None:
-            return MCPVerificationResult(server_id=server_id, ok=False, message=f"Unknown MCP server: {server_id}")
+            message = f"Unknown MCP server: {server_id}"
+            if any(candidate.id == server_id for candidate in self.config.untrusted_project_servers):
+                message = "Pending approval. Run `kolega-code mcp trust` before verifying this project server."
+            return MCPVerificationResult(server_id=server_id, ok=False, message=message)
         fingerprint = server_fingerprint(server)
         try:
             with _suppress_mcp_sdk_terminal_logs():
@@ -541,14 +528,13 @@ class MCPService:
                 tool_count=len(tool_statuses),
                 status=status,
             )
-        except MCPEnvReferenceError as exc:
+        except MCPEnvReferenceError:
             status = MCPServerStatus.failed(
                 fingerprint=fingerprint,
                 transport=server.transport,
                 source=server.source,
                 message=MCP_FAILURE_MESSAGE_ENV_MISSING,
                 oauth=server.oauth.enabled,
-                env_missing=exc.names,
             )
             self.status_store.update(server.id, status)
             return MCPVerificationResult(server_id=server.id, ok=False, message=status.message, status=status)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -14,17 +13,17 @@ from textual.screen import ModalScreen
 from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
-from kolega_code.mcp.config import MCPServerConfig
+from kolega_code.mcp.config import LoadedMCPConfig, MCPScope, MCPServerConfig
 from kolega_code.mcp.health import MCPServerHealth, health_hint
 
 from . import mcp_ops
+from .mcp_ops import plain_text
 from .settings_screen import ConfirmSettingsActionScreen
 
 if TYPE_CHECKING:
     from ..app import KolegaCodeApp
 
 MASKED_VALUE = "‹hidden›"
-_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 TRANSPORT_LABELS = {"streamable_http": "http", "sse": "sse", "stdio": "stdio"}
 _HEALTH_STYLES = {
     "connected": "green",
@@ -67,7 +66,7 @@ class MCPScreen(ModalScreen[None]):
         super().__init__()
         self.owner = owner
         self._rows: list[dict[str, Any]] = []
-        self._servers: dict[str, MCPServerConfig] = {}
+        self._servers: dict[tuple[str, MCPScope | None, str | None], MCPServerConfig] = {}
         self._in_flight = False
         self._busy_label = ""
         self._showing_tools = False
@@ -105,17 +104,32 @@ class MCPScreen(ModalScreen[None]):
         return self._rows[highlighted]
 
     def _refresh(self) -> None:
-        config = mcp_ops.load_config(self.owner)
-        self._servers = {server.id: server for server in (*config.servers.values(), *config.untrusted_project_servers)}
-        self._rows = mcp_ops.status_rows(self.owner, config)
-        self._showing_tools = self._showing_tools and self._selected_row() is not None
+        previous_row = self._selected_row()
+        previous_key = _row_key(previous_row) if previous_row is not None else None
+        try:
+            config = mcp_ops.load_config(self.owner)
+            rows = mcp_ops.status_rows(self.owner, config)
+        except mcp_ops.OPERATION_ERRORS as exc:
+            self.owner._notify_user(mcp_ops.operation_error(exc), severity="error")
+            self._render_hint()
+            return
+        self._servers = {
+            (server.id, server.scope, str(path) if (path := files.get(server.id)) is not None else None): server
+            for servers, files in (
+                (config.servers.values(), config.server_files),
+                (config.untrusted_project_servers, config.untrusted_project_server_files),
+            )
+            for server in servers
+        }
+        self._rows = rows
         listing = self.query_one("#mcp_panel_servers", OptionList)
         previous = listing.highlighted or 0
+        selected = next((index for index, row in enumerate(rows) if _row_key(row) == previous_key), None)
         listing.clear_options()
         for index, row in enumerate(self._rows):
             listing.add_option(Option(self._row_text(row), id=f"mcp_row_{index}"))
         if self._rows:
-            listing.highlighted = min(previous, len(self._rows) - 1)
+            listing.highlighted = selected if selected is not None else min(previous, len(self._rows) - 1)
         self._render_title(config)
         if self._showing_tools:
             self._load_tools()
@@ -135,13 +149,18 @@ class MCPScreen(ModalScreen[None]):
             text.append(f"  {hint}", style="dim")
         return text
 
-    def _render_title(self, config: Any) -> None:
+    def _render_title(self, config: LoadedMCPConfig) -> None:
         trusted = config.project_trusted
+        path = self.owner.active_project_path
+        trust_scope = (
+            f" (launch checkout: {plain_text(str(self.owner.project_path))})" if path != self.owner.project_path else ""
+        )
         title = Text.assemble(
             ("MCP servers  ", "bold"),
-            plain_text(str(self.owner.project_path)),
+            plain_text(str(path)),
             "  ·  ",
             ("project trusted" if trusted else "project not trusted", "green" if trusted else "yellow"),
+            trust_scope,
         )
         self.query_one("#mcp_panel_title", Static).update(title)
 
@@ -156,7 +175,7 @@ class MCPScreen(ModalScreen[None]):
 
     def _server_text(self, row: dict[str, Any]) -> Text:
         health: MCPServerHealth = row["health"]
-        server = self._servers.get(str(row["id"]))
+        server = self._definition_for(row)
         text = Text()
         text.append(plain_text(str(row["id"])), style="bold")
         text.append(f"  {_scope_location(row)}", style="dim")
@@ -186,7 +205,7 @@ class MCPScreen(ModalScreen[None]):
 
     def _load_tools(self) -> None:
         row = self._selected_row()
-        server = self._servers.get(str(row["id"])) if row else None
+        server = self._definition_for(row) if row and row["health"].health == "connected" else None
         self._tools = [
             (name, (description or "").strip().splitlines()[0] if (description or "").strip() else "")
             for name, _, description in (mcp_ops.exposed_tools(self.owner, server) if server is not None else [])
@@ -262,7 +281,7 @@ class MCPScreen(ModalScreen[None]):
         if row["health"].health == "pending_trust":
             self.owner._notify_user("Trust the project first (t) to load its servers.")
             return
-        server = self._servers.get(server_id)
+        server = self._definition_for(row)
         if authenticate and (server is None or not server.oauth.enabled):
             self.owner._notify_user(f"MCP server '{server_id}' has no OAuth configured. Use Reconnect (v) instead.")
             return
@@ -300,6 +319,9 @@ class MCPScreen(ModalScreen[None]):
         row = self._selected_row()
         if row is None or not self._ready():
             return
+        if row["health"].health == "pending_trust":
+            self.owner._notify_user("Trust the project first (t) to load its servers.")
+            return
         server_id = str(row["id"])
         self._confirm(
             ConfirmSettingsActionScreen(
@@ -319,7 +341,7 @@ class MCPScreen(ModalScreen[None]):
     def action_trust(self) -> None:
         if not self._ready():
             return
-        if self.owner.settings.is_mcp_project_trusted(self.owner.project_path):
+        if mcp_ops.project_trusted(self.owner):
             self.owner._notify_user("This project is already trusted for MCP.")
             return
 
@@ -338,7 +360,7 @@ class MCPScreen(ModalScreen[None]):
         )
 
     def action_start_import(self) -> None:
-        if self._in_flight:
+        if not self._ready():
             return
         from .mcp_import_screen import MCPImportScreen
 
@@ -362,6 +384,9 @@ class MCPScreen(ModalScreen[None]):
         """False when an operation is running or a turn would be interrupted."""
         if self._in_flight:
             return False
+        if self.owner._mcp_operation_in_flight():
+            self.owner._notify_user(mcp_ops.BUSY_MESSAGE, severity="warning")
+            return False
         if mcp_ops.change_blocked(self.owner):
             self.owner._notify_user(mcp_ops.BLOCKED_MESSAGE, severity="warning")
             return False
@@ -376,7 +401,7 @@ class MCPScreen(ModalScreen[None]):
         self.app.push_screen(dialog, callback=start)
 
     def _run(self, label: str, operation: Callable[[], Awaitable[None]]) -> None:
-        if self._in_flight:
+        if not self._ready():
             return
         self._in_flight = True
         self._busy_label = label
@@ -386,6 +411,8 @@ class MCPScreen(ModalScreen[None]):
         async def run() -> None:
             try:
                 await operation()
+            except mcp_ops.OPERATION_ERRORS as exc:
+                self.owner._notify_user(mcp_ops.operation_error(exc), severity="error")
             finally:
                 self._in_flight = False
                 self._busy_label = ""
@@ -395,16 +422,18 @@ class MCPScreen(ModalScreen[None]):
                 self.owner._schedule_maybe_start_queued_message()
 
         # Keep network and OAuth waits off the app's message pump.
-        self.run_worker(run(), name="mcp-panel-action", group="mcp-panel-actions")
+        self.run_worker(run, name="mcp-panel-action", group="mcp-panel-actions", exit_on_error=False)
+
+    def _definition_for(self, row: dict[str, Any]) -> MCPServerConfig | None:
+        return self._servers.get(_row_key(row))
 
 
-def plain_text(value: str) -> str:
-    """Strip control characters: server fields can come from a repository's config file."""
-    return _CONTROL_CHARS_RE.sub("", value)
+def _row_key(row: dict[str, Any]) -> tuple[str, MCPScope | None, str | None]:
+    return row["id"], row["scope"], row["file"]
 
 
 def _hint(row: dict[str, Any]) -> str:
-    return health_hint(row["health"], row["missing_env"])
+    return plain_text(health_hint(row["health"], row["missing_env"]))
 
 
 def _kv(label: str, value: str, style: str = "") -> Text:

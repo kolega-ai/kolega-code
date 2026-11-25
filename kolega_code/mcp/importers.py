@@ -205,6 +205,12 @@ def _reason(exc: Exception) -> str:
 
 def _read_json_source(location: ImportLocation, source_id: str) -> list[ImportCandidate]:
     block = _server_block(_read_json(location.path))
+    if source_id in {"windsurf", "file"}:
+        for name, raw in block.items():
+            if isinstance(raw, dict) and "serverUrl" in raw and "url" not in raw and "httpUrl" not in raw:
+                raw = raw.copy()
+                raw["url"] = raw.pop("serverUrl")
+                block[name] = raw
     return [_candidate(source_id, location.origin, name, raw) for name, raw in block.items()]
 
 
@@ -254,21 +260,30 @@ def _codex_entry(table: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     raw: dict[str, Any] = {}
     dropped = sorted(key for key in table if key not in _CODEX_FIELDS)
     if table.get("command"):
-        raw.update(
-            type="stdio", command=table["command"], args=table.get("args") or [], env=dict(table.get("env") or {})
-        )
+        env = table.get("env", {})
+        if not isinstance(env, dict):
+            raise MCPEntryError("env must be a table")
+        raw.update(type="stdio", command=table["command"], args=table.get("args"), env=env.copy())
         if table.get("cwd"):
             raw["cwd"] = table["cwd"]
-    else:
+    elif table.get("url"):
         raw.update(type="http", url=table["url"])
         bearer = table.get("bearer_token_env_var")
         if isinstance(bearer, str) and bearer:
             raw["headers"] = {"Authorization": "Bearer ${" + bearer + "}"}
+    else:
+        raise MCPEntryError("has neither a command nor a url")
     if table.get("enabled") is False:
         raw["disabled"] = True
     startup_timeout = table.get("startup_timeout_sec")
-    if isinstance(startup_timeout, (int, float)) and not isinstance(startup_timeout, bool):
-        raw["timeout"] = int(startup_timeout * 1000)
+    if startup_timeout is not None:
+        if (
+            isinstance(startup_timeout, bool)
+            or not isinstance(startup_timeout, (int, float))
+            or not 0 < startup_timeout <= sys.float_info.max
+        ):
+            raise MCPEntryError("startup_timeout_sec must be a positive, finite number")
+        raw["timeout_seconds"] = startup_timeout
     forwarded = table.get("env_vars")
     if isinstance(forwarded, list):
         # Codex forwards named shell variables; the same names become ${NAME} references.
@@ -286,22 +301,23 @@ def _read_codex(location: ImportLocation, source_id: str) -> list[ImportCandidat
         document = tomllib.loads(location.path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
+
+    def unsupported(name: str, reason: str) -> ImportCandidate:
+        return ImportCandidate(source_id, SOURCE_LABELS[source_id], location.origin, name, unsupported=reason)
+
+    block = document.get("mcp_servers", {})
+    if not isinstance(block, dict):
+        return [unsupported("mcp_servers", "must be a table")]
     candidates: list[ImportCandidate] = []
-    for name, table in document.get("mcp_servers", {}).items():
+    for name, table in block.items():
         if not isinstance(table, dict):
+            candidates.append(unsupported(name, "must be a table"))
             continue
-        if not table.get("command") and not table.get("url"):
-            candidates.append(
-                ImportCandidate(
-                    source_id,
-                    SOURCE_LABELS.get(source_id, source_id),
-                    location.origin,
-                    str(name),
-                    unsupported="has neither a command nor a url",
-                )
-            )
+        try:
+            raw, dropped = _codex_entry(table)
+        except MCPEntryError as exc:
+            candidates.append(unsupported(name, str(exc)))
             continue
-        raw, dropped = _codex_entry(table)
         candidate = _candidate(source_id, location.origin, name, raw)
         candidates.append(replace(candidate, dropped_fields=tuple(sorted({*candidate.dropped_fields, *dropped}))))
     return candidates

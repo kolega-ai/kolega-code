@@ -63,7 +63,8 @@ Verification opens a real MCP session and lists the server's tools. `add --verif
 | Local | `local` | `settings.json`, keyed by project path | No: this project only |
 | Project | `project` | `<project>/.mcp.json` | Yes: commit it |
 
-- A git worktree is its own project for the `local` scope and for trust.
+- A git worktree has its own `local` definitions and project enable/disable choices.
+- The CLI uses trust for the specified project path. In the TUI, linked workspaces use the launch project's trust decision.
 - A name defined in more than one scope is loaded once, from the highest-precedence scope: editor-provided → `local` → `.kolega/mcp_servers.json` → `.mcp.json` → `user`. The whole definition wins and fields are never merged. `kolega-code mcp list` reports what is shadowed.
 - `--scope project` writes `.kolega/mcp_servers.json` only for a project that already has that file and no `.mcp.json`; every other project gets `.mcp.json`.
 - Writing a literal header or env value to the shared file prints a warning: prefer `${NAME}` references there.
@@ -234,6 +235,8 @@ Cached tokens are tied to the server URL and OAuth configuration using a salted 
 Global options go before the subcommand: `kolega-code mcp --project . <command>`. `--state-dir` overrides the state directory and `--trust-mcp` trusts the project first.
 
 Where a name is defined in more than one scope, `get`, `remove`, `enable` and `disable` need `--scope` to choose one.
+If both project files define the same name, `get` and `remove` select the legacy
+`.kolega/mcp_servers.json` definition first. Removing it leaves the `.mcp.json` definition in place.
 
 | Command | What it does |
 | --- | --- |
@@ -351,7 +354,13 @@ kolega-code mcp import --file ./team-mcp.json --scope project --yes
 - Codex's `env_vars` become `${NAME}` references and `bearer_token_env_var` becomes an `Authorization: Bearer ${NAME}` header, so no secret value is copied. Fields Kolega cannot use, such as Codex per-tool settings, are reported as dropped.
 - Nothing is read from this project's own `.mcp.json`: Kolega already loads it. In the TUI, press `i` in the `/mcp` panel.
 
-Imported servers start unconnected. Run `kolega-code mcp verify --all` or reconnect them from `/mcp`.
+When importing into the shared project scope, prefer `${NAME}` references over
+literal header or env values. Use `user` or `local` scope to keep those values
+out of the shared file.
+
+Imported servers start unconnected. Project servers need approval before they
+can connect. Once they are trusted, run `kolega-code mcp verify --all` or
+reconnect them from `/mcp`.
 
 ## Verification and tool exposure
 

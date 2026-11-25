@@ -61,7 +61,7 @@ async def test_switch_to_non_vision_model_with_image_history_warns(tmp_path, mon
             monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=False, has_images=True))
 
         app._ensure_agent_from_settings = _fake_ensure
-        app._populate_settings_controls = lambda: None
+        app._populate_settings_controls = lambda *, mcp_server_id=None: None
         app._restore_composer_placeholder = lambda: None
         app._notify_user = lambda *a, **k: None
         hints: list[tuple] = []
@@ -105,7 +105,7 @@ async def test_switch_to_vision_model_with_image_history_no_warn(tmp_path, monke
             monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=True, has_images=True))
 
         app._ensure_agent_from_settings = _fake_ensure
-        app._populate_settings_controls = lambda: None
+        app._populate_settings_controls = lambda *, mcp_server_id=None: None
         app._restore_composer_placeholder = lambda: None
         app._notify_user = lambda *a, **k: None
         hints: list[tuple] = []
@@ -141,7 +141,7 @@ async def test_switch_to_non_vision_model_without_image_history_no_warn(tmp_path
             monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=False, has_images=False))
 
         app._ensure_agent_from_settings = _fake_ensure
-        app._populate_settings_controls = lambda: None
+        app._populate_settings_controls = lambda *, mcp_server_id=None: None
         app._restore_composer_placeholder = lambda: None
         app._notify_user = lambda *a, **k: None
         hints: list[tuple] = []

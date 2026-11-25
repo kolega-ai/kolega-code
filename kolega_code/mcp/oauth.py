@@ -30,6 +30,10 @@ class MCPOAuthError(RuntimeError):
     """Raised when MCP OAuth setup or callback handling fails."""
 
 
+class MCPOAuthInteractionRequired(MCPOAuthError):
+    """The server requested authorization but this session cannot prompt."""
+
+
 class MCPOAuthCallbackTimeout(MCPOAuthError):
     """The sign-in did not reach the local callback before its deadline.
 
@@ -345,6 +349,8 @@ async def build_oauth_provider(
 
     class ConfiguredOAuthClientProvider(OAuthClientProvider):
         async def _perform_authorization_code_grant(self) -> tuple[str, str]:
+            if interaction is None:
+                raise MCPOAuthInteractionRequired("MCP OAuth requires interactive sign-in.")
             # SDK discovery replaces client_metadata.scope with server-advertised
             # scopes. An explicitly configured scope must remain authoritative.
             if server.oauth.scope:

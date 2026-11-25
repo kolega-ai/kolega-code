@@ -35,7 +35,7 @@ from kolega_code.agent.prompts import (
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config, project_hooks_present
 from kolega_code.scratchpad import SCRATCHPAD_PROMPT_EXTENSION_ID, ensure_scratchpad_dir, scratchpad_dir_for
 from kolega_code.llm.exceptions import LLMError, llm_error_message
-from kolega_code.mcp.config import LoadedMCPConfig, load_mcp_config_for, server_fingerprint
+from kolega_code.mcp.config import LoadedMCPConfig, server_fingerprint
 from kolega_code.mcp.service import MCPService, mcp_tool_name_adjustment_note
 from kolega_code.mcp.tools import build_mcp_tool_extension
 from kolega_code.permissions import PermissionDecision
@@ -82,6 +82,7 @@ from ..skills import (
 )
 from . import app_base as tui_app_base
 from . import constants as tui_constants
+from . import mcp_ops
 from . import state as tui_state
 from . import widgets as tui_widgets
 
@@ -1850,6 +1851,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         if self._startup_pending and self._pending_question is None and self._pending_approval is None:
             self.run_worker(self.action_quit, name="startup-quit", group="startup-quit")
             return
+        if self._request_mcp_reconnect_cancel():
+            return
         # /handoff generation is a helper request, not an agent turn: Esc aborts
         # the handoff stream cooperatively and leaves the session untouched.
         if self._handoff_in_progress and self._handoff_cancel_event is not None:
@@ -2207,14 +2210,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             additional_prompts=self._composition_additional_prompts,
             history=lambda: self.agent.history if self.agent is not None else [],
             set_catalogs=self._set_composition_catalogs,
-            # Trust is the launch project's decision even when the agent runs in a
-            # linked workspace, so project servers never load on another checkout's say-so.
-            mcp_loader=lambda path: load_mcp_config_for(
-                path,
-                self.settings_store.root,
-                self.settings,
-                trusted=self.settings.is_mcp_project_trusted(self.project_path),
-            ),
+            mcp_loader=lambda path: mcp_ops.load_config(self, path),
             mcp_diagnostic=lambda diagnostic: self._log_status(f"mcp: {diagnostic}", level="warn"),
             mcp_names=self._log_mcp_tool_name_warnings,
             own_bundle=self._own_composition_bundle,

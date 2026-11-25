@@ -12,14 +12,16 @@ from rich.text import Text
 from textual.widgets import Button, Input, OptionList, Select, SelectionList, Static
 
 from kolega_code.cli.app import KolegaCodeApp
-from kolega_code.cli.settings import SettingsStore
+from kolega_code.cli.settings import SettingsStore, SettingsStoreError
 from kolega_code.cli.tui import mcp_ops
 from kolega_code.cli.tui import mcp_import_screen as import_screen_module
 from kolega_code.cli.tui.mcp_import_screen import MCPImportScreen
 from kolega_code.cli.tui.mcp_screen import MCPScreen
 from kolega_code.cli.tui.settings_screen import ConfirmSettingsActionScreen, SettingsScreen
+from kolega_code.cli.tui.widgets import ChatComposer
 from kolega_code.mcp.config import (
     MCPConfigFile,
+    MCPConfigError,
     MCPServerConfig,
     global_mcp_config_path,
     save_config_file,
@@ -27,6 +29,7 @@ from kolega_code.mcp.config import (
 )
 from kolega_code.mcp.failure_messages import MCP_FAILURE_MESSAGE_GENERIC
 from kolega_code.mcp.importers import ImportCandidate, ImportSource
+from kolega_code.mcp.scopes import upsert_local_server
 from kolega_code.mcp.service import MCPService, MCPVerificationResult
 from kolega_code.mcp.state import MCPServerStatus, MCPToolStatus
 
@@ -70,10 +73,12 @@ def _row(screen: MCPScreen, name: str) -> str:
     return next(row for row in _rows(screen) if row.split()[1] == name)
 
 
-async def _open_panel(app: KolegaCodeApp, pilot: Any) -> MCPScreen:
+async def _open_panel(app: KolegaCodeApp, pilot: Any, *, count: int = 3) -> MCPScreen:
     def listed() -> bool:
         screen = app.screen
-        return isinstance(screen, MCPScreen) and bool(screen.query("#mcp_panel_servers")) and len(_rows(screen)) == 3
+        return (
+            isinstance(screen, MCPScreen) and bool(screen.query("#mcp_panel_servers")) and len(_rows(screen)) == count
+        )
 
     app.action_open_mcp()
     await _wait_for_layout(pilot, listed)
@@ -151,6 +156,111 @@ async def test_mcp_panel_lists_every_scope_and_waits_for_trust(
         detail = _text(screen.query_one("#mcp_panel_detail", Static))
         assert str(app.project_path / ".mcp.json") in detail
         assert "npx repo-tools" in detail
+
+
+@pytest.mark.asyncio
+async def test_mcp_panel_opens_settings_with_the_selected_server(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    app, _ = _mcp_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _open_panel(app, pilot)
+        await _select(screen, pilot, "off")
+        await pilot.press("s")
+        await _wait_for_layout(pilot, lambda: isinstance(app.screen, SettingsScreen) and not app.screen._initializing)
+        settings = app.screen
+        assert isinstance(settings, SettingsScreen)
+        assert settings.query_one("#mcp_server_select", Select).value == "off"
+        assert settings.query_one("#mcp_url_input", Input).value == "https://off.invalid/mcp"
+        assert settings.category == "mcp"
+        assert not settings.mcp_dirty
+
+
+@pytest.mark.asyncio
+async def test_mcp_panel_keeps_same_id_active_and_pending_definitions_separate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    app, settings_store = _mcp_app(tmp_path, monkeypatch)
+    shared = app.project_path / ".mcp.json"
+    shared.write_text('{"mcpServers": {"docs": {"command": "repo-docs"}}}', encoding="utf-8")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _open_panel(app, pilot)
+        detail = screen.query_one("#mcp_panel_detail", Static)
+        await _wait_for_layout(pilot, lambda: "https://docs.invalid/mcp" in _text(detail))
+        assert str(global_mcp_config_path(settings_store.root)) in _text(detail)
+        assert "repo-docs" not in _text(detail)
+
+        listing = screen.query_one("#mcp_panel_servers", OptionList)
+        listing.highlighted = next(index for index, row in enumerate(_rows(screen)) if "Pending approval" in row)
+        await _wait_for_layout(pilot, lambda: "repo-docs" in _text(detail))
+        assert str(shared) in _text(detail)
+        assert "https://docs.invalid/mcp" not in _text(detail)
+
+
+@pytest.mark.asyncio
+async def test_mcp_panel_edits_the_active_workspace_but_uses_launch_trust(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    app, settings_store = _mcp_app(tmp_path, monkeypatch)
+    workspace = tmp_path / "linked"
+    workspace.mkdir()
+    shared = workspace / ".mcp.json"
+    shared.write_text('{"mcpServers": {"linked": {"command": "linked-tools"}}}', encoding="utf-8")
+    upsert_local_server(app.settings, workspace, MCPServerConfig(id="private", url="https://local.invalid/mcp"))
+    app.settings.trust_mcp_project(workspace)
+    settings_store.save(app.settings)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app._activate_workspace(workspace, baseline_label="linked")
+        screen = await _open_panel(app, pilot, count=4)
+        assert "local" in _row(screen, "private")
+        assert "Pending approval" in _row(screen, "linked")
+        assert not any(row.split()[1] == "repo" for row in _rows(screen))
+        assert str(workspace) in _text(screen.query_one("#mcp_panel_title", Static))
+
+        await _select(screen, pilot, "linked")
+        await pilot.press("t")
+        await _confirm(pilot)
+        await _wait_for_layout(
+            pilot,
+            lambda: (
+                app.screen is screen
+                and app.settings.is_mcp_project_trusted(app.project_path)
+                and not app._mcp_operation_in_flight()
+            ),
+        )
+        assert "Not connected" in _row(screen, "linked")
+        await pilot.press("space")
+        await _wait_for_layout(pilot, lambda: "disabled for this project" in _row(screen, "linked"))
+        assert settings_store.load().mcp_project_server_overrides == {str(workspace): {"linked": False}}
+        assert not mcp_ops.load_config(app).servers["linked"].enabled
+
+
+@pytest.mark.asyncio
+async def test_mcp_panel_and_text_toggle_report_strict_edit_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    app, settings_store = _mcp_app(tmp_path, monkeypatch)
+    user_file = global_mcp_config_path(settings_store.root)
+    document = json.loads(user_file.read_text(encoding="utf-8"))
+    document["servers"].append({"id": "incomplete", "transport": "stdio"})
+    user_file.write_text(json.dumps(document), encoding="utf-8")
+    notices: list[str] = []
+    monkeypatch.setattr(app, "_notify_user", lambda message, **kwargs: notices.append(message))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _open_panel(app, pilot)
+        await pilot.press("space")
+        await _wait_for_layout(pilot, lambda: any("Fix the config file" in notice for notice in notices))
+        assert not app._mcp_operation_in_flight()
+        assert "Not connected" in _row(screen, "docs")
+        await pilot.press("escape")
+        await _wait_for_layout(pilot, lambda: app.screen is not screen)
+        await app._command_mcp("disable docs")
+        assert "Fix the config file" in app.conversation_entries[-1].content
+        assert not app._mcp_operation_in_flight()
 
 
 @pytest.mark.asyncio
@@ -342,8 +452,9 @@ async def test_mcp_text_forms_reconnect_enable_and_disable(
     def last_entry() -> str:
         return app.conversation_entries[-1].content
 
-    async with app.run_test(size=(120, 40)):
+    async with app.run_test(size=(120, 40)) as pilot:
         await app._command_mcp("reconnect all")
+        await _wait_for_layout(pilot, lambda: "✓ docs: Verified 1 tool(s)." in last_entry())
 
         # Disabled servers and servers waiting for trust are not retried.
         assert [server_id for server_id, _ in calls] == ["docs"]
@@ -351,6 +462,7 @@ async def test_mcp_text_forms_reconnect_enable_and_disable(
 
         calls.clear()
         await app._command_mcp("reconnect all")
+        await _wait_for_layout(pilot, lambda: "already connected" in last_entry())
         assert calls == []
         assert "already connected" in last_entry()
 
@@ -375,6 +487,74 @@ async def test_mcp_text_forms_reconnect_enable_and_disable(
         assert not app._mcp_operation_in_flight()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_key", ["escape", "ctrl+c"])
+async def test_mcp_composer_reconnect_does_not_block_input_and_holds_gate_through_cancel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None, cancel_key: str
+) -> None:
+    app, _ = _mcp_app(tmp_path, monkeypatch)
+    started, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def pending_verify(self: MCPService, server_id: str, **kwargs: Any) -> MCPVerificationResult:
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            cleaning.set()
+            await release.wait()
+        pytest.fail("Reconnect should have been cancelled")
+
+    monkeypatch.setattr(MCPService, "verify_server", pending_verify)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+        await _wait_for_layout(pilot, lambda: composer.has_focus)
+        try:
+            composer.load_text("/mcp reconnect docs")
+            await asyncio.wait_for(pilot.press("enter"), timeout=10)
+            await _wait_for_layout(pilot, started.is_set)
+            assert app._mcp_operation_in_flight()
+
+            await asyncio.wait_for(pilot.press(cancel_key), timeout=10)
+            await _wait_for_layout(pilot, cleaning.is_set)
+            assert app._mcp_operation_in_flight()
+            composer.load_text("/mcp reconnect off")
+            await asyncio.wait_for(pilot.press("enter"), timeout=10)
+            await _wait_for_layout(pilot, lambda: mcp_ops.BUSY_MESSAGE in app.conversation_entries[-1].content)
+        finally:
+            release.set()
+
+        await _wait_for_layout(pilot, lambda: "MCP reconnect cancelled." in app.conversation_entries[-1].content)
+        assert not app._mcp_operation_in_flight()
+
+
+@pytest.mark.asyncio
+async def test_mcp_reconnect_is_cancelled_during_quit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    app, _ = _mcp_app(tmp_path, monkeypatch)
+    started, closed = asyncio.Event(), asyncio.Event()
+
+    async def pending_verify(self: MCPService, server_id: str, **kwargs: Any) -> MCPVerificationResult:
+        try:
+            started.set()
+            await asyncio.Future()
+        finally:
+            closed.set()
+        pytest.fail("Reconnect should have been cancelled")
+
+    monkeypatch.setattr(MCPService, "verify_server", pending_verify)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app._command_mcp("reconnect docs")
+        await _wait_for_layout(pilot, started.is_set)
+        await asyncio.wait_for(pilot.press("ctrl+q"), timeout=10)
+
+    assert closed.is_set()
+    assert not app._mcp_operation_in_flight()
+
+
 def test_mcp_is_a_tui_slash_command() -> None:
     from kolega_code.cli.slash_commands import TUI_COMMAND_ENTRIES
 
@@ -383,29 +563,21 @@ def test_mcp_is_a_tui_slash_command() -> None:
     assert "/mcp" in KolegaCodeApp._tui_command_handlers(KolegaCodeApp.__new__(KolegaCodeApp))
 
 
-def test_settings_status_block_labels_servers_waiting_for_trust() -> None:
+@pytest.mark.asyncio
+async def test_settings_status_block_labels_servers_waiting_for_trust(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
     from kolega_code.cli.tui import settings_panel
 
-    rows = [
-        {
-            "id": "repo-tools",
-            "name": "Repo Tools",
-            "scope": "project",
-            "transport": "stdio",
-            "enabled": True,
-            "oauth": False,
-            "status": "pending_trust",
-            "tool_count": 0,
-            "message": "",
-        }
-    ]
+    app, _ = _mcp_app(tmp_path, monkeypatch)
     sep = settings_panel._mcp_separator()
 
-    content, tone = settings_panel._render_mcp_status_text([], rows)
-
-    assert tone == "warning"
-    assert f"pending approval{sep}project{sep}stdio" in content.plain
-    assert "Trust the project to load this server." in content.plain
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.action_open_settings("mcp")
+        await _wait_for_layout(pilot, lambda: isinstance(app.screen, SettingsScreen) and not app.screen._initializing)
+        status = _text(app.screen.query_one("#mcp_status", Static))
+        assert f"pending approval{sep}project{sep}stdio" in status
+        assert "Trust the project to load this server." in status
 
 
 async def _press(pilot: Any, selector: str) -> None:
@@ -453,6 +625,33 @@ async def test_settings_saves_and_deletes_local_servers_in_settings(
         await app._handle_mcp_settings_button("mcp_delete_server")
         assert SettingsStore(settings_store.root).load().mcp_local_servers == {}
         assert user_file.read_bytes() == original
+
+
+@pytest.mark.asyncio
+async def test_settings_failed_local_save_does_not_publish_the_draft(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    app, settings_store = _mcp_app(tmp_path, monkeypatch)
+
+    def fail_save(_settings: object) -> None:
+        raise SettingsStoreError("fake settings lock failure")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.action_open_settings("mcp")
+        await _wait_for_layout(pilot, lambda: isinstance(app.screen, SettingsScreen) and not app.screen._initializing)
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen.query_one("#mcp_name_input", Input).value = "Unsaved Local"
+        screen.query_one("#mcp_url_input", Input).value = "https://local.invalid/mcp"
+        screen.query_one("#mcp_scope_select", Select).value = "local"
+        status = screen.query_one("#mcp_status", Static)
+        with monkeypatch.context() as patch:
+            patch.setattr(settings_store, "save", fail_save)
+            await _press(pilot, "#mcp_save_server")
+            await _wait_for_layout(pilot, lambda: "Could not save MCP" in _text(status))
+        assert screen.mcp_dirty
+        assert app.settings.mcp_local_servers == {}
+        assert settings_store.load().mcp_local_servers == {}
 
 
 @pytest.mark.asyncio
@@ -567,7 +766,13 @@ async def test_mcp_import_screen_offers_found_sources_and_writes_the_selection(
         assert isinstance(screen, MCPImportScreen)
         assert "Found 3 MCP servers in 1 tool" in _text(screen.query_one("#mcp_import_detail", Static))
 
-        await _press(pilot, "#mcp_import_next")
+        sources = screen.query_one("#mcp_import_sources", SelectionList)
+        assert sources.highlighted == 0
+        await pilot.press("space")
+        await _wait_for_layout(pilot, lambda: not sources.selected)
+        await pilot.press("space")
+        await _wait_for_layout(pilot, lambda: sources.selected == ["cursor"])
+        await pilot.press("enter")
         servers = screen.query_one("#mcp_import_servers", SelectionList)
         await _wait_for_layout(pilot, lambda: servers.display and servers.option_count == 3)
 
@@ -597,3 +802,61 @@ async def test_mcp_import_screen_offers_found_sources_and_writes_the_selection(
         assert set(written) == {"repo", "one", "docs"}
         assert written["repo"] == {"command": "npx", "args": ["repo-tools"]}
         assert not app.settings.is_mcp_project_trusted(app.project_path)
+
+
+@pytest.mark.asyncio
+async def test_mcp_project_import_warns_before_writing_and_recovers_from_edit_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    app, _ = _mcp_app(tmp_path, monkeypatch)
+    value = "fake-import-test-value"
+    server = MCPServerConfig(id="example", url="https://example.invalid/mcp", headers={"X-Test": value})
+    source = ImportSource("cursor", "Cursor", (ImportCandidate("cursor", "Cursor", "user", server.id, server=server),))
+    monkeypatch.setattr(import_screen_module, "discover_import_sources", lambda _project: [source])
+    shared = app.project_path / ".mcp.json"
+    original = shared.read_bytes()
+
+    def fail_import(*_args: object, **_kwargs: object) -> None:
+        raise MCPConfigError("fake strict config error")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.action_open_mcp_import()
+        await _wait_for_layout(
+            pilot,
+            lambda: (
+                isinstance(app.screen, MCPImportScreen)
+                and any(listing.has_focus and listing.highlighted == 0 for listing in app.screen.query(SelectionList))
+            ),
+        )
+        screen = app.screen
+        await pilot.press("enter")
+        await _wait_for_layout(pilot, lambda: screen.query_one("#mcp_import_scope_toggle", Button).display)
+        await _press(pilot, "#mcp_import_scope_toggle")
+        await _wait_for_layout(
+            pilot, lambda: "project" in str(screen.query_one("#mcp_import_scope_toggle", Button).label)
+        )
+        await _press(pilot, "#mcp_import_next")
+        await _wait_for_layout(
+            pilot,
+            lambda: (
+                isinstance(app.screen, ConfirmSettingsActionScreen) and bool(app.screen.query("#settings_action_copy"))
+            ),
+        )
+        warning = _text(app.screen.query_one("#settings_action_copy", Static))
+        assert "shared project file" in warning and "${VAR}" in warning and value not in warning
+        assert shared.read_bytes() == original
+        await pilot.press("escape")
+        await _wait_for_layout(pilot, lambda: app.screen is screen)
+        assert shared.read_bytes() == original
+
+        with monkeypatch.context() as patch:
+            patch.setattr(import_screen_module, "import_servers", fail_import)
+            await _wait_for_layout(pilot, lambda: not screen.query_one("#mcp_import_next", Button).has_class("-active"))
+            await _press(pilot, "#mcp_import_next")
+            await _confirm(pilot)
+            hint = screen.query_one("#mcp_import_hint", Static)
+            await _wait_for_layout(pilot, lambda: "Fix the config file" in _text(hint))
+            assert app.screen is screen
+            assert not app._mcp_operation_in_flight()
+            assert not screen.query_one("#mcp_import_next", Button).disabled
+        assert shared.read_bytes() == original

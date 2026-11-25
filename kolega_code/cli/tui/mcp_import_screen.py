@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import TYPE_CHECKING
 
 from rich.text import Text
@@ -14,9 +15,12 @@ from textual.widgets.selection_list import Selection
 
 from kolega_code.mcp.config import MCPScope
 from kolega_code.mcp.importers import ImportCandidate, ImportSource, discover_import_sources, import_servers
-from kolega_code.mcp.scopes import find_definitions
+from kolega_code.mcp.scopes import find_definitions, has_literal_secrets
 
-from .mcp_screen import TRANSPORT_LABELS, plain_text
+from . import mcp_ops
+from .mcp_ops import plain_text
+from .mcp_screen import TRANSPORT_LABELS
+from .settings_screen import ConfirmSettingsActionScreen
 
 if TYPE_CHECKING:
     from ..app import KolegaCodeApp
@@ -28,12 +32,20 @@ SCOPE_LABELS = {
     "local": "local (this project only)",
 }
 _SEARCHED = "Claude Code, Claude Desktop, Cursor, VS Code/Copilot, Windsurf, Gemini CLI and Codex"
+_SHARED_CREDENTIALS_WARNING = (
+    "The selected servers contain literal header or environment values. Importing them into project scope writes "
+    "those values to a shared project file. Cancel and choose user or local scope, or replace the literal values "
+    "in the source with ${VAR} references before importing."
+)
 
 
 class MCPImportScreen(ModalScreen[bool]):
     """Choose which found sources to read, then which of their servers to add."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel", show=True, priority=True)]
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True, priority=True),
+        Binding("enter", "next_step", "Next", show=False, priority=True),
+    ]
 
     def __init__(self, owner: "KolegaCodeApp") -> None:
         super().__init__()
@@ -57,8 +69,20 @@ class MCPImportScreen(ModalScreen[bool]):
             yield Static("", id="mcp_import_hint", markup=False)
 
     def on_mount(self) -> None:
-        self._sources = discover_import_sources(self.owner.project_path)
+        try:
+            self._sources = discover_import_sources(self.owner.active_project_path)
+        except mcp_ops.OPERATION_ERRORS as exc:
+            self.owner._notify_user(mcp_ops.operation_error(exc), severity="error")
         self._render_sources()
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "next_step":
+            return self._step == "sources" and self.focused is self._sources_list()
+        return super().check_action(action, parameters)
+
+    def action_next_step(self) -> None:
+        if self._sources_list().selected:
+            self._show_servers()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -70,7 +94,7 @@ class MCPImportScreen(ModalScreen[bool]):
             self._cycle_scope()
         elif event.button.id == "mcp_import_next":
             if self._step == "sources":
-                self._show_servers()
+                self.action_next_step()
             else:
                 self._import_selected()
 
@@ -108,7 +132,7 @@ class MCPImportScreen(ModalScreen[bool]):
             prompt = Text.assemble(
                 (f"{source.label:<18}", "bold"),
                 f"{count} server{'s' if count != 1 else ''}  ",
-                (source.origins, "dim"),
+                (plain_text(source.origins), "dim"),
             )
             listing.add_option(Selection(prompt, source.id, True))
         detail = self.query_one("#mcp_import_detail", Static)
@@ -132,6 +156,8 @@ class MCPImportScreen(ModalScreen[bool]):
             )
         self.query_one("#mcp_import_next", Button).disabled = not self._sources
         self._set_step_widgets()
+        if listing.option_count:
+            listing.highlighted = 0
         self.set_focus(listing)
 
     def _show_servers(self) -> None:
@@ -150,7 +176,7 @@ class MCPImportScreen(ModalScreen[bool]):
             definition.scope
             for definition in find_definitions(
                 name,
-                project_path=self.owner.project_path,
+                project_path=self.owner.active_project_path,
                 state_dir=self.owner.settings_store.root,
                 settings=self.owner.settings,
             )
@@ -160,12 +186,15 @@ class MCPImportScreen(ModalScreen[bool]):
         listing = self._servers_list()
         listing.clear_options()
         importable = 0
+        first_importable: int | None = None
         for key, candidate in self._candidates.items():
             defined = self._existing(candidate.name) if candidate.importable else []
             blocked = "" if candidate.importable else candidate.unsupported
             if candidate.importable and self._scope in defined:
                 blocked = f"already defined in {self._scope} scope"
             take = candidate.importable and not blocked
+            if take and first_importable is None:
+                first_importable = listing.option_count
             importable += take
             prompt = Text()
             prompt.append(plain_text(candidate.original_name), style="bold" if take else "dim")
@@ -184,6 +213,7 @@ class MCPImportScreen(ModalScreen[bool]):
         )
         self.query_one("#mcp_import_next", Button).disabled = importable == 0
         self._set_step_widgets()
+        listing.highlighted = first_importable
         self.set_focus(listing)
 
     def _cycle_scope(self) -> None:
@@ -191,10 +221,44 @@ class MCPImportScreen(ModalScreen[bool]):
         self._render_servers()
 
     def _import_selected(self) -> None:
-        if self._in_flight:
+        if not self._ready():
             return
         chosen = [self._candidates[str(key)] for key in self._servers_list().selected if str(key) in self._candidates]
         if not chosen:
+            return
+        if self._scope == "project" and any(
+            candidate.server is not None and has_literal_secrets(candidate.server) for candidate in chosen
+        ):
+
+            def confirm(confirmed: bool | None) -> None:
+                if confirmed and self.app.screen is self:
+                    self._write(chosen)
+
+            self.app.push_screen(
+                ConfirmSettingsActionScreen(
+                    "Import literal values into a shared file?",
+                    _SHARED_CREDENTIALS_WARNING,
+                    "Import Anyway",
+                    danger=True,
+                ),
+                callback=confirm,
+            )
+            return
+        self._write(chosen)
+
+    def _ready(self) -> bool:
+        if self._in_flight:
+            return False
+        if self.owner._mcp_operation_in_flight():
+            self.owner._notify_user(mcp_ops.BUSY_MESSAGE, severity="warning")
+            return False
+        if mcp_ops.change_blocked(self.owner):
+            self.owner._notify_user(mcp_ops.BLOCKED_MESSAGE, severity="warning")
+            return False
+        return True
+
+    def _write(self, chosen: list[ImportCandidate]) -> None:
+        if not self._ready():
             return
         self._in_flight = True
         self.owner._set_mcp_operation_in_flight(self, True)
@@ -204,26 +268,41 @@ class MCPImportScreen(ModalScreen[bool]):
 
         async def run() -> None:
             try:
+                draft = deepcopy(self.owner.settings) if scope == "local" else self.owner.settings
                 outcomes = import_servers(
                     chosen,
                     scope=scope,
-                    project_path=self.owner.project_path,
+                    project_path=self.owner.active_project_path,
                     state_dir=self.owner.settings_store.root,
-                    settings=self.owner.settings,
+                    settings=draft,
                 )
-                self.owner.settings_store.save(self.owner.settings)
+                added = [outcome for outcome in outcomes if outcome.outcome != "skipped"]
+                if scope == "local" and added:
+                    self.owner.settings_store.save(draft)
+                    self.owner.settings = draft
+            except mcp_ops.OPERATION_ERRORS as exc:
+                hint = mcp_ops.operation_error(exc)
+                if scope != "local":
+                    hint += " Some servers may already have been imported."
+                self.query_one("#mcp_import_hint", Static).update(hint)
+                self.query_one("#mcp_import_next", Button).disabled = False
+                return
             finally:
                 self._in_flight = False
                 self.owner._set_mcp_operation_in_flight(self, False)
                 self.owner._schedule_maybe_start_queued_message()
 
-            added = [outcome for outcome in outcomes if outcome.outcome != "skipped"]
+            follow_up = (
+                "Trust the project in /mcp before reconnecting."
+                if scope == "project" and not mcp_ops.project_trusted(self.owner)
+                else "Reconnect them from /mcp."
+            )
             self.owner._notify_user(
-                f"Imported {len(added)} MCP server{'s' if len(added) != 1 else ''} into {scope} scope. "
-                "Reconnect them from /mcp.",
+                f"Imported {len(added)} MCP server{'s' if len(added) != 1 else ''} into {scope} scope. " + follow_up,
                 severity="information" if added else "warning",
             )
             # Servers import unverified, so the agent's tool set is unchanged: no rebuild.
-            self.dismiss(True)
+            if self.app.screen is self:
+                self.dismiss(True)
 
-        self.run_worker(run(), name="mcp-import", group="mcp-import-actions")
+        self.run_worker(run, name="mcp-import", group="mcp-import-actions", exit_on_error=False)

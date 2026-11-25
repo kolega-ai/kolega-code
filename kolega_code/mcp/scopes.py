@@ -222,9 +222,14 @@ def upsert_server(
 
 
 def remove_server(
-    server_id: str, *, scope: MCPScope, project_path: Path, state_dir: Path, settings: MCPScopeSettings
+    server_id: str,
+    *,
+    scope: MCPScope,
+    project_path: Path,
+    state_dir: Path,
+    settings: MCPScopeSettings,
+    project_file: Path | None = None,
 ) -> bool:
-    """Remove a server's definition from one scope. Returns False when it was not defined there."""
     if scope == "user":
         return remove_server_config(global_mcp_config_path(state_dir), server_id, source="global")
     if scope == "local":
@@ -232,12 +237,22 @@ def remove_server(
     lock_dir = config_lock_dir(state_dir)
     legacy = project_mcp_config_path(project_path)
     standard = standard_mcp_config_path(project_path)
+    if project_file is not None and project_file not in (legacy, standard):
+        raise ValueError("Not a project MCP config path")
     removed = False
-    if legacy.exists():
+    if project_file in (None, legacy) and legacy.exists():
         removed = remove_server_config(legacy, server_id, source="project", lock_dir=lock_dir) or removed
-    if standard.exists():
+    if project_file in (None, standard) and standard.exists():
         removed = remove_standard_server(standard, server_id, lock_dir=lock_dir) or removed
-    clear_project_server_override(settings, project_path, server_id)
+    if project_file is None or (
+        removed
+        and not any(
+            server_id in server_ids_in_file(path, source="project")
+            for path in (legacy, standard)
+            if path != project_file
+        )
+    ):
+        clear_project_server_override(settings, project_path, server_id)
     return removed
 
 

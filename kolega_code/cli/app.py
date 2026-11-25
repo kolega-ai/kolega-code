@@ -419,6 +419,7 @@ class KolegaCodeApp(
         # Screens running an MCP operation that must not be interrupted by a turn, a
         # scheduled loop iteration or a mode switch.
         self._mcp_in_flight: set[object] = set()
+        self._mcp_reconnect_task: asyncio.Task[list[str]] | None = None
         self._onboarding_screen: Optional[tui_onboarding.OnboardingScreen] = None
         self._discovery_tip_screen: DiscoveryTip | None = None
         self._discovery_tips_ready: bool = False
@@ -1888,6 +1889,9 @@ class KolegaCodeApp(
 
     def action_open_settings(self, category: str = "model") -> None:
         """Open the full-screen settings editor."""
+        self._open_settings(category)
+
+    def _open_settings(self, category: str, *, mcp_server_id: str | None = None) -> None:
         if self._startup_pending:
             return
         if self._settings_screen is not None or self._onboarding_screen is not None:
@@ -1895,7 +1899,7 @@ class KolegaCodeApp(
         if self._pending_approval is not None or self._pending_question is not None or self._plan_decision_active:
             self._notify_user("Resolve the active prompt before opening Settings.", severity="warning")
             return
-        screen = tui_settings_screen.SettingsScreen(self, category=category)
+        screen = tui_settings_screen.SettingsScreen(self, category=category, mcp_server_id=mcp_server_id)
         self._settings_screen = screen
         self._push_fullscreen_modal(screen)
 
@@ -1924,10 +1928,7 @@ class KolegaCodeApp(
         self._push_fullscreen_modal(tui_mcp_import.MCPImportScreen(self))
 
     def _open_settings_for_mcp_server(self, server_id: str) -> None:
-        self.action_open_settings("mcp")
-        settings = self._settings_screen
-        if settings is not None:
-            settings.request_mcp_selection(server_id)
+        self._open_settings("mcp", mcp_server_id=server_id)
 
     def _dismiss_mcp_screen(self) -> None:
         """Close the MCP panel when the session or project changes underneath it."""
@@ -2432,6 +2433,7 @@ class KolegaCodeApp(
         """
         if self.config is None:
             raise RuntimeError("Agent configuration is not available.")
+        await self._cancel_mcp_reconnect()
         self._dismiss_mcp_screen()
         previous = self._background_rebuilding
         self._background_rebuilding = True
@@ -2864,6 +2866,7 @@ class KolegaCodeApp(
             self.action_open_sub_agent(activity.agent_id)
 
     async def on_unmount(self) -> None:
+        await self._cancel_mcp_reconnect()
         await self._cancel_bug_export()
         await self._cancel_plan_approval()
         if self._background_jobs is not None:
@@ -2967,6 +2970,7 @@ class KolegaCodeApp(
         self._background_paused = True
         self._invalidate_plan_approval()
         try:
+            await self._cancel_mcp_reconnect()
             await self._cancel_bug_export()
             # Release control first, so any prompt still open resolves to its
             # default instead of leaving a turn waiting on a closing window.
@@ -3871,6 +3875,7 @@ class KolegaCodeApp(
         previous = self._background_rebuilding
         self._background_rebuilding = True
         try:
+            await self._cancel_mcp_reconnect()
             await self._cancel_plan_approval()
             await self._reset_current_thread_impl(preserve_loop=preserve_loop)
         finally:
@@ -3968,6 +3973,7 @@ class KolegaCodeApp(
         """
         if self._draining_agent_tasks:
             raise RuntimeError("The previous turn is still finishing cleanup; wait before handing off the session.")
+        await self._cancel_mcp_reconnect()
         self._dismiss_mcp_screen()
         await self._cancel_plan_approval()
         await self._retire_background_jobs()

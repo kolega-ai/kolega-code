@@ -3,6 +3,8 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
+import stat
 import subprocess
 import sys
 import textwrap
@@ -24,6 +26,7 @@ from kolega_code.mcp.config import (
     project_mcp_config_path,
     remove_server_config,
     remove_standard_server,
+    sanitize_mcp_server_id,
     server_from_entry,
     server_fingerprint,
     standard_mcp_config_path,
@@ -202,6 +205,32 @@ def test_project_choices_override_only_project_definitions(tmp_path: Path) -> No
     assert server_fingerprint(config.servers["team"]) == server_fingerprint(
         config.servers["team"].model_copy(update={"enabled": True})
     )
+
+
+def test_pending_project_files_do_not_shadow_active_file_attribution(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    state = (tmp_path / "state").resolve()
+    user = global_mcp_config_path(state)
+    standard = standard_mcp_config_path(project)
+    legacy = project_mcp_config_path(project)
+    _write(user, {"mcpServers": {"shared": {"url": "https://user.example/mcp"}}})
+    _write(standard, {"mcpServers": {name: {"command": "example"} for name in ("shared", "pending", "local")}})
+    _write(legacy, {"servers": [{"id": "shared", "url": "https://legacy.example/mcp"}]})
+    local = {"local": {"url": "https://local.example/mcp"}}
+
+    config = load_mcp_config(project, state, project_trusted=False, local_servers=local)
+
+    assert config.servers["shared"].url == "https://user.example/mcp"
+    assert config.servers["local"].url == "https://local.example/mcp"
+    assert config.server_files == {"shared": user}
+    assert config.untrusted_project_server_files == {"shared": legacy, "pending": standard, "local": standard}
+    assert {server.id: server.url for server in config.untrusted_project_servers} == {
+        "shared": "https://legacy.example/mcp",
+        "pending": None,
+        "local": None,
+    }
+    assert len(config.untrusted_project_servers) == 3
+    assert load_mcp_config(project, state, project_trusted=True).untrusted_project_server_files == {}
 
 
 def test_launch_trust_can_be_applied_to_another_workspace(tmp_path: Path) -> None:
@@ -579,7 +608,7 @@ async def test_open_mcp_session_hands_the_server_resolved_values(
 
 
 @pytest.mark.asyncio
-async def test_verification_records_missing_env_names_with_one_fixed_message(
+async def test_verification_stores_fixed_failure_and_status_checks_current_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     for name in ("ARG", "KEEP", "TOKEN"):
@@ -594,10 +623,11 @@ async def test_verification_records_missing_env_names_with_one_fixed_message(
     stored = MCPStatusStore(tmp_path).get("srv")
     assert stored is not None
     assert stored.status == "failed"
-    assert stored.env_missing == ["ARG", "KEEP", "TOKEN"]
     row = service.list_status_rows()[0]
     assert row["health"].health == "failed"
     assert row["missing_env"] == ["ARG", "KEEP", "TOKEN"]
+    monkeypatch.setenv("TOKEN", "from-env")
+    assert service.list_status_rows()[0]["missing_env"] == ["ARG", "KEEP"]
 
 
 @pytest.mark.asyncio
@@ -862,6 +892,110 @@ def test_project_scope_writes_the_portable_file_unless_only_a_legacy_one_exists(
     assert scope_location("user", fresh, tmp_path) == str(global_mcp_config_path(tmp_path))
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission modes")
+@pytest.mark.parametrize("legacy", [False, True])
+def test_shared_config_mutations_preserve_modes(tmp_path: Path, legacy: bool) -> None:
+    project = tmp_path / "project"
+    state = tmp_path / "state"
+    path = project_mcp_config_path(project) if legacy else standard_mcp_config_path(project)
+    _write(path, {})
+    project.chmod(0o755)
+    if legacy:
+        path.parent.chmod(0o775)
+    path.chmod(0o664)
+    context = {"project_path": project, "state_dir": state, "settings": CliSettings()}
+    previous_umask = os.umask(0o077)
+    try:
+        assert upsert_server(_http_server("shared"), scope="project", **context) == "added"
+        assert stat.S_IMODE(path.stat().st_mode) == 0o664
+        assert remove_server("shared", scope="project", **context)
+    finally:
+        os.umask(previous_umask)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o664
+    assert stat.S_IMODE(project.stat().st_mode) == 0o755
+    assert stat.S_IMODE(path.parent.stat().st_mode) == (0o775 if legacy else 0o755)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission modes")
+def test_new_shared_config_honors_umask_but_user_config_stays_private(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir(mode=0o755)
+    project.chmod(0o755)
+    state = tmp_path / "state"
+    context = {"project_path": project, "state_dir": state, "settings": CliSettings()}
+    previous_umask = os.umask(0o027)
+    try:
+        assert upsert_server(_http_server("shared"), scope="project", **context) == "added"
+        assert stat.S_IMODE(state.stat().st_mode) == 0o700
+        assert upsert_server(_http_server("private"), scope="user", **context) == "added"
+    finally:
+        os.umask(previous_umask)
+    assert stat.S_IMODE(project.stat().st_mode) == 0o755
+    assert stat.S_IMODE(standard_mcp_config_path(project).stat().st_mode) == 0o640
+    assert stat.S_IMODE(state.stat().st_mode) == 0o700
+    assert stat.S_IMODE(global_mcp_config_path(state).stat().st_mode) == 0o600
+
+
+def test_failed_shared_config_replace_keeps_the_original_and_cleans_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    state = tmp_path / "state"
+    path = standard_mcp_config_path(project)
+    _write(path, {"mcpServers": {"existing": {"command": "example"}}})
+    original = path.read_bytes()
+
+    def fail_replace(temp: Path, target: Path) -> Path:
+        assert target == path
+        assert temp != target
+        assert set(json.loads(temp.read_bytes())["mcpServers"]) == {"existing", "other"}
+        assert target.read_bytes() == original
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    with pytest.raises(OSError, match="replace failed"):
+        upsert_server(
+            _http_server("other"), scope="project", project_path=project, state_dir=state, settings=CliSettings()
+        )
+
+    assert path.read_bytes() == original
+    assert list(path.parent.iterdir()) == [path]
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_whitespace_only_project_config_can_be_edited(tmp_path: Path, legacy: bool) -> None:
+    project = tmp_path / "project"
+    path = project_mcp_config_path(project) if legacy else standard_mcp_config_path(project)
+    path.parent.mkdir(parents=True)
+    path.write_text(" \t\n", encoding="utf-8")
+    state = tmp_path / "state"
+
+    assert (
+        upsert_server(
+            _http_server("shared"), scope="project", project_path=project, state_dir=state, settings=CliSettings()
+        )
+        == "added"
+    )
+    assert set(load_mcp_config(project, state, project_trusted=True).servers) == {"shared"}
+
+
+def test_portable_config_can_update_and_remove_an_id_longer_than_64_characters(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    state = tmp_path / "state"
+    path = standard_mcp_config_path(project)
+    long_id = "long-server-" * 6
+    canonical = sanitize_mcp_server_id(long_id)
+    _write(path, {"mcpServers": {long_id: {"command": "example", "foreignOption": True}}})
+    context = {"project_path": project, "state_dir": state, "settings": CliSettings()}
+
+    assert upsert_server(_http_server(canonical), scope="project", **context) == "updated"
+    assert json.loads(path.read_bytes())["mcpServers"] == {
+        long_id: {"type": "http", "url": "https://example.com/mcp", "foreignOption": True}
+    }
+    assert remove_server(canonical, scope="project", **context)
+    assert load_mcp_config(project, state, project_trusted=True).servers == {}
+
+
 def test_local_scope_servers_are_edited_in_place(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -942,6 +1076,28 @@ def test_independent_local_scope_additions_both_survive_the_settings_merge(tmp_p
 
     saved = store.load()
     assert set(saved.mcp_local_servers[str(project.resolve())]) == {"a", "b"}
+
+
+@pytest.mark.parametrize("rename", [False, True])
+def test_removing_last_known_local_server_keeps_another_writers_addition(tmp_path: Path, rename: bool) -> None:
+    project = tmp_path / "project"
+    store = SettingsStore(tmp_path)
+    initial = store.load()
+    upsert_server(_http_server("old"), scope="local", project_path=project, state_dir=tmp_path, settings=initial)
+    store.save(initial)
+    stale = store.load()
+    other = store.load()
+    upsert_server(_http_server("other"), scope="local", project_path=project, state_dir=tmp_path, settings=other)
+    store.save(other)
+
+    assert remove_server("old", scope="local", project_path=project, state_dir=tmp_path, settings=stale)
+    assert stale.mcp_local_servers == {}
+    store.save(stale)
+    if rename:
+        upsert_server(_http_server("new"), scope="local", project_path=project, state_dir=tmp_path, settings=stale)
+        store.save(stale)
+
+    assert set(store.load().mcp_local_servers[str(project.resolve())]) == ({"new", "other"} if rename else {"other"})
 
 
 def test_the_settings_aware_loader_is_the_only_loader_used_outside_the_config_module() -> None:

@@ -6,11 +6,12 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, cast
 
-from kolega_code.cli.settings import CliSettings, SettingsStore
+from kolega_code.cli.settings import CliSettings, SettingsStore, SettingsStoreError
 from kolega_code.mcp.config import (
     LoadedMCPConfig,
     MCPScope,
@@ -20,7 +21,7 @@ from kolega_code.mcp.config import (
     server_fingerprint,
 )
 from kolega_code.mcp.entries import TRANSPORT_ALIASES, standard_entry_payload
-from kolega_code.mcp.health import MCPServerHealth, health_fields
+from kolega_code.mcp.health import MCPServerHealth, server_health
 from kolega_code.mcp.scopes import (
     ServerDefinition,
     find_definitions,
@@ -33,12 +34,7 @@ from kolega_code.mcp.scopes import (
     untrust_project,
     upsert_server,
 )
-from kolega_code.mcp.service import (
-    MCPService,
-    MCPVerificationResult,
-    exposed_tool_names_for,
-    mcp_tool_name_adjustment_note,
-)
+from kolega_code.mcp.service import MCPService, MCPVerificationResult, exposed_tool_names_for
 from kolega_code.mcp.state import MCPStatusStore, MCPOAuthTokenStore
 
 SCOPES = ("user", "project", "local")
@@ -245,7 +241,7 @@ def _clean(value: object) -> str:
 
 
 def _note(message: str) -> None:
-    print(f"mcp: {message}", file=sys.stderr)
+    print(f"mcp: {_clean(message)}", file=sys.stderr, flush=True)
 
 
 def _scope_arg(args: argparse.Namespace) -> Optional[str]:
@@ -267,27 +263,26 @@ def _transport_label(transport: object) -> str:
 
 
 def _one_definition(ctx: McpContext, server_id: str, *, action: str) -> ServerDefinition:
-    """The one scope that defines a server, or an error naming why there is not exactly one."""
     scope = _scope_arg(ctx.args)
     definitions = ctx.definitions(server_id, scope)
     if not definitions:
         where = f" in {scope} scope" if scope else ""
         raise ValueError(f"MCP server not found{where}: {server_id}")
-    if len(definitions) > 1:
-        scopes = ", ".join(definition.scope for definition in definitions)
+    scopes = list(dict.fromkeys(definition.scope for definition in definitions))
+    if len(scopes) > 1:
         raise ValueError(
-            f"MCP server '{server_id}' is defined in more than one scope ({scopes}). "
+            f"MCP server '{server_id}' is defined in more than one scope ({', '.join(scopes)}). "
             f"Re-run with --scope to choose the one to {action}."
         )
-    return definitions[0]
+    return definitions[0]  # find_definitions orders the files by loader precedence.
 
 
 def _row_hint(row: dict[str, Any]) -> str:
     health: MCPServerHealth = row["health"]
-    parts = [health.hint]
+    parts = [health.hint, row.get("tool_name_note", "")]
     if row.get("missing_env"):
         parts.append("missing env: " + ", ".join(row["missing_env"]))
-    return " · ".join(part for part in parts if part)
+    return _clean(" · ".join(part for part in parts if part))
 
 
 def _server_json(row: dict[str, Any]) -> dict[str, Any]:
@@ -382,9 +377,10 @@ def _verified_tool_names(server: MCPServerConfig, service: MCPService) -> list[s
     return [final for _, final in exposed_tool_names_for(server.id, status.tools)]
 
 
-def _shadowed_row(server: MCPServerConfig, definition: ServerDefinition, config: LoadedMCPConfig) -> dict[str, Any]:
+def _shadowed_row(server: MCPServerConfig, definition: ServerDefinition, *, trusted: bool) -> dict[str, Any]:
     """A status row for a definition that a higher-precedence scope overrides."""
-    row: dict[str, Any] = {
+    health = server_health(server, None, trusted=trusted)
+    return {
         "id": server.id,
         "name": server.display_name,
         "source": server.source,
@@ -394,11 +390,10 @@ def _shadowed_row(server: MCPServerConfig, definition: ServerDefinition, config:
         "enabled": server.enabled,
         "oauth": server.oauth.enabled,
         "status": "shadowed",
-        "tool_count": 0,
-        "message": "",
+        "health": health,
+        "enabled_override": None,
+        "missing_env": health.missing_env,
     }
-    row.update(health_fields(server, None, config=config, trusted=True))
-    return row
 
 
 async def _cmd_get(ctx: McpContext) -> int:
@@ -416,15 +411,24 @@ async def _cmd_get(ctx: McpContext) -> int:
     if server is None:
         raise ValueError(f"MCP server not found in {definition.scope} scope: {server_id}")
     service = ctx.service(config)
-    effective = next((row for row in service.list_status_rows() if row["id"] == server_id), None)
-    shadowed_by: Optional[str] = None
-    if effective is not None and effective["scope"] == definition.scope:
-        row = effective
-    else:
-        row = _shadowed_row(server, definition, config)
-        shadowed_by = effective["scope"] if effective is not None else None
+    trusted = definition.scope != "project" or bool(config.project_trusted)
+    selected_file = str(definition.file) if definition.file is not None else None
+    row = next(
+        (
+            row
+            for row in service.list_status_rows()
+            if (row["id"], row["scope"], row["file"]) == (server_id, definition.scope, selected_file)
+        ),
+        None,
+    )
+    active = config.servers.get(server_id)
+    shadowed_by = None
+    if row is None:
+        row = _shadowed_row(server, definition, trusted=trusted)
+        if active is not None and trusted:
+            shadowed_by = active.scope
     health: MCPServerHealth = row["health"]
-    tools = _verified_tool_names(server, service) if shadowed_by is None else []
+    tools = _verified_tool_names(server, service) if trusted and shadowed_by is None and active is not None else []
 
     if getattr(args, "json", False):
         data = _server_json(row)
@@ -437,9 +441,9 @@ async def _cmd_get(ctx: McpContext) -> int:
         print(json.dumps(data, indent=2))
         return 0
 
-    location = scope_location(definition.scope, ctx.project_path, ctx.settings_store.root)
+    location = _definition_location(definition, ctx)
     print(_clean(server.id))
-    print(f"  Scope:       {definition.scope} ({_clean(location)})")
+    print(f"  Scope:       {definition.scope} ({location})")
     if shadowed_by is not None:
         print(f"  Status:      Shadowed by the {shadowed_by} definition; that one is used")
     else:
@@ -655,7 +659,7 @@ async def _verify_after_change(ctx: McpContext, server_ids: list[str]) -> int:
     all_ok = True
     for server_id in server_ids:
         result = await service.verify_server(server_id, interactive_oauth=True, open_browser=True, output=sys.stderr)
-        print(f"{'✓' if result.ok else '✗'} {_clean(server_id)}: {result.message}")
+        print(f"{'✓' if result.ok else '✗'} {_clean(server_id)}: {_clean(result.message)}")
         all_ok = all_ok and result.ok
     return 0 if all_ok else 1
 
@@ -671,11 +675,21 @@ def _report_add(ctx: McpContext, servers: list[tuple[str, MCPServerConfig]], sco
     location = scope_location(scope, ctx.project_path, ctx.settings_store.root)
     for outcome, server in servers:
         print(f"{outcome.capitalize()} MCP server {_clean(server.id)} to {scope} scope ({_clean(location)})")
-    if scope == "project":
-        if any(has_literal_secrets(server) for _, server in servers):
-            _note("warning: this file is shared. Prefer ${NAME} references over literal secrets in headers and env.")
-        if not ctx.settings.is_mcp_project_trusted(ctx.project_path):
-            _note("Project MCP servers are not trusted yet. Run `kolega-code mcp trust` to enable them.")
+
+
+def _warn_about_project_literals(scope: MCPScope, servers: Iterable[MCPServerConfig]) -> None:
+    if scope == "project" and any(has_literal_secrets(server) for server in servers):
+        _note(
+            "warning: this file is shared. Use --scope local or user to keep it private, "
+            "or prefer ${NAME} references over literal secrets in headers and env."
+        )
+
+
+def _report_pending_approval(ctx: McpContext, scope: MCPScope) -> bool:
+    if scope != "project" or ctx.settings.is_mcp_project_trusted(ctx.project_path):
+        return False
+    _note("Saved project MCP servers are pending approval. Run `kolega-code mcp trust` before verifying them.")
+    return True
 
 
 def _next_step_hint(server: MCPServerConfig) -> str:
@@ -689,6 +703,7 @@ async def _cmd_add(ctx: McpContext) -> int:
     args = ctx.args
     scope = _effective_scope(args)
     server = _server_from_add_args(args)
+    _warn_about_project_literals(scope, [server])
     outcome = upsert_server(
         server, scope=scope, project_path=ctx.project_path, state_dir=ctx.settings_store.root, settings=ctx.settings
     )
@@ -696,6 +711,8 @@ async def _cmd_add(ctx: McpContext) -> int:
     _report_add(ctx, [(outcome, server)], scope)
     if args.server_id.strip() != server.id:
         _note(f"server id '{_clean(args.server_id.strip())}' exceeds 32 characters; saved as '{server.id}'.")
+    if _report_pending_approval(ctx, scope):
+        return 1 if args.verify else 0
     if getattr(args, "verify", False):
         return await _verify_after_change(ctx, [server.id])
     print(_next_step_hint(server))
@@ -751,19 +768,42 @@ async def _cmd_add_json(ctx: McpContext) -> int:
     args = ctx.args
     scope = _effective_scope(args)
     secret = _secret_from_args(args)
-    servers: list[tuple[str, MCPServerConfig]] = []
+    validated: list[MCPServerConfig] = []
     for raw_name, raw in _json_entries(_read_json_payload(args.json), getattr(args, "server_id", None)):
         try:
             server_id = sanitize_mcp_server_id(raw_name)
         except ValueError as exc:
             raise ValueError(f'MCP server name "{_clean(raw_name)}" cannot be used here: {exc}') from exc
-        server = _with_client_secret(_validated(standard_entry_payload(server_id, raw).payload), secret)
-        outcome = upsert_server(
-            server, scope=scope, project_path=ctx.project_path, state_dir=ctx.settings_store.root, settings=ctx.settings
-        )
+        validated.append(_with_client_secret(_validated(standard_entry_payload(server_id, raw).payload), secret))
+    _warn_about_project_literals(scope, validated)
+    servers: list[tuple[str, MCPServerConfig]] = []
+    for server in validated:
+        try:
+            outcome = upsert_server(
+                server,
+                scope=scope,
+                project_path=ctx.project_path,
+                state_dir=ctx.settings_store.root,
+                settings=ctx.settings,
+            )
+        except (OSError, ValueError) as exc:
+            earlier = (
+                f" Already saved {len(servers)} earlier entries; they were not rolled back."
+                if servers and scope != "local"
+                else ""
+            )
+            raise ValueError(
+                f"Could not save MCP server '{server.id}' to {scope} scope: {_clean(exc)}.{earlier}"
+            ) from exc
         servers.append((outcome, server))
-    _save_if_settings_backed(ctx, scope)
+    try:
+        _save_if_settings_backed(ctx, scope)
+    except (OSError, SettingsStoreError) as exc:
+        persisted = " Project definitions were already written." if scope == "project" and servers else ""
+        raise ValueError(f"Could not save settings after add-json: {_clean(exc)}.{persisted}") from exc
     _report_add(ctx, servers, scope)
+    if servers and _report_pending_approval(ctx, scope):
+        return 1 if args.verify else 0
     if getattr(args, "verify", False):
         return await _verify_after_change(ctx, [server.id for _, server in servers])
     for _, server in servers:
@@ -799,6 +839,7 @@ async def _cmd_remove(ctx: McpContext) -> int:
         project_path=ctx.project_path,
         state_dir=ctx.settings_store.root,
         settings=ctx.settings,
+        project_file=definition.file if definition.scope == "project" else None,
     )
     if not removed:
         raise ValueError(f"MCP server not found in {definition.scope} scope: {server_id}")
@@ -874,7 +915,7 @@ def _print_verification(results: list[MCPVerificationResult], *, json_output: bo
         print(json.dumps([result.__dict__ for result in results], default=str))
     else:
         for result in results:
-            print(f"{'✓' if result.ok else '✗'} {_clean(result.server_id)}: {result.message}")
+            print(f"{'✓' if result.ok else '✗'} {_clean(result.server_id)}: {_clean(result.message)}")
     return 0 if all(result.ok for result in results) else 1
 
 
@@ -883,6 +924,10 @@ async def _cmd_verify(ctx: McpContext) -> int:
     config = ctx.reload()
     server_ids = _verify_server_ids(args, config)
     if not server_ids:
+        if config.untrusted_project_servers:
+            raise ValueError(
+                "Project MCP servers are pending approval. Run `kolega-code mcp trust` before verifying them."
+            )
         raise ValueError("No MCP servers to verify.")
     if not _confirm_stdio_verification(args, config, server_ids):
         return 2
@@ -918,7 +963,9 @@ async def _cmd_login(ctx: McpContext) -> int:
 
 async def _cmd_logout(ctx: McpContext) -> int:
     server_id = sanitize_mcp_server_id(ctx.args.server_id.strip())
-    _one_definition(ctx, server_id, action="sign out of")
+    if not ctx.definitions(server_id, None):
+        raise ValueError(f"MCP server not found: {server_id}")
+    # Both stores are keyed by ID, not by the scope of the definition.
     _clear_server_state(ctx, server_id)
     print(f"Signed out of MCP server {_clean(server_id)}; its cached tools were cleared.")
     server = ctx.reload().servers.get(server_id)
@@ -1086,6 +1133,7 @@ async def _cmd_import(ctx: McpContext) -> int:
             print(f"Would add {_clean(candidate.name)} to {scope} scope ({_clean(candidate.endpoint)}){notes}")
         return 0
 
+    _warn_about_project_literals(scope, (candidate.server for candidate in selected if candidate.server is not None))
     outcomes = import_servers(
         selected,
         scope=scope,
@@ -1101,7 +1149,8 @@ async def _cmd_import(ctx: McpContext) -> int:
             continue
         line = f"{outcome.outcome.capitalize()} MCP server {_clean(outcome.name)} ({scope} scope)"
         print(f"{line}; {outcome.detail}" if outcome.detail else line)
-    print("Run `kolega-code mcp verify --all` to connect them and expose their tools.")
+    if any(outcome.outcome != "skipped" for outcome in outcomes) and not _report_pending_approval(ctx, scope):
+        print("Run `kolega-code mcp verify --all` to connect them and expose their tools.")
     return 0
 
 
@@ -1134,22 +1183,10 @@ def doctor_mcp_lines(project_path: Path, state_dir: Path, settings: CliSettings)
         if health.tool_count:
             detail += f" · {health.tool_count} tool(s)"
         lines.append((f"MCP {_clean(server_id)}", detail, _HEALTH_TONES[health.health]))
-        note = _tool_name_note(config, service, server_id)
+        note = _clean(row["tool_name_note"])
         if note:
-            lines.append(
-                (f"MCP {_clean(server_id)} tool names", f"{note} See `kolega-code mcp list` for detail.", "warning")
-            )
+            lines.append((f"MCP {_clean(server_id)} tool names", f"{note} See `kolega-code mcp list`.", "warning"))
     return lines
-
-
-def _tool_name_note(config: LoadedMCPConfig, service: MCPService, server_id: str) -> str:
-    server = config.servers.get(server_id)
-    if server is None:
-        return ""
-    status = service.server_status(server)
-    if not status or status.status != "verified" or status.fingerprint != server_fingerprint(server):
-        return ""
-    return mcp_tool_name_adjustment_note(server.id, status.tools)
 
 
 _COMMANDS: dict[str, Any] = {

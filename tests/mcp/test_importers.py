@@ -141,6 +141,70 @@ startup_timeout_sec = 5
     assert broken.unsupported == "has neither a command nor a url"
 
 
+def test_codex_discovery_keeps_valid_servers_when_siblings_have_the_wrong_shape(tmp_path: Path, home: Path) -> None:
+    _write(
+        home / ".codex" / "config.toml",
+        """
+[mcp_servers]
+not_a_table = "invalid"
+
+[mcp_servers.bad_env]
+command = "uvx"
+env = "invalid"
+
+[mcp_servers.bad_timeout]
+command = "uvx"
+startup_timeout_sec = inf
+
+[mcp_servers.good]
+command = "uvx"
+env = { EXAMPLE = "value" }
+""",
+    )
+
+    (source,) = discover_import_sources(tmp_path, _environment(home))
+    candidates = {candidate.original_name: candidate for candidate in source.candidates}
+
+    assert "table" in candidates["not_a_table"].unsupported
+    assert "env" in candidates["bad_env"].unsupported
+    assert "startup_timeout_sec" in candidates["bad_timeout"].unsupported
+    assert candidates["good"].server is not None
+    assert candidates["good"].server.env == {"EXAMPLE": "value"}
+
+
+def test_codex_wrong_shaped_server_block_is_reported(tmp_path: Path) -> None:
+    path = _write(tmp_path / "config.toml", 'mcp_servers = ["invalid"]')
+
+    (candidate,) = import_file(path, tmp_path).candidates
+
+    assert not candidate.importable
+    assert candidate.original_name == "mcp_servers"
+    assert "table" in candidate.unsupported
+
+
+def test_windsurf_remote_server_url_is_imported_with_headers(tmp_path: Path, home: Path) -> None:
+    path = _write(
+        home / ".codeium" / "windsurf" / "mcp_config.json",
+        {
+            "mcpServers": {
+                "remote": {
+                    "serverUrl": "https://example.invalid/mcp",
+                    "headers": {"Authorization": "Bearer ${EXAMPLE_TOKEN}"},
+                }
+            }
+        },
+    )
+
+    (source,) = discover_import_sources(tmp_path, _environment(home))
+    for discovered_source in (source, import_file(path, tmp_path)):
+        (candidate,) = discovered_source.candidates
+        assert candidate.server is not None
+        assert candidate.server.transport == "streamable_http"
+        assert candidate.server.url == "https://example.invalid/mcp"
+        assert candidate.server.headers == {"Authorization": "Bearer ${EXAMPLE_TOKEN}"}
+        assert candidate.dropped_fields == ()
+
+
 def test_json_sources_accept_each_wrapper_and_field_spelling(tmp_path: Path, home: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()

@@ -33,6 +33,9 @@ MCP_FAILURE_MESSAGE_OAUTH_UNAUTHORIZED = (
 MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_INCOMPLETE = (
     "MCP sign-in was not completed. Run `kolega-code mcp login` for this server to sign in."
 )
+MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_REQUIRED = (
+    "MCP sign-in is required. Run `kolega-code mcp login` for this server to sign in."
+)
 MCP_FAILURE_MESSAGE_UNAUTHORIZED = (
     "MCP authentication failed. Check the configured credentials or Authorization header."
 )
@@ -57,6 +60,7 @@ SAFE_FAILED_STATUS_MESSAGES = frozenset(
         MCP_FAILURE_MESSAGE_OAUTH_CALLBACK,
         MCP_FAILURE_MESSAGE_OAUTH_UNAUTHORIZED,
         MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_INCOMPLETE,
+        MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_REQUIRED,
         MCP_FAILURE_MESSAGE_UNAUTHORIZED,
         MCP_FAILURE_MESSAGE_ENV_MISSING,
         MCP_FAILURE_MESSAGE_NOT_FOUND,

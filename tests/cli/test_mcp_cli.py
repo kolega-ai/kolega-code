@@ -4,14 +4,18 @@ import io
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
+import httpx
 import pytest
 
 from kolega_code.cli.config import API_KEY_ENV, CliConfigOverrides, build_agent_config
 from kolega_code.cli.main import main, parse_args
+from kolega_code.cli.mcp_cli import doctor_mcp_lines
 from kolega_code.cli.settings import CliSettings, SettingsStore
 from kolega_code.config import ModelProvider
-from kolega_code.mcp.config import MCPServerConfig, global_mcp_config_path, server_fingerprint
+from kolega_code.mcp.config import MCPServerConfig, global_mcp_config_path, load_mcp_config_for, server_fingerprint
+from kolega_code.mcp.failure_messages import MCP_FAILURE_MESSAGE_CONNECTION, MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_REQUIRED
 from kolega_code.mcp.service import MCP_FAILURE_MESSAGE_GENERIC, MCPService, MCPVerificationResult
 from kolega_code.mcp.state import MCPServerStatus, MCPStatusStore, MCPOAuthTokenStore, MCPToolStatus
 
@@ -206,6 +210,12 @@ def test_mcp_list_message_column_notes_adjusted_tool_names(tmp_path: Path, capsy
     assert "● docs" in captured.out
     assert "Connected" in captured.out
     assert "1 tool" in captured.out
+    assert "mcp__docs__get.file → mcp__docs__get_file" in captured.out
+    doctor = doctor_mcp_lines(project, state, SettingsStore(state).load())
+    assert any(
+        "mcp__docs__get.file → mcp__docs__get_file" in detail and "`kolega-code mcp list`" in detail
+        for _, detail, _ in doctor
+    )
 
     exit_code = main([*argv, "list", "--json"])
     captured = capsys.readouterr()
@@ -622,6 +632,43 @@ def test_mcp_add_json_rejects_a_name_missing_from_the_block(tmp_path: Path, caps
     assert not global_mcp_config_path(state).exists()
 
 
+@pytest.mark.parametrize("scope", ["user", "local", "project"])
+def test_mcp_add_json_validates_every_entry_before_writing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], scope: str
+) -> None:
+    project, state = _project(tmp_path)
+    block = '{"mcpServers":{"valid":{"command":"npx"},"invalid":{"type":"bogus"}}}'
+
+    assert main(_mcp(project, state, "add-json", "--scope", scope, block)) == 2
+    assert "bogus" in capsys.readouterr().err
+    assert not global_mcp_config_path(state).exists()
+    assert not (project / ".mcp.json").exists()
+    assert not SettingsStore(state).load().mcp_local_servers
+
+
+def test_mcp_add_json_reports_an_earlier_write_on_persistence_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kolega_code.cli import mcp_cli
+
+    project, state = _project(tmp_path)
+    upsert = mcp_cli.upsert_server
+
+    def fail_second(server: MCPServerConfig, **kwargs: Any) -> str:
+        if server.id == "second":
+            raise OSError("No space left on device")
+        return upsert(server, **kwargs)
+
+    monkeypatch.setattr(mcp_cli, "upsert_server", fail_second)
+    block = '{"mcpServers":{"first":{"command":"npx"},"second":{"command":"uvx"}}}'
+
+    assert main(_mcp(project, state, "add-json", block)) == 2
+    err = capsys.readouterr().err
+    assert "Could not save MCP server 'second'" in err
+    assert "No space left on device" in err and "not rolled back" in err
+    assert set(_user_servers(state)) == {"first"}
+
+
 def test_mcp_get_masks_secrets_and_strips_control_characters(tmp_path: Path, capsys) -> None:
     project, state = _project(tmp_path)
     (project / ".mcp.json").write_text(
@@ -678,6 +725,40 @@ def test_mcp_remove_needs_a_scope_when_a_name_is_defined_twice(tmp_path: Path, c
     assert main(_mcp(project, state, "remove", "docs", "-s", "project")) == 0
     assert set(_user_servers(state)) == {"docs"}
     assert json.loads((project / ".mcp.json").read_text()) == {"mcpServers": {}}
+
+
+def test_mcp_get_uses_legacy_precedence_within_project_scope(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project, state = _project(tmp_path)
+    legacy = project / ".kolega" / "mcp_servers.json"
+    legacy.parent.mkdir()
+    legacy.write_text(
+        '{"schema_version":1,"servers":[{"id":"docs","transport":"streamable_http","url":"https://legacy.example/mcp"}]}',
+        encoding="utf-8",
+    )
+    (project / ".mcp.json").write_text(
+        '{"mcpServers":{"docs":{"url":"https://standard.example/mcp"}}}', encoding="utf-8"
+    )
+
+    for trusted in [False, True]:
+        if trusted:
+            assert main(_mcp(project, state, "trust")) == 0
+            capsys.readouterr()
+        assert main(_mcp(project, state, "get", "docs", "--scope", "project", "--json")) == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["file"] == str(legacy)
+        assert data["endpoint"] == {"url": "https://legacy.example/mcp"}
+        assert data["health"] == ("unverified" if trusted else "pending_trust")
+
+    assert main(_mcp(project, state, "disable", "docs", "--scope", "project")) == 0
+    capsys.readouterr()
+    assert main(_mcp(project, state, "remove", "docs", "--scope", "project")) == 0
+    assert str(legacy) in capsys.readouterr().out
+    assert main(_mcp(project, state, "get", "docs", "--scope", "project", "--json")) == 0
+    remaining = json.loads(capsys.readouterr().out)
+    assert remaining["file"] == str(project / ".mcp.json")
+    assert remaining["health"] == "disabled"
 
 
 def test_mcp_project_scope_writes_the_portable_file_unless_a_legacy_one_exists(tmp_path: Path) -> None:
@@ -816,6 +897,140 @@ def test_mcp_trust_untrust_and_pending_approval_listing(tmp_path: Path, capsys) 
     assert "was not trusted" in capsys.readouterr().out
 
 
+def test_untrusted_mcp_diagnostics_strip_terminal_controls(
+    tmp_path: Path, capsysbinary: pytest.CaptureFixture[bytes]
+) -> None:
+    project, state = _project(tmp_path)
+    (project / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"bad\x1b[2J\x85\nname": {"command": "npx"}}}), encoding="utf-8"
+    )
+    assert main(_mcp(project, state, "list", "--json")) == 0
+    listed = capsysbinary.readouterr().err
+    doctor_mcp_lines(project, state, SettingsStore(state).load())
+    checked = capsysbinary.readouterr().err
+    for err in (listed, checked):
+        assert b"bad[2Jname" in err
+        assert b"\x1b" not in err and b"\xc2\x85" not in err
+
+
+@pytest.mark.parametrize("scope", ["local", "user"])
+def test_mcp_get_and_list_separate_pending_project_definition_from_active_same_id(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], scope: str
+) -> None:
+    project, state = _project(tmp_path)
+    assert main(_mcp(project, state, "add", "-s", scope, "docs", "https://active.example/mcp")) == 0
+    assert main(_mcp(project, state, "add", "-s", "project", "docs", "https://pending.example/mcp")) == 0
+    capsys.readouterr()
+
+    active_path = None if scope == "local" else str(global_mcp_config_path(state))
+    pending_path = str(project / ".mcp.json")
+    assert main(_mcp(project, state, "list", "--json")) == 0
+    rows = {row["scope"]: row for row in json.loads(capsys.readouterr().out)["servers"]}
+    assert (rows[scope]["file"], rows[scope]["health"]) == (active_path, "unverified")
+    assert (rows["project"]["file"], rows["project"]["health"]) == (pending_path, "pending_trust")
+    for chosen, filename, endpoint in ((scope, active_path, "active"), ("project", pending_path, "pending")):
+        assert main(_mcp(project, state, "get", "docs", "--scope", chosen, "--json")) == 0
+        row = json.loads(capsys.readouterr().out)
+        assert row["file"] == filename
+        assert row["health"] == ("pending_trust" if chosen == "project" else "unverified")
+        assert row["endpoint"] == {"url": f"https://{endpoint}.example/mcp"}
+    assert main(_mcp(project, state, "get", "docs", "--scope", "project")) == 0
+    assert "Pending approval" in capsys.readouterr().out
+    assert main(_mcp(project, state, "trust")) == 0
+    capsys.readouterr()
+
+    shadowed, expected_path, effective = (
+        ("project", pending_path, "local") if scope == "local" else ("user", active_path, "project")
+    )
+    assert main(_mcp(project, state, "get", "docs", "--scope", shadowed, "--json")) == 0
+    row = json.loads(capsys.readouterr().out)
+    assert (row["file"], row["status"], row["shadowed_by"]) == (expected_path, "shadowed", effective)
+
+
+def test_mcp_get_hides_cached_tool_names_after_untrust(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    project, state = _project(tmp_path)
+    assert main(_mcp(project, state, "add", "-s", "project", "docs", "https://docs.example/mcp")) == 0
+    assert main(_mcp(project, state, "trust")) == 0
+    server = load_mcp_config_for(project, state, SettingsStore(state).load()).servers["docs"]
+    MCPStatusStore(state).update(
+        server.id,
+        MCPServerStatus.verified(
+            fingerprint=server_fingerprint(server),
+            transport=server.transport,
+            source=server.source,
+            tools=[MCPToolStatus(id="old.tool")],
+        ),
+    )
+    capsys.readouterr()
+    assert main(_mcp(project, state, "get", "docs", "--json")) == 0
+    assert json.loads(capsys.readouterr().out)["tools"] == ["mcp__docs__old_tool"]
+
+    assert main(_mcp(project, state, "untrust")) == 0
+    capsys.readouterr()
+    assert main(_mcp(project, state, "get", "docs", "--json")) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert (data["health"], data["tool_count"], data["tools"]) == ("pending_trust", 0, [])
+
+
+@pytest.mark.parametrize("add_json", [False, True])
+def test_mcp_project_add_verify_saves_but_does_not_verify_pending_definitions(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, add_json: bool
+) -> None:
+    project, state = _project(tmp_path)
+
+    async def unexpected_verify(self: MCPService, server_id: str, **kwargs: Any) -> MCPVerificationResult:
+        pytest.fail(f"unexpected verification of {server_id}")
+
+    monkeypatch.setattr(MCPService, "verify_server", unexpected_verify)
+    args = (
+        ["add-json", "docs", '{"url":"https://project.example/mcp"}']
+        if add_json
+        else [
+            "add",
+            "docs",
+            "https://project.example/mcp",
+        ]
+    )
+    assert main(_mcp(project, state, *args, "--scope", "project", "--verify")) == 1
+    captured = capsys.readouterr()
+    assert "Added MCP server docs" in captured.out
+    assert "pending approval" in captured.err and "kolega-code mcp trust" in captured.err
+    assert "docs" in json.loads((project / ".mcp.json").read_text())["mcpServers"]
+
+
+def test_mcp_import_warns_before_writing_project_literals(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kolega_code.mcp import importers
+
+    project, state = _project(tmp_path)
+    source = tmp_path / "import.json"
+    source.write_text(
+        '{"mcpServers":{"docs":{"url":"https://docs.example/mcp","headers":{"Authorization":"fake-literal"}}}}',
+        encoding="utf-8",
+    )
+    import_servers = importers.import_servers
+
+    def observe_warning(*args: Any, **kwargs: Any) -> list[importers.ImportOutcome]:
+        err = capsys.readouterr().err
+        assert "this file is shared" in err and "${NAME}" in err and "--scope local" in err
+        assert "fake-literal" not in err
+        assert not (project / ".mcp.json").exists()
+        return import_servers(*args, **kwargs)
+
+    monkeypatch.setattr(importers, "import_servers", observe_warning)
+    assert main(_mcp(project, state, "import", "--file", str(source), "--scope", "project", "--yes")) == 0
+    captured = capsys.readouterr()
+    assert "Added MCP server docs" in captured.out
+    assert "fake-literal" not in captured.out + captured.err
+    assert "verify --all" not in captured.out
+    assert "pending approval" in captured.err and "kolega-code mcp trust" in captured.err
+    assert main(_mcp(project, state, "verify", "--all")) == 2
+    assert "pending approval" in capsys.readouterr().err
+    assert main(_mcp(project, state, "verify", "docs")) == 1
+    assert "Pending approval" in capsys.readouterr().out
+
+
 def test_mcp_login_requires_oauth_and_logout_clears_sign_in(tmp_path: Path, capsys, monkeypatch) -> None:
     project, state = _project(tmp_path)
     assert main(_mcp(project, state, "add", "plain", "https://plain.example/mcp")) == 0
@@ -856,6 +1071,62 @@ def test_mcp_login_requires_oauth_and_logout_clears_sign_in(tmp_path: Path, caps
     assert "Run `kolega-code mcp login hub` to sign in again." in signed_out
     assert main(_mcp(project, state, "logout", "plain")) == 0
     assert "sign in again" not in capsys.readouterr().out
+
+
+def test_mcp_logout_clears_one_state_record_regardless_of_scope(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project, state = _project(tmp_path)
+    assert main(_mcp(project, state, "add", "docs", "https://user.example/mcp", "--oauth")) == 0
+    assert main(_mcp(project, state, "add", "--scope", "project", "docs", "https://project.example/mcp")) == 0
+    tokens = MCPOAuthTokenStore(state)
+    tokens.set_tokens("docs", {"access_token": "fake-token"})
+    statuses = MCPStatusStore(state)
+    statuses.update(
+        "docs", MCPServerStatus.verified(fingerprint="fp", transport="streamable_http", source="global", tools=[])
+    )
+    capsys.readouterr()
+
+    assert main(_mcp(project, state, "logout", "docs")) == 0
+    assert statuses.get("docs") is None and tokens.secret_values() == []
+    assert "kolega-code mcp login docs" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("failure_path", "health", "message"),
+    [
+        (None, "needs_auth", MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_REQUIRED),
+        ("/mcp", "failed", MCP_FAILURE_MESSAGE_CONNECTION),
+        ("/.well-known/oauth-protected-resource/mcp", "failed", MCP_FAILURE_MESSAGE_CONNECTION),
+    ],
+)
+def test_mcp_list_check_distinguishes_auth_challenge_from_connection_failure_offline(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    failure_path: str | None,
+    health: str,
+    message: str,
+) -> None:
+    project, state = _project(tmp_path)
+    assert main(_mcp(project, state, "add", "docs", "https://docs.example/mcp", "--client-id", "public-client")) == 0
+    capsys.readouterr()
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        if request.url.path == failure_path:
+            raise httpx.ConnectError("offline", request=request)
+        return httpx.Response(401 if request.url.path == "/mcp" else 404)
+
+    def client(**kwargs: Any) -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=httpx.MockTransport(reply), **kwargs)
+
+    monkeypatch.setattr("mcp.client.streamable_http.create_mcp_http_client", client)
+    assert main(_mcp(project, state, "list", "--check", "--json")) == 1
+    row = json.loads(capsys.readouterr().out)["servers"][0]
+    assert (row["health"], row["message"]) == (health, message)
+    assert main(_mcp(project, state, "list")) == 0
+    out = capsys.readouterr().out
+    assert ("sign in: kolega-code mcp login docs" in out) == (health == "needs_auth")
 
 
 def test_mcp_list_check_verifies_enabled_servers_only(tmp_path: Path, capsys, monkeypatch) -> None:

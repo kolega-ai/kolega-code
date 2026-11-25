@@ -38,12 +38,40 @@ class SettingsStoreError(RuntimeError):
 
 
 SETTINGS_LOCK_TIMEOUT_SECONDS = 10.0
+_MCP_PROJECT_MAP_KEYS = {"mcp_local_servers", "mcp_project_server_overrides"}
+
+
+def _as_mapping(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _merge_mcp_project_maps(base: object, current: object, on_disk: object) -> dict[str, Any]:
+    original = _as_mapping(base)
+    modified = _as_mapping(current)
+    merged = _as_mapping(on_disk).copy()
+    for project in original.keys() | modified.keys():
+        before = _as_mapping(original.get(project))
+        after = _as_mapping(modified.get(project))
+        if before == after:
+            continue
+        entries = _as_mapping(merged.get(project)).copy()
+        for server_id in before.keys() - after.keys():
+            entries.pop(server_id, None)
+        # A server definition is indivisible, even when both writers changed different fields.
+        entries.update({server_id: entry for server_id, entry in after.items() if before.get(server_id) != entry})
+        if entries:
+            merged[project] = entries
+        else:
+            merged.pop(project, None)
+    return merged
 
 
 def _merge_settings_documents(
     base: dict[str, Any],
     current: dict[str, Any],
     on_disk: dict[str, Any],
+    *,
+    top_level: bool = True,
 ) -> dict[str, Any]:
     """Apply one writer's changes on top of the current document.
 
@@ -53,6 +81,9 @@ def _merge_settings_documents(
     """
     merged: dict[str, Any] = {}
     for key in set(base) | set(current) | set(on_disk):
+        if top_level and key in _MCP_PROJECT_MAP_KEYS:
+            merged[key] = _merge_mcp_project_maps(base.get(key), current.get(key), on_disk.get(key))
+            continue
         if key not in current:
             if key in base:
                 continue
@@ -66,13 +97,10 @@ def _merge_settings_documents(
             merged[key] = on_disk[key]
             continue
         if isinstance(base.get(key), dict) and isinstance(current[key], dict) and isinstance(on_disk.get(key), dict):
-            merged[key] = _merge_settings_documents(base[key], current[key], on_disk[key])
+            merged[key] = _merge_settings_documents(base[key], current[key], on_disk[key], top_level=False)
             continue
         if key not in base and isinstance(current[key], dict) and isinstance(on_disk.get(key), dict):
-            # Two writers added the same nested container, such as one project's local MCP
-            # servers. Keep both: entries only one of them wrote survive, and this writer
-            # wins an entry they both wrote.
-            merged[key] = _merge_settings_documents({}, current[key], on_disk[key])
+            merged[key] = _merge_settings_documents({}, current[key], on_disk[key], top_level=False)
             continue
         merged[key] = current[key]
     return merged
