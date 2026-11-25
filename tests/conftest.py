@@ -15,8 +15,11 @@ from kolega_code.cli.config import API_KEY_ENV
 # a generation-2 pass about once per test, and each pass scans the live heap
 # (~300 ms on the settings tests). Collecting once per interval instead of once
 # per test drops that to a handful of passes; the peak heap tracks the interval.
-GC_THRESHOLDS = (20_000, 50, 2_000)
-GC_COLLECT_TEST_INTERVAL = 50
+# The generation-1 passes between those collections are the expensive ones, so a
+# wider generation-0 threshold makes them half as frequent. Fifty settings-screen
+# tests, one process: 91.7 s -> 89.1 s at the same ~555 MB peak.
+GC_THRESHOLDS = (50_000, 50, 2_000)
+GC_COLLECT_TEST_INTERVAL = 100
 _tests_since_collection = 0
 
 
