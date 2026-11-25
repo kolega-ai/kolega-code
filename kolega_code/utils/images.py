@@ -80,20 +80,6 @@ class ImageResizeResult:
         return self.data is not None and self.media_type is not None
 
 
-def base64_encoded_size(raw_size: int) -> int:
-    """Return the exact base64 length for ``raw_size`` bytes."""
-    if raw_size < 0:
-        raise ValueError("raw_size must be non-negative")
-    return 4 * ((raw_size + 2) // 3)
-
-
-def max_raw_size_for_base64_limit(encoded_limit: int) -> int:
-    """Return the largest raw byte count whose base64 fits ``encoded_limit``."""
-    if encoded_limit < 0:
-        raise ValueError("encoded_limit must be non-negative")
-    return 3 * (encoded_limit // 4)
-
-
 def resize_base64_image_to_limit(
     data: str,
     media_type: str,
@@ -337,11 +323,6 @@ def image_media_type(path_or_suffix: Union[str, Path]) -> Optional[str]:
         if not suffix:  # bare extension like "png" with no dot or path sep
             suffix = f".{text}" if "/" not in text and "\\" not in text else ""
     return IMAGE_MIME_TYPES.get(suffix)
-
-
-def is_supported_image(path: Union[str, Path]) -> bool:
-    """True if ``path`` has a supported image extension."""
-    return image_media_type(path) is not None
 
 
 def encode_image_attachment(data: bytes, media_type: str, *, path: Optional[str] = None) -> Dict[str, Any]:
