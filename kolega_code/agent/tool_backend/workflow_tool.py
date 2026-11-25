@@ -40,7 +40,6 @@ from ..orchestration import (
     workflows_root,
 )
 from ..orchestration.accounting import WorkflowRunAccounting, get_current_agent_reservation
-from .agent_tool import AgentTool
 from .base_tool import BaseTool
 
 # agent_type name -> agent class import path. None / unknown falls back to GeneralAgent.
@@ -114,6 +113,8 @@ class WorkflowTool(BaseTool):
         self.langfuse_client = langfuse_client
         # Dedicated dispatcher bound to the same caller, so workflow sub-agents
         # inherit config/permissions/hooks exactly like normal dispatches.
+        from .agent_tool import AgentTool  # Deferred: its session-usage chain is startup-only weight otherwise.
+
         self._agent_tool = AgentTool(
             self.project_path,
             self.workspace_id,
