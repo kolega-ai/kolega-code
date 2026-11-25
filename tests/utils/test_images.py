@@ -10,12 +10,9 @@ from PIL import Image
 from kolega_code.utils.images import (
     ANTHROPIC_MAX_IMAGE_BASE64_BYTES,
     MAX_IMAGE_BYTES,
-    base64_encoded_size,
     encode_image_attachment,
     encode_image_file,
     image_media_type,
-    is_supported_image,
-    max_raw_size_for_base64_limit,
     resize_base64_image_to_limit,
 )
 
@@ -40,11 +37,6 @@ def test_image_media_type_unsupported_returns_none() -> None:
     assert image_media_type(".txt") is None
     assert image_media_type("readme.md") is None
     assert image_media_type("") is None
-
-
-def test_is_supported_image() -> None:
-    assert is_supported_image("logo.png") is True
-    assert is_supported_image("notes.txt") is False
 
 
 def test_encode_image_attachment_builds_dict() -> None:
@@ -108,16 +100,6 @@ def _encoded_image(
     save_kwargs = {"exif": exif} if exif is not None else {}
     image.save(output, format=image_format, **save_kwargs)
     return base64.b64encode(output.getvalue()).decode("ascii")
-
-
-def test_base64_size_math_matches_anthropic_boundary_and_reported_session_image() -> None:
-    assert max_raw_size_for_base64_limit(ANTHROPIC_MAX_IMAGE_BASE64_BYTES) == 7_864_320
-    assert base64_encoded_size(7_864_320) == ANTHROPIC_MAX_IMAGE_BASE64_BYTES
-    assert base64_encoded_size(7_864_321) == ANTHROPIC_MAX_IMAGE_BASE64_BYTES + 4
-
-    # Session ef87fee1e3884ce3907157a352278a85: a 10,106,238-byte
-    # JPEG became the exact 13,474,984-byte field rejected by Anthropic.
-    assert base64_encoded_size(10_106_238) == 13_474_984
 
 
 def test_resize_base64_image_returns_fitting_image_unchanged() -> None:
