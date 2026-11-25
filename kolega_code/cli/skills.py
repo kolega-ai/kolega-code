@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import difflib
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -315,6 +314,8 @@ def close_skill_matches(
     max_matches: int = SKILL_SUGGESTION_MAX,
 ) -> list[str]:
     """Rank catalog names for a mistyped activation: prefix matches first, then fuzzy similarity."""
+    import difflib  # Deferred: only a failed activation needs suggestions, not CLI startup.
+
     clean_name = name.strip().lower()
     if not clean_name:
         return []

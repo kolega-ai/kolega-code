@@ -1,40 +1,30 @@
+from __future__ import annotations
+
 import functools
 import inspect
 from pathlib import Path
 from dataclasses import dataclass, field, replace
-from typing import Any, Awaitable, Callable, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, List, Optional, Sequence, Union
 
 from .common import LogMixin
 from kolega_code.config import AgentConfig, EditProtocol
 from kolega_code.llm.models import ImageBlock, ToolDefinition
-from kolega_code.memory import MemoryToolBinding, ProjectMemoryManager
 from kolega_code.tools import Tool, ToolRegistry
 from kolega_code.scratchpad import expand_scratchpad_reference
-from kolega_code.services.file_system import FileSystem, LocalFileSystem
-from kolega_code.services.base import TerminalManager, BrowserManager
-from kolega_code.services.terminal import LocalTerminalManager
-from kolega_code.services.browser import PlaywrightBrowserManager
-from .tool_backend.agent_tool import AgentTool
-from .tool_backend.browser_tool import BrowserTool
-from .tool_backend.edit_tool import EditTool
-from .tool_backend.eval_tool import EvalTool
 from .tool_backend.hashline_v2 import format_hash_lines
-from .tool_backend.memory_tool import MemoryTool
 from .tool_backend.network_status import ConnectFailureTracker
-from .tool_backend.read_file_tool import ReadFileTool
-from .tool_backend.read_image_tool import ReadImageTool
-from .tool_backend.snapshot_tool import SnapshotTool
-from .tool_backend.terminal_tool import TerminalTool
-from .tool_backend.workflow_tool import WorkflowTool
 from .edit_protocols import EDIT_HANDLER_NAMES, edit_protocol_spec
 from .tool_definitions import builtin_tool_definition, dispatch_agent_input_schema
 from .orchestration.context import has_workflow_context_marker, validated_workflow_depth
 
-# Import additional tools for consolidated functionality
-from .tool_backend.build_tool import BuildTool
-from .tool_backend.lsp_tool import LspEditTool, LspTool
-from kolega_code.services.lsp import LspManager
-from kolega_code.services.snapshots import SnapshotService
+if TYPE_CHECKING:
+    from kolega_code.memory import MemoryToolBinding
+    from kolega_code.services.base import BrowserManager, TerminalManager
+    from kolega_code.services.file_system import FileSystem
+
+# Tool backends, managers and memory are imported by ``_initialize_tools`` and
+# ``ToolCollection.__init__`` instead of here: the CLI imports this module for
+# every command, but a command that never builds an agent never constructs them.
 
 # Canonical path parameters of the built-in file tools. The model-facing names
 # differ across edit protocols (``path`` vs ``file_path``), so expansion covers
@@ -325,11 +315,15 @@ class ToolCollection(LogMixin):
         self.project_path = Path(project_path) if isinstance(project_path, str) else project_path
 
         if filesystem is None:
+            from kolega_code.services.file_system import LocalFileSystem
+
             self.filesystem = LocalFileSystem(root_path=self.project_path)
         else:
             self.filesystem = filesystem
 
         if terminal_manager is None:
+            from kolega_code.services.terminal import LocalTerminalManager
+
             self.terminal_manager = LocalTerminalManager(
                 workspace_id, thread_id, connection_manager, default_workdir=self.project_path
             )
@@ -337,6 +331,8 @@ class ToolCollection(LogMixin):
             self.terminal_manager = terminal_manager
 
         if browser_manager is None:
+            from kolega_code.services.browser import PlaywrightBrowserManager
+
             self.browser_manager = PlaywrightBrowserManager()
         else:
             self.browser_manager = browser_manager
@@ -485,11 +481,26 @@ class ToolCollection(LogMixin):
 
     def _initialize_tools(self):
         """Initialize all tool backends based on configuration."""
+        from kolega_code.memory import ProjectMemoryManager
+        from kolega_code.services.lsp import LspConfig as _LspConfig, LspManager
+        from kolega_code.services.snapshots import SnapshotService
+        from .tool_backend.agent_tool import AgentTool
+        from .tool_backend.browser_tool import BrowserTool
+        from .tool_backend.build_tool import BuildTool
+        from .tool_backend.edit_tool import EditTool
+        from .tool_backend.eval_tool import EvalTool
+        from .tool_backend.lsp_tool import LspEditTool, LspTool
+        from .tool_backend.memory_tool import MemoryTool
+        from .tool_backend.read_file_tool import ReadFileTool
+        from .tool_backend.read_image_tool import ReadImageTool
+        from .tool_backend.snapshot_tool import SnapshotTool
+        from .tool_backend.terminal_tool import TerminalTool
+        from .tool_backend.workflow_tool import WorkflowTool
+
         # Core tool backends (always available)
 
         # LSP manager (shared across EditTool and LspTool)
         lsp_config = getattr(self.config, "lsp", None)
-        from kolega_code.services.lsp import LspConfig as _LspConfig
 
         if isinstance(lsp_config, _LspConfig) and lsp_config.enabled:
             self.lsp_manager = LspManager(

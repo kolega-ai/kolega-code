@@ -21,7 +21,6 @@ The builders return ``None`` when there is nothing worth showing (no-op edit, bi
 content, empty file), in which case no preview event should be sent.
 """
 
-import difflib
 import os
 from typing import Optional
 
@@ -150,6 +149,8 @@ def build_diff_preview(
 
     rows: list[list[str]] = []
     adds = dels = 0
+    import difflib  # Deferred: the agent import graph pays for it only when a diff is rendered.
+
     for raw in difflib.unified_diff(old.splitlines(), new.splitlines(), lineterm="", n=2):
         if raw.startswith("+++") or raw.startswith("---"):
             continue  # bare a/b headers carry no useful path here; the meta line shows it

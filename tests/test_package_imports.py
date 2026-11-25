@@ -84,6 +84,47 @@ import kolega_code.agent.tool_backend.search_backends.firecrawl
 assert "firecrawl" not in sys.modules, "import kolega_code.cli.main eagerly loaded: firecrawl"
 """
 
+#: difflib is only needed to render an edit preview or to suggest a spelling when
+#: skill activation fails. It used to load through the edit-preview helper and the
+#: skill catalog on every CLI start.
+_DIFFLIB_CHECK = """
+import sys
+import kolega_code.cli.main
+from kolega_code.cli import skills
+from kolega_code.agent.tool_backend import edit_preview
+
+assert "difflib" not in sys.modules, "import kolega_code.cli.main eagerly loaded: difflib"
+assert edit_preview.build_diff_preview("before\\n", "after\\n", "demo.txt") is not None
+assert skills.close_skill_matches("wgt", []) == []
+assert "difflib" in sys.modules, "edit previews and skill suggestions must still import difflib"
+"""
+
+#: Tool backends build their dispatchers and services (session usage, snapshots,
+#: LSP edits, eval kernels) on construction. A CLI invocation that never builds
+#: an agent -- ``--help``, ``--version``, ``sessions ...`` -- should not pay for
+#: that import tree.
+_TOOL_BACKEND_CHECK = """
+import sys
+import kolega_code.cli.main
+
+heavy = [
+    name
+    for name in (
+        "kolega_code.agent.tool_backend.agent_tool",
+        "kolega_code.agent.tool_backend.edit_tool",
+        "kolega_code.agent.tool_backend.snapshot_tool",
+        "kolega_code.services.snapshots",
+    )
+    if name in sys.modules
+]
+assert not heavy, f"import kolega_code.cli.main eagerly loaded: {heavy}"
+
+from kolega_code.agent.tool_backend.edit_tool import EditTool
+from kolega_code.agent.tool_backend.snapshot_tool import SnapshotTool
+
+assert EditTool is not None and SnapshotTool is not None
+"""
+
 
 #: Pillow, PyYAML and pathspec parse files only when a session shows an image,
 #: discovers a skill/custom agent or builds a gitignore matcher. Importing them
@@ -204,6 +245,38 @@ def test_cli_start_does_not_load_the_firecrawl_sdk() -> None:
     """
     result = subprocess.run(
         [sys.executable, "-c", _FIRECRAWL_CHECK],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_cli_start_does_not_load_difflib() -> None:
+    """difflib loads for a diff or a skill suggestion, not on start.
+
+    The edit-preview helper and the skill catalog imported it at module scope,
+    so every CLI start carried its parser tables even when the session never
+    rendered an edit or misspelled a skill.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", _DIFFLIB_CHECK],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_cli_start_does_not_load_tool_backends() -> None:
+    """Tool backends load when an agent builds its collection, not on start.
+
+    Their imports pull in session usage and journals, snapshots, LSP edits and
+    the eval stack; ``--help``, ``--version`` and session listing never construct
+    a collection.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", _TOOL_BACKEND_CHECK],
         capture_output=True,
         text=True,
         timeout=120,
