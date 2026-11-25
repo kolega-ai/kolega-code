@@ -41,6 +41,7 @@ These control the app and your session.
 | `/build` | Switch to [Build mode](../modes/) |
 | `/sidebar` | Show or hide the side panel |
 | `/settings` | Open the full-screen Settings editor |
+| `/mcp` | Open the [MCP server management panel](../../configuration/mcp/#the-mcp-panel) |
 | `/memory` | Open [Project Memory](../project-memory/) or run a memory subcommand |
 | `/permissions` | Show or switch the shell/edit permission mode |
 | `/model` | Choose the active model |
@@ -64,6 +65,9 @@ These control the app and your session.
 | `/update` | Update Kolega Code to the latest version |
 | `/quit` | Save the session and exit |
 | `/exit` | Save the session and exit |
+
+For MCP, `/mcp reconnect`, `/mcp enable`, and `/mcp disable` accept a server ID
+or `all`; `/mcp import` opens the import picker directly.
 
 ## Sharing a live session
 

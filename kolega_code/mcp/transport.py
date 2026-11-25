@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Optional, TextIO
 
 from .config import MCPServerConfig
+from .entries import expand_env_references
 from .oauth import OAuthInteraction, build_oauth_provider
 from .state import MCPOAuthTokenStore
 
@@ -43,6 +44,11 @@ async def open_mcp_session(
     stdio stderr is sent to a non-terminal sink unless a caller explicitly opts in.
     """
     from mcp.client.session import ClientSession
+
+    # ``${NAME}`` references resolve only here, on a copy: the stored configuration
+    # keeps the literal reference, so resolved secrets never reach a fingerprint,
+    # status file or display.
+    server = expand_env_references(server)
 
     if server.transport == "stdio":
         from mcp.client.stdio import StdioServerParameters, stdio_client

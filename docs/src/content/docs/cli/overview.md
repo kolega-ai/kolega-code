@@ -6,7 +6,7 @@ description: Invocation forms, global options, and the command surface of kolega
 The `kolega-code` command has two shapes:
 
 - **No subcommand** → launches the interactive [Terminal UI](../../tui/interface/).
-- **A subcommand** (`ask`, `sessions`, `share`, `doctor`, `agents`, `update`) → runs a
+- **A subcommand** (`ask`, `sessions`, `share`, `doctor`, `agents`, `mcp`, `update`) → runs a
   specific non-interactive task.
 
 ```bash
@@ -16,6 +16,7 @@ kolega-code sessions <list|delete|export> [options]
 kolega-code share export <session-id> [options]
 kolega-code doctor [options]
 kolega-code agents <list|validate> [options]
+kolega-code mcp --project . <list|add|get|verify|import|...> [options]
 kolega-code update
 ```
 
@@ -29,6 +30,7 @@ kolega-code update
 | [`share`](../share/) | Export a session as a self-contained browser replay |
 | [`doctor`](../doctor/) | Check local configuration and API-key status |
 | [`agents`](../../custom-agents/#list-validate-and-reload) | List or validate user and project custom-agent definitions |
+| [`mcp`](../configuration/mcp/#cli-reference) | Add, inspect, connect, enable, disable and import MCP servers |
 | `update` | Update Kolega Code to the latest released version |
 
 ## Launching the TUI

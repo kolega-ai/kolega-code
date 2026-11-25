@@ -69,6 +69,7 @@ if TYPE_CHECKING:
     from .background_status import BackgroundStatus
     from .bug_report import BugReportJob
     from .changes_screen import ChangesInspectorScreen
+    from .mcp_screen import MCPScreen
     from .memory_screen import MemoryScreen
     from .onboarding_screen import OnboardingScreen
     from .session_diff import DiffScope, SessionDiffFile, SessionDiffTrackerBase, TurnCheckpoint
@@ -112,6 +113,7 @@ class KolegaAppBase(App):
         _diag: DiagnosticsLog | None
         _watchdog: ResponsivenessWatchdog | None
         _bug_export_job: BugReportJob | None
+        _mcp_reconnect_task: asyncio.Task[list[str]] | None
         _bug_export_stopping: bool
         browser_visible: bool
         sidebar_visible: bool
@@ -126,6 +128,9 @@ class KolegaAppBase(App):
         _extension_bundle: KolegaExtensionBundle | None
         _settings_screen: SettingsScreen | None
         _memory_screen: MemoryScreen | None
+        _mcp_screen: MCPScreen | None
+        #: Screens running an MCP operation that must not be interrupted.
+        _mcp_in_flight: set[object]
         _onboarding_screen: OnboardingScreen | None
         _onboarding_skipped: bool
         connection_manager: CliConnectionManager
@@ -381,6 +386,12 @@ class KolegaAppBase(App):
         async def action_toggle_sidebar(self) -> None: ...
         async def action_open_onboarding(self) -> None: ...
         def action_open_memory(self, *, inspect_disabled: bool = False) -> None: ...
+        def action_open_mcp(self) -> None: ...
+        def action_open_mcp_import(self) -> None: ...
+        def _announce_untrusted_project_mcp(self, mcp_config: Any) -> None: ...
+        def _mcp_operation_in_flight(self) -> bool: ...
+        def _set_mcp_operation_in_flight(self, owner: object, in_flight: bool) -> None: ...
+        def _request_mcp_reconnect_cancel(self) -> bool: ...
         def action_open_settings(self, category: str = "model") -> None: ...
         def copy_to_clipboard(self, text: str) -> None: ...
 
@@ -543,7 +554,7 @@ class KolegaAppBase(App):
         # ------------------------------------------------------------------
         # Cross-mixin methods — settings_panel.py
         # ------------------------------------------------------------------
-        def _populate_settings_controls(self) -> None: ...
+        def _populate_settings_controls(self, *, mcp_server_id: str | None = None) -> None: ...
         async def _apply_settings_candidate(
             self, candidate: CliSettings, *, rebuild: bool = True
         ) -> tuple[bool, str]: ...

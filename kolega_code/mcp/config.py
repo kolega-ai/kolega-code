@@ -2,28 +2,56 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Mapping, Optional
+from typing import Any, Generator, Literal, Mapping, Optional, Protocol
 from urllib.parse import urlparse
+from uuid import uuid4
 
+from filelock import FileLock
+from filelock import Timeout as FileLockTimeout
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from kolega_code.local_state import write_private_secret_text
+from kolega_code.local_state import _fsync_directory, ensure_private_dir, write_private_secret_text
+
+from .entries import (
+    STANDARD_CONFIG_FILENAME,
+    STANDARD_SERVERS_KEY,
+    MCPEntryError,
+    server_id_label,
+    server_to_standard_json,
+    standard_entry_payload,
+)
 
 MCP_CONFIG_SCHEMA_VERSION = 1
 MCP_GLOBAL_CONFIG_FILENAME = "mcp_servers.json"
 MCP_CONFIG_RELATIVE_PATH = Path(".kolega") / MCP_GLOBAL_CONFIG_FILENAME
+MCP_CONFIG_LOCK_TIMEOUT_SECONDS = 10.0
+MCPScope = Literal["local", "project", "user"]
 _SERVER_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 # Tool wire names are capped at 64 chars total; a 32-char server id leaves at
 # least 25 chars of budget for the tool id after the ``mcp__{server}__`` prefix.
 _SERVER_ID_MAX_LENGTH = 32
 _SERVER_ID_PREFIX_LENGTH = 24
 _ENV_VAR_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# Labels used in diagnostics for where a definition lives.
+_STANDARD_CONFIG_LABEL = f"the project {STANDARD_CONFIG_FILENAME} file"
+_LEGACY_CONFIG_LABEL = f"the project {MCP_CONFIG_RELATIVE_PATH} file"
+_SOURCE_LABELS = {"global": "the user config", "local": "the local scope"}
+
+
+class MCPScopeSettings(Protocol):
+    """The settings fields that scope MCP servers to a project."""
+
+    trusted_mcp_projects: list[str]
+    mcp_local_servers: dict[str, dict[str, dict[str, Any]]]
+    mcp_project_server_overrides: dict[str, dict[str, bool]]
 
 
 def sanitize_mcp_server_id(value: str) -> str:
@@ -43,6 +71,11 @@ def sanitize_mcp_server_id(value: str) -> str:
         return value
     digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:7]
     return f"{value[:_SERVER_ID_PREFIX_LENGTH]}_{digest}"
+
+
+def settings_project_key(project_path: Path) -> str:
+    """The key a resolved project path uses in settings-scoped MCP state."""
+    return str(Path(project_path).expanduser().resolve())
 
 
 class MCPConfigError(ValueError):
@@ -143,12 +176,23 @@ class MCPServerConfig(BaseModel):
     cwd: Optional[str] = None
 
     # Loader metadata. Kept out of fingerprints and serialized config files.
+    # ``global`` is the user scope, ``project`` is a shared project file, ``local`` is a
+    # private per-project definition, and ``acp`` comes from the editor.
     source: str = Field(default="global", exclude=True)
 
     @field_validator("id")
     @classmethod
     def _validate_id(cls, value: str) -> str:
         return sanitize_mcp_server_id(value)
+
+    @field_validator("transport", mode="before")
+    @classmethod
+    def _transport_alias(cls, value: object) -> object:
+        # The portable ``mcpServers`` shape spells streamable HTTP ``http`` or ``streamable-http``.
+        if isinstance(value, str):
+            normalized = value.strip().lower().replace("_", "-")
+            return {"http": "streamable_http", "streamable-http": "streamable_http"}.get(normalized, value)
+        return value
 
     @field_validator("headers", "env", mode="before")
     @classmethod
@@ -186,6 +230,17 @@ class MCPServerConfig(BaseModel):
     def display_name(self) -> str:
         return self.name or self.id
 
+    @property
+    def scope(self) -> Optional[MCPScope]:
+        """Where the definition is stored, or ``None`` when the editor supplied it."""
+        if self.source == "project":
+            return "project"
+        if self.source == "local":
+            return "local"
+        if self.source == "global":
+            return "user"
+        return None
+
     def sanitized_for_display(self) -> dict[str, Any]:
         payload = self.model_dump(mode="json", exclude={"source"})
         if payload.get("headers"):
@@ -203,6 +258,15 @@ class MCPConfigFile(BaseModel):
 
     schema_version: int = MCP_CONFIG_SCHEMA_VERSION
     servers: list[MCPServerConfig] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_portable_wrapper(cls, value: object) -> object:
+        if isinstance(value, dict) and "servers" not in value:
+            portable = value.get(STANDARD_SERVERS_KEY)
+            if isinstance(portable, (dict, list)):
+                return {**value, "servers": portable}
+        return value
 
     @field_validator("servers", mode="before")
     @classmethod
@@ -243,7 +307,7 @@ class MCPConfigFile(BaseModel):
 
 @dataclass(frozen=True)
 class LoadedMCPConfig:
-    """Merged global + trusted project MCP configuration."""
+    """Merged user, local, and trusted project MCP configuration."""
 
     servers: dict[str, MCPServerConfig] = field(default_factory=dict)
     diagnostics: list[str] = field(default_factory=list)
@@ -252,6 +316,16 @@ class LoadedMCPConfig:
     project_config_path: Optional[Path] = None
     project_trusted: bool = False
     project_config_present: bool = False
+    # Definitions in an untrusted project file. Listed so a person can review them
+    # before trusting; they are never loaded, verified or exposed.
+    untrusted_project_servers: list[MCPServerConfig] = field(default_factory=list)
+    # Project-scope servers whose effective enabled state comes from a private choice.
+    project_overrides: dict[str, bool] = field(default_factory=dict)
+    # The file that defines each loaded server, by id. Absent for local-scope servers
+    # (they live in settings) and for servers the editor supplied.
+    server_files: dict[str, Path] = field(default_factory=dict)
+    # The highest-precedence project definition for each id awaiting trust.
+    untrusted_project_server_files: dict[str, Path] = field(default_factory=dict)
 
     @property
     def enabled_servers(self) -> list[MCPServerConfig]:
@@ -266,141 +340,455 @@ def project_mcp_config_path(project_path: Path) -> Path:
     return Path(project_path).expanduser().resolve() / MCP_CONFIG_RELATIVE_PATH
 
 
-def parse_mcp_config_text(text: str, *, source: str) -> MCPConfigFile:
+def standard_mcp_config_path(project_path: Path) -> Path:
+    return Path(project_path).expanduser().resolve() / STANDARD_CONFIG_FILENAME
+
+
+def _raw_entries(data: Any) -> list[tuple[str, dict[str, Any]]]:
+    """``(id, entry)`` pairs from ``servers`` or the portable ``mcpServers`` key, in file order."""
+    if not isinstance(data, dict):
+        raise MCPConfigError("MCP config must be a JSON object")
+    servers = data["servers"] if "servers" in data else data.get(STANDARD_SERVERS_KEY)
+    if servers is None:
+        return []
+    entries: list[tuple[str, dict[str, Any]]] = []
+    if isinstance(servers, list):
+        for item in servers:
+            if not isinstance(item, dict) or item.get("id") is None:
+                raise MCPConfigError("servers must be an array of objects with an id")
+            entries.append((str(item["id"]), item))
+    elif isinstance(servers, dict):
+        for server_id, item in servers.items():
+            if not isinstance(item, dict):
+                raise MCPConfigError(f'MCP server "{server_id_label(server_id)}" must be an object')
+            entries.append((str(server_id), item))
+    else:
+        raise MCPConfigError("servers must be an array or object")
+    return entries
+
+
+def _server_from_raw(server_id: str, raw: object, *, source: str) -> MCPServerConfig:
+    entry = standard_entry_payload(server_id, raw)
+    try:
+        server = MCPServerConfig.model_validate(entry.payload)
+    except ValidationError as exc:
+        errors = exc.errors()
+        message = str(errors[0].get("msg", "invalid configuration")) if errors else "invalid configuration"
+        raise MCPEntryError(
+            f'MCP server "{server_id_label(server_id)}" is invalid: {message.removeprefix("Value error, ")}'
+        ) from exc
+    return server.model_copy(update={"source": source})
+
+
+def _parse_config_entries(
+    data: Any,
+    *,
+    label: str,
+    source: str,
+    tolerant: bool,
+) -> tuple[list[MCPServerConfig], list[str]]:
+    """Parse every entry in a config document.
+
+    Tolerant parsing reports a bad entry as a diagnostic and keeps the rest of the
+    file; strict parsing raises, so a mutation can never rewrite a file it could not
+    fully understand.
+    """
+    servers: list[MCPServerConfig] = []
+    diagnostics: list[str] = []
+    try:
+        raw_entries = _raw_entries(data)
+        version = data.get("schema_version", MCP_CONFIG_SCHEMA_VERSION)
+        if version != MCP_CONFIG_SCHEMA_VERSION:
+            raise ValueError(f"Unsupported MCP config schema version: {version}")
+    except (MCPConfigError, ValueError) as exc:
+        if not tolerant:
+            raise MCPConfigError(str(exc)) from exc
+        return [], [f"Could not load {source} MCP config {label}: {exc}"]
+    seen: set[str] = set()
+    for raw_id, raw in raw_entries:
+        try:
+            server = _server_from_raw(raw_id, raw, source=source)
+            if server.id in seen:
+                raise MCPEntryError(f"Duplicate MCP server id: {server.id}")
+        except MCPEntryError as exc:
+            if not tolerant:
+                raise MCPConfigError(str(exc)) from exc
+            diagnostics.append(f"Skipped an entry in {source} MCP config {label}: {exc}")
+            continue
+        seen.add(server.id)
+        if raw_id != server.id:
+            diagnostics.append(
+                f"MCP server id '{server_id_label(raw_id)}' exceeds {_SERVER_ID_MAX_LENGTH} characters; "
+                f"using '{server.id}' instead."
+            )
+        servers.append(server)
+    return servers, diagnostics
+
+
+def parse_mcp_config_text(text: str, *, source: str, label: str = "<config>") -> MCPConfigFile:
     data = json.loads(text)
-    parsed = MCPConfigFile.model_validate(data)
-    parsed.servers = [server.model_copy(update={"source": source}) for server in parsed.servers]
-    return parsed
+    servers, _ = _parse_config_entries(data, label=label, source=source, tolerant=False)
+    return MCPConfigFile(servers=servers)
 
 
 def load_mcp_config_file(path: Path, *, source: str) -> MCPConfigFile:
-    return parse_mcp_config_text(path.read_text(encoding="utf-8"), source=source)
+    path = Path(path)
+    text = path.read_text(encoding="utf-8")
+    return parse_mcp_config_text(text, source=source, label=str(path)) if text.strip() else MCPConfigFile()
 
 
-def _raw_mcp_server_ids(path: Path) -> list[str]:
-    """Raw server ids from a config file before validation, in file order.
-
-    Used to diagnose ids that ``sanitize_mcp_server_id`` rewrote for length.
-    Returns [] on any read/parse error (the caller reports those separately).
-    """
+def _read_config_file(path: Path, *, source: str) -> tuple[list[MCPServerConfig], list[str]]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, ValueError):
-        return []
-    servers = data.get("servers")
-    if isinstance(servers, list):
-        return [str(entry.get("id")) for entry in servers if isinstance(entry, dict) and entry.get("id") is not None]
-    if isinstance(servers, dict):
-        return [str(key) for key in servers]
-    return []
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        # A file that was never created is the normal state, not a load error.
+        return [], []
+    except (OSError, UnicodeDecodeError) as exc:
+        return [], [f"Could not load {source} MCP config {path}: {exc}"]
+    if not text.strip():
+        return [], []
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, ValueError) as exc:
+        return [], [f"Could not load {source} MCP config {path}: {exc}"]
+    return _parse_config_entries(data, label=str(path), source=source, tolerant=True)
 
 
-def load_mcp_config(project_path: Path, state_dir: Path, *, project_trusted: bool) -> LoadedMCPConfig:
-    """Load global MCP config plus trusted project config.
+def _entries_from_mapping(
+    entries: Mapping[str, Any], *, source: str, label: str
+) -> tuple[list[MCPServerConfig], list[str]]:
+    return _parse_config_entries({STANDARD_SERVERS_KEY: entries}, label=label, source=source, tolerant=True)
 
-    Invalid files are reported as diagnostics instead of crashing agent startup.
-    The explicit `mcp` management commands use the stricter mutation helpers below
+
+def servers_in_file(path: Path, *, source: str) -> list[MCPServerConfig]:
+    """Servers a config file defines, read tolerantly; empty when it is absent or unreadable."""
+    servers, _ = _read_config_file(path, source=source)
+    return servers
+
+
+def server_from_entry(server_id: str, raw: object, *, source: str) -> MCPServerConfig:
+    """Validate one raw server entry. Raises ``MCPConfigError`` when it cannot be interpreted."""
+    try:
+        return _server_from_raw(server_id, raw, source=source)
+    except MCPEntryError as exc:
+        raise MCPConfigError(str(exc)) from exc
+
+
+def server_ids_in_file(path: Path, *, source: str) -> set[str]:
+    """Ids a config file defines, read tolerantly; empty when it is absent or unreadable."""
+    return {server.id for server in servers_in_file(path, source=source)}
+
+
+def load_mcp_config(
+    project_path: Path,
+    state_dir: Path,
+    *,
+    project_trusted: bool,
+    local_servers: Optional[Mapping[str, Any]] = None,
+    project_overrides: Optional[Mapping[str, bool]] = None,
+) -> LoadedMCPConfig:
+    """Load user, local and trusted project MCP configuration, highest precedence last.
+
+    Invalid files are reported as diagnostics instead of crashing agent startup. The
+    explicit ``mcp`` management commands use the stricter mutation helpers below
     when they need to fail loudly.
     """
     global_path = global_mcp_config_path(state_dir)
-    project_config = project_mcp_config_path(project_path)
+    resolved_project = Path(project_path).expanduser().resolve()
+    legacy_path = project_mcp_config_path(resolved_project)
+    standard_path = standard_mcp_config_path(resolved_project)
+    project_files = ((standard_path, _STANDARD_CONFIG_LABEL), (legacy_path, _LEGACY_CONFIG_LABEL))
     diagnostics: list[str] = []
     merged: dict[str, MCPServerConfig] = {}
+    origin: dict[str, str] = {}
+    server_files: dict[str, Path] = {}
+    untrusted: dict[str, MCPServerConfig] = {}
+    untrusted_project_server_files: dict[str, Path] = {}
 
-    for path, source, trusted in (
-        (global_path, "global", True),
-        (project_config, "project", project_trusted),
-    ):
-        if source == "project" and path.exists() and not trusted:
-            diagnostics.append(
-                f"Project MCP config exists at {path}, but this project is not trusted for MCP; project servers disabled."
-            )
-            continue
-        if not trusted or not path.exists():
-            continue
-        try:
-            config_file = load_mcp_config_file(path, source=source)
-        except (OSError, json.JSONDecodeError, ValidationError, ValueError) as exc:
-            diagnostics.append(f"Could not load {source} MCP config {path}: {exc}")
-            continue
-        raw_ids = _raw_mcp_server_ids(path)
-        for position, server in enumerate(config_file.servers):
-            raw_id = raw_ids[position] if position < len(raw_ids) else ""
-            if raw_id and server.id != raw_id:
-                diagnostics.append(
-                    f"MCP server id '{raw_id}' exceeds {_SERVER_ID_MAX_LENGTH} characters; using '{server.id}' instead."
-                )
-            if server.id in merged:
-                diagnostics.append(f"MCP server '{server.id}' from {source} overrides earlier configuration.")
+    def absorb(servers: list[MCPServerConfig], label: str, path: Optional[Path] = None) -> None:
+        for server in servers:
+            previous = origin.get(server.id)
+            if previous is not None:
+                diagnostics.append(f"MCP server '{server.id}' from {label} overrides the definition in {previous}.")
             merged[server.id] = server
+            origin[server.id] = label
+            if path is None:
+                server_files.pop(server.id, None)
+            else:
+                server_files[server.id] = path
+
+    servers, notes = _read_config_file(global_path, source="global")
+    diagnostics.extend(notes)
+    absorb(servers, _SOURCE_LABELS["global"], global_path)
+
+    present = {path: label for path, label in project_files if path.exists()}
+    if present and not project_trusted:
+        diagnostics.append(
+            "Project MCP config exists at "
+            + " and ".join(str(path) for path in present)
+            + ", but this project is not trusted for MCP; project servers disabled."
+        )
+    for path, label in present.items():
+        servers, notes = _read_config_file(path, source="project")
+        diagnostics.extend(notes)
+        if project_trusted:
+            absorb(servers, label, path)
+        else:
+            for server in servers:
+                untrusted[server.id] = server
+                untrusted_project_server_files[server.id] = path
+
+    if local_servers:
+        servers, notes = _entries_from_mapping(local_servers, source="local", label="the local scope")
+        diagnostics.extend(notes)
+        absorb(servers, _SOURCE_LABELS["local"])
+
+    applied_overrides: dict[str, bool] = {}
+    for server_id, enabled in (project_overrides or {}).items():
+        server = merged.get(server_id)
+        if server is not None and server.source == "project":
+            merged[server_id] = server.model_copy(update={"enabled": bool(enabled)})
+            applied_overrides[server_id] = bool(enabled)
 
     return LoadedMCPConfig(
         servers=merged,
         diagnostics=diagnostics,
         global_path=global_path,
-        project_path=Path(project_path).expanduser().resolve(),
-        project_config_path=project_config,
+        project_path=resolved_project,
+        project_config_path=legacy_path,
         project_trusted=project_trusted,
-        project_config_present=project_config.exists(),
+        project_config_present=bool(present),
+        untrusted_project_servers=list(untrusted.values()),
+        project_overrides=applied_overrides,
+        server_files=server_files,
+        untrusted_project_server_files=untrusted_project_server_files,
+    )
+
+
+def load_mcp_config_for(
+    project_path: Path,
+    state_dir: Path,
+    settings: MCPScopeSettings,
+    *,
+    trusted: Optional[bool] = None,
+) -> LoadedMCPConfig:
+    """Load MCP configuration with the trust, local servers and overrides saved in settings.
+
+    ``trusted`` overrides the saved trust decision for ``project_path``; a host whose
+    session is anchored to a launch project passes that project's trust.
+    """
+    key = settings_project_key(project_path)
+    return load_mcp_config(
+        project_path,
+        state_dir,
+        project_trusted=(key in getattr(settings, "trusted_mcp_projects", [])) if trusted is None else trusted,
+        local_servers=getattr(settings, "mcp_local_servers", {}).get(key),
+        project_overrides=getattr(settings, "mcp_project_server_overrides", {}).get(key),
     )
 
 
 def load_config_file_for_edit(path: Path, *, source: str) -> MCPConfigFile:
-    """Load a config file for mutation, returning an empty config if absent."""
-    if not path.exists():
-        return MCPConfigFile()
+    """Load a config file for mutation, returning an empty config if absent or blank."""
     try:
         return load_mcp_config_file(path, source=source)
-    except (OSError, json.JSONDecodeError, ValidationError, ValueError) as exc:
+    except FileNotFoundError:
+        return MCPConfigFile()
+    except (OSError, ValueError) as exc:
         raise MCPConfigError(f"Could not load MCP config {path}: {exc}") from exc
 
 
-def save_config_file(path: Path, config: MCPConfigFile) -> None:
+def _write_shared_config(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        mode = None
+
+    temp = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    # O_CREAT applies the process umask without changing it for other threads.
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666 if mode is None else 0o600)
+    try:
+        try:
+            contents = memoryview(content.encode("utf-8"))
+            while contents:
+                written = os.write(fd, contents)
+                if written <= 0:
+                    raise OSError("short write while persisting MCP config")
+                contents = contents[written:]
+            if mode is not None:
+                temp.chmod(mode)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        temp.replace(path)
+        _fsync_directory(path.parent)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def save_config_file(path: Path, config: MCPConfigFile, *, shared: bool = False) -> None:
     payload = json.dumps(config.to_file_dict(), indent=2, sort_keys=True)
-    write_private_secret_text(path, payload + "\n")
+    if shared:
+        _write_shared_config(path, payload + "\n")
+    else:
+        write_private_secret_text(path, payload + "\n")
 
 
-def upsert_server_config(path: Path, server: MCPServerConfig, *, source: str) -> None:
-    config = load_config_file_for_edit(path, source=source)
-    updated: list[MCPServerConfig] = []
-    replaced = False
-    for existing in config.servers:
-        if existing.id == server.id:
+def config_lock_dir(state_dir: Path) -> Path:
+    """Where mutation locks for config files outside the state directory are kept.
+
+    A lock file left beside a shared project file would show up as an untracked file in
+    every clone that ran a management command, so project files lock through the
+    private state directory instead.
+    """
+    return Path(state_dir).expanduser() / "locks"
+
+
+def _lock_path(path: Path, lock_dir: Optional[Path]) -> Path:
+    if lock_dir is None:
+        return Path(f"{path}.lock")
+    digest = hashlib.sha256(str(Path(path).expanduser().resolve()).encode("utf-8")).hexdigest()[:32]
+    return Path(lock_dir).expanduser() / f"mcp-config-{digest}.lock"
+
+
+@contextlib.contextmanager
+def _config_lock(path: Path, lock_dir: Optional[Path] = None) -> Generator[None, None, None]:
+    """Hold a cross-process lock for one read-modify-write of a config file."""
+    lock_file = _lock_path(path, lock_dir)
+    if lock_dir is not None:
+        ensure_private_dir(lock_file.parent)
+    else:
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
+    lock = FileLock(str(lock_file))
+    try:
+        lock.acquire(timeout=MCP_CONFIG_LOCK_TIMEOUT_SECONDS)
+    except FileLockTimeout as exc:
+        raise MCPConfigError(f"Timed out locking the MCP config: {path}") from exc
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+def upsert_server_config(path: Path, server: MCPServerConfig, *, source: str, lock_dir: Optional[Path] = None) -> bool:
+    """Add or replace one server. Returns True when the server was added."""
+    with _config_lock(path, lock_dir):
+        config = load_config_file_for_edit(path, source=source)
+        updated: list[MCPServerConfig] = []
+        replaced = False
+        for existing in config.servers:
+            if existing.id == server.id:
+                updated.append(server.model_copy(update={"source": source}))
+                replaced = True
+            else:
+                updated.append(existing)
+        if not replaced:
             updated.append(server.model_copy(update={"source": source}))
-            replaced = True
-        else:
-            updated.append(existing)
-    if not replaced:
-        updated.append(server.model_copy(update={"source": source}))
-    config.servers = updated
-    save_config_file(path, config)
+        config.servers = updated
+        save_config_file(path, config, shared=source == "project")
+    return not replaced
 
 
-def remove_server_config(path: Path, server_id: str, *, source: str) -> bool:
-    config = load_config_file_for_edit(path, source=source)
-    before = len(config.servers)
-    config.servers = [server for server in config.servers if server.id != server_id]
-    if len(config.servers) == before:
-        return False
-    save_config_file(path, config)
+def remove_server_config(path: Path, server_id: str, *, source: str, lock_dir: Optional[Path] = None) -> bool:
+    with _config_lock(path, lock_dir):
+        config = load_config_file_for_edit(path, source=source)
+        before = len(config.servers)
+        config.servers = [server for server in config.servers if server.id != server_id]
+        if len(config.servers) == before:
+            return False
+        save_config_file(path, config, shared=source == "project")
     return True
 
 
-def set_server_enabled(path: Path, server_id: str, enabled: bool, *, source: str) -> bool:
-    config = load_config_file_for_edit(path, source=source)
-    updated: list[MCPServerConfig] = []
-    changed = False
-    for server in config.servers:
-        if server.id == server_id:
-            updated.append(server.model_copy(update={"enabled": enabled, "source": source}))
-            changed = True
-        else:
-            updated.append(server)
-    if not changed:
-        return False
-    config.servers = updated
-    save_config_file(path, config)
+def set_server_enabled(
+    path: Path, server_id: str, enabled: bool, *, source: str, lock_dir: Optional[Path] = None
+) -> bool:
+    with _config_lock(path, lock_dir):
+        config = load_config_file_for_edit(path, source=source)
+        updated: list[MCPServerConfig] = []
+        changed = False
+        for server in config.servers:
+            if server.id == server_id:
+                updated.append(server.model_copy(update={"enabled": enabled, "source": source}))
+                changed = True
+            else:
+                updated.append(server)
+        if not changed:
+            return False
+        config.servers = updated
+        save_config_file(path, config, shared=source == "project")
     return True
+
+
+def _standard_document(path: Path) -> dict[str, Any]:
+    """The raw shared ``.mcp.json`` document, or ``{}`` when the file is absent or blank."""
+    try:
+        text = path.read_text(encoding="utf-8")
+        data = json.loads(text) if text.strip() else {}
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        raise MCPConfigError(f"Could not load project MCP config {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise MCPConfigError(f"Could not load project MCP config {path}: MCP config must be a JSON object")
+    return data
+
+
+def _standard_entries(data: dict[str, Any]) -> dict[str, Any]:
+    key = "servers" if "servers" in data and STANDARD_SERVERS_KEY not in data else STANDARD_SERVERS_KEY
+    if key not in data:
+        data[key] = {}
+    entries: Any = data[key]
+    if not isinstance(entries, dict):
+        raise MCPConfigError(f'"{key}" must be an object keyed by server name')
+    return entries
+
+
+def _write_standard_document(path: Path, data: dict[str, Any]) -> None:
+    _write_shared_config(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+
+
+def upsert_standard_server(
+    path: Path, server: MCPServerConfig, *, source: str, lock_dir: Optional[Path] = None
+) -> bool:
+    """Add or replace one entry in a shared ``.mcp.json`` without touching anything else.
+
+    Runs on the raw document so fields Kolega does not know, and every other entry,
+    survive the rewrite. Returns True when the server was added.
+    """
+    with _config_lock(path, lock_dir):
+        data = _standard_document(path)
+        entries = _standard_entries(data)
+        key = server.id
+        if key not in entries:
+            key = next((raw_id for raw_id in entries if _sanitized_id(raw_id) == server.id), key)
+        existing = entries.get(key)
+        existing_entry = existing if isinstance(existing, dict) else None
+        entry = server_to_standard_json(server.model_copy(update={"source": source}), existing=existing_entry)
+        if existing_entry != entry:
+            entries[key] = entry
+            _write_standard_document(path, data)
+    return existing_entry is None
+
+
+def remove_standard_server(path: Path, server_id: str, *, lock_dir: Optional[Path] = None) -> bool:
+    with _config_lock(path, lock_dir):
+        data = _standard_document(path)
+        entries = _standard_entries(data)
+        keys = [key for key in entries if key == server_id or _sanitized_id(key) == server_id]
+        if not keys:
+            return False
+        for key in keys:
+            del entries[key]
+        _write_standard_document(path, data)
+    return True
+
+
+def _sanitized_id(value: object) -> Optional[str]:
+    try:
+        return sanitize_mcp_server_id(str(value))
+    except ValueError:
+        return None
 
 
 def server_fingerprint(server: MCPServerConfig) -> str:

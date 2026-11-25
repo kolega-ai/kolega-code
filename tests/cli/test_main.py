@@ -717,7 +717,7 @@ def test_doctor_reports_mcp_tool_name_adjustments(
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "MCP docs" in output
-    assert "verified" in output
+    assert "Connected" in output
     assert "mcp__docs__get.file → mcp__docs__get_file" in output
     assert "mcp list" in output
 

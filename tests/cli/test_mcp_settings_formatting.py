@@ -1,4 +1,5 @@
 import pytest
+from kolega_code.mcp.health import MCPServerHealth
 
 
 def _rows(*rows):
@@ -28,7 +29,7 @@ def test_mcp_status_rendering_all_verified_has_single_aggregate_tick() -> None:
             "transport": "streamable_http",
             "enabled": True,
             "oauth": False,
-            "status": "verified",
+            "health": MCPServerHealth("connected"),
             "tool_count": 2,
             "message": "OK",
         },
@@ -39,7 +40,7 @@ def test_mcp_status_rendering_all_verified_has_single_aggregate_tick() -> None:
             "transport": "stdio",
             "enabled": True,
             "oauth": False,
-            "status": "verified",
+            "health": MCPServerHealth("connected"),
             "tool_count": 1,
             "message": "OK",
         },
@@ -79,7 +80,7 @@ def test_mcp_status_rendering_mixed_attention_states_use_text_labels() -> None:
             "transport": "streamable_http",
             "enabled": True,
             "oauth": True,
-            "status": "failed",
+            "health": MCPServerHealth("failed"),
             "tool_count": 0,
             "message": "Unauthorized. Please check your API key.",
         },
@@ -90,7 +91,7 @@ def test_mcp_status_rendering_mixed_attention_states_use_text_labels() -> None:
             "transport": "stdio",
             "enabled": True,
             "oauth": False,
-            "status": "stale",
+            "health": MCPServerHealth("stale"),
             "tool_count": 0,
             "message": "Previously verified.",
         },
@@ -122,7 +123,7 @@ def test_mcp_status_rendering_disabled_servers_do_not_force_warning() -> None:
             "transport": "streamable_http",
             "enabled": False,
             "oauth": False,
-            "status": "failed",
+            "health": MCPServerHealth("disabled"),
             "tool_count": 0,
             "message": "Connection refused.",
         }
@@ -149,6 +150,16 @@ def test_mcp_status_rendering_no_servers_has_add_and_verify_hint() -> None:
 
     assert tone == "info"
     assert content.plain == "No MCP servers configured. Add one below, then Verify."
+
+
+def test_mcp_status_diagnostics_strip_control_bytes_before_display() -> None:
+    from kolega_code.cli.tui import settings_panel
+
+    content, _ = settings_panel._render_mcp_status_text(["Invalid config key: field\x00name\x7f."], [])
+
+    assert b"Invalid config key: fieldname." in content.plain.encode()
+    assert b"\x00" not in content.plain.encode()
+    assert b"\x7f" not in content.plain.encode()
 
 
 def test_mcp_server_selector_labels_are_readable() -> None:
@@ -187,9 +198,9 @@ def test_mcp_server_selector_labels_are_readable() -> None:
 
     sep = settings_panel._mcp_separator()
 
-    assert settings_panel._mcp_server_select_label(http_server) == f"Context7 — global{sep}HTTP{sep}enabled"
+    assert settings_panel._mcp_server_select_label(http_server) == f"Context7 — user{sep}HTTP{sep}enabled"
     assert settings_panel._mcp_server_select_label(stdio_server) == f"Repo Tools — project{sep}stdio{sep}disabled"
     assert (
         settings_panel.SettingsPanelMixin._mcp_server_option_label(_FakeMCPStatusPanel(), http_server)
-        == f"Context7 — global{sep}HTTP{sep}enabled"
+        == f"Context7 — user{sep}HTTP{sep}enabled"
     )

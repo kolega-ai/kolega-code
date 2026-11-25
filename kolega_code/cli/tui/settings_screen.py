@@ -34,7 +34,7 @@ from ..provider_registry import (
     ui_provider_options,
     ui_thinking_effort_options,
 )
-from . import custom_model, settings_panel
+from . import custom_model, mcp_ops, settings_panel
 from .settings_widgets import SettingsSelect as Select
 
 if TYPE_CHECKING:
@@ -174,7 +174,7 @@ class SettingsScreen(ModalScreen[None]):
         Binding("escape", "close", "Close", show=True),
     ]
 
-    def __init__(self, owner: "KolegaCodeApp", category: str = "model") -> None:
+    def __init__(self, owner: "KolegaCodeApp", category: str = "model", *, mcp_server_id: str | None = None) -> None:
         super().__init__()
         self.owner = owner
         self.category = category if category in {value for _, value in SETTINGS_CATEGORIES} else "model"
@@ -182,7 +182,8 @@ class SettingsScreen(ModalScreen[None]):
         self._baseline: tuple[tuple[str, Any], ...] = ()
         self._mcp_baseline: tuple[tuple[str, Any], ...] = ()
         self.mcp_server_id = settings_panel.MCP_NEW_SERVER_VALUE
-        self.mcp_busy = False
+        self._initial_mcp_server_id: str | None = mcp_server_id
+        self._mcp_busy = False
         self._mcp_read_only = False
         self._mcp_navigation_pending = False
         self._mcp_feedback = ""
@@ -612,10 +613,17 @@ class SettingsScreen(ModalScreen[None]):
                 yield Static("", id="mcp_status")
                 yield Label("Server")
                 yield Select(
-                    [("New user server", settings_panel.MCP_NEW_SERVER_VALUE)],
+                    [("New server", settings_panel.MCP_NEW_SERVER_VALUE)],
                     id="mcp_server_select",
                     allow_blank=False,
                     value=settings_panel.MCP_NEW_SERVER_VALUE,
+                )
+                yield Label("Scope", id="mcp_scope_label")
+                yield Select(
+                    settings_panel.MCP_SCOPE_OPTIONS,
+                    id="mcp_scope_select",
+                    allow_blank=False,
+                    value="user",
                 )
                 yield Static("", id="mcp_source_hint", classes="settings-hint")
                 yield Static("", id="mcp_draft_status", markup=False)
@@ -818,7 +826,7 @@ class SettingsScreen(ModalScreen[None]):
         self._cache_mcp_widgets()
         self._show_category(self.category)
         self._show_agent_role("planning")
-        self.owner._populate_settings_controls()
+        self.owner._populate_settings_controls(mcp_server_id=self._initial_mcp_server_id)
         self.run_worker(
             self._refresh_memory_controls(),
             name="settings-memory-status",
@@ -882,6 +890,16 @@ class SettingsScreen(ModalScreen[None]):
             self._reset_connection_status()
             self.owner._refresh_provider_account_status()
         self._queue_apply_label_refresh()
+
+    @property
+    def mcp_busy(self) -> bool:
+        return self._mcp_busy
+
+    @mcp_busy.setter
+    def mcp_busy(self, value: bool) -> None:
+        # Registered with the app so the /mcp panel is covered by the same gating.
+        self._mcp_busy = value
+        self.owner._set_mcp_operation_in_flight(self, value)
 
     def _mcp_snapshot(self) -> tuple[tuple[str, Any], ...]:
         root = self._mcp_page if self._mcp_page is not None else self
@@ -986,12 +1004,17 @@ class SettingsScreen(ModalScreen[None]):
     def _start_mcp_action(self, action: Callable[[], Awaitable[object]]) -> None:
         if self.mcp_busy:
             return
+        if self.owner._mcp_operation_in_flight():
+            self.owner._notify_user(mcp_ops.BUSY_MESSAGE, severity="warning")
+            return
         self.mcp_busy = True
         self._refresh_apply_label()
 
         async def run() -> None:
             try:
                 await action()
+            except mcp_ops.OPERATION_ERRORS as exc:
+                self.owner._set_mcp_status(mcp_ops.operation_error(exc), "error")
             finally:
                 self.mcp_busy = False
                 if self.is_mounted:
@@ -999,7 +1022,7 @@ class SettingsScreen(ModalScreen[None]):
                 self.owner._schedule_maybe_start_queued_message()
 
         # Keep network/OAuth waits off the app's message pump.
-        self.run_worker(run(), name="settings-mcp-action", group="settings-mcp-actions")
+        self.run_worker(run, name="settings-mcp-action", group="settings-mcp-actions", exit_on_error=False)
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
         self._queue_apply_label_refresh()
@@ -1223,15 +1246,16 @@ class SettingsScreen(ModalScreen[None]):
             if button_id == "mcp_delete_server":
                 screen = ConfirmSettingsActionScreen(
                     "Delete MCP server?",
-                    f"The user MCP server '{server_id}' and its saved verification and OAuth state will be removed.",
+                    f"The MCP server '{server_id}' and its saved verification and sign-in state will be removed.",
                     "Delete Server",
                     danger=True,
                 )
             else:
                 screen = ConfirmSettingsActionScreen(
-                    "Clear MCP OAuth tokens?",
-                    f"Stored OAuth credentials for '{server_id}' will be removed. You may need to verify it again.",
-                    "Clear Tokens",
+                    "Clear MCP sign-in?",
+                    f"Stored OAuth credentials and cached tools for '{server_id}' will be removed. "
+                    "Sign in again before using the server.",
+                    "Clear Sign-in",
                     danger=True,
                 )
         self.app.push_screen(

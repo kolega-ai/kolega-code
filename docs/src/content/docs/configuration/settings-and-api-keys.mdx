@@ -87,7 +87,12 @@ The global Apply button is hidden on the MCP page; applying other settings neith
 saves nor discards an MCP draft. If both drafts have changes, closing Settings
 resolves the MCP draft first, then asks about discarding the ordinary settings
 draft. Trust, deletion, and OAuth token removal remain immediate, confirmed
-actions. Trusted-project servers are read-only here.
+actions.
+
+A new server chooses a **Scope**: *User* (all your projects) or *Local* (this
+project only). An existing server keeps the scope it was defined in. Servers from
+the project's shared `.mcp.json` are read-only here; see
+[MCP servers](./mcp/#scopes).
 
 When you switch models, the thinking effort resets to the new model's default.
 

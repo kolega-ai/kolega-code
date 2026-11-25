@@ -15,8 +15,10 @@ from kolega_code.mcp.config import (
     global_mcp_config_path,
     load_mcp_config,
     mcp_secret_values,
+    project_mcp_config_path,
     sanitize_mcp_server_id,
     server_fingerprint,
+    standard_mcp_config_path,
 )
 from kolega_code.mcp.service import (
     MCPService,
@@ -114,6 +116,48 @@ def test_load_mcp_config_rewrites_over_long_server_ids_with_diagnostic(tmp_path:
     rewritten = sanitize_mcp_server_id(long_id)
     assert set(config.servers) == {rewritten}
     assert any("exceeds 32 characters" in diagnostic and long_id in diagnostic for diagnostic in config.diagnostics)
+
+
+def test_load_mcp_config_hashes_the_entire_id_without_logging_its_full_length(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    prefix = "x" * 64
+    ids = [prefix + "one", prefix + "two"]
+    _write_json(
+        global_mcp_config_path(state_dir),
+        {"servers": [{"id": server_id, "command": "example"} for server_id in ids]},
+    )
+
+    config = load_mcp_config(tmp_path, state_dir, project_trusted=False)
+
+    assert set(config.servers) == {sanitize_mcp_server_id(server_id) for server_id in ids}
+    assert len(config.diagnostics) == 2
+    assert all(prefix in note and not any(server_id in note for server_id in ids) for note in config.diagnostics)
+
+
+@pytest.mark.parametrize("broken_scope", ["user", "project"])
+def test_non_utf8_mcp_config_reports_a_diagnostic_and_keeps_other_definitions(
+    tmp_path: Path, broken_scope: str
+) -> None:
+    state = tmp_path / "state"
+    user = global_mcp_config_path(state)
+    project = standard_mcp_config_path(tmp_path)
+    broken, intact = (user, project) if broken_scope == "user" else (project, user)
+    broken.parent.mkdir(parents=True, exist_ok=True)
+    broken.write_bytes(b"\xff")
+    _write_json(intact, {"mcpServers": {"intact": {"command": "example"}}})
+
+    config = load_mcp_config(tmp_path, state, project_trusted=True)
+
+    assert set(config.servers) == {"intact"}
+    assert len(config.diagnostics) == 1
+    assert str(broken.resolve()) in config.diagnostics[0]
+    assert "utf-8" in config.diagnostics[0]
+
+
+def test_loaded_config_keeps_the_legacy_project_config_path(tmp_path: Path) -> None:
+    config = load_mcp_config(tmp_path, tmp_path / "state", project_trusted=False)
+
+    assert config.project_config_path == project_mcp_config_path(tmp_path)
 
 
 def test_server_fingerprint_ignores_enabled_and_source_but_not_connection_details() -> None:

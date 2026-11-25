@@ -62,7 +62,7 @@ from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config
 from kolega_code.llm.ledger import UsageLedger
 from kolega_code.llm.models import Message, TextBlock
 from kolega_code.llm.pricing import PricingResolver
-from kolega_code.mcp.config import MCPServerConfig, load_mcp_config
+from kolega_code.mcp.config import MCPServerConfig, load_mcp_config_for
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest, normalize_permission_mode
 from kolega_code.session.recording import RecordingConnectionManager
 from kolega_code.session.usage import UsagePresentation
@@ -214,11 +214,8 @@ class AgentFactory:
             if session.approved_plan is not None or (session.turn_task is not None and not session.turn_task.done()):
                 raise RequestError.invalid_request({"message": "MCP configuration applies between turns only."})
             assert self._settings is not None and self._settings_store is not None
-            configured = load_mcp_config(
-                Path(session.record.project_path),
-                self._settings_store.root,
-                project_trusted=self._settings.is_mcp_project_trusted(Path(session.record.project_path)),
-            )
+            project = Path(session.record.project_path)
+            configured = load_mcp_config_for(project, self._settings_store.root, self._settings)
             config = session.config.model_copy(update={"mcp_config": merge_mcp_config(configured, clients)})
             await self._rebuild_agent(session, config, client_mcp_servers=clients)
 
@@ -701,15 +698,17 @@ class AgentFactory:
         )
         assert self._settings is not None and self._settings_store is not None
         project_path = Path(record.project_path)
+        settings = self._settings
+        state_dir = self._settings_store.root
         hook_config = load_hook_config(
             project_path,
-            self._settings_store.root,
-            project_trusted=self._settings.is_hook_project_trusted(project_path),
+            state_dir,
+            project_trusted=settings.is_hook_project_trusted(project_path),
         )
         for _diagnostic in hook_config.diagnostics:
             logger.warning("ACP hook configuration warning; check saved hooks and project trust.")
         hooks = HookDispatcher(hook_config)
-        mcp_extension = await build_session_mcp_extension(config.mcp_config, project_path, self._settings_store.root)
+        mcp_extension = await build_session_mcp_extension(config.mcp_config, project_path, state_dir)
         request = CompositionRequest(
             config=config,
             project_path=project_path,
@@ -748,7 +747,7 @@ class AgentFactory:
             additional_prompts=lambda: [],
             history=lambda: agent_holder["agent"].history if "agent" in agent_holder else [],
             set_catalogs=lambda skills, agents: None,
-            mcp_trusted=lambda: self._settings.is_mcp_project_trusted(project_path) if self._settings else False,
+            mcp_loader=lambda path: load_mcp_config_for(path, state_dir, settings),
             mcp_diagnostic=lambda diagnostic: logger.warning("ACP MCP: %s", diagnostic),
             mcp_names=lambda loaded: None,
             own_bundle=lambda bundle: None,

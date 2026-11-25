@@ -10,16 +10,40 @@ import re
 import secrets
 import threading
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 from urllib.parse import urlsplit
 
 from kolega_code.llm.models import ImageBlock, TextBlock
 from kolega_code.tools import ToolError
 
 from .config import LoadedMCPConfig, MCPServerConfig, server_fingerprint
-from .oauth import interactive_oauth_interaction
+from .entries import MCPEnvReferenceError
+from .failure_messages import (
+    MCP_FAILURE_MESSAGE_COMMAND,
+    MCP_FAILURE_MESSAGE_CONNECTION,
+    MCP_FAILURE_MESSAGE_ENV_MISSING,
+    MCP_FAILURE_MESSAGE_GITHUB_COPILOT_OAUTH,
+    MCP_FAILURE_MESSAGE_GENERIC,
+    MCP_FAILURE_MESSAGE_NOT_FOUND,
+    MCP_FAILURE_MESSAGE_OAUTH_CALLBACK,
+    MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION,
+    MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION_NON_DCR,
+    MCP_FAILURE_MESSAGE_OAUTH_SECRET_ENV,
+    MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_INCOMPLETE,
+    MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_REQUIRED,
+    MCP_FAILURE_MESSAGE_OAUTH_UNAUTHORIZED,
+    MCP_FAILURE_MESSAGE_PERMISSION,
+    MCP_FAILURE_MESSAGE_TIMEOUT,
+    MCP_FAILURE_MESSAGE_UNAUTHORIZED,
+    MCP_TOOL_FAILURE_MESSAGE_GENERIC,
+    MCP_TOOL_FAILURE_MESSAGE_TIMEOUT,
+    safe_failed_status_message,
+)
+from .health import health_fields
+from .oauth import MCPOAuthCallbackTimeout, MCPOAuthInteractionRequired, interactive_oauth_interaction
 from .state import MCPServerStatus, MCPStatusStore, MCPToolStatus, MCPOAuthTokenStore
 from .transport import open_mcp_session
 
@@ -35,58 +59,6 @@ _mcp_log_suppression_count = 0
 _mcp_log_previous_propagate = True
 _mcp_null_handler = logging.NullHandler()
 
-MCP_FAILURE_MESSAGE_GENERIC = "Verification failed. Check the MCP server configuration and try again."
-MCP_FAILURE_MESSAGE_GITHUB_COPILOT_OAUTH = (
-    "GitHub remote MCP OAuth failed: this endpoint does not support generic MCP dynamic client registration. "
-    "Use a PAT Authorization header for this endpoint, or a client with GitHub-provided OAuth support."
-)
-MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION = (
-    "OAuth dynamic client registration failed. This server may require a pre-registered OAuth client or "
-    "bearer-token header."
-)
-MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION_NON_DCR = (
-    "OAuth dynamic client registration failed. Check the server's registration requirements; "
-    "if it requires pre-registered credentials, configure an OAuth client ID."
-)
-MCP_FAILURE_MESSAGE_OAUTH_SECRET_ENV = (
-    "The OAuth client secret environment variable is missing or empty. "
-    "Set the configured client_secret_env variable and verify again."
-)
-MCP_FAILURE_MESSAGE_OAUTH_CALLBACK = (
-    "Could not listen on the configured OAuth callback address. "
-    "Check that its port is available and the redirect URI matches the registered application."
-)
-MCP_FAILURE_MESSAGE_OAUTH_UNAUTHORIZED = (
-    "MCP OAuth authorization failed. Check the server credentials or bearer-token header."
-)
-MCP_FAILURE_MESSAGE_UNAUTHORIZED = (
-    "MCP authentication failed. Check the configured credentials or Authorization header."
-)
-MCP_FAILURE_MESSAGE_NOT_FOUND = "MCP server endpoint was not found. Check the configured URL."
-MCP_FAILURE_MESSAGE_TIMEOUT = "MCP server verification timed out. Check the server URL and network connectivity."
-MCP_FAILURE_MESSAGE_CONNECTION = (
-    "Could not connect to the MCP server. Check the command, URL, and network connectivity."
-)
-MCP_FAILURE_MESSAGE_COMMAND = "Could not start the MCP server command. Check the configured command and arguments."
-MCP_FAILURE_MESSAGE_PERMISSION = "Permission denied while starting or contacting the MCP server."
-MCP_TOOL_FAILURE_MESSAGE_GENERIC = "MCP tool call failed."
-MCP_TOOL_FAILURE_MESSAGE_TIMEOUT = "MCP tool call timed out. Check the server URL and network connectivity."
-
-_SAFE_FAILED_STATUS_MESSAGES = (
-    MCP_FAILURE_MESSAGE_GENERIC,
-    MCP_FAILURE_MESSAGE_GITHUB_COPILOT_OAUTH,
-    MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION,
-    MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION_NON_DCR,
-    MCP_FAILURE_MESSAGE_OAUTH_SECRET_ENV,
-    MCP_FAILURE_MESSAGE_OAUTH_CALLBACK,
-    MCP_FAILURE_MESSAGE_OAUTH_UNAUTHORIZED,
-    MCP_FAILURE_MESSAGE_UNAUTHORIZED,
-    MCP_FAILURE_MESSAGE_NOT_FOUND,
-    MCP_FAILURE_MESSAGE_TIMEOUT,
-    MCP_FAILURE_MESSAGE_CONNECTION,
-    MCP_FAILURE_MESSAGE_COMMAND,
-    MCP_FAILURE_MESSAGE_PERMISSION,
-)
 _UNAUTHORIZED_MARKERS = ("unauthorized", "401", "forbidden", "403", "invalid token", "invalid_token")
 _NOT_FOUND_MARKERS = ("404", "not found")
 _TIMEOUT_MARKERS = ("timeout", "timed out", "readtimeout", "connecttimeout")
@@ -322,6 +294,12 @@ def _suppress_mcp_sdk_terminal_logs():
 
 def _mcp_failure_message(server: MCPServerConfig, exc: BaseException) -> str:
     """Return a fixed, credential-safe status message for a caught MCP failure."""
+    if server.oauth.enabled:
+        exceptions = list(_leaf_exceptions(exc))
+        if any(isinstance(error, MCPOAuthCallbackTimeout) for error in exceptions):
+            return MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_INCOMPLETE
+        if any(isinstance(error, MCPOAuthInteractionRequired) for error in exceptions):
+            return MCP_FAILURE_MESSAGE_OAUTH_SIGNIN_REQUIRED
     return _safe_mcp_failure_message(server, _exception_text_for_matching(exc))
 
 
@@ -333,14 +311,18 @@ def _mcp_tool_failure_message(server: MCPServerConfig, exc: BaseException) -> st
     if safe_message != MCP_FAILURE_MESSAGE_GENERIC:
         return safe_message
 
-    exception_types = _dedupe_messages(_leaf_exception_type_names(exc))[:3]
+    exception_types = _dedupe_messages(
+        "".join(character for character in type(error).__name__ if character.isalnum() or character in "._")[:64]
+        or "Exception"
+        for error in _leaf_exceptions(exc)
+    )[:3]
     if not exception_types:
         return MCP_TOOL_FAILURE_MESSAGE_GENERIC
     return f"{MCP_TOOL_FAILURE_MESSAGE_GENERIC[:-1]} ({', '.join(exception_types)})."
 
 
 def _exception_text_for_matching(exc: BaseException) -> str:
-    messages = _dedupe_messages(_leaf_exception_messages(exc))
+    messages = _dedupe_messages(_single_exception_message(error) for error in _leaf_exceptions(exc))
     if not messages:
         messages = [_single_exception_message(exc)]
     return " ".join(messages).lower()
@@ -373,13 +355,6 @@ def _safe_mcp_failure_message(server: MCPServerConfig, lower_message: str) -> st
     return MCP_FAILURE_MESSAGE_GENERIC
 
 
-def _safe_failed_status_message(message: str) -> str:
-    for safe_message in _SAFE_FAILED_STATUS_MESSAGES:
-        if message == safe_message:
-            return safe_message
-    return MCP_FAILURE_MESSAGE_GENERIC
-
-
 def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
     return any(needle in text for needle in needles)
 
@@ -394,45 +369,21 @@ def _is_github_copilot_api_url(url: Optional[str]) -> bool:
     return bool(hostname and hostname.rstrip(".").lower() == "api.githubcopilot.com")
 
 
-def _leaf_exception_messages(exc: BaseException, seen: Optional[set[int]] = None) -> list[str]:
+def _leaf_exceptions(exc: BaseException, seen: Optional[set[int]] = None) -> Iterable[BaseException]:
     seen = seen or set()
     if id(exc) in seen:
-        return []
+        return
     seen.add(id(exc))
 
     if isinstance(exc, BaseExceptionGroup):
-        messages: list[str] = []
         for child in exc.exceptions:
-            messages.extend(_leaf_exception_messages(child, seen))
-        if messages:
-            return messages
+            yield from _leaf_exceptions(child, seen)
+        return
 
-    messages = [_single_exception_message(exc)]
+    yield exc
     cause = exc.__cause__ or (None if exc.__suppress_context__ else exc.__context__)
     if cause is not None:
-        messages.extend(_leaf_exception_messages(cause, seen))
-    return messages
-
-
-def _leaf_exception_type_names(exc: BaseException, seen: Optional[set[int]] = None) -> list[str]:
-    seen = seen or set()
-    if id(exc) in seen:
-        return []
-    seen.add(id(exc))
-
-    if isinstance(exc, BaseExceptionGroup):
-        names: list[str] = []
-        for child in exc.exceptions:
-            names.extend(_leaf_exception_type_names(child, seen))
-        if names:
-            return names
-
-    name = "".join(character for character in exc.__class__.__name__ if character.isalnum() or character in "._")
-    names = [name[:64] or "Exception"]
-    cause = exc.__cause__ or (None if exc.__suppress_context__ else exc.__context__)
-    if cause is not None:
-        names.extend(_leaf_exception_type_names(cause, seen))
-    return names
+        yield from _leaf_exceptions(cause, seen)
 
 
 def _single_exception_message(exc: BaseException) -> str:
@@ -445,7 +396,7 @@ def _single_exception_message(exc: BaseException) -> str:
     return f"{name}: {text}"
 
 
-def _dedupe_messages(messages: list[str]) -> list[str]:
+def _dedupe_messages(messages: Iterable[str]) -> list[str]:
     seen: set[str] = set()
     unique: list[str] = []
     for message in messages:
@@ -458,18 +409,17 @@ def _dedupe_messages(messages: list[str]) -> list[str]:
 
 
 def _status_row_message(
-    server: MCPServerConfig, status: Optional[MCPServerStatus], *, verified: bool, stale: bool
+    server: MCPServerConfig, status: Optional[MCPServerStatus], *, verified: bool, stale: bool, tool_note: str
 ) -> str:
     if status is None:
-        return "Not verified."
+        return "Sign-in required before this server can connect." if server.oauth.enabled else "Not verified."
     if stale:
         return "Configuration changed since last verification. Verify again."
     if verified:
         message = f"Verified {status.tool_count} tool(s)."
-        note = mcp_tool_name_adjustment_note(server.id, status.tools)
-        return f"{message} {note}" if note else message
+        return f"{message} {tool_note}" if tool_note else message
     if status.status == "failed":
-        return _safe_failed_status_message(status.message)
+        return safe_failed_status_message(status.message)
     return "Not verified."
 
 
@@ -502,28 +452,32 @@ class MCPService:
                 tools.append(MCPExposedTool(server=server, tool=tool))
         return tools
 
-    def list_status_rows(self) -> list[dict[str, Any]]:
+    def list_status_rows(self, environ: Optional[Mapping[str, str]] = None) -> list[dict[str, Any]]:
+        """One row per server, including definitions waiting for project trust."""
         rows: list[dict[str, Any]] = []
-        for server in self.config.servers.values():
-            status = self.server_status(server)
+        for server in [*self.config.servers.values(), *self.config.untrusted_project_servers]:
+            trusted = server.source != "project" or self.config.project_trusted
+            status = self.server_status(server) if trusted else None
             current_fingerprint = server_fingerprint(server)
             verified = bool(status and status.status == "verified" and status.fingerprint == current_fingerprint)
             stale = bool(status and status.fingerprint and status.fingerprint != current_fingerprint)
-            rows.append(
-                {
-                    "id": server.id,
-                    "name": server.display_name,
-                    "source": server.source,
-                    "transport": server.transport,
-                    "enabled": server.enabled,
-                    "oauth": server.oauth.enabled,
-                    "status": "verified"
-                    if verified
-                    else ("stale" if stale else (status.status if status else "unverified")),
-                    "tool_count": status.tool_count if verified and status else 0,
-                    "message": _status_row_message(server, status, verified=verified, stale=stale),
-                }
-            )
+            tool_note = mcp_tool_name_adjustment_note(server.id, status.tools) if verified and status else ""
+            row: dict[str, Any] = {
+                "id": server.id,
+                "name": server.display_name,
+                "source": server.source,
+                "transport": server.transport,
+                "enabled": server.enabled,
+                "oauth": server.oauth.enabled,
+                "status": "verified"
+                if verified
+                else ("stale" if stale else (status.status if status else "unverified")),
+                "tool_count": status.tool_count if verified and status else 0,
+                "message": _status_row_message(server, status, verified=verified, stale=stale, tool_note=tool_note),
+                "tool_name_note": tool_note,
+            }
+            row.update(health_fields(server, status, config=self.config, trusted=trusted, environ=environ))
+            rows.append(row)
         return rows
 
     async def verify_server(
@@ -536,7 +490,10 @@ class MCPService:
     ) -> MCPVerificationResult:
         server = self.config.servers.get(server_id)
         if server is None:
-            return MCPVerificationResult(server_id=server_id, ok=False, message=f"Unknown MCP server: {server_id}")
+            message = f"Unknown MCP server: {server_id}"
+            if any(candidate.id == server_id for candidate in self.config.untrusted_project_servers):
+                message = "Pending approval. Run `kolega-code mcp trust` before verifying this project server."
+            return MCPVerificationResult(server_id=server_id, ok=False, message=message)
         fingerprint = server_fingerprint(server)
         try:
             with _suppress_mcp_sdk_terminal_logs():
@@ -571,6 +528,16 @@ class MCPService:
                 tool_count=len(tool_statuses),
                 status=status,
             )
+        except MCPEnvReferenceError:
+            status = MCPServerStatus.failed(
+                fingerprint=fingerprint,
+                transport=server.transport,
+                source=server.source,
+                message=MCP_FAILURE_MESSAGE_ENV_MISSING,
+                oauth=server.oauth.enabled,
+            )
+            self.status_store.update(server.id, status)
+            return MCPVerificationResult(server_id=server.id, ok=False, message=status.message, status=status)
         except Exception as exc:  # noqa: BLE001 - verification failures are reported in status
             message = _mcp_failure_message(server, exc)
             status = MCPServerStatus.failed(

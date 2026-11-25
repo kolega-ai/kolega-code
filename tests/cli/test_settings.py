@@ -256,6 +256,38 @@ def test_settings_save_merges_nested_mappings(tmp_path: Path) -> None:
     assert store.load().api_keys == {"openai": "sk-openai-updated", "anthropic": "sk-anthropic"}
 
 
+@pytest.mark.parametrize("entry_exists", [False, True])
+def test_settings_merge_chooses_a_whole_local_mcp_definition_on_conflict(tmp_path: Path, entry_exists: bool) -> None:
+    store = SettingsStore(tmp_path)
+    if entry_exists:
+        store.save(CliSettings(mcp_local_servers={"/p": {"same": {"name": "existing", "command": "original"}}}))
+    first = store.load()
+    second = store.load()
+    first_def = {"type": "stdio", "command": "example", "args": ["--option"]}
+    second_def = {"type": "http", "url": "https://example.com/mcp"}
+    first.mcp_local_servers["/p"] = {"same": first_def, "different": first_def}
+    second.mcp_local_servers["/p"] = {"same": second_def}
+    store.save(first)
+    store.save(second)
+
+    assert store.load().mcp_local_servers == {"/p": {"same": second_def, "different": first_def}}
+
+
+def test_settings_merge_of_project_mcp_choices_keeps_new_ids_without_restoring_removed_ones(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    store.save(CliSettings(mcp_project_server_overrides={"/p": {"a": False}, "/q": {"b": False}}))
+    stale = store.load()
+    other = store.load()
+    other.mcp_project_server_overrides["/p"]["new"] = True
+    del other.mcp_project_server_overrides["/q"]
+    store.save(other)
+
+    del stale.mcp_project_server_overrides["/p"]
+    store.save(stale)
+
+    assert store.load().mcp_project_server_overrides == {"/p": {"new": True}}
+
+
 def test_settings_repeated_save_preserves_unknown_fields_and_concurrent_changes(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path)
     store.path.write_text(

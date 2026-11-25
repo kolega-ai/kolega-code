@@ -54,9 +54,13 @@ from ..slash_commands import SKILLS_LIST_COMMAND, TUI_COMMAND_NAMES, agent_comma
 from ..updater import check_for_update, run_self_update, update_status_message
 from . import app_base as tui_app_base
 from . import constants as tui_constants
+from . import mcp_ops
 from . import state as tui_state
 from . import widgets as tui_widgets
 from .bug_report import BugReportJob, diagnostics_summary_lines
+
+
+MCP_USAGE = "Usage: /mcp [reconnect (<server>|all) | enable|disable (<server>|all) | import]"
 
 
 class CommandHandlersMixin(tui_app_base.KolegaAppBase):
@@ -75,6 +79,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             "/model": self._command_model,
             "/effort": self._command_effort,
             "/lsp": self._command_lsp,
+            "/mcp": self._command_mcp,
             "/login": self._command_login,
             "/logout": self._command_logout,
             "/gigacode": self._command_gigacode,
@@ -1612,6 +1617,118 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
                     content="LSP is not available (disabled or not configured).",
                 )
             )
+
+    async def _command_mcp(self, args: str) -> None:
+        """Manage MCP servers: open the panel, or reconnect/enable/disable from the composer."""
+        parts = args.split()
+        action = parts[0].lower() if parts else ""
+        if action in {"", "panel", "status"}:
+            self.action_open_mcp()
+            return
+        if action == "import":
+            self.action_open_mcp_import()
+            return
+        needs_target = action in {"enable", "disable"} and len(parts) != 2
+        if action not in {"reconnect", "enable", "disable"} or len(parts) > 2 or needs_target:
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=MCP_USAGE))
+            return
+        if mcp_ops.change_blocked(self):
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=mcp_ops.BLOCKED_MESSAGE))
+            return
+        if self._mcp_operation_in_flight():
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=mcp_ops.BUSY_MESSAGE))
+            return
+
+        target = parts[1] if len(parts) > 1 else "all"
+        if action == "reconnect":
+            task = asyncio.create_task(self._mcp_text_action(action, target), name="mcp-reconnect")
+            self._mcp_reconnect_task = task
+            self._set_mcp_operation_in_flight(task, True)
+            task.add_done_callback(self._finish_mcp_reconnect)
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(kind="system", content="Reconnecting MCP servers… Press Esc to cancel.")
+            )
+            return
+        self._set_mcp_operation_in_flight(self, True)
+        try:
+            lines = await self._mcp_text_action(action, target)
+        except mcp_ops.OPERATION_ERRORS as exc:
+            lines = [mcp_ops.operation_error(exc)]
+        finally:
+            self._set_mcp_operation_in_flight(self, False)
+            self._schedule_maybe_start_queued_message()
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content="\n".join(lines)))
+
+    def _finish_mcp_reconnect(self, task: asyncio.Task[list[str]]) -> None:
+        if self._mcp_reconnect_task is not task:
+            return
+        self._mcp_reconnect_task = None
+        self._set_mcp_operation_in_flight(task, False)
+        try:
+            lines = task.result()
+        except asyncio.CancelledError:
+            lines = ["MCP reconnect cancelled."]
+        except mcp_ops.OPERATION_ERRORS as exc:
+            lines = [mcp_ops.operation_error(exc)]
+        except Exception:
+            lines = [mcp_ops.INCOMPLETE_MESSAGE]
+        if self.is_running:
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content="\n".join(lines)))
+            self._schedule_maybe_start_queued_message()
+
+    def _request_mcp_reconnect_cancel(self) -> bool:
+        task = self._mcp_reconnect_task
+        if task is None or task.done():
+            return False
+        if not task.cancelling():
+            task.cancel()
+        return True
+
+    async def _cancel_mcp_reconnect(self) -> None:
+        task = self._mcp_reconnect_task
+        if task is not None:
+            self._request_mcp_reconnect_cancel()
+            await asyncio.gather(asyncio.shield(task), return_exceptions=True)
+
+    async def _mcp_text_action(self, action: str, target: str) -> list[str]:
+        config = mcp_ops.load_config(self)
+        if action == "reconnect":
+            if target == "all":
+                targets = mcp_ops.reconnect_targets(self)
+            elif target in config.servers:
+                targets = [target]
+            else:
+                return [f"MCP server not found or not loaded: {mcp_ops.plain_text(target)}"]
+            if not targets:
+                return ["Every enabled MCP server is already connected."]
+            lines: list[str] = []
+            for server_id in targets:
+                result = await mcp_ops.verify(self, server_id)
+                if result is None:
+                    lines.append(mcp_ops.BLOCKED_MESSAGE)
+                    break
+                lines.append(f"{'✓' if result.ok else '✗'} {server_id}: {result.message}")
+            return lines
+
+        rows = mcp_ops.status_rows(self, config)
+        selected = rows if target == "all" else [row for row in rows if row["id"] == target]
+        if target != "all":
+            selected = [row for row in selected if row["health"].health != "pending_trust"] or selected
+        if not selected:
+            return [f"MCP server not found: {mcp_ops.plain_text(target)}"]
+        enable = action == "enable"
+        verb = "Enabled" if enable else "Disabled"
+        lines = []
+        for row in selected:
+            try:
+                changed = await mcp_ops.set_enabled(self, str(row["id"]), row["scope"], enable)
+            except mcp_ops.OPERATION_ERRORS as exc:
+                lines.append(f"{row['id']}: {mcp_ops.operation_error(exc)}")
+                continue
+            lines.append(
+                f"{verb} {row['id']}" if changed else f"Could not {action} {row['id']}: it is no longer defined."
+            )
+        return lines
 
     async def _command_version(self, args: str) -> None:
         result = await asyncio.to_thread(check_for_update)

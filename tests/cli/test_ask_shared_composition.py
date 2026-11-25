@@ -171,8 +171,8 @@ async def test_shared_composition_preserves_ask_paths_capabilities_and_live_skil
     mcp_extension = ToolExtension(name="ask-mcp", tools={})
     mcp = Mock(return_value=mcp_extension)
     monkeypatch.setattr(main_module, "build_mcp_tool_extension", mcp)
-    load_mcp = Mock(wraps=main_module.load_mcp_config)
-    monkeypatch.setattr(main_module, "load_mcp_config", load_mcp)
+    load_mcp_for = Mock(wraps=main_module.load_mcp_config_for)
+    monkeypatch.setattr(main_module, "load_mcp_config_for", load_mcp_for)
     warnings = Mock()
     monkeypatch.setattr(main_module, "_print_mcp_tool_name_warnings", warnings)
     hooks = Mock(wraps=main_module.load_hook_config)
@@ -212,10 +212,13 @@ async def test_shared_composition_preserves_ask_paths_capabilities_and_live_skil
     active_config = mcp.call_args.kwargs["loaded_config"]
     mcp.assert_called_once_with(active, state, project_trusted=trusted, loaded_config=active_config)
     if linked:
-        load_mcp.assert_called_once_with(active, state, project_trusted=trusted)
+        # A linked workspace loads its own MCP config under the launch project's trust.
+        assert load_mcp_for.call_count == 1
+        assert load_mcp_for.call_args.args[:2] == (active, state)
+        assert load_mcp_for.call_args.kwargs == {"trusted": trusted}
         assert active_config is not cached
     else:
-        load_mcp.assert_not_called()
+        load_mcp_for.assert_not_called()
         assert active_config is cached
     warnings.assert_called_once_with(active_config, state, active)
     assert [ext.id for ext in agent.kwargs["prompt_extensions"]] == ["cli-agent-skills"]

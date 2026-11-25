@@ -70,7 +70,10 @@ class CompositionHost:
     additional_prompts: Callable[[], list[PromptExtension]]
     history: Callable[[], Iterable[Message]]
     set_catalogs: Callable[[SkillCatalog, CustomAgentCatalog], None]
-    mcp_trusted: Callable[[], bool]
+    # Loads the full MCP configuration for a project path: definitions, project trust,
+    # local-scope servers and per-project enable choices. Hosts derive it from their
+    # settings so nothing is loaded through a trust-only fallback.
+    mcp_loader: Callable[[Path], LoadedMCPConfig]
     mcp_diagnostic: Callable[[str], None]
     mcp_names: Callable[[LoadedMCPConfig], None]
     own_bundle: Callable[[KolegaExtensionBundle], None]
@@ -152,19 +155,24 @@ def prepare_composition(request: CompositionRequest, host: CompositionHost) -> P
         tools.append(question_tool)
 
     mcp_config = getattr(request.config, "mcp_config", None)
-    if mcp_config is not None:
-        for diagnostic in getattr(mcp_config, "diagnostics", []) or []:
-            host.mcp_diagnostic(diagnostic)
+    # The cached config describes the launch project. Another active workspace, or a
+    # host without a cached config, is loaded for the path the agent actually runs in.
+    active_mcp_config = (
+        mcp_config if mcp_config is not None and request.active_project_path == request.project_path else None
+    )
+    if active_mcp_config is None:
+        active_mcp_config = host.mcp_loader(request.active_project_path)
+    for diagnostic in getattr(active_mcp_config, "diagnostics", []) or []:
+        host.mcp_diagnostic(diagnostic)
     mcp_extension = host.mcp_builder(
         request.active_project_path,
         request.state_dir,
-        project_trusted=host.mcp_trusted(),
-        loaded_config=mcp_config if request.active_project_path == request.project_path else None,
+        project_trusted=bool(getattr(active_mcp_config, "project_trusted", False)),
+        loaded_config=active_mcp_config,
     )
-    if mcp_extension is not None:
+    if mcp_extension is not None and active_mcp_config is not None:
         tools.append(mcp_extension)
-        if mcp_config is not None and request.active_project_path == request.project_path:
-            host.mcp_names(mcp_config)
+        host.mcp_names(active_mcp_config)
     prompts.extend(host.additional_prompts())
     return PreparedComposition(prompts, tools, custom_agents, extensions.scratchpad)
 

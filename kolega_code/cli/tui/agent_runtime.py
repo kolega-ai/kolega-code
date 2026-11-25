@@ -82,6 +82,7 @@ from ..skills import (
 )
 from . import app_base as tui_app_base
 from . import constants as tui_constants
+from . import mcp_ops
 from . import state as tui_state
 from . import widgets as tui_widgets
 
@@ -1474,8 +1475,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._schedule_maybe_start_queued_message()
 
     def _maybe_start_queued_message(self) -> bool:
-        settings_screen = getattr(self, "_settings_screen", None)
-        if settings_screen is not None and settings_screen.mcp_busy:
+        if self._mcp_operation_in_flight():
             return False
         if (
             self._startup_pending
@@ -1851,6 +1851,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         if self._startup_pending and self._pending_question is None and self._pending_approval is None:
             self.run_worker(self.action_quit, name="startup-quit", group="startup-quit")
             return
+        if self._request_mcp_reconnect_cancel():
+            return
         # /handoff generation is a helper request, not an agent turn: Esc aborts
         # the handoff stream cooperatively and leaves the session untouched.
         if self._handoff_in_progress and self._handoff_cancel_event is not None:
@@ -1971,13 +1973,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         self.session.config = config_summary(config)
         await self._save_session_async()
         try:
-            settings_screen = getattr(self, "_settings_screen", None)
             await self._build_agent(
                 config,
                 rebuild=rebuild,
                 # Peer messages may arrive while an MCP operation awaits OAuth
                 # or a remote server. Resume them against the rebuilt agent.
-                preserve_queued=settings_screen is not None and settings_screen.mcp_busy,
+                preserve_queued=self._mcp_operation_in_flight(),
             )
         except KolegaExtensionLoadError as exc:
             # The failed generation was already reclaimed by _build_agent; there
@@ -2137,6 +2138,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
     ) -> None:
         if self._draining_agent_tasks and asyncio.current_task() is not self._workspace_switch_task:
             raise RuntimeError("The previous turn is still finishing cleanup; wait before rebuilding the agent.")
+        self._announce_untrusted_project_mcp(getattr(config, "mcp_config", None))
         previous = self._background_rebuilding
         self._background_rebuilding = True
         try:
@@ -2208,7 +2210,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             additional_prompts=self._composition_additional_prompts,
             history=lambda: self.agent.history if self.agent is not None else [],
             set_catalogs=self._set_composition_catalogs,
-            mcp_trusted=lambda: self.settings.is_mcp_project_trusted(self.project_path),
+            mcp_loader=lambda path: mcp_ops.load_config(self, path),
             mcp_diagnostic=lambda diagnostic: self._log_status(f"mcp: {diagnostic}", level="warn"),
             mcp_names=self._log_mcp_tool_name_warnings,
             own_bundle=self._own_composition_bundle,
@@ -2418,6 +2420,20 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 severity="warning",
                 title="Untrusted project hooks",
             )
+
+    def _announce_untrusted_project_mcp(self, mcp_config: LoadedMCPConfig | None) -> None:
+        """Once per session, point at /mcp when a project's MCP servers wait for trust."""
+        pending = getattr(mcp_config, "untrusted_project_servers", None) if mcp_config is not None else None
+        if self._mcp_notice_shown or not pending:
+            return
+        self._mcp_notice_shown = True
+        servers = "server" if len(pending) == 1 else "servers"
+        self._notify_user(
+            f"This project defines {len(pending)} MCP {servers}, but they are not trusted, so none are loaded. "
+            "Run /mcp to review and trust them.",
+            severity="warning",
+            title="Untrusted project MCP servers",
+        )
 
     async def _fire_session_start_once(self) -> None:
         if self._session_started or self.agent is None:

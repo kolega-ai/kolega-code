@@ -19,6 +19,7 @@ from kolega_code.mcp.config import MCPOAuthConfig, MCPServerConfig
 from kolega_code.mcp.oauth import (
     LocalOAuthCallbackServer,
     MCPFileTokenStorage,
+    MCPOAuthCallbackTimeout,
     MCPOAuthError,
     OAuthInteraction,
     build_oauth_provider,
@@ -93,6 +94,13 @@ async def test_ephemeral_callback_preserves_query(host: str) -> None:
             response = await client.get(callback.redirect_uri + "&code=fake-code&state=fake-state")
         assert response.status_code == 200
         assert await callback.wait_for_callback() == ("fake-code", "fake-state")
+
+
+@pytest.mark.asyncio
+async def test_callback_wait_that_receives_no_sign_in_raises_its_own_error() -> None:
+    async with LocalOAuthCallbackServer("http://127.0.0.1:0/callback", timeout_seconds=0.01) as callback:
+        with pytest.raises(MCPOAuthCallbackTimeout):
+            await callback.wait_for_callback()
 
 
 @pytest.mark.asyncio

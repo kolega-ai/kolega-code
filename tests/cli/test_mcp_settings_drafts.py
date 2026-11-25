@@ -15,6 +15,7 @@ from textual.widgets import Button, Input, OptionList, Select, Static, Switch
 
 from kolega_code.cli.app import KolegaCodeApp
 from kolega_code.cli.tui import settings_panel
+from kolega_code.mcp import scopes as mcp_scopes
 from kolega_code.cli.tui.memory_screen import MemoryScreen
 from kolega_code.cli.tui.settings_screen import (
     SETTINGS_CATEGORIES,
@@ -270,7 +271,7 @@ async def test_failed_save_and_verify_never_connects_or_clears_draft(
         value = "" if failure == "validation" else "https://edited.invalid/mcp"
         screen.query_one("#mcp_url_input", Input).value = value
         if failure == "write":
-            monkeypatch.setattr(settings_panel, "upsert_server_config", fail_write)
+            monkeypatch.setattr(mcp_scopes, "upsert_server_config", fail_write)
         app._turn_active = failure == "active-turn"
         try:
             await app._handle_mcp_settings_button("mcp_save_verify_server")

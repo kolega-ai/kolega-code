@@ -26,6 +26,7 @@ class MCPToolStatus(BaseModel):
 class MCPServerStatus(BaseModel):
     status: Literal["unverified", "verified", "failed"] = "unverified"
     fingerprint: Optional[str] = None
+    verified_at: Optional[str] = None
     message: str = ""
     transport: Optional[str] = None
     source: Optional[str] = None
@@ -47,6 +48,7 @@ class MCPServerStatus(BaseModel):
         return cls(
             status="verified",
             fingerprint=fingerprint,
+            verified_at=_now_iso(),
             message=message or f"Verified {len(tools)} tool(s).",
             transport=transport,
             source=source,
@@ -68,6 +70,7 @@ class MCPServerStatus(BaseModel):
         return cls(
             status="failed",
             fingerprint=fingerprint,
+            verified_at=_now_iso(),
             message=message,
             transport=transport,
             source=source,

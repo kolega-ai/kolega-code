@@ -38,12 +38,40 @@ class SettingsStoreError(RuntimeError):
 
 
 SETTINGS_LOCK_TIMEOUT_SECONDS = 10.0
+_MCP_PROJECT_MAP_KEYS = {"mcp_local_servers", "mcp_project_server_overrides"}
+
+
+def _as_mapping(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _merge_mcp_project_maps(base: object, current: object, on_disk: object) -> dict[str, Any]:
+    original = _as_mapping(base)
+    modified = _as_mapping(current)
+    merged = _as_mapping(on_disk).copy()
+    for project in original.keys() | modified.keys():
+        before = _as_mapping(original.get(project))
+        after = _as_mapping(modified.get(project))
+        if before == after:
+            continue
+        entries = _as_mapping(merged.get(project)).copy()
+        for server_id in before.keys() - after.keys():
+            entries.pop(server_id, None)
+        # A server definition is indivisible, even when both writers changed different fields.
+        entries.update({server_id: entry for server_id, entry in after.items() if before.get(server_id) != entry})
+        if entries:
+            merged[project] = entries
+        else:
+            merged.pop(project, None)
+    return merged
 
 
 def _merge_settings_documents(
     base: dict[str, Any],
     current: dict[str, Any],
     on_disk: dict[str, Any],
+    *,
+    top_level: bool = True,
 ) -> dict[str, Any]:
     """Apply one writer's changes on top of the current document.
 
@@ -53,6 +81,9 @@ def _merge_settings_documents(
     """
     merged: dict[str, Any] = {}
     for key in set(base) | set(current) | set(on_disk):
+        if top_level and key in _MCP_PROJECT_MAP_KEYS:
+            merged[key] = _merge_mcp_project_maps(base.get(key), current.get(key), on_disk.get(key))
+            continue
         if key not in current:
             if key in base:
                 continue
@@ -66,7 +97,10 @@ def _merge_settings_documents(
             merged[key] = on_disk[key]
             continue
         if isinstance(base.get(key), dict) and isinstance(current[key], dict) and isinstance(on_disk.get(key), dict):
-            merged[key] = _merge_settings_documents(base[key], current[key], on_disk[key])
+            merged[key] = _merge_settings_documents(base[key], current[key], on_disk[key], top_level=False)
+            continue
+        if key not in base and isinstance(current[key], dict) and isinstance(on_disk.get(key), dict):
+            merged[key] = _merge_settings_documents({}, current[key], on_disk[key], top_level=False)
             continue
         merged[key] = current[key]
     return merged
@@ -118,6 +152,39 @@ def _coerce_permission_mode(raw: object) -> str:
         return PermissionMode(str(raw).lower()).value
     except ValueError:
         return PermissionMode.ASK.value
+
+
+def _coerce_local_mcp_servers(raw: object) -> dict[str, dict[str, dict[str, Any]]]:
+    """Normalize ``mcp_local_servers`` (project path -> server id -> server entry).
+
+    Structural only: an entry that is not an object is dropped so a malformed file
+    can never crash startup. Whether an entry is a valid server is checked when the
+    project's MCP configuration is loaded, and reported there as a diagnostic.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    projects: dict[str, dict[str, dict[str, Any]]] = {}
+    for project, servers in raw.items():
+        if not isinstance(servers, dict):
+            continue
+        entries = {str(server_id): dict(entry) for server_id, entry in servers.items() if isinstance(entry, dict)}
+        if entries:
+            projects[str(project)] = entries
+    return projects
+
+
+def _coerce_mcp_server_overrides(raw: object) -> dict[str, dict[str, bool]]:
+    """Normalize ``mcp_project_server_overrides`` (project path -> server id -> enabled)."""
+    if not isinstance(raw, dict):
+        return {}
+    projects: dict[str, dict[str, bool]] = {}
+    for project, overrides in raw.items():
+        if not isinstance(overrides, dict):
+            continue
+        entries = {str(server_id): enabled for server_id, enabled in overrides.items() if isinstance(enabled, bool)}
+        if entries:
+            projects[str(project)] = entries
+    return projects
 
 
 def _coerce_optional_bool(raw: object) -> Optional[bool]:
@@ -253,10 +320,18 @@ class CliSettings:
     model_slots: dict[str, dict] = field(default_factory=dict)
     # Resolved project paths whose .kolega/hooks.json the user has opted to trust.
     trusted_hook_projects: list[str] = field(default_factory=list)
-    # Resolved project paths whose .kolega/mcp_servers.json the user has opted to trust.
+    # Resolved project paths whose MCP servers (.mcp.json or .kolega/mcp_servers.json)
+    # the user has opted to trust.
     trusted_mcp_projects: list[str] = field(default_factory=list)
     # Resolved project paths whose .kolega/lsp.json the user has opted to trust.
     trusted_lsp_projects: list[str] = field(default_factory=list)
+    # `local` scope MCP servers, keyed by resolved project path and then server id.
+    # Additive optional field — absent in older files -> empty mapping, no schema bump.
+    mcp_local_servers: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    # Private per-project enable/disable choices for project-scope MCP servers, keyed
+    # like mcp_local_servers; the shared definition is never edited for these.
+    # Additive optional field — absent in older files -> empty mapping, no schema bump.
+    mcp_project_server_overrides: dict[str, dict[str, bool]] = field(default_factory=dict)
     # Web search backend selection. Additive optional fields (absent -> None -> the
     # "duckduckgo" default is applied downstream), so no schema bump is needed — same
     # convention as active_theme. Cloud backend API keys live in api_keys under the
@@ -349,6 +424,9 @@ class CliSettings:
             trusted_hook_projects=[str(path) for path in trusted if path],
             trusted_mcp_projects=[str(path) for path in trusted_mcp if path],
             trusted_lsp_projects=[str(path) for path in trusted_lsp if path],
+            # Additive optional fields; absent in older files -> empty mapping.
+            mcp_local_servers=_coerce_local_mcp_servers(data.get("mcp_local_servers")),
+            mcp_project_server_overrides=_coerce_mcp_server_overrides(data.get("mcp_project_server_overrides")),
             # Additive optional fields; absent in older files -> None -> default backend.
             web_search_backend=data.get("web_search_backend"),
             web_search_base_url=data.get("web_search_base_url"),
@@ -397,6 +475,8 @@ class CliSettings:
             "trusted_hook_projects": self.trusted_hook_projects,
             "trusted_mcp_projects": self.trusted_mcp_projects,
             "trusted_lsp_projects": self.trusted_lsp_projects,
+            "mcp_local_servers": self.mcp_local_servers,
+            "mcp_project_server_overrides": self.mcp_project_server_overrides,
             "web_search_backend": self.web_search_backend,
             "web_search_base_url": self.web_search_base_url,
             "web_search_mode": self.web_search_mode,

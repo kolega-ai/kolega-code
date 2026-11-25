@@ -1759,7 +1759,7 @@ async def test_mcp_settings_page_oauth_controls_and_saving(
 
         token_store = MCPOAuthTokenStore(settings_store.root)
         token_store.set_tokens(saved.id, {"access_token": "fake-access-token", "token_type": "Bearer"})
-        app._clear_mcp_tokens_from_ui()
+        await app._clear_mcp_tokens_from_ui()
         assert token_store.get(saved.id).tokens is None
         cfg_after = load_mcp_config(app.project_path, settings_store.root, project_trusted=False)
         server_after = cfg_after.servers[saved.id]
