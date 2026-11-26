@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 
+from kolega_code.agent.tool_backend import hashline_v2
 from kolega_code.agent.tool_backend.edit_tool import EditTool
 from kolega_code.agent.tool_backend.hashline_v2 import (
     HashlineMismatchError,
@@ -87,6 +88,37 @@ def test_xxhash32_matches_reference_vectors(data: bytes, seed: int, expected: in
 def test_hash_ignores_whitespace_and_line_number() -> None:
     assert compute_line_hash("a b\t c") == compute_line_hash("abc")
     assert format_line_tag(1, "abc").split("#", 1)[1] == format_line_tag(999, "abc").split("#", 1)[1]
+
+
+def test_repeated_tag_rendering_reuses_cached_line_hashes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Re-reading a file must not re-run the pure-Python hash for every line."""
+    token = uuid.uuid4().hex
+    hashed: list[bytes] = []
+    real_xxhash32 = hashline_v2.xxhash32
+
+    def counting_xxhash32(data: bytes, seed: int = 0) -> int:
+        hashed.append(data)
+        return real_xxhash32(data, seed)
+
+    monkeypatch.setattr(hashline_v2, "xxhash32", counting_xxhash32)
+    body = f"    return '{token}'"
+    content = f"def unique_{token}():\n{body}\n{body}"
+
+    first = format_hash_lines(content)
+    # One hash per distinct line, not per occurrence.
+    assert len(hashed) == 2
+    assert format_hash_lines(content) == first
+    assert len(hashed) == 2
+
+
+def test_long_lines_hash_without_the_cache_and_match_the_known_digest() -> None:
+    line = "x" * (hashline_v2._LINE_HASH_CACHE_MAX_CHARS + 1)
+    value = xxhash32("".join(line.split()).encode("utf-8")) & 0xFF
+    alphabet = "ZPMQVRWSNKTXJBYH"
+    expected = alphabet[value >> 4] + alphabet[value & 0x0F]
+
+    assert compute_line_hash(line) == expected
+    assert compute_line_hash(line) == expected
 
 
 def test_format_and_parse_original_v2_tags() -> None:

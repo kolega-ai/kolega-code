@@ -9,6 +9,7 @@ surface, without its optional ``replaceText`` or autocorrection modes.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import re
 import struct
 from typing import Any, Iterable, Mapping, Sequence
@@ -82,9 +83,29 @@ def xxhash32(data: bytes, seed: int = 0) -> int:
     return digest & _MASK32
 
 
+#: Lines up to this length are memoized. Every read formats one tag per shown
+#: line, an edit re-verifies the anchors it touches, and a re-read repeats all
+#: of that work: the pure-Python xxHash32 costs ~4 µs per line, a cache lookup a
+#: fraction of that. Longer lines bypass the cache so a minified or binary-ish
+#: file cannot pin megabytes of text in it.
+_LINE_HASH_CACHE_MAX_CHARS = 256
+_LINE_HASH_CACHE_SIZE = 8192
+
+
 def compute_line_hash(line: str) -> str:
     """Return the original v2 two-character ID for a source line."""
 
+    if len(line) <= _LINE_HASH_CACHE_MAX_CHARS:
+        return _cached_line_hash(line)
+    return _line_hash(line)
+
+
+@lru_cache(maxsize=_LINE_HASH_CACHE_SIZE)
+def _cached_line_hash(line: str) -> str:
+    return _line_hash(line)
+
+
+def _line_hash(line: str) -> str:
     if line.endswith("\r"):
         line = line[:-1]
     normalized = "".join(line.split())
