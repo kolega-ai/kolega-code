@@ -78,6 +78,8 @@ class Glyph:
     DOWN = "↓"
     PENDING = "○"  # phase not started
     RUNNING = "▶"  # phase in progress
+    CTX_STATIC = "■"
+    CTX_EMPTY = "□"
 
 
 ASCII_FALLBACKS = {
@@ -96,6 +98,8 @@ ASCII_FALLBACKS = {
     Glyph.DOWN: "v",
     Glyph.PENDING: "o",
     Glyph.RUNNING: ">",
+    Glyph.CTX_STATIC: "#",
+    Glyph.CTX_EMPTY: ".",
 }
 
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"

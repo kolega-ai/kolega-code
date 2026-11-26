@@ -136,6 +136,7 @@ from .tui import constants as tui_constants
 from .tui import agent_runtime as tui_agent_runtime
 from .tui import changes_screen as tui_changes
 from .tui import command_handlers as tui_command_handlers
+from .tui import context_screen as tui_context
 from .tui import loop_runtime as tui_loop_runtime
 from .tui import mcp_import_screen as tui_mcp_import
 from .tui import mcp_screen as tui_mcp
@@ -430,6 +431,7 @@ class KolegaCodeApp(
         self._settings_screen: Optional[tui_settings_screen.SettingsScreen] = None
         self._memory_screen: Optional[tui_memory.MemoryScreen] = None
         self._mcp_screen: Optional[tui_mcp.MCPScreen] = None
+        self._context_screen: Optional[tui_context.ContextInspectorScreen] = None
         # Screens running an MCP operation that must not be interrupted by a turn, a
         # scheduled loop iteration or a mode switch.
         self._mcp_in_flight: set[object] = set()
@@ -1967,6 +1969,47 @@ class KolegaCodeApp(
         if self.screen is screen:
             screen.dismiss()
 
+    def action_open_context(self) -> None:
+        """Open the read-only context-usage visualizer modal."""
+        if self._startup_pending:
+            return
+        if self._context_screen is not None or self._onboarding_screen is not None:
+            return
+        screen = tui_context.ContextInspectorScreen(self)
+        self._context_screen = screen
+        self._push_fullscreen_modal(screen)
+
+    def _dismiss_context_screen(self) -> None:
+        screen = self._context_screen
+        if screen is None:
+            return
+        self._context_screen = None
+        if self.screen is screen:
+            screen.dismiss()
+
+    def _start_compress_command(self) -> None:
+        if self.agent is None:
+            self._notify_user("Configure a model in /settings before compacting.", severity="warning")
+            return
+        if (
+            self._turn_active
+            or self.agent_worker is not None
+            or self._agent_execution_draining()
+            or self._background_rebuilding
+            or self._background_retirement is not None
+            or self._pending_workspace_switch is not None
+            or self._mcp_operation_in_flight()
+            or self._pending_approval is not None
+            or self._pending_question is not None
+            or self._plan_decision_active
+        ):
+            self._notify_user("Wait for the active operation to finish before compacting.", severity="warning")
+            return
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="user", content="/compress"))
+        self.agent_worker = self.run_worker(
+            self._process_message("/compress"), name="kolega-turn", group="turns", exclusive=True
+        )
+
     async def _maybe_show_discovery_tip(self) -> None:
         """Offer one tip per launch, without covering setup or prompts."""
         if not self._discovery_tips_ready:
@@ -2463,6 +2506,7 @@ class KolegaCodeApp(
             raise RuntimeError("Agent configuration is not available.")
         await self._cancel_mcp_reconnect()
         self._dismiss_mcp_screen()
+        self._dismiss_context_screen()
         previous = self._background_rebuilding
         self._background_rebuilding = True
         try:
@@ -4004,6 +4048,7 @@ class KolegaCodeApp(
             raise RuntimeError("The previous turn is still finishing cleanup; wait before handing off the session.")
         await self._cancel_mcp_reconnect()
         self._dismiss_mcp_screen()
+        self._dismiss_context_screen()
         await self._cancel_plan_approval()
         await self._retire_background_jobs()
         # 1) Final durable flush of the old session while its agent/recorder are

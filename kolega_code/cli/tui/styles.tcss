@@ -1266,3 +1266,93 @@ MemoryScreen #memory_toolbar_buttons Button,
 MemoryScreen #memory_footer Button {
     margin-left: 1;
 }
+
+ContextInspectorScreen {
+    align: center middle;
+    background: $background 92%;
+}
+
+ContextInspectorScreen #context_shell {
+    width: 96%;
+    max-width: 132;
+    height: 92%;
+    background: $surface;
+    border: round $surface-lighten-2;
+}
+
+ContextInspectorScreen #context_header {
+    height: 3;
+    padding: 0 2;
+    background: $surface;
+    border-bottom: solid $surface-lighten-2;
+}
+
+ContextInspectorScreen #context_title {
+    width: 1fr;
+    height: 3;
+    content-align: left middle;
+    text-style: bold;
+}
+
+ContextInspectorScreen #context_header_hint {
+    width: auto;
+    height: 3;
+    content-align: right middle;
+    color: $text-muted;
+}
+
+ContextInspectorScreen #context_scroll {
+    height: 1fr;
+    padding: 1 2;
+    background: $surface;
+}
+
+ContextInspectorScreen #context_status {
+    height: auto;
+    padding: 1 0;
+    color: $text-muted;
+}
+
+ContextInspectorScreen #context_hero {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+}
+
+ContextInspectorScreen #context_hero.stacked {
+    layout: vertical;
+}
+
+ContextInspectorScreen #context_grid {
+    width: auto;
+    height: auto;
+    padding: 0 3 1 0;
+}
+
+ContextInspectorScreen #context_hero.stacked #context_grid {
+    width: 100%;
+    padding: 0 0 1 0;
+}
+
+ContextInspectorScreen #context_summary {
+    width: 1fr;
+    height: auto;
+}
+
+ContextInspectorScreen #context_hero.stacked #context_summary {
+    width: 100%;
+}
+
+ContextInspectorScreen #context_details {
+    width: 100%;
+    height: auto;
+    padding-top: 1;
+    border-top: solid $surface-lighten-2;
+}
+
+ContextInspectorScreen #context_footer {
+    height: auto;
+    padding: 1 2;
+    background: $background;
+    border-top: solid $surface-lighten-2;
+}

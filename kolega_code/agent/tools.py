@@ -95,6 +95,8 @@ class ToolExtension:
     exclusive_tools: frozenset[str] = field(default_factory=frozenset)
     # Factories replace only the corresponding callbacks for each agent.
     agent_tool_factories: dict[str, Callable[[Any], Callable[..., Any]]] = field(default_factory=dict)
+    # Optional per-tool provenance metadata (e.g. MCP server/tool IDs).
+    tool_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def for_agent(self, agent: Any) -> "ToolExtension":
         if not self.agent_tool_factories:
@@ -360,6 +362,8 @@ class ToolCollection(LogMixin):
         self.extension_callbacks = {}
         self.extension_descriptions = {}
         self.extension_schemas = {}
+        self.extension_metadata: dict[str, dict[str, Any]] = {}
+        self.extension_tool_sources: dict[str, str] = {}
         self.exclusive_tools = frozenset()
         self._extension_group_names = set()
         self._extension_dispatch_tools: set[str] = set()
@@ -430,6 +434,9 @@ class ToolCollection(LogMixin):
                 setattr(self, tool_name, callback)
                 self.extension_callbacks[tool_name] = callback
                 self.extension_descriptions[tool_name] = extension.tool_descriptions[tool_name]
+                self.extension_tool_sources[tool_name] = extension.name
+                if tool_name in extension.tool_metadata:
+                    self.extension_metadata[tool_name] = dict(extension.tool_metadata[tool_name])
 
             for tool_name, schema in extension.tool_schemas.items():
                 self.extension_schemas[tool_name] = schema
