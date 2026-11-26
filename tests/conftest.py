@@ -1,10 +1,14 @@
 """Shared pytest configuration for the repository."""
 
+import functools
 import gc
 import os
+import ssl
 import tempfile
 from pathlib import Path
+from typing import Any
 
+import certifi
 import pytest
 from dotenv import load_dotenv
 
@@ -18,6 +22,37 @@ from kolega_code.cli.config import API_KEY_ENV
 GC_THRESHOLDS = (20_000, 50, 2_000)
 GC_COLLECT_TEST_INTERVAL = 50
 _tests_since_collection = 0
+
+
+# Every LLM client the suite constructs (anthropic, openai, google-genai, all
+# over httpx) builds a TLS context from the certifi bundle, and
+# ``ssl.create_default_context`` parses the ~140 certificates in it: 22.7 ms per
+# call here. The clients are then handed fake transports, so ``tests/agent``
+# alone paid for 1,327 such parses. One shared context for exactly that bundle
+# is the trust store each client would have built: httpx and google-genai pass
+# it to httpcore without mutating it. Every other caller — ``verify=False``, a
+# test's own ``SSL_CERT_FILE`` bundle, anyio's and websockets' no-argument
+# calls — still gets a fresh context, so a library that tunes the object it
+# created (ddgs shuffles ciphers) cannot leak into another test.
+_ssl_create_default_context = ssl.create_default_context
+_CERTIFI_BUNDLE = certifi.where()
+
+
+@functools.cache
+def _default_certifi_context() -> ssl.SSLContext:
+    return _ssl_create_default_context(cafile=_CERTIFI_BUNDLE)
+
+
+def _shared_create_default_context(
+    purpose: ssl.Purpose = ssl.Purpose.SERVER_AUTH,
+    *,
+    cafile: str | None = None,
+    capath: str | None = None,
+    cadata: Any = None,
+) -> ssl.SSLContext:
+    if purpose is ssl.Purpose.SERVER_AUTH and cafile == _CERTIFI_BUNDLE and capath is None and cadata is None:
+        return _default_certifi_context()
+    return _ssl_create_default_context(purpose, cafile=cafile, capath=capath, cadata=cadata)
 
 
 CLI_CONFIG_ENV_KEYS = {
@@ -52,6 +87,12 @@ CLI_CONFIG_ENV_KEYS = {
 def pytest_configure() -> None:
     """Load local test environment variables before test modules import."""
     load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
+    # Installed before collection so a module-level client is covered too.
+    ssl.create_default_context = _shared_create_default_context
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    ssl.create_default_context = _ssl_create_default_context
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
