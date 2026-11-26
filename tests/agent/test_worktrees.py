@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -187,6 +189,67 @@ def test_git_metadata_write_failure_is_non_fatal(tmp_path: Path, monkeypatch) ->
     monkeypatch.setattr("kolega_code.worktrees.resolve_git_common_dir", resolve_to_file)
 
     assert ensure_worktree_dir_ignored(tmp_path) is False
+
+
+def test_nonexistent_common_dir_is_not_created(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    missing = tmp_path / "missing-git-dir"
+    monkeypatch.setattr("kolega_code.worktrees.resolve_git_common_dir", lambda _path: missing)
+
+    assert ensure_worktree_dir_ignored(tmp_path) is False
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_setup_recreates_missing_info_dir_inside_existing_common_dir(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_init(repo)
+    common_dir = resolve_git_common_dir(repo)
+    assert common_dir is not None
+    shutil.rmtree(common_dir / "info")
+
+    assert ensure_worktree_dir_ignored(repo) is True
+    assert WORKTREE_EXCLUDE_RULE in (common_dir / "info" / "exclude").read_text(encoding="utf-8").splitlines()
+
+
+def test_info_path_write_failure_inside_existing_common_dir_is_non_fatal(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_init(repo)
+    common_dir = resolve_git_common_dir(repo)
+    assert common_dir is not None
+    info_path = common_dir / "info"
+    shutil.rmtree(info_path)
+    info_path.write_text("blocked", encoding="utf-8")
+
+    assert ensure_worktree_dir_ignored(repo) is False
+
+
+def test_pre_231_git_emulator_updates_real_exclude_without_dirtying_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    _git_init(repo)
+    _commit_initial(repo)
+    real_run = subprocess.run
+
+    def emulate_pre_231(command: list[str], *args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if "rev-parse" in command:
+            unknown = [arg for arg in command if arg.startswith("--path-format")]
+            if unknown:
+                stripped = [arg for arg in command if not arg.startswith("--path-format")]
+                completed = real_run(stripped, *args, **kwargs)
+                return subprocess.CompletedProcess(
+                    command,
+                    completed.returncode,
+                    stdout="\n".join(unknown) + "\n" + completed.stdout,
+                    stderr=completed.stderr,
+                )
+        return real_run(command, *args, **kwargs)
+
+    monkeypatch.setattr("kolega_code.memory.identity.run_subprocess", emulate_pre_231)
+
+    assert ensure_worktree_dir_ignored(repo) is True
+    assert WORKTREE_EXCLUDE_RULE in (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8").splitlines()
+    assert _git(repo, "status", "--porcelain").stdout == ""
+    assert sorted(entry.name for entry in repo.iterdir()) == [".git", "tracked.txt"]
 
 
 def test_resolve_registered_worktree_by_absolute_relative_nested_and_branch(tmp_path: Path) -> None:

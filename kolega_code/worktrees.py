@@ -76,7 +76,9 @@ def ensure_worktree_dir_ignored(project_path: Path | str) -> bool:
     exclude_path = common_dir / "info" / "exclude"
     lock_path = exclude_path.with_name("exclude.kolega-code.lock")
     try:
-        exclude_path.parent.mkdir(parents=True, exist_ok=True)
+        if not common_dir.is_dir():
+            return False
+        exclude_path.parent.mkdir(exist_ok=True)
         with FileLock(str(lock_path), timeout=_LOCK_TIMEOUT_SECONDS, mode=0o600):
             try:
                 content = exclude_path.read_bytes()
