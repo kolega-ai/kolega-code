@@ -138,14 +138,12 @@ class LLMStreamStalled(LLMTimeout):
         *,
         provider: Optional[str] = None,
         stage: str = "stream",
-        waited_s: float = 0.0,
         timeout_s: float = 0.0,
         bytes_received: int = 0,
         partial_output: bool = False,
     ) -> None:
         super().__init__(message=message, provider=provider)
         self.stage = stage
-        self.waited_s = waited_s
         self.timeout_s = timeout_s
         self.bytes_received = bytes_received
         self.partial_output = partial_output
