@@ -136,6 +136,26 @@ def build_worktree_control_prompt(plan_mode: bool = False) -> str:
 
 
 MODE_SWITCH_NOTICE_SOURCE = "interaction-mode"
+CONTEXT_USAGE_REMINDER_SOURCE = "context_usage"
+
+
+def build_context_usage_reminder(
+    *,
+    input_tokens: int,
+    max_input_tokens: int,
+    compression_threshold: float,
+) -> Optional[str]:
+    """Factual context-window utilization reminder for the model, or None when budget is unset."""
+    if max_input_tokens <= 0:
+        return None
+    tokens = max(0, int(input_tokens))
+    usage_pct = round((tokens / max_input_tokens) * 100)
+    threshold_pct = f"{round(compression_threshold * 100, 1):g}"
+    body = (
+        f"Context usage: {tokens:,} / {max_input_tokens:,} input tokens "
+        f"({usage_pct}%; automatic compaction at {threshold_pct}%)."
+    )
+    return f'<system-reminder source="{CONTEXT_USAGE_REMINDER_SOURCE}">\n{body}\n</system-reminder>'
 
 
 def build_mode_switch_notice(

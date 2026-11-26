@@ -62,6 +62,7 @@ def test_settings_store_missing_file_returns_empty_settings(tmp_path: Path) -> N
     assert settings.eval_enabled is None
     assert settings.subagents_enabled is None
     assert settings.skills_enabled is None
+    assert settings.context_usage_reminders_enabled is None
 
 
 def test_settings_store_round_trips_eval_enabled(tmp_path: Path) -> None:
@@ -102,6 +103,22 @@ def test_settings_store_round_trips_skills_enabled(tmp_path: Path) -> None:
     data = CliSettings().to_dict()
     del data["skills_enabled"]
     assert CliSettings.from_dict(data).skills_enabled is None
+
+
+def test_settings_store_round_trips_context_usage_reminders_enabled(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    store.save(CliSettings(context_usage_reminders_enabled=False))
+
+    loaded = store.load()
+    assert loaded.context_usage_reminders_enabled is False
+    assert loaded.to_dict()["context_usage_reminders_enabled"] is False
+
+    data = CliSettings().to_dict()
+    del data["context_usage_reminders_enabled"]
+    assert CliSettings.from_dict(data).context_usage_reminders_enabled is None
+
+    data["context_usage_reminders_enabled"] = "not-a-bool"
+    assert CliSettings.from_dict(data).context_usage_reminders_enabled is None
 
 
 def test_settings_store_round_trips_telegram_bot_token(tmp_path: Path) -> None:

@@ -381,6 +381,7 @@ class CliSettings:
     # Additive optional field — absent in older files -> None -> the agent's
     # built-in default (95%).
     compression_threshold: Optional[float] = None
+    context_usage_reminders_enabled: Optional[bool] = None
     # Custom model endpoints keyed by endpoint id (provider value "custom:<id>").
     # Additive optional field — absent in older files -> empty mapping.
     custom_endpoints: dict[str, dict] = field(default_factory=dict)
@@ -454,6 +455,7 @@ class CliSettings:
             skills_enabled=data.get("skills_enabled"),
             # Additive optional field; absent in older files -> None (default 95%).
             compression_threshold=_coerce_compression_threshold(data.get("compression_threshold")),
+            context_usage_reminders_enabled=_coerce_optional_bool(data.get("context_usage_reminders_enabled")),
             # Additive optional field; absent in older files -> empty mapping.
             custom_endpoints=_coerce_custom_endpoints(data.get("custom_endpoints")),
             usage_pricing=data["usage_pricing"] if isinstance(data.get("usage_pricing"), dict) else {},
@@ -492,6 +494,7 @@ class CliSettings:
             "subagents_enabled": self.subagents_enabled,
             "skills_enabled": self.skills_enabled,
             "compression_threshold": self.compression_threshold,
+            "context_usage_reminders_enabled": self.context_usage_reminders_enabled,
             "custom_endpoints": self.custom_endpoints,
             "usage_pricing": self.usage_pricing,
             "cloudflare_account_id": self.cloudflare_account_id,

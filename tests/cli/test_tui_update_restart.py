@@ -61,6 +61,8 @@ def test_build_restart_args_preserves_runtime_flags_and_strips_one_shot_flags(tm
             "max",
             "--compression-threshold",
             "90",
+            "--context-usage-reminders",
+            "off",
             "--lsp",
             "off",
             "--subagents",
@@ -99,6 +101,7 @@ def test_build_restart_args_preserves_runtime_flags_and_strips_one_shot_flags(tm
     assert reparsed.model == "deepseek-flash"
     assert reparsed.thinking_effort == "max"
     assert reparsed.compression_threshold == "90"
+    assert reparsed.context_usage_reminders == "off"
     assert reparsed.lsp == "off"
     assert reparsed.subagents == "off"
     assert reparsed.skills == "off"

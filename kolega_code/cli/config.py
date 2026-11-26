@@ -104,6 +104,8 @@ SKILLS_MODE_ENV = "KOLEGA_CODE_SKILLS"
 # Compression threshold override, in percent (10-100). Absent means defer to
 # settings.compression_threshold, then the agent's built-in default (95%).
 COMPRESSION_THRESHOLD_ENV = "KOLEGA_CODE_COMPRESSION_THRESHOLD"
+CONTEXT_USAGE_REMINDER_MODES = ("on", "off")
+CONTEXT_USAGE_REMINDERS_ENV = "KOLEGA_CODE_CONTEXT_USAGE_REMINDERS"
 # Env vars that supply a cloud web-search backend's key, keyed by backend name.
 SEARCH_BACKEND_KEY_ENV = {
     "firecrawl": "FIRECRAWL_API_KEY",
@@ -156,6 +158,7 @@ class CliConfigOverrides:
     # Compression threshold in percent, as typed on the command line; parsed and
     # validated in _compression_threshold.
     compression_threshold: Optional[str] = None
+    context_usage_reminders_mode: Optional[str] = None
     # Strict per-run context budget, as typed on the command line; parsed and
     # validated as a pair in _strict_context_budget. Never persisted.
     context_window_tokens: Optional[str] = None
@@ -555,6 +558,28 @@ def _skills_enabled(
         return mode == "on"
     if settings is not None and settings.skills_enabled is not None:
         return bool(settings.skills_enabled)
+    return True
+
+
+def _context_usage_reminders_enabled(
+    env: Mapping[str, str],
+    settings: Optional[CliSettings],
+    override: Optional[str],
+) -> bool:
+    """Resolve context-usage reminders with flag-over-env-over-settings precedence."""
+    explicit: Optional[str] = None
+    if override is not None:
+        explicit = override
+    elif CONTEXT_USAGE_REMINDERS_ENV in env and env[CONTEXT_USAGE_REMINDERS_ENV].strip():
+        explicit = env[CONTEXT_USAGE_REMINDERS_ENV]
+    if explicit is not None:
+        mode = explicit.strip().lower()
+        if mode not in CONTEXT_USAGE_REMINDER_MODES:
+            valid = ", ".join(CONTEXT_USAGE_REMINDER_MODES)
+            raise CliConfigError(f"Unsupported context usage reminders mode '{mode}'. Valid modes: {valid}")
+        return mode == "on"
+    if settings is not None and settings.context_usage_reminders_enabled is not None:
+        return bool(settings.context_usage_reminders_enabled)
     return True
 
 
@@ -1055,6 +1080,9 @@ def build_agent_config(
             eval_enabled=(True if settings is None or settings.eval_enabled is None else bool(settings.eval_enabled)),
             subagents_enabled=_subagents_enabled(loaded_env, settings, overrides.subagents_mode),
             skills_enabled=_skills_enabled(loaded_env, settings, overrides.skills_mode),
+            context_usage_reminders_enabled=_context_usage_reminders_enabled(
+                loaded_env, settings, overrides.context_usage_reminders_mode
+            ),
             history_compression_threshold=compression_threshold,
             context_window_tokens=context_window_tokens,
             max_output_tokens=max_output_tokens,

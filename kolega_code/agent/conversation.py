@@ -559,6 +559,7 @@ class Conversation:
         # The block ``mark_cache_checkpoint`` marked last time; it keeps its breakpoint on the
         # next call so there are always two, one turn apart. See ``mark_cache_checkpoint``.
         self._previous_checkpoint: Any = None
+        self._prior_turn_checkpoint: Any = None
 
     # ------------------------------------------------------------------
     # History access (compaction-aware)
@@ -1006,8 +1007,39 @@ class Conversation:
         for block in (previous, latest):
             if block is not None:
                 block.cache_checkpoint = True
+        self._prior_turn_checkpoint = previous if previous is not latest else None
         if latest is not None:
             self._previous_checkpoint = latest
+
+    def advance_latest_cache_checkpoint(self, request_history: Optional[MessageHistory] = None) -> None:
+        """Move only this iteration's latest cache checkpoint to the newly appended tail block."""
+        new_latest = self._last_cacheable_block()
+        if new_latest is None or new_latest is self._previous_checkpoint:
+            return
+        old_latest = self._previous_checkpoint
+        if old_latest is not None and old_latest is not self._prior_turn_checkpoint:
+            if hasattr(old_latest, "cache_checkpoint"):
+                old_latest.cache_checkpoint = False
+            if request_history is not None:
+                expected_remaining = 0
+                if self._prior_turn_checkpoint is not None and any(
+                    block is self._prior_turn_checkpoint
+                    for message in self.effective_history()
+                    if isinstance(message.content, list)
+                    for block in message.content
+                ):
+                    expected_remaining = 1
+                marked_blocks = [
+                    block
+                    for message in list(request_history)[:-1]
+                    if isinstance(message.content, list)
+                    for block in message.content
+                    if getattr(block, "cache_checkpoint", False)
+                ]
+                while len(marked_blocks) > expected_remaining:
+                    marked_blocks.pop().cache_checkpoint = False
+        new_latest.cache_checkpoint = True
+        self._previous_checkpoint = new_latest
 
     def _last_cacheable_block(self) -> Any:
         """The last block that may carry a breakpoint, or ``None``.

@@ -56,6 +56,7 @@ from .. import messages, theme
 from . import mcp_ops
 from ..config import (
     COMPRESSION_THRESHOLD_ENV,
+    CONTEXT_USAGE_REMINDERS_ENV,
     SKILLS_MODE_ENV,
     SUBAGENTS_MODE_ENV,
     CliConfigError,
@@ -613,6 +614,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         self._populate_subagents_controls()
         self._populate_skills_controls()
         self._populate_compression_controls()
+        self._populate_context_usage_reminders_controls()
         self._populate_gateway_controls()
         self._update_settings_status()
 
@@ -2424,6 +2426,42 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             return
         self.settings.compression_threshold = None if value == COMPRESSION_THRESHOLD_DEFAULT_VALUE else float(value)
 
+    def _populate_context_usage_reminders_controls(self) -> None:
+        """Seed the context-usage reminders toggle from saved settings."""
+        try:
+            select = self._settings_query_one("#context_usage_reminders_select", Select)
+        except NoMatches:
+            return
+        enabled = self.settings.context_usage_reminders_enabled
+        select.value = "false" if enabled is False else "true"
+        self._update_context_usage_reminders_status()
+
+    def _update_context_usage_reminders_status(self) -> None:
+        """Note when a launch flag or env var pins context-usage reminders for this session."""
+        try:
+            status = self._settings_query_one("#context_usage_reminders_status", Static)
+        except NoMatches:
+            return
+        flag_value = getattr(self.overrides, "context_usage_reminders_mode", None)
+        env_value = os.environ.get(CONTEXT_USAGE_REMINDERS_ENV)
+        forced = flag_value or env_value
+        if forced:
+            source = "--context-usage-reminders" if flag_value else CONTEXT_USAGE_REMINDERS_ENV
+            status.update(
+                f"Context usage reminders are forced {forced} for this session by {source}; "
+                "the setting applies from the next launch."
+            )
+            return
+        status.update("")
+
+    def _collect_context_usage_reminders_from_ui(self) -> None:
+        """Read the context-usage reminders toggle and save into settings."""
+        try:
+            value = str(self._settings_query_one("#context_usage_reminders_select", Select).value)
+        except NoMatches:
+            return
+        self.settings.context_usage_reminders_enabled = value == "true"
+
     def _settings_candidate_from_ui(self) -> tuple[CliSettings, str, str, str]:
         """Collect the mounted form into a detached settings candidate."""
         provider = str(self._settings_query_one("#provider_select", Select).value)
@@ -2468,6 +2506,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._collect_subagents_from_ui()
             self._collect_skills_from_ui()
             self._collect_compression_from_ui()
+            self._collect_context_usage_reminders_from_ui()
             self._collect_gateway_from_ui()
         finally:
             self.settings = original

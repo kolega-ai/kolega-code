@@ -600,6 +600,18 @@ class SettingsScreen(ModalScreen[None]):
                     allow_blank=False,
                     value=settings_panel.COMPRESSION_THRESHOLD_DEFAULT_VALUE,
                 )
+                yield Static(
+                    "Include a concise, user-invisible context-window utilization reminder after each tool round.",
+                    classes="settings-hint",
+                )
+                yield Static("", id="context_usage_reminders_status")
+                yield Label("Context usage reminders")
+                yield Select(
+                    [("Enabled", "true"), ("Disabled", "false")],
+                    id="context_usage_reminders_select",
+                    allow_blank=False,
+                    value="true",
+                )
 
     def _compose_mcp_page(self) -> ComposeResult:
         with VerticalScroll(id="settings_page_mcp", classes="settings-page"):
