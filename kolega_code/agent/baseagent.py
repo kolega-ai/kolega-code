@@ -2152,7 +2152,6 @@ class BaseAgent(LogMixin):
             message,
             provider=self.primary_model_config.provider.value,
             stage=stage,
-            waited_s=waited_s,
             timeout_s=limit_s,
             bytes_received=bytes_received,
             partial_output=bytes_received > 0,

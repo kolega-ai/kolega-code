@@ -24,25 +24,23 @@ from kolega_code.llm.exceptions import (
 _STRIP_BUDGET = 52
 
 
-def _zero_output_stall(waited_s: float = 90.0) -> LLMStreamStalled:
+def _zero_output_stall(timeout_s: float = 90.0) -> LLMStreamStalled:
     return LLMStreamStalled(
         "No response from the endpoint",
         provider="deepseek",
         stage="first_chunk",
-        waited_s=waited_s,
-        timeout_s=waited_s,
+        timeout_s=timeout_s,
         bytes_received=0,
         partial_output=False,
     )
 
 
-def _partial_stall(waited_s: float = 300.0) -> LLMStreamStalled:
+def _partial_stall(timeout_s: float = 300.0) -> LLMStreamStalled:
     return LLMStreamStalled(
         "The response stalled mid-stream",
         provider="deepseek",
         stage="stream",
-        waited_s=waited_s,
-        timeout_s=waited_s,
+        timeout_s=timeout_s,
         bytes_received=120,
         partial_output=True,
     )
@@ -152,7 +150,7 @@ async def test_exhausted_message_counts_attempts_without_the_endpoint(base_agent
         patch("kolega_code.agent.baseagent.asyncio.sleep", side_effect=_no_sleep),
         pytest.raises(LLMStreamStalled),
     ):
-        await base_agent.handle_llm_error(_zero_output_stall(waited_s=91.0))
+        await base_agent.handle_llm_error(_zero_output_stall(timeout_s=91.0))
 
     events = [event for event in _status_events(mock_connection_manager) if event.content["status"] == "error"]
     assert events, "no terminal error status was emitted"
