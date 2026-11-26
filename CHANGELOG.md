@@ -6,6 +6,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- **`usage_recorder` without Langfuse.** `InstrumentedLLMClient` and
+  `AgentContext.create_llm_client()` now forward usage records to
+  `usage_recorder` for both `generate()` and `stream()` calls even when
+  `langfuse_client` is `None`.
+
 ## 0.57.0 - 2026-11-26
 
 ### Added

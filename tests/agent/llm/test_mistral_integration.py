@@ -345,6 +345,131 @@ async def test_instrumented_mistral_stream_counters(mistral_http: MistralHttp) -
 
 
 @pytest.mark.asyncio
+async def test_usage_recorder_without_langfuse_generate(mistral_http: MistralHttp) -> None:
+    recorded: list[dict[str, Any]] = []
+    client = InstrumentedLLMClient(
+        provider="mistral",
+        api_key="mistral-integration-test",
+        model=MODEL,
+        max_retries=0,
+        langfuse_client=None,
+        usage_recorder=recorded.append,
+        workspace_id="workspace",
+        thread_id="thread",
+        agent_type="agent",
+    )
+    await _install_transport(client, mistral_http)
+    try:
+        mistral_http.completion("untraced", usage=USAGE)
+        response = await client.generate(messages=_messages(), model=MODEL)
+    finally:
+        await _close_transport(client)
+
+    assert len(recorded) == 1
+    assert recorded[0]["provider"] == "mistral"
+    assert recorded[0]["model"] == MODEL
+    assert recorded[0]["input_tokens"] == 41
+    assert recorded[0]["output_tokens"] == 7
+    assert recorded[0]["success"] is True
+    assert recorded[0]["error_message"] is None
+    assert recorded[0]["metadata"]["raw_usage"] == response.usage_metadata
+
+
+@pytest.mark.asyncio
+async def test_usage_recorder_without_langfuse_stream(mistral_http: MistralHttp) -> None:
+    recorded: list[dict[str, Any]] = []
+    client = InstrumentedLLMClient(
+        provider="mistral",
+        api_key="mistral-integration-test",
+        max_retries=0,
+        langfuse_client=None,
+        usage_recorder=recorded.append,
+    )
+    await _install_transport(client, mistral_http)
+    try:
+        mistral_http.stream(_event({"content": "streamed"}, finish="stop"), _event(usage=USAGE))
+        cm = await cast(Any, client.stream(messages=_messages(), model=MODEL))
+        async with cm as stream:
+            assert "".join([chunk.text or "" async for chunk in stream]) == "streamed"
+        final = await stream.get_final_message()
+        assert final.usage is not None and final.usage.total_tokens == 48
+    finally:
+        await _close_transport(client)
+
+    assert len(recorded) == 1
+    assert recorded[0]["provider"] == "mistral"
+    assert recorded[0]["model"] == MODEL
+    assert (recorded[0]["input_tokens"], recorded[0]["output_tokens"]) == (41, 7)
+    assert recorded[0]["success"] is True
+    assert recorded[0]["error_message"] is None
+    assert recorded[0]["metadata"]["raw_usage"] == final.usage_metadata
+
+
+@pytest.mark.parametrize("with_langfuse", [False, True])
+@pytest.mark.asyncio
+async def test_usage_recorder_stream_failure_matches_langfuse_behavior(
+    mistral_http: MistralHttp, with_langfuse: bool
+) -> None:
+    recorded: list[dict[str, Any]] = []
+    langfuse = _mock_langfuse() if with_langfuse else None
+    client = InstrumentedLLMClient(
+        provider="mistral",
+        api_key="mistral-integration-test",
+        max_retries=0,
+        langfuse_client=langfuse,
+        usage_recorder=recorded.append,
+    )
+    await _install_transport(client, mistral_http)
+    try:
+        mistral_http.stream(_event({"content": "streamed"}, finish="stop"), _event(usage=USAGE))
+        cm = await cast(Any, client.stream(messages=_messages(), model=MODEL))
+        with pytest.raises(RuntimeError, match="consumer aborted"):
+            async with cm as stream:
+                async for _ in stream:
+                    pass
+                raise RuntimeError("consumer aborted")
+    finally:
+        await _close_transport(client)
+
+    assert len(recorded) == 1
+    assert recorded[0]["provider"] == "mistral"
+    assert recorded[0]["model"] == MODEL
+    assert (recorded[0]["input_tokens"], recorded[0]["output_tokens"]) == (41, 7)
+    assert recorded[0]["success"] is False
+    assert recorded[0]["error_message"] == "consumer aborted"
+
+
+@pytest.mark.asyncio
+async def test_usage_recorder_with_langfuse_records_once_per_request(mistral_http: MistralHttp) -> None:
+    recorded: list[dict[str, Any]] = []
+    langfuse = _mock_langfuse()
+    client = InstrumentedLLMClient(
+        provider="mistral",
+        api_key="mistral-integration-test",
+        max_retries=0,
+        langfuse_client=langfuse,
+        usage_recorder=recorded.append,
+    )
+    await _install_transport(client, mistral_http)
+    try:
+        mistral_http.completion("one", usage=USAGE)
+        await client.generate(messages=_messages(), model=MODEL)
+
+        mistral_http.stream(_event({"content": "two"}, finish="stop"), _event(usage=USAGE))
+        cm = await cast(Any, client.stream(messages=_messages(), model=MODEL))
+        async with cm as stream:
+            async for _ in stream:
+                pass
+        await stream.get_final_message()
+    finally:
+        await _close_transport(client)
+
+    assert len(recorded) == 2
+    assert all(entry["success"] is True for entry in recorded)
+    assert langfuse._test_generation.update.call_count == 2
+
+
+@pytest.mark.asyncio
 async def test_native_history_roundtrip_preserves_provider_metadata_and_replays_native_thinking(
     mistral_http: MistralHttp,
 ) -> None:

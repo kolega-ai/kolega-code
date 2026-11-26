@@ -309,3 +309,44 @@ async def test_real_sdk_stream_closes_on_early_exit(monkeypatch: pytest.MonkeyPa
             await consume()
         assert wire.closed
         assert stream.openai_stream.response.is_closed
+
+
+@pytest.mark.asyncio
+async def test_instrumented_stream_midstream_wire_error_records_failure_without_langfuse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kolega_code.llm.instrumented_client import InstrumentedLLMClient
+
+    wire = _SSEBody([_partial_chunk(), {"error": {"code": "insufficient_credits", "message": "Account exhausted"}}])
+    recorded: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=wire)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        monkeypatch.setattr(transport, "AsyncOpenAI", partial(AsyncOpenAI, http_client=http_client))
+        client = InstrumentedLLMClient(
+            provider="refuseless",
+            api_key=FAKE_KEY,
+            max_retries=0,
+            model=MODEL,
+            langfuse_client=None,
+            usage_recorder=recorded.append,
+        )
+        stream_coro: Any = client.stream(MessageHistory([Message("user", [TextBlock("hello")])]), model=MODEL)
+        assert inspect.isawaitable(stream_coro)
+        stream = await stream_coro
+        chunks = []
+        with pytest.raises(APIError):
+            async with stream:
+                async for chunk in stream:
+                    chunks.append(chunk)
+
+    assert [chunk.text for chunk in chunks] == ["partial"]
+    assert len(recorded) == 1
+    assert recorded[0]["provider"] == "refuseless"
+    assert recorded[0]["model"] == MODEL
+    assert recorded[0]["input_tokens"] == 10
+    assert recorded[0]["output_tokens"] == 2
+    assert recorded[0]["success"] is False
+    assert recorded[0]["error_message"] is not None

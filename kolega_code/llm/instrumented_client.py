@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 def _end_observations(generation: Any, trace: Any, **updates: Any) -> None:
     trace_updates = {key: updates[key] for key in ("level", "status_message") if key in updates}
     for observation, values in ((generation, updates), (trace, trace_updates)):
+        if observation is None:
+            continue
         try:
             observation.update(**values)
         except Exception:
@@ -249,9 +251,9 @@ class InstrumentedLLMClient(LLMClient):
         _precomputed_input_tokens: Optional[int] = None,
         **kwargs: Any,
     ) -> Message:
-        """Generate with Langfuse tracing."""
-        if not self.langfuse:
-            # Fallback to non-instrumented if Langfuse not configured
+        """Generate with Langfuse tracing and usage recording."""
+        if not self.langfuse and not self.usage_recorder:
+            # Fallback to non-instrumented if neither Langfuse nor usage recording is configured
             return await super().generate(
                 messages,
                 system,
@@ -266,6 +268,21 @@ class InstrumentedLLMClient(LLMClient):
 
         # Extract model from kwargs
         model = kwargs.get("model", "unknown")
+
+        if not self.langfuse:
+            response = await super().generate(
+                messages,
+                system,
+                temperature,
+                max_completion_tokens,
+                tools,
+                thinking,
+                params,
+                _precomputed_input_tokens=_precomputed_input_tokens,
+                **kwargs,
+            )
+            await self._record_usage(self._extract_usage_details(response), model, success=True)
+            return response
 
         # Format input for Langfuse
         input_data = {
@@ -409,9 +426,9 @@ class InstrumentedLLMClient(LLMClient):
         _precomputed_input_tokens: Optional[int] = None,
         **kwargs: Any,
     ) -> Union[AsyncContextManager[Any], Coroutine[Any, Any, AsyncContextManager[Any]]]:
-        """Stream a response with Langfuse tracing"""
-        if not self.langfuse:
-            # Fallback to non-instrumented if Langfuse not configured
+        """Stream a response with Langfuse tracing and usage recording."""
+        if not self.langfuse and not self.usage_recorder:
+            # Fallback to non-instrumented if neither Langfuse nor usage recording is configured
             return super().stream(
                 messages,
                 system,
@@ -424,8 +441,6 @@ class InstrumentedLLMClient(LLMClient):
                 **kwargs,
             )
 
-        # ``self.langfuse`` is guaranteed non-None here (we returned early above).
-        # Capture it in a local so the closure below sees a non-optional type.
         langfuse = self.langfuse
 
         # Since we need to create langfuse metadata synchronously but the stream
@@ -433,54 +448,58 @@ class InstrumentedLLMClient(LLMClient):
         async def create_instrumented_stream():
             # Extract model from kwargs
             model = kwargs.get("model", "unknown")
+            trace: Any = None
+            generation: Any = None
 
-            # Format input for Langfuse (same format as generate method)
-            input_data = {
-                "messages": [msg.to_dict() for msg in messages],
-                "system": system.to_dict() if system else None,
-                "temperature": temperature,
-                "max_completion_tokens": max_completion_tokens,
-                "tools": tools,
-            }
+            if langfuse:
+                # Format input for Langfuse (same format as generate method)
+                input_data = {
+                    "messages": [msg.to_dict() for msg in messages],
+                    "system": system.to_dict() if system else None,
+                    "temperature": temperature,
+                    "max_completion_tokens": max_completion_tokens,
+                    "tools": tools,
+                }
 
-            # Create metadata for the generation
-            metadata = self._create_generation_metadata(**kwargs)
+                # Create metadata for the generation
+                metadata = self._create_generation_metadata(**kwargs)
 
-            model_parameters: Dict[str, Any] = {
-                "temperature": temperature,
-                "max_completion_tokens": max_completion_tokens,
-                "streaming": True,
-                "provider": self.provider_name,
-            }
+                model_parameters: Dict[str, Any] = {
+                    "temperature": temperature,
+                    "max_completion_tokens": max_completion_tokens,
+                    "streaming": True,
+                    "provider": self.provider_name,
+                }
 
-            # Keep attribute propagation scoped to the Kolega span, not any
-            # host observation that was current when stream creation began.
-            with langfuse.start_as_current_observation(
-                name=f"{self.agent_type or 'agent'}-llm-stream",
-                as_type="span",
-                input=input_data,
-                metadata=metadata,
-                end_on_exit=False,
-            ) as trace:
-                with self._trace_attributes(
-                    [
-                        self.environment,
-                        f"workspace:{self.workspace_id}",
-                        f"thread:{self.thread_id}",
-                        f"agent:{self.agent_type}",
-                        f"provider:{self.provider_name}",
-                        "streaming",
-                        f"user:{self.user_id}" if self.user_id else None,
-                    ]
-                ):
-                    generation = trace.start_observation(
-                        name=f"{self.agent_type or 'agent'}-llm-stream-generation",
-                        as_type="generation",
-                        model=model,
-                        model_parameters=model_parameters,
-                        input=input_data,
-                        metadata=metadata,
-                    )
+                # Keep attribute propagation scoped to the Kolega span, not any
+                # host observation that was current when stream creation began.
+                with langfuse.start_as_current_observation(
+                    name=f"{self.agent_type or 'agent'}-llm-stream",
+                    as_type="span",
+                    input=input_data,
+                    metadata=metadata,
+                    end_on_exit=False,
+                ) as current_trace:
+                    trace = current_trace
+                    with self._trace_attributes(
+                        [
+                            self.environment,
+                            f"workspace:{self.workspace_id}",
+                            f"thread:{self.thread_id}",
+                            f"agent:{self.agent_type}",
+                            f"provider:{self.provider_name}",
+                            "streaming",
+                            f"user:{self.user_id}" if self.user_id else None,
+                        ]
+                    ):
+                        generation = current_trace.start_observation(
+                            name=f"{self.agent_type or 'agent'}-llm-stream-generation",
+                            as_type="generation",
+                            model=model,
+                            model_parameters=model_parameters,
+                            input=input_data,
+                            metadata=metadata,
+                        )
 
             try:
                 stream = LLMClient.stream(
@@ -547,36 +566,37 @@ class MinimalLangfuseStreamWrapper:
         return False
 
     async def _finalize(self, exc_type: Optional[type[BaseException]], exc_val: Optional[BaseException]) -> None:
-        output = None
-        usage = None
+        if self.generation is not None or self.trace is not None:
+            output = None
+            usage = None
 
-        try:
-            if hasattr(self.stream, "get_final_message"):
-                final_message = await self.stream.get_final_message()
+            try:
+                if hasattr(self.stream, "get_final_message"):
+                    final_message = await self.stream.get_final_message()
 
-                # The Message already has usage_metadata populated by from_anthropic/from_openai
-                output = final_message.get_text_content() if hasattr(final_message, "get_text_content") else None
-                usage = self._extract_langfuse_usage(final_message)
-        except asyncio.CancelledError as error:
-            _end_observations(
-                self.generation, self.trace, level="ERROR", status_message=str(error) or type(error).__name__
-            )
-            raise
-        except Exception as e:
-            logger.debug(f"Error getting final message: {e}")
+                    # The Message already has usage_metadata populated by from_anthropic/from_openai
+                    output = final_message.get_text_content() if hasattr(final_message, "get_text_content") else None
+                    usage = self._extract_langfuse_usage(final_message)
+            except asyncio.CancelledError as error:
+                _end_observations(
+                    self.generation, self.trace, level="ERROR", status_message=str(error) or type(error).__name__
+                )
+                raise
+            except Exception as e:
+                logger.debug(f"Error getting final message: {e}")
 
-        # Update generation with available data
-        gen_update_kwargs: Dict[str, Any] = {
-            "level": "ERROR" if exc_type else "DEFAULT",
-            "status_message": (str(exc_val) or type(exc_val).__name__) if exc_val is not None else "Success",
-        }
+            # Update generation with available data
+            gen_update_kwargs: Dict[str, Any] = {
+                "level": "ERROR" if exc_type else "DEFAULT",
+                "status_message": (str(exc_val) or type(exc_val).__name__) if exc_val is not None else "Success",
+            }
 
-        if output is not None:
-            gen_update_kwargs["output"] = output
-        if usage is not None:
-            gen_update_kwargs["usage_details"] = usage
+            if output is not None:
+                gen_update_kwargs["output"] = output
+            if usage is not None:
+                gen_update_kwargs["usage_details"] = usage
 
-        _end_observations(self.generation, self.trace, **gen_update_kwargs)
+            _end_observations(self.generation, self.trace, **gen_update_kwargs)
 
         # Record usage for streaming response
         try:
