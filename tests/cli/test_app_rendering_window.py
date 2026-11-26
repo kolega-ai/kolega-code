@@ -810,14 +810,20 @@ async def test_inspector_refreshes_only_dirty_steps_in_a_paged_window(
         window = screen._trajectory_window
         assert window is not None
         view.scroll_to(y=0, animate=False, immediate=True)
-        await wait_for_layout(
-            pilot,
-            lambda: (
+
+        def expansion_painted() -> bool:
+            # scroll_y is published during arrange; widget regions land on a later pass.
+            oldest = next(iter(window.widgets.values()), None)
+            return (
                 len(screen._step_widgets) == INSPECTOR_MAX + theme.INSPECTOR_WINDOW_EXPAND_CHUNK
                 and not window._expand_pending
                 and 0 < view.scroll_y < view.max_scroll_y
-            ),
-        )
+                and oldest is not None
+                and oldest.region.height > 0
+                and oldest.region.y < view.content_region.y
+            )
+
+        await wait_for_layout(pilot, expansion_painted)
         first = activity.stream_steps["reply-200"]
         second = activity.stream_steps["reply-201"]
         rows = dict(window.widgets)
