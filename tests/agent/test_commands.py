@@ -140,7 +140,8 @@ async def test_handle_reset_alias(command_processor, mock_agent, mock_message):
 async def test_handle_context_empty_history(command_processor):
     """Test the /context command handler with empty history"""
     result = await command_processor._handle_context()
-    assert result == "Current context token count: 0 / 1000 input budget"
+    assert "0 / 1k tokens (0.0%)" in result
+    assert "Token usage by category:" in result
 
 
 @pytest.mark.asyncio
@@ -156,9 +157,10 @@ async def test_handle_context_with_history(command_processor, mock_agent, mock_m
 
     result = await command_processor._handle_context()
 
-    # Verify token count was called and returned expected message
+    # Verify token count was called and returned structured breakdown
     mock_agent.count_current_context.assert_called_once()
-    assert result == "Current context token count: 100 / 1000 input budget"
+    assert "100 / 1k tokens (10.0%)" in result
+    assert "User messages:" in result
 
 
 @pytest.mark.asyncio

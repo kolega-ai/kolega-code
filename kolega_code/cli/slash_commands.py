@@ -39,6 +39,7 @@ THREAD_RESET_COMMANDS: frozenset[str] = frozenset({"/clear", "/reset"})
 TUI_AGENT_COMMAND_DESCRIPTION_OVERRIDES: dict[str, str] = {
     "/clear": "Clear message history, terminal output, and logs",
     "/reset": "Clear message history, terminal output, and logs (alias of /clear)",
+    "/context": "Inspect context window usage and breakdown",
 }
 SKILLS_LIST_COMMAND = "/skills"
 

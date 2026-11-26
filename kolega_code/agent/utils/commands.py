@@ -23,7 +23,7 @@ class CommandProcessor:
         AgentCommandSpec("/compress", "Compress message history", "_handle_compress"),
         AgentCommandSpec("/clear", "Clear message history", "_handle_clear"),
         AgentCommandSpec("/reset", "Clear message history", "_handle_clear"),
-        AgentCommandSpec("/context", "Show current context token count", "_handle_context"),
+        AgentCommandSpec("/context", "Show context window usage and breakdown", "_handle_context"),
     )
 
     def __init__(self, agent: Any) -> None:
@@ -69,12 +69,10 @@ class CommandProcessor:
 
     async def _handle_context(self) -> str:
         """Handle the /context command."""
-        input_tokens = 0
-        if len(self.agent.history) > 0:
-            token_count = await self.agent.count_current_context()
-            input_tokens = token_count.input_tokens
-        capped = " (capped)" if getattr(self.agent, "strict_context_budget", False) else ""
-        return f"Current context token count: {input_tokens} / {self.agent.model_max_input_tokens} input budget{capped}"
+        from ..context_breakdown import analyze_agent_context, format_context_breakdown_text
+
+        breakdown = await analyze_agent_context(self.agent, refresh_provider_count=True)
+        return format_context_breakdown_text(breakdown)
 
     @staticmethod
     def process_commands(target_cls: Type) -> Type:

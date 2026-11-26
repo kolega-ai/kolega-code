@@ -162,6 +162,7 @@ def _tool_extension(service: MCPService) -> ToolExtension | None:
     callbacks: dict[str, Any] = {}
     descriptions: dict[str, str] = {}
     schemas: dict[str, dict[str, Any]] = {}
+    metadata: dict[str, dict[str, Any]] = {}
 
     def make_callback(server_id: str, tool_id: str) -> Callable[..., Awaitable[Any]]:
         async def call(**inputs: Any) -> Any:
@@ -177,11 +178,13 @@ def _tool_extension(service: MCPService) -> ToolExtension | None:
             description += f"\n\nThe server-side tool name is `{item.tool.id}`; it is exposed here as `{name}`."
         descriptions[name] = description
         schemas[name] = item.tool.input_schema
+        metadata[name] = {"mcp_server_id": item.server.id, "mcp_tool_id": item.tool.id}
     return ToolExtension(
         name="mcp",
         tools=callbacks,
         tool_descriptions=descriptions,
         tool_schemas=schemas,
+        tool_metadata=metadata,
         tool_groups={"mcp_tools": list(callbacks)},
         cleanup=service.cleanup,
         propagate_to_sub_agents=False,

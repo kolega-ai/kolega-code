@@ -74,6 +74,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             "/build": self._command_build,
             "/sidebar": self._command_sidebar,
             "/settings": self._command_settings,
+            "/context": self._command_context,
             "/memory": self._command_memory,
             "/permissions": self._command_permissions,
             "/model": self._command_model,
@@ -741,6 +742,37 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
 
     async def _command_settings(self, args: str) -> None:
         self.action_open_settings()
+
+    async def _command_context(self, args: str) -> None:
+        action = args.strip().lower()
+        if action in {"", "modal", "inspect"}:
+            self.action_open_context()
+            return
+        if action in {"text", "inline"}:
+            if self.agent is None:
+                self._add_conversation_entry(
+                    tui_state.ConversationEntry(
+                        kind="system",
+                        content="No active agent — configure a model in /settings first.",
+                        tone="warning",
+                    )
+                )
+                return
+            from kolega_code.agent.context_breakdown import analyze_agent_context, format_context_breakdown_text
+
+            is_live_turn = bool(self._turn_active or self.agent_worker is not None or self._agent_execution_draining())
+            breakdown = await analyze_agent_context(
+                self.agent,
+                is_live_turn=is_live_turn,
+                refresh_provider_count=False,
+            )
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(kind="system", content=format_context_breakdown_text(breakdown))
+            )
+            return
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(kind="system", content="Usage: /context [text]", tone="warning")
+        )
 
     async def _command_memory(self, args: str) -> None:
         """Browse or manage the app-owned private project-memory service."""

@@ -33,6 +33,7 @@ def build_mcp_tool_extension(
     callbacks = {}
     descriptions = {}
     schemas = {}
+    metadata = {}
     tool_names = []
 
     def make_callback(server_id: str, tool_id: str) -> Callable[..., Awaitable[Any]]:
@@ -51,6 +52,7 @@ def build_mcp_tool_extension(
             )
         descriptions[tool_name] = description
         schemas[tool_name] = exposed_tool.tool.input_schema
+        metadata[tool_name] = {"mcp_server_id": exposed_tool.server.id, "mcp_tool_id": tool_id}
         tool_names.append(tool_name)
 
     return ToolExtension(
@@ -59,6 +61,7 @@ def build_mcp_tool_extension(
         tool_groups={"mcp_tools": tool_names},
         tool_descriptions=descriptions,
         tool_schemas=schemas,
+        tool_metadata=metadata,
         cleanup=service.cleanup,
         propagate_to_sub_agents=False,
     )

@@ -3,7 +3,6 @@ from weakref import WeakKeyDictionary
 import asyncio
 import json
 import logging
-import math
 import os
 import threading
 import uuid
@@ -29,7 +28,7 @@ from ..timeouts import streaming_timeout
 from ..tool_execution_ids import ToolExecutionIdRegistry
 from ..accounting import UsageObservation, publish_observation, read_wire
 from ..usage import attach_normalized_usage, observation_from_metadata, read_detail_int
-from ._token_encoding import get_counting_encoding
+from ._token_encoding import estimate_image_tokens, get_counting_encoding
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
 
@@ -772,30 +771,7 @@ class OpenAIProvider(BaseLLMProvider):
         return ("?",)
 
     def _estimate_image_tokens(self, base64_data_length: int) -> int:
-        """Estimate image token cost based on base64 data length.
-
-        OpenAI charges for images based on their dimensions after resizing.
-        Since we don't decode images (performance), we estimate based on data size.
-
-        Uses same formula as Anthropic for consistency:
-        tokens ≈ 20 + sqrt(base64_length * 6)
-
-        This gives reasonable estimates:
-        - Tiny images (96 chars base64): ~44 tokens
-        - Small images (~50KB base64): ~659 tokens
-        - Medium images (~200KB base64): ~1285 tokens
-        - Large images (~800KB base64): ~2549 tokens
-
-        Args:
-            base64_data_length: Length of base64 encoded image data
-
-        Returns:
-            Estimated token count for the image
-        """
-        # Use square root scaling for better fit across image sizes
-        # Base cost of 20 tokens + sqrt scaling
-        estimated_tokens = 20 + int(math.sqrt(base64_data_length * 6))
-        return estimated_tokens
+        return estimate_image_tokens(base64_data_length)
 
     async def stream(
         self,

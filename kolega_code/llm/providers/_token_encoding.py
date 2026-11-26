@@ -11,9 +11,14 @@ counted as normal text. Passing ``disallowed_special=()`` disables the check —
 exactly what tiktoken's own error message recommends.
 """
 
+import math
 from typing import List
 
 import tiktoken
+
+
+def estimate_image_tokens(base64_data_length: int) -> int:
+    return 20 + int(math.sqrt(max(0, base64_data_length) * 6))
 
 
 class CountingEncoding:
