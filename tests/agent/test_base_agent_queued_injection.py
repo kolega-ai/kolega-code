@@ -51,14 +51,15 @@ async def test_queued_input_injected_after_tool_batch(base_agent) -> None:
 
     _ = [chunk async for chunk in base_agent.process_message_stream("do X")]
 
-    # history[0] is the session-context message; history[2] is the volatile-context update injected
-    # at the start of the first turn (memory and date, as its own user turn). See volatile_context.py.
+    # history[0] is session context; [2] is volatile context; [5] is the queued
+    # user input; [6] is the post-tool-round context-usage reminder.
     assert base_agent.history[0] is base_agent.session_context_message
     assert [message.role for message in base_agent.history] == [
         "user",
         "user",
         "user",
         "assistant",
+        "user",
         "user",
         "user",
         "assistant",
@@ -68,7 +69,8 @@ async def test_queued_input_injected_after_tool_batch(base_agent) -> None:
     assert len(base_agent.history[5].content) == 1
     assert isinstance(base_agent.history[5].content[0], TextBlock)
     assert base_agent.history[5].content[0].text == "also do Y"
-    assert base_agent.history[6].stop_reason == "end_turn"
+    assert '<system-reminder source="context_usage">' in base_agent.history[6].get_text_content()
+    assert base_agent.history[7].stop_reason == "end_turn"
     assert base_agent.conversation.is_valid_for_anthropic() is True
     provider.assert_awaited_once_with()
 
@@ -134,26 +136,29 @@ async def test_injection_journal_ordering_and_replay(base_agent, tmp_path) -> No
     _ = [chunk async for chunk in base_agent.process_message_stream("do X")]
 
     event_types = [event.event_type for event in store.journal(session.session_id).read_events()]
-    # Two context messages now: the volatile-context update at the start of the turn, and the
-    # queued user input delivered mid-turn.
-    assert event_types[-8:] == [
+    # Three context messages: volatile context at turn start, queued user input mid-turn,
+    # and the post-tool-round context-usage reminder before the next model call.
+    assert event_types[-9:] == [
         "turn.started",
         "context.system",
         "context.message",
         "assistant.message",
         "tool.results",
         "context.message",
+        "context.message",
         "assistant.message",
         "turn.completed",
     ]
 
     replayed = [Message.from_dict(item) for item in store.load(session.session_id).history]
-    # replayed[0] is the injected volatile-context update; the turn's messages follow it.
-    assert [message.role for message in replayed] == ["user", "user", "assistant", "user", "user", "assistant"]
+    # replayed[0] is the user prompt, [1] volatile context, [2] tool call, [3] tool result,
+    # [4] queued user input, [5] context-usage reminder, [6] final assistant reply.
+    assert [message.role for message in replayed] == ["user", "user", "assistant", "user", "user", "user", "assistant"]
     assert all(isinstance(block, ToolResult) for block in replayed[3].content)
     assert len(replayed[4].content) == 1
     assert isinstance(replayed[4].content[0], TextBlock)
     assert replayed[4].content[0].text == "also do Y"
+    assert '<system-reminder source="context_usage">' in replayed[5].get_text_content()
 
 
 @pytest.mark.asyncio

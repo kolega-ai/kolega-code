@@ -130,6 +130,10 @@ compression; over-limit recovery and explicit context caps remain enforced
 — `/compress` always works manually. For one session only, override
 it with `--compression-threshold PERCENT` or `KOLEGA_CODE_COMPRESSION_THRESHOLD`;
 the editor notes when a launch flag or environment variable has pinned the value.
+The same section also lets you toggle **context usage reminders** (`context_usage_reminders_enabled`,
+default enabled), which append a concise, user-invisible context-window utilization
+reminder for the model after each tool-call round; override for one session with
+`--context-usage-reminders on|off` or `KOLEGA_CODE_CONTEXT_USAGE_REMINDERS`.
 
 ## Where settings live
 

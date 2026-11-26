@@ -24,6 +24,7 @@ from kolega_code.config import AgentConfig, EditProtocol, ModelProvider
 from kolega_code.events import AgentConnectionManager
 from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
 from .conversation import Conversation, adapt_history_for_provider
+from .prompts import build_context_usage_reminder
 from .volatile_context import VolatileContextTracker, VolatileSection, scrub_reminder_markup
 from kolega_code.events import AgentEventEmitter
 from kolega_code.hooks import (
@@ -510,6 +511,9 @@ class BaseAgent(LogMixin):
         config_threshold = getattr(self.config, "history_compression_threshold", None)
         if config_threshold is not None:
             self.history_compression_threshold = config_threshold
+        self.context_usage_reminders_enabled = (
+            getattr(self.config, "context_usage_reminders_enabled", True) is not False
+        )
         self.compressor = HistoryCompressor(threshold=self.history_compression_threshold)
         self.emitter = AgentEventEmitter(
             connection_manager=self.connection_manager,
@@ -3131,6 +3135,7 @@ class BaseAgent(LogMixin):
         silent_turn_nudges = 0
         truncated_turn_nudges = 0
         iterations = 0
+        pending_context_usage_reminder = False
         while stop_reason not in ["end_turn", "max_tokens", "stop_sequence"]:
             attempt_stream_segments: dict[tuple[str, str], bool] = {}
             attempt_rendered_output = False
@@ -3214,6 +3219,24 @@ class BaseAgent(LogMixin):
                             f"Request needs {token_count.input_tokens} input tokens after automatic compaction, "
                             f"exceeding this run's resolved maximum input of {self.model_max_input_tokens}."
                         )
+
+                if pending_context_usage_reminder:
+                    pending_context_usage_reminder = False
+                    if self.context_usage_reminders_enabled:
+                        reminder_text = build_context_usage_reminder(
+                            input_tokens=token_count.input_tokens,
+                            max_input_tokens=self.model_max_input_tokens,
+                            compression_threshold=self.history_compression_threshold,
+                        )
+                        if reminder_text is not None and (
+                            not self.strict_context_budget
+                            or token_count.input_tokens + len(reminder_text) <= self.model_max_input_tokens
+                        ):
+                            committing_history = True
+                            await self._record_context_user_message(reminder_text)
+                            committing_history = False
+                            fixed_history.append(self.conversation.history[-1])
+                            self.conversation.advance_latest_cache_checkpoint(fixed_history)
 
                 current_response = ""
                 current_thinking = ""
@@ -3464,6 +3487,7 @@ class BaseAgent(LogMixin):
                     # The loop will continue — deliver any user messages queued in the
                     # host UI so the next model request sees them.
                     await self._deliver_queued_user_inputs()
+                    pending_context_usage_reminder = True
 
                 # Silent-turn guard: the model ended this iteration with no tool
                 # call and no visible text (reasoning-only or empty). Finalizing

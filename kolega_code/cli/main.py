@@ -110,6 +110,7 @@ from . import messages
 from .browser_backend import build_browser_manager
 from .diagnostics import write_crash_log
 from .config import (
+    CONTEXT_USAGE_REMINDER_MODES,
     DEPRECATED_THINKING_TOKENS_MESSAGE,
     LSP_MODES,
     SKILL_MODES,
@@ -347,6 +348,13 @@ def _add_common_model_args(parser: argparse.ArgumentParser) -> None:
         help="Input-budget usage percentage that triggers automatic history compression "
         "(10-100; default 95). Overrides settings.json for this session; not persisted. "
         "100 disables proactive compression; over-limit recovery and explicit context caps remain enforced.",
+    )
+    parser.add_argument(
+        "--context-usage-reminders",
+        choices=list(CONTEXT_USAGE_REMINDER_MODES),
+        default=None,
+        help="Force live context-window utilization reminders to the model on or off for this session "
+        "(overrides settings.json; not persisted).",
     )
     parser.add_argument(
         "--context-window-tokens",
@@ -832,6 +840,7 @@ def _overrides_from_args(args: argparse.Namespace) -> CliConfigOverrides:
         subagents_mode=getattr(args, "subagents", None),
         skills_mode=getattr(args, "skills", None),
         compression_threshold=getattr(args, "compression_threshold", None),
+        context_usage_reminders_mode=getattr(args, "context_usage_reminders", None),
         context_window_tokens=getattr(args, "context_window_tokens", None),
         max_output_tokens=getattr(args, "max_output_tokens", None),
         custom_endpoints_json=getattr(args, "custom_endpoints", None),
@@ -1371,6 +1380,7 @@ _RESTART_PRESERVED_VALUE_ARGS: tuple[tuple[str, str], ...] = (
     ("endpoint_temperature", "--endpoint-temperature"),
     ("environment", "--environment"),
     ("compression_threshold", "--compression-threshold"),
+    ("context_usage_reminders", "--context-usage-reminders"),
     ("context_window_tokens", "--context-window-tokens"),
     ("max_output_tokens", "--max-output-tokens"),
     ("edit_protocol", "--edit-protocol"),

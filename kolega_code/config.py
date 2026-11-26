@@ -376,6 +376,12 @@ class AgentConfig(BaseModel):
     # the skill catalog prompt and model-facing activation tool.
     skills_enabled: bool = Field(default=True, exclude=True, description="Enable CLI Agent Skills")
 
+    context_usage_reminders_enabled: bool = Field(
+        default=True,
+        exclude=True,
+        description="Inject live context-window utilization reminders into the agent loop",
+    )
+
     # Custom model endpoints keyed by endpoint id (provider value "custom:<id>").
     # Excluded from serialization like mcp_config: entries can carry API keys.
     custom_endpoints: Dict[str, CustomEndpointConfig] = Field(
