@@ -113,7 +113,16 @@ from .slash_commands import (
     search_commands,
 )
 from .theme import Color, Glyph
-from .updater import check_for_update, current_version, update_status_message
+from .updater import (
+    InstallDrift,
+    InstallFingerprint,
+    capture_install_fingerprint,
+    check_for_update,
+    current_version,
+    detect_install_drift,
+    install_drift_warning,
+    update_status_message,
+)
 from .tui.startup import RecentSessionItem, StartupEntryWidget, display_project_path
 from .tui.discovery import DiscoveryTip
 from .tui.metadata import MetadataStrip
@@ -261,6 +270,8 @@ class KolegaCodeApp(
         self._resume_in_progress = False
         # A claimed target for main.py's clean, same-process app relaunch.
         self.resume_session: SessionRecord | None = None
+        # Post-quit launcher action (/restart, /update) run outside Textual.
+        self.exit_action: tui_state.TuiExitAction | None = None
         # Two managers, one stream. The TUI reads live events off the CLI queue;
         # the agent broadcasts into the recording wrapper, which assigns each
         # event a sequence number and persists it before forwarding. That is what
@@ -413,6 +424,9 @@ class KolegaCodeApp(
         # Dedup flag: one vision-mismatch system message per non-vision model
         # session. Reset in _switch_model so a new model gets a fresh warning.
         self._vision_warning_shown = False
+        self._last_compaction_error: Optional[str] = None
+        self._install_fingerprint: Optional[InstallFingerprint] = capture_install_fingerprint()
+        self._install_drift_warned: Optional[InstallDrift] = None
         self._settings_screen: Optional[tui_settings_screen.SettingsScreen] = None
         self._memory_screen: Optional[tui_memory.MemoryScreen] = None
         self._mcp_screen: Optional[tui_mcp.MCPScreen] = None
@@ -1266,6 +1280,19 @@ class KolegaCodeApp(
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=message))
         self._notify_user(message)
 
+    def _check_install_drift(self) -> bool:
+        """Warn once if another process updated or removed this install on disk."""
+        drift = detect_install_drift(getattr(self, "_install_fingerprint", None))
+        if drift is None:
+            return False
+        if drift == getattr(self, "_install_drift_warned", None):
+            return True
+        self._install_drift_warned = drift
+        warning = install_drift_warning(drift)
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=warning, tone="warning"))
+        self._notify_user(warning, severity="warning")
+        return True
+
     def _validated_interaction_mode(self, interaction_mode: str) -> str:
         if interaction_mode in {tui_constants.BUILD_INTERACTION_MODE, tui_constants.PLAN_INTERACTION_MODE}:
             return interaction_mode
@@ -1561,6 +1588,7 @@ class KolegaCodeApp(
 
         if not stripped_text and not self._pending_image_attachments:
             return
+        self._check_install_drift()
         if self.agent is None:
             self._set_settings_status(messages.SETTINGS_REQUIRED, tone="warning")
             if self.config is None:
@@ -3914,6 +3942,7 @@ class KolegaCodeApp(
         self._sub_agent_by_tool_call = {}
         self._sub_agent_seq = 0
         self._workflow_activities = {}
+        self._last_compaction_error = None
         if not preserve_loop:
             self._clear_queued_messages()
         self._latest_plan = None
@@ -4087,6 +4116,7 @@ class KolegaCodeApp(
         assert config is not None  # an agent existed, so a config was built
         self._session_started = False
         self._mcp_notice_shown = False
+        self._last_compaction_error = None
         await self._build_agent(config, rebuild=True, restore_transcript=True)
 
         # 10) Usage persistence on the new journal.

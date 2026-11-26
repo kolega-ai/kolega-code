@@ -478,19 +478,32 @@ class AgentEventEmitter:
             )
         )
 
-    async def compaction_status(self, phase: str, message: str = "", summary: str = "") -> None:
+    async def compaction_status(
+        self,
+        phase: str,
+        message: str = "",
+        summary: str = "",
+        *,
+        trigger: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> None:
         """Send a compaction_status event so the UI can show compaction progress.
 
         ``phase`` is one of "started" | "finished" | "error". On "finished",
         ``summary`` carries the summary text so the UI can show it in the transcript.
         """
         sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
+        content: dict[str, Any] = {"phase": phase, "message": message, "summary": summary}
+        if trigger:
+            content["trigger"] = trigger
+        if reason:
+            content["reason"] = reason
 
         await self.emit(
             AgentEvent(
                 sender=self.sender,
                 event_type=KnownEventType.COMPACTION_STATUS,
-                content={"phase": phase, "message": message, "summary": summary},
+                content=content,
                 is_streaming=False,
                 sub_agent_info=sub_agent_info,
             )

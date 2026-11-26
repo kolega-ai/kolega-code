@@ -87,61 +87,97 @@ async def test_textual_app_copy_and_version_slash_commands(tmp_path: Path, monke
 
 
 @pytest.mark.asyncio
-async def test_textual_app_update_slash_command_runs_self_update(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "command,expected_kind",
+    [("/update", "update_and_restart"), ("/restart", "restart")],
+)
+async def test_textual_app_update_and_restart_slash_commands_exit_with_action(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str, expected_kind: str
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.tui import command_handlers as command_handlers_module
     from kolega_code.cli.tui.widgets import ChatComposer
-    from kolega_code.cli.updater import UpdateRunResult
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
-    monkeypatch.setattr(
-        command_handlers_module,
-        "run_self_update",
-        lambda *, capture_output=False: UpdateRunResult(returncode=0, stdout="installed\n"),
-    )
 
     async with app.run_test():
         composer = app.query_one("#composer", ChatComposer)
-        composer.load_text("/update")
+        composer.load_text(command)
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
 
-        entry = app.conversation_entries[-1]
-        assert entry.kind == "system"
-        assert "Kolega Code update completed" in entry.content
-        assert "installed" in entry.content
+    assert not app.is_running
+    assert app._quit_cleanly is True
+    assert app.exit_action is not None
+    assert app.exit_action.kind == expected_kind
+    assert app.exit_action.session_id == app.session.session_id
+    assert app.exit_action.project_path == Path(app.session.project_path)
 
 
 @pytest.mark.asyncio
-async def test_textual_app_update_slash_command_includes_gateway_restart_notes(
+@pytest.mark.parametrize("command", ["/update", "/restart"])
+async def test_textual_app_update_and_restart_blocked_during_active_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._turn_active = True
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text(command)
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        assert app.is_running
+        assert app.exit_action is None
+
+
+@pytest.mark.asyncio
+async def test_textual_app_warns_once_when_install_drifts_on_disk(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.tui import command_handlers as command_handlers_module
     from kolega_code.cli.tui.widgets import ChatComposer
-    from kolega_code.cli.updater import UpdateRunResult
+    from kolega_code.cli.updater import InstallFingerprint
+
+    site = tmp_path / "venv" / "lib" / "python3.13" / "site-packages"
+    pkg_init = site / "kolega_code" / "__init__.py"
+    pkg_init.parent.mkdir(parents=True)
+    pkg_init.write_text('__version__ = "0.55.0"\n', encoding="utf-8")
+    dist_55 = site / "kolega_code-0.55.0.dist-info"
+    dist_55.mkdir()
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
-    monkeypatch.setattr(
-        command_handlers_module,
-        "run_self_update",
-        lambda *, capture_output=False: UpdateRunResult(
-            returncode=0, stdout="installed\n", gateway_restart_notes=("systemd unit restarted",)
-        ),
+    app._install_fingerprint = InstallFingerprint(
+        package_file=pkg_init,
+        site_packages=site,
+        dist_info_names=frozenset({dist_55.name}),
+        version="0.55.0",
     )
 
     async with app.run_test():
-        composer = app.query_one("#composer", ChatComposer)
-        composer.load_text("/update")
-        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        # Simulate an out-of-band update replacing dist-info while the TUI is open.
+        dist_55.rmdir()
+        (site / "kolega_code-0.56.0.dist-info").mkdir()
 
-        entry = app.conversation_entries[-1]
-        assert entry.kind == "system"
-        assert "Kolega Code update completed" in entry.content
-        assert "Gateway: systemd unit restarted" in entry.content
+        composer = app.query_one("#composer", ChatComposer)
+        # app.agent is None in this minimal harness, so submission runs the drift
+        # check and returns cleanly at the settings gate without invoking an LLM.
+        app.agent = None
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, "hello"))
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, "hello again"))
+
+        drift_entries = [
+            entry
+            for entry in app.conversation_entries
+            if entry.kind == "system" and "0.55.0 -> 0.56.0" in entry.content
+        ]
+        assert len(drift_entries) == 1
+        assert drift_entries[0].tone == "warning"
+        assert "/restart" in drift_entries[0].content
 
 
 @pytest.mark.asyncio

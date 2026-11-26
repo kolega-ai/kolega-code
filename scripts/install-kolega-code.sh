@@ -115,12 +115,28 @@ fi
 # Without --python, uv uses its default interpreter, often a release kolega-code's pinned
 # dependencies ship no wheels for yet. Keep in step with TOOL_PYTHON in kolega_code/cli/updater.py.
 PYTHON_REQUEST=">=3.11.5,<3.15"
+PYTHON_MAX_MINOR=15
 if [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = x86_64 ]; then
     PYTHON_REQUEST=">=3.11.5,<3.13"
+    PYTHON_MAX_MINOR=13
 fi
 
+existing_tool_python_compatible() {
+    [ -z "${KOLEGA_CODE_VERSION:-}" ] || return 1
+    tool_dir="${UV_TOOL_DIR:-$(uv tool dir 2>/dev/null || true)}"
+    [ -n "$tool_dir" ] || return 1
+    env_dir="$tool_dir/$PACKAGE_NAME"
+    [ -f "$env_dir/uv-receipt.toml" ] || return 1
+    [ -x "$env_dir/bin/python" ] || return 1
+    "$env_dir/bin/python" -c "import sys; sys.exit(0 if (3, 11, 5) <= sys.version_info[:3] < (3, $PYTHON_MAX_MINOR, 0) else 1)" >/dev/null 2>&1
+}
+
 info "Installing or updating $PACKAGE_SPEC..."
-uv tool install --force --upgrade --python "$PYTHON_REQUEST" "$PACKAGE_SPEC"
+if existing_tool_python_compatible; then
+    uv tool upgrade "$PACKAGE_NAME"
+else
+    uv tool install --force --upgrade --python "$PYTHON_REQUEST" "$PACKAGE_SPEC"
+fi
 
 if ! have "$PACKAGE_NAME"; then
     uv tool update-shell >/dev/null 2>&1 || true

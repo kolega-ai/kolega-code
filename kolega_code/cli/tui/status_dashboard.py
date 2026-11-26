@@ -280,8 +280,8 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             self._refresh_status_dashboard()
 
     def _apply_compaction_status(self, content: dict) -> None:
-        """Toggle the 'compaction in progress' indicator and, on finish, drop the
-        summary into the transcript as a collapsible the user can expand."""
+        """Toggle the 'compaction in progress' indicator and record finished
+        summaries or automatic compaction failures in the transcript."""
         phase = str(content.get("phase") or "")
         if phase == "started":
             self._status_state.is_compacting = True
@@ -293,11 +293,35 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             self._status_state.is_compacting = False
             self._status_state.compaction_message = ""
             if phase == "finished":
+                self._last_compaction_error = None
                 summary = content.get("summary")
                 if isinstance(summary, str) and summary.strip():
                     self._add_conversation_entry(
                         tui_state.ConversationEntry(kind="compaction_summary", content=summary.strip())
                     )
+            elif phase == "error":
+                trigger = str(content.get("trigger") or "")
+                reason = str(content.get("reason") or "")
+                raw_message = content.get("message")
+                detail = raw_message.strip() if isinstance(raw_message, str) else ""
+                if (
+                    trigger != "manual"
+                    and reason not in ("too_few", "nothing_to_summarize")
+                    and detail
+                    and detail != getattr(self, "_last_compaction_error", None)
+                ):
+                    self._last_compaction_error = detail
+                    warning = messages.AUTO_COMPACTION_FAILED.format(error=detail)
+                    self._add_conversation_entry(
+                        tui_state.ConversationEntry(kind="system", content=warning, tone="warning")
+                    )
+                    notify = getattr(self, "_notify_user", None)
+                    if callable(notify):
+                        notify(warning, severity="warning")
+                if reason not in ("too_few", "nothing_to_summarize"):
+                    check_drift = getattr(self, "_check_install_drift", None)
+                    if callable(check_drift):
+                        check_drift()
         self._refresh_status_dashboard()
 
     def _apply_context_status_update(self, content: dict) -> None:

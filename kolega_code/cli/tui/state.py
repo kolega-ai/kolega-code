@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from kolega_code.permissions import PermissionMode, PermissionRequest, PermissionRuleOption
 
@@ -390,3 +390,12 @@ class StatusDashboardState:
     context_note: str = ""
     is_compacting: bool = False
     compaction_message: str = ""
+
+
+@dataclass(frozen=True)
+class TuiExitAction:
+    """Post-quit action executed by the CLI launcher after Textual exits cleanly."""
+
+    kind: Literal["restart", "update_and_restart"]
+    session_id: str
+    project_path: Path
