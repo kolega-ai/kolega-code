@@ -6,6 +6,48 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.57.0 - 2026-11-26
+
+### Added
+
+- **Visual `/context` inspector.** Running `/context` in the TUI opens an
+  interactive modal showing a proportional grid and categorized token
+  breakdown across the system prompt, tools, MCP servers, skills, memory,
+  conversation turns, reasoning, images, and remaining space before
+  auto-compaction, with shortcuts to refresh, copy the report, or trigger
+  `/compress`.
+- **Live context-usage reminders.** Agents now receive concise,
+  user-invisible context-window utilization reminders after tool-call rounds
+  so they can pace long runs before auto-compaction. Enabled by default and
+  configurable in **Settings**, via `--context-usage-reminders on|off`, or via
+  `KOLEGA_CODE_CONTEXT_USAGE_REMINDERS`.
+- **`/restart` command.** Added `/restart` in the TUI to cleanly save state
+  and relaunch into the same session.
+
+### Changed
+
+- **Tinker catalog refresh.** Added the free 64K
+  `thinkingmachines/Inkling-2-Mini:peft:65536:free` entry and enabled vision
+  support on `zai-org/GLM-5.3-Flash:peft:262144`,
+  `deepseek-ai/DeepSeek-V4.1-Flash:peft:262144`, and
+  `deepseek-ai/DeepSeek-V4.1-Flash-1017:peft:262144`.
+- **Faster CLI startup.** Deferred `difflib` and tool-backend imports until
+  first use, speeding up `--help`, `--version`, and session listing.
+
+### Fixed
+
+- **Safe `/update` restarts and surfaced compaction errors.** `/update` now
+  saves and exits the TUI, runs the upgrade in the terminal, and relaunches
+  into the same session. `kolega-code update` and the installer preserve a
+  compatible `uv` tool Python interpreter instead of replacing it under live
+  sessions, warn when other sessions are active, pre-compile parameterized
+  prompt templates, and surface automatic compaction failures in the TUI
+  transcript instead of dropping them silently.
+- **Git < 2.31 compatibility for project memory and worktrees.** Removed the
+  unsupported `--path-format=absolute` flag when resolving repository roots so
+  older Git installations no longer create stray directories in the working
+  tree.
+
 ## 0.56.0 - 2026-11-25
 
 ### Added
