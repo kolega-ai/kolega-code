@@ -38,6 +38,33 @@ def resolve_project_identity(project_path: Path | str) -> ProjectIdentity:
     return ProjectIdentity("path", f"path:{project}", str(project))
 
 
+def _run_rev_parse(directory: Path, flag: str) -> str | None:
+    try:
+        result = run_subprocess(
+            ["git", "-C", str(directory), "rev-parse", flag],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=3,
+            env=git_env(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode:
+        return None
+    value = result.stdout.removesuffix("\n").removesuffix("\r")
+    if not value.strip() or "\n" in value or "\r" in value:
+        return None
+    return value
+
+
+def _resolve_rev_parse_path(directory: Path, value: str) -> Path:
+    resolved = Path(value)
+    if not resolved.is_absolute():
+        resolved = directory / resolved
+    return resolved.resolve(strict=False)
+
+
 def resolve_git_worktree_root(path: Path | str) -> Path | None:
     """Return the containing Git worktree root for an existing path or ancestor."""
     candidate = Path(path).expanduser().resolve(strict=False)
@@ -45,28 +72,10 @@ def resolve_git_worktree_root(path: Path | str) -> Path | None:
         candidate = candidate.parent
     if candidate.is_file():
         candidate = candidate.parent
-    commands = (
-        ["git", "-C", str(candidate), "rev-parse", "--path-format=absolute", "--show-toplevel"],
-        ["git", "-C", str(candidate), "rev-parse", "--show-toplevel"],
-    )
-    for command in commands:
-        try:
-            result = run_subprocess(
-                command,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=3,
-                env=git_env(),
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        if result.returncode:
-            continue
-        value = result.stdout.strip()
-        if value:
-            return Path(value).resolve(strict=False)
-    return None
+    value = _run_rev_parse(candidate, "--show-toplevel")
+    if value is None or value == "--show-toplevel":
+        return None
+    return _resolve_rev_parse_path(candidate, value)
 
 
 def resolve_git_common_dir(path: Path | str) -> Path | None:
@@ -76,29 +85,12 @@ def resolve_git_common_dir(path: Path | str) -> Path | None:
     checkout. The returned path is absolute but is not required to exist.
     """
     project = Path(path).expanduser().resolve()
-    commands = (
-        ["git", "-C", str(project), "rev-parse", "--path-format=absolute", "--git-common-dir"],
-        ["git", "-C", str(project), "rev-parse", "--git-common-dir"],
-    )
-    for command in commands:
-        try:
-            result = run_subprocess(
-                command,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=3,
-                env=git_env(),
-            )
-        except (OSError, subprocess.SubprocessError):
+    value = _run_rev_parse(project, "--git-common-dir")
+    if value == "--git-common-dir":
+        # Older Git echoes unknown rev-parse flags verbatim with exit code 0.
+        value = _run_rev_parse(project, "--git-dir")
+        if value == "--git-dir":
             return None
-        if result.returncode:
-            continue
-        value = result.stdout.strip()
-        if not value:
-            continue
-        path = Path(value)
-        if not path.is_absolute():
-            path = project / path
-        return path
-    return None
+    if value is None:
+        return None
+    return _resolve_rev_parse_path(project, value)
