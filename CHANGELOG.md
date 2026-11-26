@@ -6,6 +6,15 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.57.1 - 2026-11-26
+
+### Changed
+
+- **Faster Hashline reads and TUI turn shutdown.** Memoized Hashline
+  line-hash digests for repeated reads, and released inline turn callers
+  promptly on completion so TUI shutdown no longer stalls on a forced drain
+  timeout.
+
 ### Fixed
 
 - **`usage_recorder` without Langfuse.** `InstrumentedLLMClient` and
