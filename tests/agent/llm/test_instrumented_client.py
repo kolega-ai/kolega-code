@@ -599,3 +599,99 @@ async def test_real_langfuse_sdk_stream_preserves_host_span_attributes(request: 
     assert generation_parent.span_id == trace_context.span_id
     assert dict(trace.attributes or {})["user.id"] == "user-789"
     assert dict(generation.attributes or {})["user.id"] == "user-789"
+
+
+@pytest.mark.asyncio
+async def test_stream_without_langfuse_or_usage_recorder_uses_base_stream():
+    """Keep the zero-overhead fallback when neither Langfuse nor usage_recorder is set."""
+    client = InstrumentedLLMClient(
+        provider="anthropic",
+        api_key="test-key",
+        langfuse_client=None,
+        usage_recorder=None,
+    )
+    mock_stream = AsyncMock()
+    with patch("kolega_code.llm.client.LLMClient.stream", MagicMock(return_value=mock_stream)):
+        messages = MessageHistory([Message(role="user", content=[TextBlock(text="Hello")])])
+        result = client.stream(messages=messages, model="claude-3-opus")
+        assert result is mock_stream
+
+
+@pytest.mark.asyncio
+async def test_stream_without_langfuse_handles_stream_init_failure():
+    """Stream initialization errors propagate cleanly when Langfuse is None."""
+    recorded: list[dict[str, Any]] = []
+    client = InstrumentedLLMClient(
+        provider="anthropic",
+        api_key="test-key",
+        langfuse_client=None,
+        usage_recorder=recorded.append,
+    )
+    with patch("kolega_code.llm.client.LLMClient.stream", MagicMock(side_effect=RuntimeError("init boom"))):
+        messages = MessageHistory([Message(role="user", content=[TextBlock(text="Hello")])])
+        stream_coro = cast(
+            Coroutine[Any, Any, AsyncContextManager[Any]],
+            client.stream(messages=messages, model="claude-3-opus"),
+        )
+        with pytest.raises(RuntimeError, match="init boom"):
+            await stream_coro
+    assert recorded == []
+
+
+@pytest.mark.asyncio
+async def test_stream_without_langfuse_settles_ledger_and_records_usage_once():
+    from kolega_code.llm.ledger import UsageLedger
+
+    from .test_client_ledger import _FakeProvider, _messages
+
+    recorded: list[dict[str, Any]] = []
+    ledger = UsageLedger()
+    provider = _FakeProvider()
+    client = InstrumentedLLMClient(
+        provider="anthropic",
+        api_key="test-key",
+        langfuse_client=None,
+        usage_recorder=recorded.append,
+        usage_ledger=ledger,
+    )
+    client.provider = cast(Any, provider)
+
+    stream_cm = await cast(Any, client.stream(messages=_messages(), model="claude-opus-5"))
+    async with stream_cm as stream:
+        async for _ in stream:
+            pass
+    final = await stream.get_final_message()
+
+    assert final is provider.wrapper.message
+    assert len(recorded) == 1
+    assert recorded[0]["model"] == "claude-opus-5"
+    assert recorded[0]["success"] is True
+    snap = ledger.snapshot()
+    assert (snap.requests, snap.responses, snap.reported) == (1, 1, 1)
+
+
+def test_agent_context_creates_instrumented_client_for_usage_recorder_without_langfuse(tmp_path):
+    import uuid
+
+    from kolega_code.agent.coder import CoderAgent
+    from kolega_code.agent.prompt_provider import AgentMode
+    from kolega_code.events import AgentConnectionManager
+
+    from ..compaction_helpers import make_agent_config
+
+    recorded: list[dict[str, Any]] = []
+    recorder = recorded.append
+    agent = CoderAgent(
+        project_path=tmp_path,
+        workspace_id="test_ws",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=AsyncMock(spec=AgentConnectionManager),
+        config=make_agent_config(),
+        agent_mode=AgentMode.CLI,
+        langfuse_client=None,
+        usage_recorder=recorder,
+    )
+    client = agent.context.create_llm_client(agent.agent_name)
+    assert isinstance(client, InstrumentedLLMClient)
+    assert client.langfuse is None
+    assert client.usage_recorder is recorder

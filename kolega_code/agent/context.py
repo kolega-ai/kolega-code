@@ -106,7 +106,7 @@ class AgentContext:
     hook_dispatcher: HookDispatcher = NO_OP_DISPATCHER
 
     def create_llm_client(self, agent_name: str) -> LLMClient:
-        """Create the LLM client, instrumented when a Langfuse client is available.
+        """Create the LLM client, instrumented when Langfuse or usage recording is enabled.
 
         The client is bound to the provider for this agent's role (which may differ
         from the global model when a per-agent override is configured); the model id
@@ -115,7 +115,7 @@ class AgentContext:
         model_config = self.config.model_config_for_agent(agent_name)
         connection_kwargs = self.config.llm_client_kwargs(model_config)
 
-        if self.telemetry.langfuse_client:
+        if self.telemetry.langfuse_client or self.telemetry.usage_recorder:
             return InstrumentedLLMClient(
                 provider=model_config.provider,
                 api_key=self.config.get_api_key(model_config.provider) or "",
