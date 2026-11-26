@@ -89,7 +89,8 @@ TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     SlashCommandEntry("diagnostics", "Show version, model/endpoint, and the diagnostics log path", CommandScope.TUI),
     SlashCommandEntry("bug", "Bundle local diagnostics into a shareable file for a bug report", CommandScope.TUI),
     SlashCommandEntry("version", "Show the Kolega Code version", CommandScope.TUI),
-    SlashCommandEntry("update", "Update Kolega Code to the latest version", CommandScope.TUI),
+    SlashCommandEntry("update", "Update Kolega Code to the latest version and restart", CommandScope.TUI),
+    SlashCommandEntry("restart", "Save the session and restart Kolega Code", CommandScope.TUI),
     SlashCommandEntry("quit", "Save the session and exit", CommandScope.TUI),
     SlashCommandEntry("exit", "Save the session and exit", CommandScope.TUI),
 )

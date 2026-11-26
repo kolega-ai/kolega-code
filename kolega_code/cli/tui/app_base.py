@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from ..diagnostics import DiagnosticsLog, ResponsivenessWatchdog
     from ..file_index import WorkspaceFileIndex
     from ..goal import GoalState
+    from ..updater import InstallDrift, InstallFingerprint
     from ..loop import LoopSpec, LoopState
     from ..session_journal import SessionRecorder
     from ..session_store import SessionRecord, SessionStore
@@ -159,6 +160,7 @@ class KolegaAppBase(App):
         _session_started: bool
         #: True only after persistence and teardown; gates relaunch and quit hints.
         _quit_cleanly: bool
+        exit_action: tui_state.TuiExitAction | None
         _agent_cleanup_failed: bool
         _startup_pending: bool
         agent: BaseAgent | None
@@ -244,6 +246,12 @@ class KolegaAppBase(App):
         _queued_messages: list[tui_state.QueuedMessage]
         _queued_message_seq: int
         _vision_warning_shown: bool
+        _last_compaction_error: str | None
+        _install_fingerprint: InstallFingerprint | None
+        _install_drift_warned: InstallDrift | None
+
+        def _check_install_drift(self) -> bool: ...
+
         _permission_lock: asyncio.Lock
         _persistence_lock: asyncio.Lock
         _pending_session_saves: set[asyncio.Task[None]]

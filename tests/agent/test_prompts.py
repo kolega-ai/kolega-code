@@ -267,6 +267,50 @@ def test_gigacode_guide_recommends_leaf_workers_by_default() -> None:
     assert "defaults to `1`" in GIGACODE_AUTHORING_GUIDE
     assert "hard maximum" in GIGACODE_AUTHORING_GUIDE
     assert "is `2`" in GIGACODE_AUTHORING_GUIDE
+
+
+def test_parameterized_prompts_render_after_template_dir_disappears(monkeypatch) -> None:
+    # Simulate an out-of-band uv tool upgrade removing the running interpreter's
+    # site-packages directory after module import.
+    monkeypatch.setattr(prompts._LOADER, "searchpath", [])
+
+    assert "hello" in prompts.build_compression_summary_user_prompt("hello", previous_summary="prev")
+    assert "transcript" in prompts.build_handoff_user_prompt("transcript", focus="tests")
+    assert prompts.build_silent_turn_nudge(1)
+    assert prompts.build_truncated_turn_nudge(1)
+    assert prompts.build_interrupted_turn_nudge(1)
+    assert "plan" in prompts.build_implement_plan_prompt("plan")
+    assert "/tmp/plan.md" in prompts.build_current_plan_artifact_prompt("/tmp/plan.md")
+    assert "/tmp/scratch" in prompts.build_scratchpad_prompt("/tmp/scratch")
+    assert prompts.build_worktree_control_prompt(plan_mode=False)
+    assert "edit" in prompts.build_mode_switch_notice(to_plan=True, removed_tools=["edit"], added_tools=[])
+    assert prompts.build_init_agents_prompt("")
+    assert "skill-a" in prompts.build_skill_catalog_prompt("skill-a")
+
+
+def test_every_prompts_module_template_is_preloaded(monkeypatch) -> None:
+    import ast
+
+    tree = ast.parse(Path(prompts.__file__).read_text(encoding="utf-8"))
+    referenced: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "render_prompt_template"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            referenced.add(node.args[0].value)
+
+    assert referenced
+    assert prompts._ENV.auto_reload is False
+    # With no searchpath on disk, every template referenced in prompts.py must
+    # already be compiled in _prompt_template's cache.
+    monkeypatch.setattr(prompts._LOADER, "searchpath", [])
+    for name in sorted(referenced):
+        assert prompts._prompt_template(name) is not None
     assert "parallel()" in GIGACODE_AUTHORING_GUIDE
     assert "pipeline()" in GIGACODE_AUTHORING_GUIDE
 

@@ -11,13 +11,14 @@ import io
 import json
 import logging
 import os
+import shutil
 import sys
 import threading
 import uuid
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, Optional, cast
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional, cast
 
 from kolega_code.agent import CoderAgent
 from kolega_code.config import EditProtocol
@@ -156,7 +157,18 @@ from .skills import (
     activated_skill_names,
     discover_skills,
 )
-from .updater import check_for_update, current_version, run_self_update, update_status_message
+from .updater import (
+    PACKAGE_NAME,
+    check_for_update,
+    count_other_live_sessions,
+    current_version,
+    other_live_sessions_note,
+    run_self_update,
+    update_status_message,
+)
+
+if TYPE_CHECKING:
+    from .tui.state import TuiExitAction
 
 SUBCOMMANDS = {
     "ask",
@@ -989,6 +1001,9 @@ def _run_update() -> int:
         print("Kolega Code update completed. Run `kolega-code --version` to confirm.")
         for note in result.gateway_restart_notes:
             print(f"gateway: {note}")
+        sessions_note = other_live_sessions_note(count_other_live_sessions())
+        if sessions_note:
+            _print_styled(sessions_note, style="warning")
     elif not result.error:
         _print_styled("Kolega Code update failed.", style="error", stderr=True)
     return result.returncode
@@ -1308,7 +1323,178 @@ async def _close_tui_app(app: Any) -> None:
         raise cleanup_error
 
 
-async def _run_tui_loop(launch: _TuiLaunch, initial_project_path: Path) -> None:
+_RESTART_STRIPPED_ARG_DESTS: frozenset[str] = frozenset(
+    {
+        "help",
+        "command",
+        "version",
+        "project_path",
+        "new",
+        "resume",
+        "session",
+        "name",
+        "permission_mode",
+        "trust_hooks",
+        "trust_mcp",
+        "trust_lsp",
+        "worktree",
+        "create_worktree",
+        "worktree_from",
+        "worktree_path",
+        "deprecated_thinking_tokens",
+    }
+)
+_RESTART_PRESERVED_FLAG_ARGS: tuple[tuple[str, str], ...] = (
+    ("browser_visible", "--browser-visible"),
+    ("show_logs", "--show-logs"),
+    ("endpoint_vision", "--endpoint-vision"),
+)
+_RESTART_PRESERVED_VALUE_ARGS: tuple[tuple[str, str], ...] = (
+    ("mode", "--mode"),
+    ("state_dir", "--state-dir"),
+    ("lsp", "--lsp"),
+    ("subagents", "--subagents"),
+    ("skills", "--skills"),
+    ("provider", "--provider"),
+    ("model", "--model"),
+    ("fast_provider", "--fast-provider"),
+    ("fast_model", "--fast-model"),
+    ("thinking_effort", "--thinking-effort"),
+    ("custom_endpoints", "--custom-endpoints"),
+    ("endpoint_url", "--endpoint-url"),
+    ("endpoint_style", "--endpoint-style"),
+    ("endpoint_api_key", "--endpoint-api-key"),
+    ("endpoint_context", "--endpoint-context"),
+    ("endpoint_max_output", "--endpoint-max-output"),
+    ("endpoint_thinking", "--endpoint-thinking"),
+    ("endpoint_reasoning", "--endpoint-reasoning"),
+    ("endpoint_temperature", "--endpoint-temperature"),
+    ("environment", "--environment"),
+    ("compression_threshold", "--compression-threshold"),
+    ("context_window_tokens", "--context-window-tokens"),
+    ("max_output_tokens", "--max-output-tokens"),
+    ("edit_protocol", "--edit-protocol"),
+    ("extension", "--extension"),
+    ("extension_config", "--extension-config"),
+)
+
+
+def _capture_launch_executable(argv0: str | None = None) -> Path | None:
+    """Resolve the CLI entrypoint path at launch without following symlinks.
+
+    Keeping the symlink path (e.g. ``~/.local/bin/kolega-code``) means an
+    in-place uv tool replacement still execs the newly installed interpreter.
+    """
+    raw = (sys.argv[0] if sys.argv else "") if argv0 is None else argv0
+    if not raw:
+        return None
+    if os.sep in raw or (os.altsep is not None and os.altsep in raw):
+        candidate = Path(os.path.abspath(os.path.expanduser(raw)))
+    else:
+        found = shutil.which(raw)
+        if not found:
+            return None
+        candidate = Path(os.path.abspath(found))
+    if not candidate.is_file() or not os.access(candidate, os.X_OK):
+        return None
+    if candidate.suffix.lower() in {".py", ".pyc", ".pyo"}:
+        return None
+    if not candidate.name.lower().startswith("kolega"):
+        return None
+    return candidate
+
+
+def _build_restart_args(args: argparse.Namespace, action: TuiExitAction) -> list[str]:
+    """Reconstruct TUI CLI args to resume ``action.session_id`` after restart."""
+    restart_args = ["tui", str(action.project_path), "--resume", action.session_id]
+    for dest, flag in _RESTART_PRESERVED_FLAG_ARGS:
+        if getattr(args, dest, False):
+            restart_args.append(flag)
+    for dest, flag in _RESTART_PRESERVED_VALUE_ARGS:
+        value = getattr(args, dest, None)
+        if value is None:
+            continue
+        if dest == "mode" and value == CLI_AGENT_MODE:
+            continue
+        restart_args.extend([flag, str(value)])
+    return restart_args
+
+
+def _resolve_restart_command(
+    launch_executable: Path | None,
+    restart_args: list[str],
+    *,
+    prefer_installed_cli: bool,
+) -> tuple[str, list[str]] | None:
+    if launch_executable is not None and launch_executable.is_file() and os.access(launch_executable, os.X_OK):
+        exe = str(launch_executable)
+        return exe, [exe, *restart_args]
+    which_cli = shutil.which(PACKAGE_NAME)
+    if prefer_installed_cli and which_cli:
+        return which_cli, [which_cli, *restart_args]
+    if sys.executable and Path(sys.executable).is_file():
+        return sys.executable, [sys.executable, "-m", "kolega_code.cli.main", *restart_args]
+    if which_cli:
+        return which_cli, [which_cli, *restart_args]
+    return None
+
+
+def _exec_replace_process(exec_path: str, exec_argv: list[str]) -> int:
+    if sys.platform == "win32":
+        import subprocess
+
+        return subprocess.call(exec_argv)
+    os.execv(exec_path, exec_argv)
+    return 0  # pragma: no cover - os.execv does not return on success
+
+
+def _execute_tui_exit_action(
+    args: argparse.Namespace,
+    action: TuiExitAction,
+    *,
+    launch_executable: Path | None,
+    state_root: Path,
+) -> int:
+    if action.kind == "update_and_restart":
+        print(messages.UPDATE_STARTED)
+        result = run_self_update()
+        if result.error:
+            _print_styled(result.error, style="error", stderr=True)
+        if result.returncode != 0:
+            if not result.error:
+                _print_styled(messages.UPDATE_FAILED.format(code=result.returncode), style="error", stderr=True)
+            _print_quit_resume_hint(action.session_id)
+            return result.returncode
+        for note in result.gateway_restart_notes:
+            print(f"gateway: {note}")
+        sessions_note = other_live_sessions_note(count_other_live_sessions(state_root))
+        if sessions_note:
+            _print_styled(sessions_note, style="warning")
+
+    print(messages.RESTARTING_CLI)
+    restart_args = _build_restart_args(args, action)
+    resolved = _resolve_restart_command(
+        launch_executable,
+        restart_args,
+        prefer_installed_cli=(action.kind == "update_and_restart"),
+    )
+    if resolved is None:
+        _print_styled("Could not locate the kolega-code executable to restart.", style="error", stderr=True)
+        _print_quit_resume_hint(action.session_id)
+        return 1
+
+    exec_path, exec_argv = resolved
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        return _exec_replace_process(exec_path, exec_argv)
+    except OSError as exc:
+        _print_styled(f"Could not restart Kolega Code: {exc}", style="error", stderr=True)
+        _print_quit_resume_hint(action.session_id)
+        return 1
+
+
+async def _run_tui_loop(launch: _TuiLaunch, initial_project_path: Path) -> Optional[TuiExitAction]:
     next_project_path = initial_project_path
     next_session: SessionRecord | None = None
     apply_name = True
@@ -1326,6 +1512,7 @@ async def _run_tui_loop(launch: _TuiLaunch, initial_project_path: Path) -> None:
 
         clean_quit = bool(getattr(app, "_quit_cleanly", False)) and not getattr(app, "_agent_cleanup_failed", False)
         selected = getattr(app, "resume_session", None)
+        exit_action = getattr(app, "exit_action", None)
         current_session_id = getattr(app.session, "session_id", launch.crash_context["session_id"])
         if clean_quit and selected is not None:
             if current_session_id and current_session_id != selected.session_id:
@@ -1336,11 +1523,14 @@ async def _run_tui_loop(launch: _TuiLaunch, initial_project_path: Path) -> None:
             launch.armed_watchdogs.pop().set()
             continue
 
+        if clean_quit and exit_action is not None:
+            return exit_action
+
         # Normal quit only: action_quit set _quit_cleanly after saving the
         # session, so the terminal now shows how to resume exactly this one.
         if clean_quit and current_session_id:
             _print_quit_resume_hint(current_session_id)
-        break
+        return None
 
 
 def _run_tui(args: argparse.Namespace) -> int:
@@ -1348,6 +1538,7 @@ def _run_tui(args: argparse.Namespace) -> int:
         print("Textual is not installed. Reinstall the CLI with: kolega-code update", file=sys.stderr)
         return 2
 
+    launch_executable = _capture_launch_executable()
     launch = _TuiLaunch(
         args=args,
         store=_store_from_args(args),
@@ -1362,6 +1553,7 @@ def _run_tui(args: argparse.Namespace) -> int:
         },
         armed_watchdogs=[],
     )
+    exit_action: Optional[TuiExitAction] = None
     try:
         initial_project_path = _select_startup_project(args.project_path, args)
         try:
@@ -1371,7 +1563,7 @@ def _run_tui(args: argparse.Namespace) -> int:
             return 1
 
         try:
-            asyncio.run(_run_tui_loop(launch, initial_project_path))
+            exit_action = asyncio.run(_run_tui_loop(launch, initial_project_path))
         except Exception as exc:  # noqa: BLE001 — last-resort crash capture before re-raising
             settings = launch.crash_context.get("settings")
             project_path = launch.crash_context.get("project_path")
@@ -1403,12 +1595,20 @@ def _run_tui(args: argparse.Namespace) -> int:
                     stderr=True,
                 )
             raise
-        return 0
     finally:
         # Control came back, so leave no watchdog armed to kill a later caller.
         for cancel in launch.armed_watchdogs:
             cancel.set()
         launch.store.release_session_locks()
+
+    if exit_action is not None:
+        return _execute_tui_exit_action(
+            args,
+            exit_action,
+            launch_executable=launch_executable,
+            state_root=launch.store.root,
+        )
+    return 0
 
 
 def known_secret_values(

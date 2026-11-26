@@ -1287,7 +1287,7 @@ class BaseAgent(LogMixin):
         async def on_error(message: str) -> None:
             await self.log_error(message, sender=self.agent_name)
 
-        await self.emitter.compaction_status("started", "Compacting conversation…")
+        await self.emitter.compaction_status("started", "Compacting conversation…", trigger=trigger)
         try:
             compaction_system_prompt = None
             compaction_override = self.prompt_overrides.load_compaction_system_prompt()
@@ -1342,7 +1342,9 @@ class BaseAgent(LogMixin):
 
         phase = "finished" if result.ok else "error"
         summary_text = self.conversation.summary.get_text_content() if result.ok and self.conversation.summary else ""
-        await self.emitter.compaction_status(phase, result.message, summary=summary_text)
+        await self.emitter.compaction_status(
+            phase, result.message, summary=summary_text, trigger=trigger, reason=result.reason
+        )
         return result
 
     async def _auto_compact_once(

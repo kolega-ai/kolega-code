@@ -43,6 +43,7 @@ def test_agent_command_names_match_command_processor():
     # the model, which answered it with a failed get_task_list call.
     assert "/tasks" in TUI_COMMAND_NAMES
     assert "/loop" in TUI_COMMAND_NAMES
+    assert "/restart" in TUI_COMMAND_NAMES
     assert "/exit" in TUI_COMMAND_NAMES
 
 
@@ -68,6 +69,7 @@ def test_all_command_entries_include_each_scope():
     assert by_name["queue-clear"].scope is CommandScope.TUI
     assert "queue" not in by_name
     assert by_name["tasks"].scope is CommandScope.TUI
+    assert by_name["restart"].scope is CommandScope.TUI
     assert by_name["exit"].scope is CommandScope.TUI
     assert by_name["demo-skill"].scope is CommandScope.SKILL
 

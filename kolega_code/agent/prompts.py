@@ -17,6 +17,7 @@ _ENV = jinja2.Environment(
     trim_blocks=True,
     lstrip_blocks=True,
     keep_trailing_newline=True,
+    auto_reload=False,
 )
 
 
@@ -45,6 +46,25 @@ SHARED_TASK_LIST_READONLY_PROMPT = render_prompt_template("extensions/cli/shared
 PLANNING_QUESTION_PROMPT = render_prompt_template("extensions/cli/planning_questions.md")
 BUILD_QUESTION_PROMPT = render_prompt_template("extensions/cli/build_questions.md")
 SILENT_TURN_EXHAUSTED_NOTICE = render_prompt_template("auxiliary/agent_loop/silent_turn_exhausted.user.md")
+
+_PRELOADED_TEMPLATES: tuple[str, ...] = (
+    "auxiliary/compression/summary.user.md.j2",
+    "auxiliary/handoff/document.user.md.j2",
+    "auxiliary/agent_loop/silent_turn_nudge.user.md.j2",
+    "auxiliary/agent_loop/truncated_turn_nudge.user.md.j2",
+    "auxiliary/agent_loop/interrupted_turn_nudge.user.md.j2",
+    "user_tasks/cli/implement_plan.md.j2",
+    "extensions/cli/current_plan_artifact.md.j2",
+    "extensions/cli/scratchpad.md.j2",
+    "extensions/cli/worktree_control.md.j2",
+    "extensions/cli/mode_switch_notice.md.j2",
+    "user_tasks/cli/init_agents.md.j2",
+    "extensions/skills/catalog.md.j2",
+)
+# Pre-compile parameterized templates so long sessions never make a cold disk
+# read on first compaction/handoff/nudge after an out-of-band package update.
+for _template_name in _PRELOADED_TEMPLATES:
+    _prompt_template(_template_name)
 
 
 def build_compression_summary_user_prompt(history: str, previous_summary: Optional[str] = None) -> str:

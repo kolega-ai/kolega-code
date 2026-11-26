@@ -236,8 +236,8 @@ SHARE_UNREDACTED_NOTE = (
 )
 VERSION_INFO = "Kolega Code version {version}."
 UPDATE_STARTED = "Updating Kolega Code…"
-UPDATE_COMPLETED = "Kolega Code update completed. Restart this TUI to use the updated version."
 UPDATE_FAILED = "Kolega Code update failed with exit code {code}."
+RESTARTING_CLI = "Restarting Kolega Code…"
 
 # Blockers
 BLOCK_STOP_BEFORE_RESET = "Stop the current turn before resetting the thread."
@@ -247,6 +247,7 @@ BLOCK_STOP_BEFORE_SKILL = "Stop the current turn before activating a skill."
 BLOCK_STOP_BEFORE_MODEL_SWITCH = "Stop the current turn before switching models."
 BLOCK_STOP_BEFORE_EFFORT_SWITCH = "Stop the current turn before switching thinking effort."
 BLOCK_STOP_BEFORE_UPDATE = "Stop the current turn before updating Kolega Code."
+BLOCK_STOP_BEFORE_RESTART = "Stop the current turn before restarting Kolega Code."
 BLOCK_STOP_BEFORE_HANDOFF = "Stop the current turn before handing off the session."
 BLOCK_PLAN_DECISION = "Choose Implement plan or Discuss further before sending another message."
 BLOCK_PLAN_DECISION_INIT = "Choose Implement plan or Discuss further before running /init."
@@ -327,6 +328,7 @@ STATUS_TOKENS_UNKNOWN = "Token counts unavailable."
 STATUS_WORKTREE_LABEL = "Worktree"
 COMPACTING = "Compacting conversation…"
 COMPACTION_SUMMARY_TITLE = "Conversation compacted — summary"
+AUTO_COMPACTION_FAILED = "Automatic compression failed: {error}"
 
 # Logs
 LOG_IGNORED_EVENT = "Ignored non-display event: {event_type}"

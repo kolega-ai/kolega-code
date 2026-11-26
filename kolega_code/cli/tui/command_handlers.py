@@ -7,7 +7,7 @@ from concurrent.futures import CancelledError as ExportCancelledError
 from contextvars import copy_context
 from functools import partial
 from pathlib import Path
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Literal, Optional
 
 
 from kolega_code.agent import PromptExtension
@@ -51,7 +51,7 @@ from ..provider_registry import (
 )
 from ..skills import activated_skill_names, skill_activation_label
 from ..slash_commands import SKILLS_LIST_COMMAND, TUI_COMMAND_NAMES, agent_command_names
-from ..updater import check_for_update, run_self_update, update_status_message
+from ..updater import check_for_update, update_status_message
 from . import app_base as tui_app_base
 from . import constants as tui_constants
 from . import mcp_ops
@@ -102,6 +102,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             "/bug": self._command_bug,
             "/version": self._command_version,
             "/update": self._command_update,
+            "/restart": self._command_restart,
             "/quit": self._command_quit,
             "/exit": self._command_quit,
         }
@@ -1738,33 +1739,35 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             lines.append(update_message)
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content="\n".join(lines)))
 
-    async def _command_update(self, args: str) -> None:
-        if self._turn_active or self.agent_worker is not None or self._agent_execution_draining():
-            self._show_composer_hint(messages.BLOCK_STOP_BEFORE_UPDATE)
-            self._notify_user(messages.BLOCK_STOP_BEFORE_UPDATE, severity="warning")
+    async def _request_exit_action(
+        self,
+        kind: Literal["restart", "update_and_restart"],
+        *,
+        blocker_message: str,
+    ) -> None:
+        if (
+            self._turn_active
+            or self.agent_worker is not None
+            or self._agent_execution_draining()
+            or self._handoff_in_progress
+        ):
+            self._show_composer_hint(blocker_message)
+            self._notify_user(blocker_message, severity="warning")
             return
+        self.exit_action = tui_state.TuiExitAction(
+            kind=kind,
+            session_id=self.session.session_id,
+            project_path=Path(self.session.project_path),
+        )
+        await self.action_quit()
+        if not self._quit_cleanly:
+            self.exit_action = None
 
-        self._notify_user(messages.UPDATE_STARTED)
-        result = await asyncio.to_thread(run_self_update, capture_output=True)
-        severity = "information" if result.returncode == 0 else "error"
-        if result.returncode == 0:
-            lines = [messages.UPDATE_COMPLETED]
-            for note in result.gateway_restart_notes:
-                lines.append(f"Gateway: {note}")
-        else:
-            lines = [messages.UPDATE_FAILED.format(code=result.returncode)]
-            if result.error:
-                lines.append(result.error)
+    async def _command_update(self, args: str) -> None:
+        await self._request_exit_action("update_and_restart", blocker_message=messages.BLOCK_STOP_BEFORE_UPDATE)
 
-        output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
-        if output:
-            if len(output) > 4000:
-                output = "[output truncated]\n" + output[-4000:]
-            lines.extend(["", "Output:", "```text", output, "```"])
-
-        content = "\n".join(lines)
-        self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=content))
-        self._notify_user(lines[0], severity=severity)
+    async def _command_restart(self, args: str) -> None:
+        await self._request_exit_action("restart", blocker_message=messages.BLOCK_STOP_BEFORE_RESTART)
 
     async def _command_queue_clear(self, args: str) -> None:
         count = self._clear_queued_messages()

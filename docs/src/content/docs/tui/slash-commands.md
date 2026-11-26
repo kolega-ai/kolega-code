@@ -62,7 +62,8 @@ These control the app and your session.
 | `/diagnostics` | Show version, model/endpoint, and the local diagnostics log path |
 | `/bug` | Package local diagnostics into a shareable zip for a bug report |
 | `/version` | Show the Kolega Code version |
-| `/update` | Update Kolega Code to the latest version |
+| `/update` | Update Kolega Code to the latest version and restart into this session |
+| `/restart` | Save the session and restart Kolega Code |
 | `/quit` | Save the session and exit |
 | `/exit` | Save the session and exit |
 
