@@ -82,6 +82,8 @@ PARAM_ALIASES: Dict[str, Dict[str, ParamAlias]] = {
         # regardless.
         "timeout": ParamAlias("yield_time_ms", transform=_timeout_to_yield_ms),
         "cmd": ParamAlias("command"),
+        # Seen 2× (deepseek-v4-flash): mirror of eval.command -> code.
+        "code": ParamAlias("command"),
         # Seen 9×, borrowed from eval's title. Purely cosmetic: discard.
         "title": ParamAlias(),
     },
@@ -89,6 +91,8 @@ PARAM_ALIASES: Dict[str, Dict[str, ParamAlias]] = {
         # Seen 36× as eval "missing required argument: code" — exec-style
         # cross-over of exec_command's payload name.
         "command": ParamAlias("code"),
+        # Seen 2× (deepseek-v4-flash): companion to exec_command.cmd.
+        "cmd": ParamAlias("code"),
     },
     # ``read`` merged ``read_entire_file``/``read_file_section`` into one tool
     # with a canonical ``file_path`` parameter (like claude_edit/claude_write),
@@ -96,6 +100,13 @@ PARAM_ALIASES: Dict[str, Dict[str, ParamAlias]] = {
     # so models will cross-contaminate. Map-and-accept: ``file_path`` stays
     # canonical in the schema.
     "read": {
+        "path": ParamAlias("file_path"),
+        "start_line": ParamAlias("offset"),
+    },
+    # Under claude_code, ``edit`` binds to claude_edit(file_path, ...); under
+    # search_replace and hashline_v2, ``path`` is canonical so the signature
+    # guard passes it through untouched.
+    "edit": {
         "path": ParamAlias("file_path"),
     },
     # The tool NAME ``write`` binds to different callables per edit protocol:
@@ -109,6 +120,14 @@ PARAM_ALIASES: Dict[str, Dict[str, ParamAlias]] = {
     # search_replace.
     "write": {
         "path": ParamAlias("file_path"),
+    },
+    # Seen 4×: apply_patch only takes ``input``.
+    "apply_patch": {
+        "patch": ParamAlias("input"),
+    },
+    # Seen 4× (claude-opus-5): cross-contaminated from sibling web_search(query, max_results).
+    "web_fetch": {
+        "max_results": ParamAlias(),
     },
     # Seen 3× (write_memory 2, read_memory 1): the claude_code file tools spell
     # the path ``file_path``. Edit and delete share the same parameter.

@@ -24,9 +24,30 @@ ALIAS_CASES = [
     ("exec_command", "exec_command", {"command": "ls", "timeout": 5000}, {"command": "ls", "yield_time_ms": 5000}),
     ("exec_command", "exec_command", {"command": "ls", "title": "list files"}, {"command": "ls"}),
     ("exec_command", "exec_command", {"cmd": "ls"}, {"command": "ls"}),
+    ("exec_command", "exec_command", {"code": "ls"}, {"command": "ls"}),
     ("eval", "eval", {"command": "print(1)"}, {"code": "print(1)"}),
+    ("eval", "eval", {"cmd": "print(1)"}, {"code": "print(1)"}),
     ("read", "read", {"path": "a.py"}, {"file_path": "a.py"}),
+    ("read", "read", {"file_path": "a.py", "start_line": 10}, {"file_path": "a.py", "offset": 10}),
+    (
+        "claude_edit",
+        "edit",
+        {"path": "a.py", "old_string": "a", "new_string": "b"},
+        {"file_path": "a.py", "old_string": "a", "new_string": "b"},
+    ),
     ("claude_write", "write", {"path": "a.py", "content": "hello"}, {"file_path": "a.py", "content": "hello"}),
+    (
+        "apply_patch",
+        "apply_patch",
+        {"patch": "*** Begin Patch\n*** End Patch"},
+        {"input": "*** Begin Patch\n*** End Patch"},
+    ),
+    (
+        "web_fetch",
+        "web_fetch",
+        {"url": "https://example.com", "instruction": "summarize", "max_results": 5},
+        {"url": "https://example.com", "instruction": "summarize"},
+    ),
     ("read_memory", "read_memory", {"file_path": "notes.md"}, {"path": "notes.md"}),
     (
         "write_memory",
@@ -52,14 +73,24 @@ CANONICAL_WINS_CASES = [
         {"command": "ls", "yield_time_ms": 500},
     ),
     ("exec_command", "exec_command", {"command": "ls", "cmd": "rm -rf /"}, {"command": "ls"}),
+    ("exec_command", "exec_command", {"command": "ls", "code": "rm -rf /"}, {"command": "ls"}),
     ("eval", "eval", {"command": "print(1)", "code": "print(2)"}, {"code": "print(2)"}),
+    ("eval", "eval", {"cmd": "print(1)", "code": "print(2)"}, {"code": "print(2)"}),
     ("read", "read", {"path": "a.py", "file_path": "b.py"}, {"file_path": "b.py"}),
+    ("read", "read", {"file_path": "a.py", "start_line": 10, "offset": 20}, {"file_path": "a.py", "offset": 20}),
+    (
+        "claude_edit",
+        "edit",
+        {"path": "a.py", "old_string": "a", "new_string": "b", "file_path": "b.py"},
+        {"file_path": "b.py", "old_string": "a", "new_string": "b"},
+    ),
     (
         "claude_write",
         "write",
         {"path": "a.py", "content": "x", "file_path": "b.py"},
         {"file_path": "b.py", "content": "x"},
     ),
+    ("apply_patch", "apply_patch", {"patch": "ignored", "input": "canonical"}, {"input": "canonical"}),
     ("read_memory", "read_memory", {"file_path": "a.md", "path": "b.md"}, {"path": "b.md"}),
     (
         "write_memory",
@@ -169,6 +200,27 @@ async def test_write_path_passes_through_when_binding_accepts_path():
     tool = _capture_tool("write", received, binding_name="write", log_debug=log_debug)
     assert await tool.call(path="a.py", content="hello") == "ok"
     assert received == {"path": "a.py", "content": "hello"}
+    assert messages == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "binding_name, call_kwargs",
+    [
+        ("edit", {"path": "a.py", "block": "x"}),
+        ("hashline_edit", {"path": "a.py", "edits": []}),
+    ],
+)
+async def test_edit_path_passes_through_when_binding_accepts_path(binding_name, call_kwargs):
+    received = {}
+    messages = []
+
+    async def log_debug(message: str) -> None:
+        messages.append(message)
+
+    tool = _capture_tool("edit", received, binding_name=binding_name, log_debug=log_debug)
+    assert await tool.call(**call_kwargs) == "ok"
+    assert received == call_kwargs
     assert messages == []
 
 
