@@ -677,6 +677,21 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 self._refresh_shortcut_context()
                 self._schedule_maybe_start_queued_message()
                 self._wake_plan_approval()
+            # A turn awaited directly instead of through a Worker tracked its
+            # caller as the execution task. The turn has returned, so release
+            # it: otherwise shutdown waits for the caller, which is itself
+            # awaiting the shutdown, until the force-stop bound expires. A
+            # detached (draining) caller keeps ownership so its done callback
+            # still runs the post-drain recovery.
+            current = asyncio.current_task()
+            controller = self._turn_controller
+            if (
+                owner is None
+                and current is not None
+                and controller.execution_task is current
+                and current not in controller.draining_tasks
+            ):
+                controller.release_task(current)
 
     # ------------------------------------------------------------------
     # Autonomous goal loop
