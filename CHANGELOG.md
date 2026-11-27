@@ -6,6 +6,32 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.58.0 - 2026-11-27
+
+### Added
+
+- **Vercel AI Gateway provider.** Added the built-in `vercel_ai_gateway`
+  provider (`https://ai-gateway.vercel.sh/v1`) with `VERCEL_API_KEY` (or
+  `AI_GATEWAY_API_KEY`) authentication, automatic gateway prompt caching,
+  reported `usage.cost` accounting, `kolega-code models refresh --provider
+  vercel_ai_gateway` support, optional provider routing overrides, and
+  actionable free-tier billing errors.
+
+### Changed
+
+- **Broader tool parameter aliases.** Normalized additional common model
+  parameter variants (`exec_command` `code`, `eval` `cmd`, `read`
+  `start_line`, `edit` `path`, `apply_patch` `patch`, and ignored `web_fetch`
+  `max_results`) to match observed model tool calls without breaking canonical
+  schemas.
+
+### Fixed
+
+- **Native Tinker reasoning replay.** Preserved `ThinkingBlock` reasoning
+  across multi-turn tool-call histories on the `tinker` provider by routing
+  history adaptation through the model's `reasoning_content` spec instead of
+  dropping prior thinking.
+
 ## 0.57.1 - 2026-11-26
 
 ### Changed
