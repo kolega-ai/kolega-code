@@ -36,7 +36,7 @@ from ..models import (
     ToolCall,
     ToolDefinition,
 )
-from ..specs import MODEL_SPECS, get_model_specs
+from ..specs import MODEL_SPECS, get_model_specs, model_is_known
 from ..accounting import UsageObservation, publish_observation
 from ..usage import attach_normalized_usage, observation_from_metadata, read_detail_int
 from .base import BaseLLMProvider
@@ -154,7 +154,13 @@ def _build_prompt(
     return renderer.build_generation_prompt(prompt_messages)
 
 
-def _openai_messages(messages: MessageHistory, system: Optional[Message]) -> tuple[List[Dict[str, Any]], str]:
+def _openai_messages(
+    messages: MessageHistory,
+    system: Optional[Message],
+    *,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+) -> tuple[List[Dict[str, Any]], str]:
     """Convert Kolega history to OpenAI-shaped dicts plus the system text.
 
     ``MessageHistory.to_openai`` already partitions ``ToolResult`` blocks into
@@ -163,7 +169,7 @@ def _openai_messages(messages: MessageHistory, system: Optional[Message]) -> tup
     system_text = ""
     if system is not None:
         system_text = system.get_text_content()
-    return messages.to_openai(), system_text
+    return messages.to_openai(provider=provider, model=model), system_text
 
 
 def _parsed_to_message(parsed: Any, stop_reason: str) -> Message:
@@ -319,14 +325,20 @@ class TinkerProvider(BaseLLMProvider):
             self._renderer = await asyncio.to_thread(_renderer_for_base_model, base_model, effort)
         return self._renderer
 
+    def _spec_model(self, model: str) -> str:
+        if self._base_model and (self.provider_name, self._base_model) in MODEL_SPECS:
+            return self._base_model
+        if model_is_known(self.provider_name, model):
+            return model
+        if self.provider_name == "tinker":
+            return "tinker://*"
+        return model
+
     def _context_length(self, model: str) -> int:
-        base_model = self._base_model or model
-        specs = MODEL_SPECS.get(("tinker", base_model))
-        if specs is None:
-            try:
-                specs = get_model_specs("tinker", model)
-            except ValueError:
-                specs = None
+        try:
+            specs = get_model_specs(self.provider_name, self._spec_model(model))
+        except ValueError:
+            specs = None
         return int((specs or {}).get("context_length") or _FALLBACK_CONTEXT_LENGTH)
 
     async def _sample(
@@ -341,7 +353,9 @@ class TinkerProvider(BaseLLMProvider):
         await self._ensure_client(model)
         effort = params.thinking if params else None
         renderer = await self._get_renderer(model, effort)
-        openai_messages, system_text = _openai_messages(messages, system)
+        openai_messages, system_text = _openai_messages(
+            messages, system, provider=self.provider_name, model=self._spec_model(model)
+        )
         tools = list(params.tools) if params and params.tools else []
         prompt = await asyncio.to_thread(_build_prompt, renderer, openai_messages, system_text, tools, effort)
 
@@ -459,7 +473,9 @@ class TinkerProvider(BaseLLMProvider):
         await self._ensure_client(resolved_model)
         effort = kwargs.get("thinking")
         renderer = await self._get_renderer(resolved_model, effort)
-        openai_messages, system_text = _openai_messages(messages, system)
+        openai_messages, system_text = _openai_messages(
+            messages, system, provider=self.provider_name, model=self._spec_model(resolved_model)
+        )
         prompt = await asyncio.to_thread(_build_prompt, renderer, openai_messages, system_text, tools or [], effort)
         return TokenCount(input_tokens=prompt.length, output_tokens=None)
 

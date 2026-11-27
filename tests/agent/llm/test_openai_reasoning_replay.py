@@ -294,3 +294,76 @@ def test_openrouter_thinking_block_serializes_as_reasoning_on_a_tool_call_turn()
     assert out["content"] == [{"type": "text", "text": "calling the tool"}]
     assert "*Thinking:*" not in str(out["content"])
     assert out["tool_calls"][0]["id"] == "t9"
+
+
+# --- native tinker --------------------------------------------------------
+
+
+def test_reasoning_replay_field_tinker_models_and_checkpoints(monkeypatch: pytest.MonkeyPatch):
+    effort_model = "test-org/Tinker-Effort-Model"
+    plain_model = "test-org/Tinker-Plain-Model"
+    opt_out_model = "test-org/Tinker-No-Replay-Model"
+    base_spec = {
+        "context_length": 65536,
+        "max_completion_tokens": 32768,
+        "input_budget": "window_minus_output",
+        "default_temperature": 1.0,
+    }
+    monkeypatch.setitem(
+        MODEL_SPECS,
+        ("tinker", effort_model),
+        {
+            **base_spec,
+            "thinking_effort": ThinkingEffortSpec(
+                options=("none", "high"),
+                default="high",
+                mode="tinker_native_effort",
+            ),
+        },
+    )
+    monkeypatch.setitem(MODEL_SPECS, ("tinker", plain_model), dict(base_spec))
+    monkeypatch.setitem(MODEL_SPECS, ("tinker", opt_out_model), {**base_spec, "drop_prior_reasoning": True})
+
+    assert reasoning_replay_field("tinker", effort_model) == "reasoning_content"
+    assert reasoning_replay_field("tinker", plain_model) == "reasoning_content"
+    assert reasoning_replay_field("tinker", "tinker://run-1:train:0/sampler_weights/000080") == "reasoning_content"
+    assert reasoning_replay_field("tinker", "test-org/no-such-model") is None
+    assert reasoning_replay_field("tinker", opt_out_model) is None
+
+
+def test_tinker_thinking_block_serializes_as_reasoning_content(monkeypatch: pytest.MonkeyPatch):
+    model = "test-org/Tinker-Effort-Model"
+    monkeypatch.setitem(
+        MODEL_SPECS,
+        ("tinker", model),
+        {
+            "context_length": 65536,
+            "max_completion_tokens": 32768,
+            "input_budget": "window_minus_output",
+            "default_temperature": 1.0,
+            "thinking_effort": ThinkingEffortSpec(
+                options=("none", "high"),
+                default="high",
+                mode="tinker_native_effort",
+            ),
+        },
+    )
+    same_provider = _assistant(
+        ThinkingBlock(thinking="checking files"),
+        ToolCall(id="call_0", name="read", input={"file_path": "a.py"}),
+        provider="tinker",
+    )
+    foreign_provider = _assistant(
+        ThinkingBlock(thinking="foreign cot"),
+        TextBlock("answer"),
+        provider="anthropic",
+    )
+
+    out_same = MessageHistory([same_provider]).to_openai(provider="tinker", model=model)[0]
+    assert out_same["reasoning_content"] == "checking files"
+    assert out_same["content"] == ""
+    assert "*Thinking:*" not in str(out_same["content"])
+    assert out_same["tool_calls"][0]["id"] == "call_0"
+
+    out_foreign = MessageHistory([foreign_provider]).to_openai(provider="tinker", model=model)[0]
+    assert "reasoning_content" not in out_foreign
