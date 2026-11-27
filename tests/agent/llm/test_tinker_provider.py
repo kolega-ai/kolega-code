@@ -29,10 +29,12 @@ from kolega_code.llm.models import (
     ToolCall,
     ToolDefinition,
     ToolParameter,
+    ToolResult,
 )
 from kolega_code.llm.providers import tinker as tinker_provider
 from kolega_code.llm.providers.models import GenerationParams
 from kolega_code.llm.providers.tinker import TinkerProvider, TinkerTraceRecord
+from kolega_code.llm.specs import MODEL_SPECS, ThinkingEffortSpec
 
 MODEL = "Qwen/Qwen3-8B"
 CHECKPOINT = "tinker://0034d8c9-0a88-52a9-b2b7-bce7cb1e6fef:train:0/sampler_weights/000080"
@@ -545,6 +547,114 @@ async def test_effort_none_sends_zero_to_effort_aware_renderers(monkeypatch: pyt
     assert renderer.prompt_calls[0]["kwargs"] == {"effort": 0.0}
 
 
+def _multi_turn_thinking_history(assistant_provider: str = "tinker") -> MessageHistory:
+    return MessageHistory(
+        [
+            Message(role="user", content=[TextBlock(text="Read a.py")]),
+            Message(
+                role="assistant",
+                content=[
+                    ThinkingBlock(thinking="Need to inspect a.py."),
+                    ToolCall(id="call_0", name="read", input={"file_path": "a.py"}),
+                ],
+                stop_reason="tool_use",
+                usage_metadata={"provider": assistant_provider},
+            ),
+            Message(
+                role="user",
+                content=[ToolResult(tool_use_id="call_0", name="read", content="print(1)", is_error=False)],
+            ),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize(
+    ("request_model", "base_model"),
+    [
+        ("test-org/Tinker-Thinking-Model", "test-org/Tinker-Thinking-Model"),
+        (CHECKPOINT, "test-org/Tinker-Thinking-Model"),
+        (CHECKPOINT, "test-org/Uncatalogued-Checkpoint-Base"),
+        ("test-org/Uncatalogued-Direct-Base", "test-org/Uncatalogued-Direct-Base"),
+    ],
+)
+async def test_multi_turn_replays_same_provider_thinking_as_reasoning_content(
+    monkeypatch: pytest.MonkeyPatch,
+    streaming: bool,
+    request_model: str,
+    base_model: str,
+) -> None:
+    monkeypatch.setitem(
+        MODEL_SPECS,
+        ("tinker", "test-org/Tinker-Thinking-Model"),
+        {
+            "context_length": 65536,
+            "max_completion_tokens": 32768,
+            "input_budget": "window_minus_output",
+            "default_temperature": 1.0,
+            "thinking_effort": ThinkingEffortSpec(
+                options=("none", "high"),
+                default="high",
+                mode="tinker_native_effort",
+            ),
+        },
+    )
+    client = FakeSamplingClient(base_model, FakeSampleResponse([FakeSequence([1], [0.1])]))
+    renderer = FakeRenderer({"role": "assistant", "content": "Done."})
+    _patch_provider(monkeypatch, client, renderer)
+
+    provider = TinkerProvider(api_key="test-key", model=request_model)
+    history = _multi_turn_thinking_history(assistant_provider="tinker")
+    if streaming:
+        stream_cm = await provider.stream(history, SYSTEM, GenerationParams(), model=request_model)
+        async with stream_cm as stream:
+            async for _chunk in stream:
+                pass
+    else:
+        await provider.generate(history, SYSTEM, GenerationParams(), model=request_model)
+
+    sent_messages = renderer.prompt_calls[0]["messages"]
+    assistant_msg = sent_messages[1]
+    assert assistant_msg["role"] == "assistant"
+    assert assistant_msg["reasoning_content"] == "Need to inspect a.py."
+    assert assistant_msg["content"] == ""
+    assert "*Thinking:*" not in str(assistant_msg["content"])
+    assert assistant_msg["tool_calls"][0]["function"]["name"] == "read"
+    assert sent_messages[2]["role"] == "tool"
+
+
+@pytest.mark.asyncio
+async def test_count_tokens_replays_same_provider_thinking_as_reasoning_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeSamplingClient(MODEL, FakeSampleResponse([FakeSequence([1], [0.1])]))
+    renderer = FakeRenderer({"role": "assistant", "content": "Done."})
+    _patch_provider(monkeypatch, client, renderer)
+
+    provider = TinkerProvider(api_key="test-key", model=CHECKPOINT)
+    await provider.count_tokens(_multi_turn_thinking_history(), SYSTEM, model=CHECKPOINT)
+
+    assistant_msg = renderer.prompt_calls[0]["messages"][1]
+    assert assistant_msg["reasoning_content"] == "Need to inspect a.py."
+    assert assistant_msg["content"] == ""
+
+
+@pytest.mark.asyncio
+async def test_multi_turn_does_not_replay_foreign_provider_thinking_natively(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeSamplingClient(MODEL, FakeSampleResponse([FakeSequence([1], [0.1])]))
+    renderer = FakeRenderer({"role": "assistant", "content": "Done."})
+    _patch_provider(monkeypatch, client, renderer)
+
+    provider = _make_provider()
+    await provider.generate(_multi_turn_thinking_history(assistant_provider="anthropic"), SYSTEM, GenerationParams())
+
+    assistant_msg = renderer.prompt_calls[0]["messages"][1]
+    assert "reasoning_content" not in assistant_msg
+
+
 # ---------------------------------------------------------------------------
 # Real-stack tests (run only where the optional extra is installed)
 # ---------------------------------------------------------------------------
@@ -599,6 +709,117 @@ def test_build_prompt_renders_messages_and_tools_with_real_cookbook() -> None:
     )
     assert model_input.length > 0
     assert model_input.to_ints()
+
+
+@needs_native_stack
+def test_deepseek_v4_1_renderer_preserves_thinking_and_prefix_extension_with_tools() -> None:
+    """Verify real DeepSeekV4_1Renderer preserves ThinkingBlock reasoning across
+    tool-call turns and maintains the token prefix-extension property."""
+    from tinker_cookbook.renderers.deepseek_v4_1 import DeepSeekV4_1Renderer  # pyright: ignore[reportMissingImports]
+
+    special_tokens = [
+        "<｜begin▁of▁sentence｜>",
+        "<｜end▁of▁sentence｜>",
+        "<think>",
+        "</think>",
+    ]
+    special_to_id = {tok: idx for idx, tok in enumerate(special_tokens)}
+    id_to_special = {idx: tok for tok, idx in special_to_id.items()}
+    byte_offset = len(special_tokens)
+
+    class OfflineByteTokenizer:
+        def encode(self, text: str, add_special_tokens: bool = False) -> List[int]:
+            _ = add_special_tokens
+            tokens: List[int] = []
+            pos = 0
+            while pos < len(text):
+                matched = next((tok for tok in special_tokens if text.startswith(tok, pos)), None)
+                if matched is not None:
+                    tokens.append(special_to_id[matched])
+                    pos += len(matched)
+                else:
+                    tokens.extend(byte_offset + b for b in text[pos].encode("utf-8"))
+                    pos += 1
+            return tokens
+
+        def decode(self, tokens: Sequence[int]) -> str:
+            out: List[str] = []
+            buf = bytearray()
+            for tok in tokens:
+                if tok in id_to_special:
+                    if buf:
+                        out.append(buf.decode("utf-8", errors="replace"))
+                        buf.clear()
+                    out.append(id_to_special[tok])
+                else:
+                    buf.append(tok - byte_offset)
+            if buf:
+                out.append(buf.decode("utf-8", errors="replace"))
+            return "".join(out)
+
+    tokenizer = OfflineByteTokenizer()
+    renderer = DeepSeekV4_1Renderer(tokenizer)  # type: ignore[arg-type]
+    tools = [
+        ToolDefinition(
+            name="get_weather",
+            description="Get the weather",
+            parameters=[ToolParameter(name="city", type="string", description="City", required=True)],
+        )
+    ]
+
+    turn1_history = MessageHistory([Message(role="user", content=[TextBlock(text="Weather in Paris?")])])
+    turn1_openai, system_text = tinker_provider._openai_messages(
+        turn1_history, SYSTEM, provider="tinker", model=CHECKPOINT
+    )
+    turn1_prompt = tinker_provider._build_prompt(renderer, turn1_openai, system_text, tools, effort=None)
+    turn1_tokens = list(turn1_prompt.to_ints())
+
+    sampled_body = (
+        "Let me check the weather first.</think>\n\n"
+        "<｜DSML｜ calls>\n"
+        '<｜DSML｜ invoke name="get_weather">\n'
+        '<｜DSML｜ parameter name="city" string="true">Paris</｜DSML｜ parameter>\n'
+        "</｜DSML｜ invoke>\n"
+        "</｜DSML｜ calls>"
+    )
+    sampled_tokens = tokenizer.encode(sampled_body, add_special_tokens=False) + [special_to_id["<｜end▁of▁sentence｜>"]]
+    parsed, termination = renderer.parse_response(sampled_tokens)
+    assistant_msg = tinker_provider._parsed_to_message(parsed, tinker_provider._kolega_stop_reason("stop", termination))
+    assistant_msg.usage_metadata = {"provider": "tinker"}
+
+    assert any(
+        isinstance(b, ThinkingBlock) and b.thinking == "Let me check the weather first." for b in assistant_msg.content
+    )
+    assert assistant_msg.tool_calls and assistant_msg.tool_calls[0].name == "get_weather"
+
+    turn2_history = MessageHistory(
+        [
+            Message(role="user", content=[TextBlock(text="Weather in Paris?")]),
+            assistant_msg,
+            Message(
+                role="user",
+                content=[
+                    ToolResult(
+                        tool_use_id=assistant_msg.tool_calls[0].id,
+                        name="get_weather",
+                        content="Sunny, 20C",
+                        is_error=False,
+                    )
+                ],
+            ),
+        ]
+    )
+    turn2_openai, turn2_system = tinker_provider._openai_messages(
+        turn2_history, SYSTEM, provider="tinker", model=CHECKPOINT
+    )
+    turn2_prompt = tinker_provider._build_prompt(renderer, turn2_openai, turn2_system, tools, effort=None)
+    turn2_tokens = list(turn2_prompt.to_ints())
+    decoded_turn2 = tokenizer.decode(turn2_tokens)
+
+    assert "<think>Let me check the weather first.</think>" in decoded_turn2
+    assert "*Thinking:*" not in decoded_turn2
+    assert "<think></think>" not in decoded_turn2
+    assert turn2_tokens[: len(turn1_tokens) + len(sampled_tokens)] == turn1_tokens + sampled_tokens
 
 
 def test_map_tinker_errors_by_status() -> None:

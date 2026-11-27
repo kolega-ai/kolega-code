@@ -183,6 +183,10 @@ _REASONING_REPLAY_FIELDS: Dict[str, str] = {
     # assistant tool-call turns whenever reasoning is enabled.
     "openrouter": "reasoning",
     "vercel_ai_gateway": "reasoning",
+    # Native Tinker feeds OpenAI dicts into openai_messages_to_tinker(), which
+    # turns reasoning_content into a leading ThinkingPart and leaves keep/drop
+    # policy to each model's cookbook renderer.
+    "tinker": "reasoning_content",
     "together": "reasoning",
     # xAI's Chat Completions endpoint returns and accepts reasoning_content even
     # though its public docs only describe the Responses API (verified live
@@ -192,14 +196,14 @@ _REASONING_REPLAY_FIELDS: Dict[str, str] = {
     "refuseless": "reasoning_content",
 }
 
-# Chat-Completions reasoning modes whose reasoning text is replayable via a flat
-# top-level field. Responses/Anthropic/Google modes carry reasoning differently
-# and are excluded.
+# Reasoning modes whose reasoning text is replayable via a flat top-level field.
+# Responses/Anthropic/Google modes carry reasoning differently and are excluded.
 _REASONING_REPLAY_MODES = frozenset(
     {
         "openai_reasoning_effort",
         "cloudflare_reasoning_effort",
         "openrouter_reasoning",
+        "tinker_native_effort",
         "vercel_ai_gateway_reasoning",
     }
 )
