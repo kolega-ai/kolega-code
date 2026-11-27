@@ -102,11 +102,14 @@ def test_openrouter_entries_do_not_shadow_direct_provider_models() -> None:
     # tuples and the gateway is merged last, so the real invariant is that a
     # direct provider's spec is never replaced by the gateway's. Assert that
     # directly: shared ids keep their direct spec, not the gateway's markers.
-    shared = {model for provider, model in MODEL_SPECS if provider != PROVIDER and model in OPENROUTER_MODELS}
+    gateway_providers = {PROVIDER, "vercel_ai_gateway"}
+    shared = {
+        model for provider, model in MODEL_SPECS if provider not in gateway_providers and model in OPENROUTER_MODELS
+    }
     assert shared  # the overlap exists today (Qwen ids served by both)
 
     for provider, model in MODEL_SPECS:
-        if provider == PROVIDER or model not in shared:
+        if provider in gateway_providers or model not in shared:
             continue
         spec = MODEL_SPECS[(provider, model)]
         assert "featured" not in spec

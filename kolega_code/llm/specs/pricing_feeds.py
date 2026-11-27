@@ -11,6 +11,7 @@ from .pricing import pricing_to_json
 
 CHECKED_AT = "2026-11-01"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/models"
+VERCEL_AI_GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/models"
 TINKER_URL = "https://tinker-docs.thinkingmachines.ai/tinker/models.json"
 PERPLEXITY_URL = "https://docs.perplexity.ai/docs/agent-api/models"
 CLOUDFLARE_URL = "https://developers.cloudflare.com/workers-ai/platform/pricing/"
@@ -51,6 +52,59 @@ _OPENROUTER_RATE_FIELDS = {
     "input_cache_write_1h": "cache_write_1h",
 }
 _OPENROUTER_CONDITION_FIELDS = {"min_prompt_tokens", "max_prompt_tokens", "utc_days", "utc_start", "utc_end"}
+
+_VERCEL_RATE_FIELDS = {
+    "input": "input",
+    "output": "output",
+    "input_cache_read": "cache_read",
+    "input_cache_write": "cache_write",
+}
+_VERCEL_TIER_FIELDS = {
+    "input_tiers": "input",
+    "output_tiers": "output",
+    "input_cache_read_tiers": "cache_read",
+    "input_cache_write_tiers": "cache_write",
+}
+
+
+def _vercel_ai_gateway_schedules(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[int, int | None], dict[str, str]] = {}
+    for src, dest in _VERCEL_TIER_FIELDS.items():
+        tiers = raw.get(src)
+        if tiers is None:
+            continue
+        if not isinstance(tiers, list):
+            raise ValueError(f"invalid upstream {src}")
+        for tier in tiers:
+            if not isinstance(tier, Mapping):
+                raise ValueError(f"invalid upstream {src} entry")
+            min_tokens = tier.get("min", 0)
+            max_tokens = tier.get("max")
+            if type(min_tokens) is not int or min_tokens < 0:
+                raise ValueError("invalid upstream tier min")
+            if max_tokens is not None and (type(max_tokens) is not int or max_tokens <= min_tokens):
+                raise ValueError("invalid upstream tier max")
+            rate = _decimal(tier["cost"], factor="1000000")
+            grouped.setdefault((min_tokens, max_tokens), {})[dest] = rate
+
+    schedules: list[dict[str, Any]] = []
+    ordered = sorted(grouped.items(), key=lambda item: (item[0][0], item[0][1] if item[0][1] is not None else 10**18))
+    for index, ((min_tokens, max_tokens), rates) in enumerate(ordered):
+        when: dict[str, Any] = {}
+        if min_tokens > 0:
+            when["min_input_tokens"] = min_tokens
+        if max_tokens is not None:
+            # Vercel's tier max is exclusive; Kolega's max_input_tokens is inclusive.
+            when["max_input_tokens"] = max_tokens - 1
+        schedules.append(
+            {
+                "id": f"upstream_tier_{index}",
+                "priority": index,
+                "when": when,
+                "rates": rates,
+            }
+        )
+    return schedules
 
 
 def _openrouter_schedules(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -153,7 +207,12 @@ def _bundled_pricing(provider: str, model: str) -> dict[str, Any] | None:
 
 def feed_pricing(provider: str, model: str, row: Mapping[str, Any], *, checked_at: str | None = None) -> dict[str, Any]:
     stamp = checked_at or date.today().isoformat()
-    urls = {"openrouter": OPENROUTER_URL, "tinker": TINKER_URL, "perplexity_agent": PERPLEXITY_URL}
+    urls = {
+        "openrouter": OPENROUTER_URL,
+        "vercel_ai_gateway": VERCEL_AI_GATEWAY_URL,
+        "tinker": TINKER_URL,
+        "perplexity_agent": PERPLEXITY_URL,
+    }
     url = urls[provider]
     try:
         if provider == "openrouter":
@@ -220,6 +279,59 @@ def feed_pricing(provider: str, model: str, row: Mapping[str, Any], *, checked_a
                         missing = f"{key}: published gateway pricing requires a separately observed billing quantity"
                         if missing not in record["missing_components"]:
                             record["missing_components"].append(missing)
+        elif provider == "vercel_ai_gateway":
+            raw = row.get("pricing")
+            if not isinstance(raw, Mapping):
+                raise ValueError("missing pricing object")
+            rates = {
+                dest: _decimal(raw[src], factor="1000000") for src, dest in _VERCEL_RATE_FIELDS.items() if src in raw
+            }
+            if not {"input", "output"} <= rates.keys():
+                raise ValueError("missing input/output rates")
+            schedules = _vercel_ai_gateway_schedules(raw)
+            tags = row.get("tags") or []
+            has_free_tag = isinstance(tags, (list, tuple)) and "free" in tags
+            known_keys = {*_VERCEL_RATE_FIELDS, *_VERCEL_TIER_FIELDS}
+            extra_modifiers: list[str] = []
+            for key, value in raw.items():
+                if key in known_keys or value is None or value is False:
+                    continue
+                if isinstance(value, (dict, list)) and not value:
+                    continue
+                if isinstance(value, (str, int, float, Decimal)) and not isinstance(value, bool):
+                    if Decimal(_decimal(value)) == 0:
+                        continue
+                extra_modifiers.append(key)
+            free = (
+                has_free_tag
+                and all(Decimal(rate) == 0 for rate in rates.values())
+                and all(Decimal(rate) == 0 for schedule in schedules for rate in schedule["rates"].values())
+                and not extra_modifiers
+            )
+            record = _record(
+                provider,
+                model,
+                url,
+                rates,
+                checked_at=stamp,
+                billing_mode="gateway",
+                scope="gateway_model_list_rates",
+                source_scope="Model-level advertised rates; not an endpoint-pinned request charge.",
+                upstream_pricing=deepcopy(dict(raw)),
+                verified_free=free,
+                schedules=schedules,
+                assumptions=[
+                    "Published Vercel AI Gateway model-list rates estimate resource/list value; "
+                    "the routed upstream provider, region, service tier, and BYOK arrangement may change the actual charge. "
+                    "Provider-reported usage.cost takes precedence."
+                ],
+            )
+            if free:
+                record["cache_policy"] = {"cache_read": "included", "cache_write": "included"}
+            record["missing_components"] = [
+                f"{key}: published gateway pricing modifier requires separately observed routing or billing context"
+                for key in sorted(extra_modifiers)
+            ]
         elif provider == "tinker":
             rates = {
                 dest: _decimal(row[src], dollar=True)

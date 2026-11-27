@@ -75,12 +75,24 @@ API_KEY_ENV = {
     ModelProvider.OLLAMA_CLOUD: "OLLAMA_API_KEY",
     ModelProvider.CLOUDFLARE_WORKERS_AI: cloudflare_workers_ai.API_TOKEN_ENV,
     ModelProvider.OPENROUTER: "OPENROUTER_API_KEY",
+    ModelProvider.VERCEL_AI_GATEWAY: "VERCEL_API_KEY",
     ModelProvider.THINKING_MACHINES: "TINKER_API_KEY",
     # Native Tinker sampling authenticates with the same key.
     ModelProvider.TINKER: "TINKER_API_KEY",
     ModelProvider.PERPLEXITY_AGENT: "PERPLEXITY_API_KEY",
     ModelProvider.REFUSELESS: "REFUSELESS_API_KEY",
 }
+
+API_KEY_ENV_ALIASES: dict[ModelProvider, tuple[str, ...]] = {
+    ModelProvider.VERCEL_AI_GATEWAY: ("AI_GATEWAY_API_KEY",),
+}
+
+
+def provider_api_key_env_names(provider: ModelProvider) -> tuple[str, ...]:
+    primary = API_KEY_ENV.get(provider)
+    aliases = API_KEY_ENV_ALIASES.get(provider, ())
+    return (primary, *aliases) if primary else aliases
+
 
 DEFAULT_WEB_SEARCH_BACKEND = "duckduckgo"
 WEB_SEARCH_BACKEND_ENV = "KOLEGA_CODE_WEB_SEARCH_BACKEND"
@@ -397,9 +409,9 @@ def _api_key_for_provider(
         merged = custom_endpoints or _merged_custom_endpoints(env, CliConfigOverrides(), settings)
         entry = merged.get(endpoint_id) or {}
         return entry.get("api_key") or None
-    env_name = API_KEY_ENV.get(provider)
-    if env_name and env.get(env_name):
-        return env[env_name]
+    for env_name in provider_api_key_env_names(provider):
+        if env.get(env_name):
+            return env[env_name]
     if settings:
         return settings.get_api_key(provider.value)
     return None
@@ -1055,6 +1067,7 @@ def build_agent_config(
             cloudflare_account_id=cloudflare_account_id,
             cloudflare_ai_gateway_id=cloudflare_ai_gateway_id,
             openrouter_api_key=_api_key_for_provider(ModelProvider.OPENROUTER, loaded_env, settings),
+            vercel_ai_gateway_api_key=_api_key_for_provider(ModelProvider.VERCEL_AI_GATEWAY, loaded_env, settings),
             thinking_machines_api_key=_api_key_for_provider(ModelProvider.THINKING_MACHINES, loaded_env, settings),
             perplexity_api_key=_api_key_for_provider(ModelProvider.PERPLEXITY_AGENT, loaded_env, settings),
             refuseless_api_key=_api_key_for_provider(ModelProvider.REFUSELESS, loaded_env, settings),
@@ -1143,9 +1156,9 @@ def key_status(provider: str, project_path: Path, settings: Optional[CliSettings
             return f"signed in as {email} ({plan})"
         return "not signed in"
     env = load_cli_env(project_path)
-    env_name = API_KEY_ENV.get(provider_value)
-    if env_name and env.get(env_name):
-        status = f"present via {env_name}"
+    matched_env = next((name for name in provider_api_key_env_names(provider_value) if env.get(name)), None)
+    if matched_env:
+        status = f"present via {matched_env}"
     elif settings and settings.get_api_key(provider_value.value):
         status = "present in local settings"
     else:

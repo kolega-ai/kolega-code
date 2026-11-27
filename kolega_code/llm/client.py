@@ -68,6 +68,7 @@ _CHAT_COMPLETIONS_PROVIDERS = frozenset(
         "dashscope",
         "ollama_cloud",
         "openrouter",
+        "vercel_ai_gateway",
         cloudflare_workers_ai.PROVIDER,
         "refuseless",
     }
@@ -277,6 +278,7 @@ class LLMClient:
                 "minimax": "https://api.minimax.io/anthropic",
                 "ollama_cloud": "https://ollama.com/v1",
                 "openrouter": "https://openrouter.ai/api/v1",
+                "vercel_ai_gateway": "https://ai-gateway.vercel.sh/v1",
                 # Responses-compatible; /v1/responses is an accepted alias of /v1/agent.
                 "perplexity_agent": "https://api.perplexity.ai/v1",
                 # Tinker's Anthropic-compatible endpoint: the Anthropic SDK appends

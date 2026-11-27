@@ -183,6 +183,7 @@ Supported model providers:
 - xAI / Grok
 - DashScope / Qwen
 - OpenRouter (gateway to 250+ tool-capable models)
+- Vercel AI Gateway (gateway to 250+ tool-capable models)
 - Moonshot / Kimi
 - MiniMax
 - DeepSeek

@@ -195,6 +195,7 @@ def _provider_display_name(provider: str | None) -> str:
         ModelProvider.OLLAMA_CLOUD.value: "Ollama Cloud",
         ModelProvider.CLOUDFLARE_WORKERS_AI.value: "Cloudflare Workers AI",
         ModelProvider.OPENROUTER.value: "OpenRouter",
+        ModelProvider.VERCEL_AI_GATEWAY.value: "Vercel AI Gateway",
         ModelProvider.PERPLEXITY_AGENT.value: "Perplexity",
         ModelProvider.REFUSELESS.value: "Refuseless",
     }
@@ -215,6 +216,13 @@ def billing_error_message(error: LLMBillingError, model: str | None = None) -> s
             f"{provider_model} could not run this request: the Cloudflare account has used its daily free "
             "Workers AI allocation, or this model requires the Workers Paid plan. Upgrade the account to "
             "Workers Paid or switch to another provider/model in Settings or with /model."
+        )
+
+    if provider == ModelProvider.VERCEL_AI_GATEWAY.value:
+        return (
+            f"{provider_model} could not run this request: the Vercel AI Gateway account has insufficient "
+            "credits or this model is restricted on the free tier. Add AI Gateway credits or switch to "
+            "a free-tier model or another provider in Settings or with /model."
         )
 
     return (
@@ -439,6 +447,48 @@ def _is_refuseless_billing_error(error: "OpenAIError") -> bool:
     return any(isinstance(code, str) and code == "insufficient_credits" for code in codes)
 
 
+_VERCEL_BILLING_PHRASES = (
+    "free tier users do not have access",
+    "add ai gateway credits",
+    "restrictedmodelserror",
+    "insufficient balance",
+    "insufficient credit",
+    "insufficient credits",
+    "budget",
+    "payment required",
+)
+_VERCEL_CONTEXT_PHRASES = (
+    "maximum context length",
+    "context window",
+    "context length",
+    "too many input tokens",
+    "prompt is too long",
+    "exceeds the context",
+)
+
+
+def _map_vercel_ai_gateway_openai_error(error: "OpenAIError", provider: str) -> Optional[LLMError]:
+    status_code = getattr(error, "status_code", None)
+    text = str(error).lower()
+    body = getattr(error, "body", None)
+    param_name = ""
+    if isinstance(body, dict):
+        for container in (body, body.get("error")):
+            if isinstance(container, dict):
+                param = container.get("param")
+                if isinstance(param, dict) and isinstance(param.get("name"), str):
+                    param_name = param["name"].lower()
+    message = f"OpenAI APIError: {str(error)}"
+    if _is_billing_status(error) or (
+        status_code == 403
+        and (param_name == "restrictedmodelserror" or any(phrase in text for phrase in _VERCEL_BILLING_PHRASES))
+    ):
+        return LLMBillingError(message=message, provider=provider)
+    if status_code == 413 or (status_code == 400 and any(phrase in text for phrase in _VERCEL_CONTEXT_PHRASES)):
+        return LLMContextWindowExceededError(message=message, provider=provider)
+    return None
+
+
 def map_openai_errors(error: "OpenAIError", provider: str | None = None) -> LLMError:
     from openai import (
         APIConnectionError as OpenAIAPIConnectionError,
@@ -455,6 +505,10 @@ def map_openai_errors(error: "OpenAIError", provider: str | None = None) -> LLME
         cloudflare_error = _map_cloudflare_openai_error(error, provider)
         if cloudflare_error is not None:
             return cloudflare_error
+    if provider == ModelProvider.VERCEL_AI_GATEWAY.value:
+        vercel_error = _map_vercel_ai_gateway_openai_error(error, provider)
+        if vercel_error is not None:
+            return vercel_error
     status_code = getattr(error, "status_code", None)
     if status_code is not None:
         if status_code == 400:

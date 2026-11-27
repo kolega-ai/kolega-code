@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from kolega_code.llm.pricing import PricingResolver, _match
-from kolega_code.llm.specs import openrouter_catalog, perplexity_catalog, tinker_catalog
+from kolega_code.llm.specs import openrouter_catalog, perplexity_catalog, tinker_catalog, vercel_ai_gateway_catalog
 from kolega_code.llm.specs.catalog import MODEL_SPECS, WILDCARD_MODEL_SPECS
 from kolega_code.llm.specs.catalog.pricing_sources import PROVIDER_SOURCES
 from kolega_code.llm.specs.pricing import pricing_to_json
@@ -20,7 +20,7 @@ from kolega_code.llm.specs.types import ThinkingEffortSpec
 from kolega_code.llm.usage import NormalizedUsage
 
 PRICING = {key: spec["pricing"] for key, spec in {**MODEL_SPECS, **WILDCARD_MODEL_SPECS}.items()}
-CATALOGS = ["openrouter", "tinker", "perplexity", "ollama_cloud", "cloudflare_workers_ai"]
+CATALOGS = ["openrouter", "vercel_ai_gateway", "tinker", "perplexity", "ollama_cloud", "cloudflare_workers_ai"]
 DEFAULT_TIER_CASES = [
     ("minimax", "MiniMax-M3", "standard", "0.00042"),
     ("perplexity_agent", "openai/gpt-6.1-sol", "default", "0.003"),
@@ -131,6 +131,62 @@ def test_router_variant_zero_is_not_a_paid_sibling_or_metadata_router() -> None:
         )
         assert not_all_free["status"] == "priced"
         assert not_all_free["verified_free"] is False
+
+
+def test_vercel_ai_gateway_decimal_conversion_and_input_tiers() -> None:
+    raw = {
+        "input": "0.0000004",
+        "input_tiers": [
+            {"cost": "0.0000004", "max": 256000},
+            {"cost": "0.0000008", "min": 256000},
+        ],
+        "output": "0.000002",
+        "output_tiers": [
+            {"cost": "0.000002", "min": 0, "max": 256000},
+            {"cost": "0.000004", "min": 256000},
+        ],
+        "input_cache_read": "0.00000004",
+        "input_cache_write": "0.0000005",
+        "regional": {"us": {"input": "0.00000044"}},
+    }
+    card = feed_pricing("vercel_ai_gateway", "vendor/tiered-model", {"pricing": raw})
+    assert card["status"] == "priced"
+    assert card["billing_mode"] == "gateway"
+    assert Decimal(card["rates"]["input"]) == Decimal("0.4")
+    assert Decimal(card["rates"]["output"]) == Decimal("2")
+    assert Decimal(card["rates"]["cache_read"]) == Decimal("0.04")
+    assert Decimal(card["rates"]["cache_write"]) == Decimal("0.5")
+    assert card["schedules"][0]["when"] == {"max_input_tokens": 255999}
+    assert card["schedules"][1]["when"] == {"min_input_tokens": 256000}
+    assert Decimal(card["schedules"][1]["rates"]["input"]) == Decimal("0.8")
+    assert Decimal(card["schedules"][1]["rates"]["output"]) == Decimal("4")
+    assert any("regional" in item for item in card["missing_components"])
+    assert pricing_to_json(card) == card
+
+
+def test_vercel_ai_gateway_free_and_malformed_pricing() -> None:
+    free = feed_pricing(
+        "vercel_ai_gateway",
+        "vendor/free-model",
+        {"tags": ["free", "tool-use"], "pricing": {"input": "0", "output": "0"}},
+    )
+    assert free["status"] == "priced"
+    assert free["verified_free"] is True
+    assert free["cache_policy"] == {"cache_read": "included", "cache_write": "included"}
+
+    entry = {
+        "id": "vendor/bad-price",
+        "type": "language",
+        "context_window": 65536,
+        "max_tokens": 8192,
+        "supported_parameters": ["tools", "temperature"],
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "pricing": {"input": "-1", "output": "0.000001"},
+    }
+    entries = vercel_ai_gateway_catalog.catalog_entries({"data": [entry]})
+    assert len(entries) == 1
+    assert entries[0][1]["context_length"] == 65536
+    assert entries[0][1]["pricing"]["status"] == "unverified"
 
 
 @pytest.mark.parametrize(

@@ -21,6 +21,7 @@ OPENAI_SHAPED = {
     "ollama_cloud",
     "cloudflare_workers_ai",
     "openrouter",
+    "vercel_ai_gateway",
     "mistral",
 }
 

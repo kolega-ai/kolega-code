@@ -135,6 +135,13 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
             return {"extra_body": {"reasoning": {"enabled": False}}}
         return {"extra_body": {"reasoning": {"effort": normalized}}}
 
+    if spec.mode == "vercel_ai_gateway_reasoning":
+        if normalized == "none":
+            return {"extra_body": {"reasoning": {"enabled": False}}}
+        if normalized == "enabled":
+            return {"extra_body": {"reasoning": {"enabled": True}}}
+        return {"extra_body": {"reasoning": {"effort": normalized}}}
+
     if spec.mode == "openai_responses_reasoning":
         # The Responses API nests reasoning effort under a "reasoning" object,
         # unlike Chat Completions' flat "reasoning_effort". We request
@@ -175,6 +182,7 @@ _REASONING_REPLAY_FIELDS: Dict[str, str] = {
     # OpenRouter emits reasoning as delta.reasoning and requires it echoed back on
     # assistant tool-call turns whenever reasoning is enabled.
     "openrouter": "reasoning",
+    "vercel_ai_gateway": "reasoning",
     "together": "reasoning",
     # xAI's Chat Completions endpoint returns and accepts reasoning_content even
     # though its public docs only describe the Responses API (verified live
@@ -187,7 +195,14 @@ _REASONING_REPLAY_FIELDS: Dict[str, str] = {
 # Chat-Completions reasoning modes whose reasoning text is replayable via a flat
 # top-level field. Responses/Anthropic/Google modes carry reasoning differently
 # and are excluded.
-_REASONING_REPLAY_MODES = frozenset({"openai_reasoning_effort", "cloudflare_reasoning_effort", "openrouter_reasoning"})
+_REASONING_REPLAY_MODES = frozenset(
+    {
+        "openai_reasoning_effort",
+        "cloudflare_reasoning_effort",
+        "openrouter_reasoning",
+        "vercel_ai_gateway_reasoning",
+    }
+)
 
 
 def reasoning_replay_field(provider: str, model_name: str) -> Optional[str]:

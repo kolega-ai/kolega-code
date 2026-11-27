@@ -21,6 +21,7 @@ from .tinker import TINKER_SPECS, TINKER_WILDCARD_SPECS
 from .perplexity_agent import PERPLEXITY_AGENT_SPECS
 from .cloudflare_workers_ai import CLOUDFLARE_WORKERS_AI_SPECS
 from .openrouter import OPENROUTER_SPECS
+from .vercel_ai_gateway import VERCEL_AI_GATEWAY_SPECS
 from .refuseless import REFUSELESS_SPECS
 
 # Dictionary mapping (provider, model_name) to model specifications.
@@ -61,6 +62,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
     # is OpenRouter's own usage ranking, and its leading entries carry
     # ``featured`` so pickers stay short.
     **OPENROUTER_SPECS,
+    **VERCEL_AI_GATEWAY_SPECS,
 }
 
 # Wildcard spec templates: fallback specs for uncatalogued, per-user model

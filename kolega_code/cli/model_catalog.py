@@ -28,6 +28,7 @@ from kolega_code.llm.specs import ollama_cloud_catalog as ollama_cloud
 from kolega_code.llm.specs import openrouter_catalog as openrouter
 from kolega_code.llm.specs import perplexity_catalog as perplexity
 from kolega_code.llm.specs import tinker_catalog as tinker
+from kolega_code.llm.specs import vercel_ai_gateway_catalog as vercel_ai_gateway
 from kolega_code.llm.specs.validation import validate_model_spec
 from kolega_code.llm.specs.accessors import get_model_pricing
 from kolega_code.llm.specs.pricing import pricing_datetime, pricing_is_newer, pricing_to_json
@@ -48,6 +49,7 @@ OVERLAY_SOURCES = {
     mistral.PROVIDER: mistral,
     ollama_cloud.PROVIDER: ollama_cloud,
     openrouter.PROVIDER: openrouter,
+    vercel_ai_gateway.PROVIDER: vercel_ai_gateway,
     tinker.PROVIDER: tinker,
     perplexity.AGENT_PROVIDER: perplexity.AGENT_CATALOG,
     cloudflare_workers_ai.PROVIDER: cloudflare_workers_ai,

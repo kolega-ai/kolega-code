@@ -86,6 +86,11 @@ _PATTERNS: tuple[_PatternSpec, ...] = (
         needles=("cfut_", "cfat_", "cfk_"),
     ),
     _PatternSpec(
+        "vercel-ai-gateway-token",
+        re.compile(r"\bvck_[A-Za-z0-9_-]{20,}"),
+        needles=("vck_",),
+    ),
+    _PatternSpec(
         "authorization",
         re.compile(r"(?i)authorization\s*:\s*(?:bearer|basic)\s+(?P<value>\S+)"),
         group="value",
