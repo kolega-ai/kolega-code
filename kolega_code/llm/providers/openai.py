@@ -48,6 +48,7 @@ _encoding = None
 # The OpenRouter gateway needs request/response handling the direct OpenAI-compatible
 # providers do not (see _apply_openrouter_request_rules and _capture_usage_details).
 OPENROUTER_PROVIDER = "openrouter"
+VERCEL_AI_GATEWAY_PROVIDER = "vercel_ai_gateway"
 
 # Workers AI silently caps a request without an explicit output limit at 256
 # tokens, so uncatalogued models still get a usable cap.
@@ -86,6 +87,18 @@ def _openrouter_routing_preferences() -> Dict[str, Any]:
     return preferences
 
 
+def _vercel_ai_gateway_options() -> Dict[str, Any]:
+    """Build Vercel AI Gateway ``providerOptions.gateway`` settings."""
+    options: Dict[str, Any] = {"caching": "auto"}
+    order = _csv_env("KOLEGA_CODE_VERCEL_AI_GATEWAY_PROVIDER_ORDER")
+    if order:
+        options["order"] = order
+    sort = (os.environ.get("KOLEGA_CODE_VERCEL_AI_GATEWAY_SORT") or "").strip().lower()
+    if sort:
+        options["sort"] = sort
+    return options
+
+
 def _capture_usage_details(usage: Any, target: Dict[str, Any]) -> None:
     """Record cache-read/cache-write token detail from an OpenAI-shaped usage object.
 
@@ -100,14 +113,15 @@ def _capture_usage_details(usage: Any, target: Dict[str, Any]) -> None:
         target["reasoning_output_tokens"] = reasoning
 
     details = read_wire(usage, "prompt_tokens_details")
-    if details is None:
-        return
+    if details is not None:
+        cached = read_detail_int(details, "cached_tokens")
+        if cached is not None:
+            target["cache_read_input_tokens"] = cached
 
-    cached = read_detail_int(details, "cached_tokens")
-    if cached is not None:
-        target["cache_read_input_tokens"] = cached
-
-    cache_write = read_detail_int(details, "cache_write_tokens")
+    cache_write = read_detail_int(details, "cache_write_tokens") if details is not None else None
+    if cache_write is None:
+        # Vercel AI Gateway emits cache writes at the top level of usage, counted inside prompt_tokens.
+        cache_write = read_detail_int(usage, "cache_creation_input_tokens")
     if cache_write is not None:
         target["cache_write_input_tokens"] = cache_write
         prompt_tokens = target.get("prompt_tokens")
@@ -124,6 +138,9 @@ def _usage_metadata(usage: Any) -> dict[str, Any]:
             "total_tokens",
             "cost",
             "cost_details",
+            "market_cost",
+            "gateway_cost",
+            "is_byok",
             "cost_in_usd_ticks",
             "service_tier",
             "pricing_tier_input_tokens",
@@ -470,6 +487,8 @@ class OpenAIProvider(BaseLLMProvider):
 
         if self.provider_name == OPENROUTER_PROVIDER:
             self._apply_openrouter_request_rules(generation_params)
+        elif self.provider_name == VERCEL_AI_GATEWAY_PROVIDER:
+            self._apply_vercel_ai_gateway_request_rules(generation_params)
 
         # Refuseless has independent endpoint limits, not the inherited DeepSeek cap.
         if self.provider_name != "refuseless" and is_deepseek_model(model):
@@ -532,6 +551,13 @@ class OpenAIProvider(BaseLLMProvider):
         if routing:
             extra["provider"] = routing
         self._merge_request_params(generation_params, {"extra_body": extra})
+
+    def _apply_vercel_ai_gateway_request_rules(self, generation_params: Dict[str, Any]) -> None:
+        """Apply automatic prompt caching and opt-in gateway routing for Vercel AI Gateway."""
+        self._merge_request_params(
+            generation_params,
+            {"extra_body": {"providerOptions": {"gateway": _vercel_ai_gateway_options()}}},
+        )
 
     async def count_tokens(
         self,

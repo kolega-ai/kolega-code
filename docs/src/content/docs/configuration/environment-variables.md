@@ -55,6 +55,7 @@ provider or model.
 | `OLLAMA_API_KEY` | Ollama Cloud |
 | `CLOUDFLARE_API_TOKEN` | Cloudflare Workers AI (also needs `CLOUDFLARE_ACCOUNT_ID`) |
 | `OPENROUTER_API_KEY` | OpenRouter |
+| `VERCEL_API_KEY` | Vercel AI Gateway (`AI_GATEWAY_API_KEY` is also accepted as a fallback) |
 | `TINKER_API_KEY` | Thinking Machines — both the `thinking_machines` (Anthropic-compatible) and `tinker` (native SDK) providers |
 | `PERPLEXITY_API_KEY` | Perplexity Agent API |
 | `REFUSELESS_API_KEY` | Refuseless |
@@ -66,6 +67,7 @@ Anthropic-compatible endpoint (`https://api.kimi.com/coding/`), which is distinc
 standard Moonshot API used by the `moonshot` provider.
 The `OLLAMA_API_KEY` key authenticates against Ollama Cloud's direct API (`https://ollama.com/v1` for OpenAI-compatible requests).
 The `OPENROUTER_API_KEY` key authenticates against the OpenRouter gateway (`https://openrouter.ai/api/v1`).
+The `VERCEL_API_KEY` key (or `AI_GATEWAY_API_KEY` fallback) authenticates against Vercel AI Gateway (`https://ai-gateway.vercel.sh/v1`).
 The `PERPLEXITY_API_KEY` key authenticates against the Perplexity Agent API (`https://api.perplexity.ai/v1`).
 The `REFUSELESS_API_KEY` key authenticates Refuseless Chat Completions requests
 at `https://api.refuseless.com/v1`. An exported key overrides the Refuseless key
@@ -122,6 +124,18 @@ All optional; unset means Kolega Code sends nothing for that field.
 | `KOLEGA_CODE_OPENROUTER_PROVIDER_ONLY` | Comma-separated upstream provider slugs to restrict routing to (OpenRouter `provider.only`). |
 | `KOLEGA_CODE_OPENROUTER_CATALOG` | Read the refreshed model cache from this path instead of the state directory. |
 | `KOLEGA_CODE_DISABLE_OPENROUTER_CATALOG` | Ignore any refreshed cache and use only the catalog bundled with this release. |
+
+### Vercel AI Gateway tuning
+
+All optional; unset means Kolega Code sends nothing for that field.
+
+| Variable | Purpose |
+| --- | --- |
+| `AI_GATEWAY_API_KEY` | Fallback API key variable read when `VERCEL_API_KEY` is unset (matches Vercel's AI Gateway docs). |
+| `KOLEGA_CODE_VERCEL_AI_GATEWAY_PROVIDER_ORDER` | Comma-separated upstream provider slugs to try in order (`providerOptions.gateway.order`). |
+| `KOLEGA_CODE_VERCEL_AI_GATEWAY_SORT` | Upstream provider sort order: `cost`, `ttft`, or `tps` (`providerOptions.gateway.sort`). |
+| `KOLEGA_CODE_VERCEL_AI_GATEWAY_CATALOG` | Read the refreshed model cache from this path instead of the state directory. |
+| `KOLEGA_CODE_DISABLE_VERCEL_AI_GATEWAY_CATALOG` | Ignore any refreshed cache and use only the catalog bundled with this release. |
 
 ## Model selection
 

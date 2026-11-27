@@ -98,13 +98,18 @@ def reported_cost(provider: str, usage: Any) -> dict[str, Any] | None:
         provenance["field"] = "usage.cost.total_cost"
         if isinstance(breakdown, Mapping):
             provenance["breakdown"] = json_payload(breakdown)
-    elif provider == "openrouter":
+    elif provider in ("openrouter", "vercel_ai_gateway"):
         raw = read_wire(usage, "cost")
         scope = "gateway_request_charge"
         provenance["field"] = "usage.cost"
         details = read_wire(usage, "cost_details")
         if isinstance(details, Mapping):
             provenance["cost_details"] = json_payload(details)
+        if provider == "vercel_ai_gateway":
+            for extra_key in ("market_cost", "gateway_cost", "is_byok"):
+                extra_val = read_wire(usage, extra_key)
+                if extra_val is not None:
+                    provenance[extra_key] = extra_val
     elif provider == "xai":
         ticks = read_wire(usage, "cost_in_usd_ticks")
         if type(ticks) is not int or ticks < 0:

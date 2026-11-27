@@ -14,7 +14,7 @@ import anthropic
 import openai
 import pytest
 
-from kolega_code.cli.config import API_KEY_ENV
+from kolega_code.cli.config import API_KEY_ENV, provider_api_key_env_names
 from kolega_code.config import ModelProvider
 from kolega_code.llm.client import LLMClient
 from kolega_code.llm.exceptions import (
@@ -64,10 +64,11 @@ _IDS = [f"{p}-{m.rsplit('/', 1)[-1]}" for p, m in PROVIDER_MODELS]
 def _require_key(provider_value: str) -> str:
     if SKIP_IN_CI:
         pytest.skip("Skipping live provider call in CI")
-    env_name = API_KEY_ENV[ModelProvider(provider_value)]
-    api_key = os.getenv(env_name)
+    provider = ModelProvider(provider_value)
+    env_names = provider_api_key_env_names(provider)
+    api_key = next((os.getenv(name) for name in env_names if os.getenv(name)), None)
     if not api_key:
-        pytest.skip(f"{env_name} not set")
+        pytest.skip(f"{API_KEY_ENV[provider]} not set")
     # Workers AI URLs are account-scoped; LLMClient reads the ID from the environment.
     if provider_value == ModelProvider.CLOUDFLARE_WORKERS_AI.value and not os.getenv("CLOUDFLARE_ACCOUNT_ID"):
         pytest.skip("CLOUDFLARE_ACCOUNT_ID not set")

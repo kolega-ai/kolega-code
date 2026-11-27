@@ -40,9 +40,41 @@ Anthropic-compatible):
 | Ollama Cloud | `ollama_cloud` | `OLLAMA_API_KEY` |
 | Cloudflare Workers AI | `cloudflare_workers_ai` | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
+| Vercel AI Gateway | `vercel_ai_gateway` | `VERCEL_API_KEY` (fallback: `AI_GATEWAY_API_KEY`) |
 | Perplexity Agent API | `perplexity_agent` | `PERPLEXITY_API_KEY` |
 | Llama (local) | `llama` | _none — local model_ |
 | Refuseless | `refuseless` | `REFUSELESS_API_KEY` |
+
+### Vercel AI Gateway
+
+The built-in `vercel_ai_gateway` provider uses **Chat Completions** at
+`https://ai-gateway.vercel.sh/v1`, authenticated by `VERCEL_API_KEY` (primary),
+`AI_GATEWAY_API_KEY` (fallback matching Vercel's docs), or a key saved in
+Settings → Providers. Setting an API key alone does not change your active
+provider or model.
+
+```bash
+export VERCEL_API_KEY="vck_your-api-key"
+kolega-code . --provider vercel_ai_gateway --model moonshotai/kimi-k2.7-code
+kolega-code models list --provider vercel_ai_gateway
+kolega-code models refresh --provider vercel_ai_gateway
+```
+
+The bundled catalog covers all tool-capable interactive language models from
+`GET /v1/models` (excluding asynchronous `*-batch` routes, which return 404 on
+`/v1/chat/completions`). Settings pickers show a curated featured set led by
+`moonshotai/kimi-k2.7-code`, with an **Other…** entry for any other catalogued
+model ID. Run `kolega-code models refresh --provider vercel_ai_gateway` (no key
+required) to pick up newly added models between releases.
+
+Requests automatically enable gateway prompt caching
+(`providerOptions.gateway.caching = "auto"`), report provider-billed `usage.cost`,
+replay reasoning in the native `reasoning` field (dropped for `anthropic/*`
+routes where plain strings cannot carry thinking signatures), and honor optional
+routing overrides (`KOLEGA_CODE_VERCEL_AI_GATEWAY_PROVIDER_ORDER` and
+`KOLEGA_CODE_VERCEL_AI_GATEWAY_SORT`). On free-tier accounts, paid-only models
+return HTTP 403 (`RestrictedModelsError`), which Kolega Code surfaces as a
+billing error so you can add AI Gateway credits or switch to an eligible model.
 
 ### Refuseless
 

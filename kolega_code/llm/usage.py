@@ -58,6 +58,7 @@ OPENAI_USAGE_PROVIDERS = frozenset(
         "ollama_cloud",
         "cloudflare_workers_ai",
         "openrouter",
+        "vercel_ai_gateway",
         "perplexity_agent",
         "mistral",
         "refuseless",

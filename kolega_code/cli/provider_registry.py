@@ -47,6 +47,7 @@ PROVIDER_LABELS: dict[ModelProvider, str] = {
     ModelProvider.OLLAMA_CLOUD: "Ollama Cloud",
     ModelProvider.CLOUDFLARE_WORKERS_AI: "Cloudflare Workers AI",
     ModelProvider.OPENROUTER: "OpenRouter",
+    ModelProvider.VERCEL_AI_GATEWAY: "Vercel AI Gateway",
     ModelProvider.THINKING_MACHINES: "Thinking Machines",
     ModelProvider.TINKER: "Tinker",
     ModelProvider.PERPLEXITY_AGENT: "Perplexity Agent API",
@@ -259,6 +260,7 @@ PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     # Hardcoded on purpose: regenerating the OpenRouter catalog reorders it by
     # live usage, and that must never silently change what new users get.
     ModelProvider.OPENROUTER: "moonshotai/kimi-k3",
+    ModelProvider.VERCEL_AI_GATEWAY: "moonshotai/kimi-k2.7-code",
     ModelProvider.THINKING_MACHINES: "thinkingmachines/Inkling",
     # Cheap and renderable without the optional tinker-inkling extra, so the
     # provider works out of the box for anyone who installs the base extras.
@@ -305,6 +307,8 @@ def _api_key_env(provider: ModelProvider) -> str:
         return "OLLAMA_API_KEY"
     if provider == ModelProvider.CLOUDFLARE_WORKERS_AI:
         return "CLOUDFLARE_API_TOKEN"
+    if provider == ModelProvider.VERCEL_AI_GATEWAY:
+        return "VERCEL_API_KEY"
     if provider == ModelProvider.THINKING_MACHINES:
         # Thinking Machines documents TINKER_API_KEY, not THINKING_MACHINES_API_KEY.
         return "TINKER_API_KEY"

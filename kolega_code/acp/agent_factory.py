@@ -50,7 +50,13 @@ from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.prompts import BUILD_QUESTION_PROMPT, PLANNING_QUESTION_PROMPT
 from kolega_code.agent.tool_definitions import tool_description_asset
 from kolega_code.agent.volatile_context import VolatileSection
-from kolega_code.cli.config import API_KEY_ENV, CliConfigOverrides, build_agent_config, config_summary
+from kolega_code.cli.config import (
+    API_KEY_ENV,
+    CliConfigOverrides,
+    build_agent_config,
+    config_summary,
+    provider_api_key_env_names,
+)
 from kolega_code.cli.connection import CliConnectionManager
 from kolega_code.cli.provider_registry import PROVIDER_LABELS, ui_model_options
 from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
@@ -453,7 +459,9 @@ class AgentFactory:
         assert self._settings is not None
         providers = {provider for provider, key in self._settings.api_keys.items() if key}
         providers.update(
-            provider.value for provider, env_name in API_KEY_ENV.items() if (os.environ.get(env_name) or "").strip()
+            provider.value
+            for provider in API_KEY_ENV
+            if any((os.environ.get(env_name) or "").strip() for env_name in provider_api_key_env_names(provider))
         )
         return sorted(providers)
 

@@ -40,6 +40,7 @@ class ModelProvider(str, Enum):
     OLLAMA_CLOUD = "ollama_cloud"
     CLOUDFLARE_WORKERS_AI = "cloudflare_workers_ai"
     OPENROUTER = "openrouter"  # Gateway in front of many vendors' models
+    VERCEL_AI_GATEWAY = "vercel_ai_gateway"  # Vercel AI Gateway (multi-provider Chat Completions)
     THINKING_MACHINES = "thinking_machines"  # Thinking Machines Lab (Tinker API)
     TINKER = "tinker"  # Native Tinker SamplingClient (agentic-RL trajectory source)
     PERPLEXITY_AGENT = "perplexity_agent"
@@ -234,6 +235,7 @@ class AgentConfig(BaseModel):
         default=None, description="Optional Cloudflare AI Gateway that Workers AI requests route through"
     )
     openrouter_api_key: Optional[str] = Field(default=None, description="API key for OpenRouter")
+    vercel_ai_gateway_api_key: Optional[str] = Field(default=None, description="API key for Vercel AI Gateway")
     thinking_machines_api_key: Optional[str] = Field(default=None, description="API key for Thinking Machines (Tinker)")
     perplexity_api_key: Optional[str] = Field(
         default=None, description="API key for Perplexity (Gateway and Agent API)"
@@ -476,6 +478,7 @@ class AgentConfig(BaseModel):
             ModelProvider.OLLAMA_CLOUD: self.ollama_cloud_api_key,
             ModelProvider.CLOUDFLARE_WORKERS_AI: self.cloudflare_api_token,
             ModelProvider.OPENROUTER: self.openrouter_api_key,
+            ModelProvider.VERCEL_AI_GATEWAY: self.vercel_ai_gateway_api_key,
             ModelProvider.THINKING_MACHINES: self.thinking_machines_api_key,
             # The native Tinker provider shares the same TINKER_API_KEY credential.
             ModelProvider.TINKER: self.thinking_machines_api_key,

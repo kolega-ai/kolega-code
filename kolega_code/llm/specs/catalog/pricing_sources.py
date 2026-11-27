@@ -26,6 +26,7 @@ _SOURCES = {
     "ollama_cloud": ("https://ollama.com/pricing", "included_credits_or_pay_as_you_go"),
     "cloudflare_workers_ai": ("https://developers.cloudflare.com/workers-ai/platform/pricing/", "workers_ai"),
     "openrouter": ("https://openrouter.ai/api/v1/models", "gateway"),
+    "vercel_ai_gateway": ("https://ai-gateway.vercel.sh/v1/models", "gateway"),
     "thinking_machines": ("https://tinker-docs.thinkingmachines.ai/tinker/serverless.json", "tinker_serverless"),
     "tinker": ("https://tinker-docs.thinkingmachines.ai/tinker/models.json", "native_tinker_sampling"),
     "perplexity_agent": ("https://docs.perplexity.ai/docs/getting-started/pricing", "gateway"),
